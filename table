@@ -1,0 +1,21 @@
+| Tier    | Component      | Model / Library                  | Embedding Dim | Disk Size | RAM / VRAM Req                     | Notes / Use Case                                     |
+| ------- | -------------- | -------------------------------- | ------------- | --------- | ---------------------------------- | ---------------------------------------------------- |
+| Small   | Embedding      | all-MiniLM-L6-v2                 | 384           | ~100MB    | Low RAM (CPU ok)                   | Fast, light, ideal for offline on consumer laptops   |
+| Medium  | Embedding      | all-mpnet-base-v2                | 768           | ~420MB    | Moderate RAM (CPU ok)              | Higher quality semantic embeddings, moderate speed   |
+| Premium | Embedding      | LaBSE / paraphrase-MiniLM-L12-v2 | 768–1024      | 500–800MB | Moderate–High RAM, GPU recommended | Best retrieval quality for complex datasets          |
+| Any     | Keyword / BM25 | Rank-BM25 / Whoosh               | N/A           | Minimal   | Low                                | Fast keyword search fallback, CPU-only               |
+| Small   | LLM            | Mistral-7B-instruct (quantized)  | N/A           | ~13GB     | 6–8GB VRAM                         | Can run on mid-range GPU, CPU slower                 |
+| Medium  | LLM            | LLaMA-13B                        | N/A           | ~26GB     | 12–16GB VRAM                       | Good local LLM, GPU recommended for speed            |
+| Premium | LLM            | LLaMA-65B / MPT-30B              | N/A           | 70–130GB+ | 40+GB VRAM                         | High-end local LLM, only for powerful desktop/server |
+
+
+
+Layer 	Tool / Model	Disk Size	Why? (The "Kid" Explanation)
+The Eyes	PyMuPDF4LLM	~20 MB	Scans the PDF and pulls out both the text and the pictures.
+The Visual Brain	moondream:v2 (via Ollama)	829 MB	A tiny "Camera Eye" that looks at diagrams and tells what's in them in plain English.
+The Base Brain	spaCy (en_core_web_md)	~40-115 MB	The "Idea Finder." It instantly spots names and concepts for your Graph without needing a heavy LLM.
+The Search Brain	nomic-embed-text (via Ollama)	274 MB	The "Librarian." It files every page and diagram description into a giant index for fast searching.
+The Super Brain	Llama3-8B (Optional)	4.7 GB	The "Genius." It reads the folder and answers your toughest questions [Previous Context].
+The Memory	DuckDB	~50 MB	The "Secret Suitcase." It stores your Markdown, Graph strings, and Search Index in one file inside your folder.
+The Dashboard	Next.js + Shadcn + Tailwind	~150 MB	The "Secret Lab." A premium UI that feels like Claude and Gemini had a baby.
+The Hologram	React Force Graph	< 5 MB	The "Glowing Web." An interactive map of bubbles you can drag and bounce to see how ideas connect.

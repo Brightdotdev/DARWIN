@@ -1,0 +1,56 @@
+
+documentparser:
+light : pymupdf4llm
+docling : high
+
+llm:
+local
+none
+api
+
+::if local then we are very happy
+::if api then we have to handle rate liiting...have pity on the users tokens
+::if none...its okay but it dosnt feel ai and revolutinary just meh
+
+embedding:
+light: e5-small : : 8GB system RAM
+medium:  BAAI BGE-M3 : : 16–32GB
+large :  Large: gritlm-7b :: 32GB+ 
+
+::these othere embeddings models are even an overlikk sticking with e5-small
+
+chunking:
+hybrid...no other option
+
+chunking size:
+im still stuck...idk
+
+graph:
+instead of a fixed graph more of a scale too zoom in and out of hoow much concepts you wish to break down
+
+performanceapproech:
+honelstly parralelism...we spliit stuffs in cores on the users pc
+
+reranking:
+not needed..we have a graph
+
+external knowledge:
+v2
+ui and server:
+v2
+
+
+chatmemory:
+we save it as it then summarize ever n tokens with xml for presise explanation
+we dont save chats and just return requests as flashcards or something with citations
+
+
+skills:
+save it all in xml annd have the model use them as manytimes as it wants
+save as md raw text  annd have the model use them as manytimes as it wants
+dont do skills
+
+system promot
+roleplaying :: you are a very smart agentic system etc
+xml and delarative :: these are your documents and you own them now return {userquery}
+

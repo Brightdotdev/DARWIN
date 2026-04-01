@@ -1,0 +1,23 @@
+[project]
+name = "studyagent"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "en-core-web-md",
+    "markitdown>=0.1.5",
+    "pymupdf4llm>=1.27.2.2",
+    "pyvis>=0.3.2",
+    "rich>=14.3.3",
+    "spacy>=3.8.13",
+    "toml>=0.10.2",
+    "typer>=0.24.1",
+]
+
+[tool.uv.sources]
+en-core-web-md = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl" }
+
+
+[project.scripts]
+darwin = "agent:app"
