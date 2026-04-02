@@ -1,4 +1,6 @@
 
+WANNABE RAG
+
 documentparser:
 light : pymupdf4llm
 docling : high
@@ -19,6 +21,7 @@ large :  Large: gritlm-7b :: 32GB+
 
 ::these othere embeddings models are even an overlikk sticking with e5-small
 
+qweryreqriting:
 chunking:
 hybrid...no other option
 
@@ -33,6 +36,10 @@ honelstly parralelism...we spliit stuffs in cores on the users pc
 
 reranking:
 not needed..we have a graph
+ms-marco-TinyBERT-L-2-v2 : light
+ ms-marco-MiniLM-L-12-v2 : medium
+ BAAI/bge-reranker-base or mixedbread-ai/mxbai-rerank-large-v1 :: insane
+ 
 
 external knowledge:
 v2
