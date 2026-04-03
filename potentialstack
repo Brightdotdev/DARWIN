@@ -61,3 +61,22 @@ system promot
 roleplaying :: you are a very smart agentic system etc
 xml and delarative :: these are your documents and you own them now return {userquery}
 
+
+
+
+actual query flow
+query
+→ normalize (lowercase, clean)
+→ remove light stopwords
+→ expand (synonyms or embeddings)
+→ generate 2–4 query variations
+→ hybrid search (each variation)
+→ merge results
+→ rerank
+→ take top_k
+→ send to LLM
+→ evaluate (recall, accuracy)
+
+
+
+litellm for model handling
