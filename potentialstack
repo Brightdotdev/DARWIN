@@ -64,7 +64,7 @@ xml and delarative :: these are your documents and you own them now return {user
 
 
 
-actual query flow
+actual query flow 
 query
 → normalize (lowercase, clean)
 → remove light stopwords
