@@ -80,3 +80,10 @@ query
 
 
 litellm for model handling
+
+
+
+vision model:
+SmolVLM-256M :: light
+SmolVLM-500M :: medium
+LightOnOCR-2-1B :: overkill

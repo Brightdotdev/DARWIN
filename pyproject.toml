@@ -1,5 +1,5 @@
 [project]
-name = "studyagent"
+name = "DARWIN"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -7,9 +7,14 @@ requires-python = ">=3.11"
 dependencies = [
     "en-core-web-md",
     "markitdown>=0.1.5",
+    "nltk>=3.9.4",
     "pymupdf4llm>=1.27.2.2",
+    "pytest>=9.0.2",
     "pyvis>=0.3.2",
+    "rank-bm25>=0.2.2",
     "rich>=14.3.3",
+    "scikit-learn>=1.8.0",
+    "sentence-transformers>=5.3.0",
     "spacy>=3.8.13",
     "toml>=0.10.2",
     "typer>=0.24.1",

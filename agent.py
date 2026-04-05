@@ -1,3 +1,15 @@
+"""
+agent.py
+--------
+CLI agent for studyagent project.
+
+Commands:
+    start  - scan folder and convert supported files to markdown
+    help   - show available commands
+
+Creates .agent folder structure with sources/, viz/, config.toml, index.json
+"""
+
 import sys
 import json
 import toml
@@ -8,11 +20,11 @@ from rich.progress import track
 
 console = Console()
 
-AGENT_DIR   = Path.cwd() / ".agent"
+AGENT_DIR = Path.cwd() / ".agent"
 SOURCES_DIR = AGENT_DIR / "sources"
-VIZ_DIR     = AGENT_DIR / "viz"
+VIZ_DIR = AGENT_DIR / "viz"
 CONFIG_FILE = AGENT_DIR / "config.toml"
-INDEX_FILE  = AGENT_DIR / "index.json"
+INDEX_FILE = AGENT_DIR / "index.json"
 
 SUPPORTED = {".pdf", ".docx", ".pptx", ".txt", ".md"}
 
@@ -24,7 +36,7 @@ def init_agent_dir():
     if not CONFIG_FILE.exists():
         config = {
             "llm": {"provider": "none", "model": "", "api_key": ""},
-            "parser": {"ocr_enabled": False}
+            "parser": {"ocr_enabled": False},
         }
         CONFIG_FILE.write_text(toml.dumps(config))
     if not INDEX_FILE.exists():
@@ -51,9 +63,11 @@ def convert_file(path):
     suffix = path.suffix.lower()
     if suffix == ".pdf":
         import pymupdf4llm
+
         return pymupdf4llm.to_markdown(str(path))
     elif suffix in {".docx", ".pptx", ".txt", ".md"}:
         from markitdown import MarkItDown
+
         result = MarkItDown().convert(str(path))
         return result.text_content
     return ""
@@ -95,12 +109,12 @@ def cmd_start():
             out_path = SOURCES_DIR / (f.stem + ".md")
             out_path.write_text(text, encoding="utf-8")
             index["files"][file_key] = {
-                "source":    str(f),
+                "source": str(f),
                 "converted": str(out_path),
-                "modified":  str(f.stat().st_mtime),
+                "modified": str(f.stat().st_mtime),
                 "processed": datetime.now().isoformat(),
-                "chars":     len(text),
-                "words":     len(text.split()),
+                "chars": len(text),
+                "words": len(text.split()),
             }
             new_files += 1
         except Exception as e:
@@ -111,7 +125,9 @@ def cmd_start():
     console.print(f"\n[bold green]✓ Done[/bold green]")
     console.print(f"  Converted : [green]{new_files}[/green]")
     console.print(f"  Skipped   : [dim]{skip_files}[/dim]")
-    console.print(f"  Errors    : [red]{error_files}[/red]" if error_files else "  Errors    : 0")
+    console.print(
+        f"  Errors    : [red]{error_files}[/red]" if error_files else "  Errors    : 0"
+    )
     console.print(f"\n  Saved to [dim].agent/sources/[/dim]\n")
 
 
@@ -124,8 +140,8 @@ def cmd_help():
 
 
 COMMANDS = {
-    "start":  cmd_start,
-    "help":   cmd_help,
+    "start": cmd_start,
+    "help": cmd_help,
 }
 
 if __name__ == "__main__":
