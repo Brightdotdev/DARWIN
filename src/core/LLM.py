@@ -22,6 +22,8 @@ import time
 import random
 from dataclasses import dataclass
 
+from src.lib.Terminal import TerminalUI
+
 
 # ── Provider env var mapping ───────────────────────────────────────────────────
 
@@ -263,14 +265,14 @@ class LLM:
 
             except RateLimitError:
                 if attempt == self.max_retries - 1:
-                    print(f"  [llm] rate limited — giving up after {self.max_retries} attempts")
+                    TerminalUI.error(f" [llm] rate limited — giving up after  {self.max_retries} attempts")
                     return None
                 delay = self.base_delay * (2 ** attempt) + random.uniform(0, 1)
-                print(f"  [llm] rate limited — retrying in {delay:.1f}s")
+                TerminalUI.dim(f"  (attempt {attempt + 1} of {self.max_retries})")
                 time.sleep(delay)
 
             except Exception as e:
-                print(f"  [llm] api call failed: {type(e).__name__}: {e}")
+                TerminalUI.error(f" [llm] api call failed: {type(e).__name__}: {e}")
                 return None
 
         return None

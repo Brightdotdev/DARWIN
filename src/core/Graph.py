@@ -41,6 +41,7 @@ from src.core.Embedder import Embedder
 from src.core.Extractor import Extractor, Concept, ExtractionResult
 from src.core.LLM      import LLM
 from src.core.Store    import DarwinStore
+from src.lib.Terminal import TerminalUI
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -135,6 +136,9 @@ class BuildResult:
 
 
 class GraphBuilder:
+
+
+
     """
     Builds and renders Darwin knowledge graphs.
 
@@ -168,29 +172,33 @@ class GraphBuilder:
         Returns:
             BuildResult with stats about what was built
         """
-        print(f"\n  [graph] building for {filename}")
+        TerminalUI.blank()
+        TerminalUI.bold(f"building graph for {filename}")
+        TerminalUI.blank()
 
         # ── step 1: extract concepts ──────────────────────────────────────────
         extractor = Extractor(self.llm)
 
         if not self.llm.is_available:
-            print(f"  [graph] no LLM — using raw chunk text as concept labels")
-            print(f"  [graph] tip: set up an LLM and run 'darwin graph {filename} --refine'")
-            print(f"          for cleaner concept labels")
+            TerminalUI.dim("no LLM — using raw chunk text as concept labels")
+            TerminalUI.dim(f"tip: set up an LLM and run 'darwin graph {filename} --refine'")
+            TerminalUI.dim("for cleaner concept labels")
+            TerminalUI.blank()
 
         result = extractor.extract_all_sync(chunks)
         concepts = result.concepts
 
         if not concepts:
-            print(f"  [graph] no concepts extracted — aborting")
+            TerminalUI.error(f"no concepts extracted from {filename}")
             raise ValueError(f"no concepts could be extracted from {filename}")
 
-        print(f"  [graph] extracted {len(concepts)} concepts "
-              f"({'llm' if result.llm_available else 'raw'})")
+        TerminalUI.step(f"extracted {len(concepts)} concepts ({'llm' if result.llm_available else 'raw'})")
+        TerminalUI.done()
+        TerminalUI.blank()
 
         # ── step 2: embed all concepts ────────────────────────────────────────
-        print(f"  [graph] embedding concepts...")
-
+        TerminalUI.step("embedding concepts")
+        
         # reuse Embedder with passage prefix
         from src.core.Chunker import Chunk as ChunkClass
         concept_chunks = [
@@ -206,15 +214,20 @@ class GraphBuilder:
 
         embed_result = self.embedder.embed(concept_chunks)
         embeddings   = np.array([ec.embedding for ec in embed_result.embedded_chunks])
+        TerminalUI.done()
 
         # ── step 3: deduplicate ───────────────────────────────────────────────
+        TerminalUI.step("deduplicating similar concepts")
         concepts, embeddings = _deduplicate(concepts, embeddings)
-        print(f"  [graph] {len(concepts)} unique concepts after dedup")
+        TerminalUI.done(f"{len(concepts)} unique concepts")
+        TerminalUI.blank()
 
         # ── step 4: compute full similarity matrix ────────────────────────────
+        TerminalUI.step("computing similarity matrix")
         # this is what the slider reads — computed once, never again
         sim_matrix = embeddings @ embeddings.T
         sim_matrix = np.clip(sim_matrix, -1.0, 1.0)
+        TerminalUI.done()
 
         # ── step 5: count edges at default threshold ──────────────────────────
         default_threshold = self.store.load_config().get("graph_threshold", 0.40)
@@ -226,6 +239,7 @@ class GraphBuilder:
         )
 
         # ── step 6: save ──────────────────────────────────────────────────────
+        TerminalUI.step("saving graph to disk")
         graph_data = {
             "concepts": [
                 {
@@ -245,7 +259,11 @@ class GraphBuilder:
         }
 
         self.store.save_graph(filename, graph_data, threshold=default_threshold)
-        print(f"  [graph] saved — {len(concepts)} concepts, {edge_count} edges")
+        TerminalUI.done()
+        TerminalUI.blank()
+
+        TerminalUI.success(f"saved — {len(concepts)} concepts, {edge_count} edges")
+        TerminalUI.blank()
 
         return BuildResult(
             filename      = filename,
@@ -443,10 +461,9 @@ class GraphBuilder:
 
         _inject_slider(html_path, threshold, filename)
 
-        print(f"  [graph] rendered → {html_path}")
-        print(f"  [graph] nodes: {G.number_of_nodes()} "
-              f"edges: {G.number_of_edges()} "
-              f"threshold: {threshold:.2f}")
+
+        TerminalUI.success(f"rendered → {html_path.name}")
+        TerminalUI.dim(f"nodes: {G.number_of_nodes()}  edges: {G.number_of_edges()}  threshold: {threshold:.2f}")
 
         if open_browser:
             webbrowser.open(html_path.as_uri())
@@ -462,10 +479,10 @@ class GraphBuilder:
         Only makes sense when llm.is_available is True.
         """
         if not self.llm.is_available:
-            print("  [graph] refine requires an LLM — set one up in config")
+            TerminalUI.error("refine requires an LLM — set one up in config")
             raise RuntimeError("LLM not available for graph refinement")
 
-        print(f"  [graph] refining {filename} with LLM...")
+        TerminalUI.info("refining graph...")
         return self.build(filename, chunks)
 
 

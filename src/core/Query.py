@@ -17,6 +17,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from src.core.Chunker import Chunk
 from src.core.Embedder import Embedder
+from src.lib.Terminal import TerminalUI
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -412,8 +413,10 @@ class QueryPipeline:
         self._semantic.build(chunks)
         self._bm25.build(chunks)
         self._built = True
-        print(f"  indexed {len(chunks)} chunks")
-        print(f"  domain stopwords discovered: {len(self._bm25._domain_stopwords)}")
+
+        # printing
+        TerminalUI.bold(f"  indexed {len(chunks)} chunks")
+        TerminalUI.dim(f" domain stopwords discovered: {len(self._bm25._domain_stopwords)})")
 
     def query(self, raw_query: str, top_k: int = TOP_K) -> QueryResult:
         """

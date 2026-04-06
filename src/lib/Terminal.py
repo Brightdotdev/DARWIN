@@ -126,6 +126,11 @@ class TerminalUI:
         console.print(f"[bold]{text}[/bold]", end="")
 
     @classmethod
+    def success_inline(cls, text: str) -> None:
+        """Print success text without newline."""
+        console.print(f"[green]{text}[/green]", end="")
+
+    @classmethod
     def cyan(cls, text: str) -> None:
         """Print cyan text (useful for commands, filenames)."""
         console.print(f"  [cyan]{text}[/cyan]")
@@ -229,6 +234,23 @@ class TerminalUI:
         """Print a horizontal rule with optional title."""
         from rich.rule import Rule
         console.print(Rule(title, style="dim"))
+
+    @classmethod
+    def print_onboarding_splash(cls) -> None:
+        """Print the full onboarding splash screen with ASCII art and welcome panel."""
+        cls.blank()
+        for line in cls.ASCII:
+            console.print(f"[cyan]{line}[/cyan]")
+        cls.blank()
+        console.print(Panel(
+            "[bold]welcome to darwin[/bold]\n\n"
+            "let's get you set up. this takes about 2 minutes.\n"
+            "you can change any of these settings later with:\n"
+            "[cyan]python main.py config[/cyan]",
+            border_style="dim",
+            padding=(1, 2),
+        ))
+        cls.blank()
 
 
 

@@ -358,23 +358,6 @@ def _select(
                 console.print(f"  {TerminalUI.c(TerminalUI.RED, 'please enter a number')}")
 
 
-# ── Splash for onboarding ──────────────────────────────────────────────────────
-
-def _print_onboarding_splash() -> None:
-    console.print()
-    for line in TerminalUI.ASCII:
-        console.print(f"[cyan]{line}[/cyan]")
-    console.print("\n")
-    console.print(Panel(
-        "[bold]welcome to darwin[/bold]\n\n"
-        "let's get you set up. this takes about 2 minutes.\n"
-        "you can change any of these settings later with:\n"
-        "[cyan]python main.py config[/cyan]",
-        border_style = "dim",
-        padding      = (1, 2),
-    ))
-    console.print()
-
 # ── Individual config steps ────────────────────────────────────────────────────
 
 def _step_llm() -> tuple[str, str, str]:
@@ -382,8 +365,9 @@ def _step_llm() -> tuple[str, str, str]:
     Guide user through LLM provider + model selection.
     Returns (provider_id, model_id, key_name)
     """
-    console.print(TerminalUI.c(TerminalUI.BOLD, "step 1 of 3 — language model"))
-    console.print(TerminalUI.c(TerminalUI.DIM, "used for concept extraction and graph refinement\n"))
+    TerminalUI.bold("step 1 of 3 — language model")
+    TerminalUI.dim("used for concept extraction and graph refinement")
+    TerminalUI.blank()
 
     # provider selection
     default_provider = next(
@@ -400,30 +384,27 @@ def _step_llm() -> tuple[str, str, str]:
 
     # none — skip everything
     if provider.id == "none":
-        console.print(
-            f"\n  {TerminalUI.c(TerminalUI.DIM, 'no LLM selected — graph will use raw chunk text as labels')}"
-        )
-        console.print(
-            f"  {TerminalUI.c(TerminalUI.DIM, 'you can enable an LLM later with: python main.py config')}\n"
-        )
+        TerminalUI.blank()
+        TerminalUI.dim("no LLM selected — graph will use raw chunk text as labels")
+        TerminalUI.dim("you can enable an LLM later with: python main.py config")
+        TerminalUI.blank()
         return "none", "", ""
 
     # ollama — no key needed
     if provider.id == "ollama":
-        console.print(
-            f"\n  {TerminalUI.c(TerminalUI.DIM, 'make sure Ollama is running: ollama serve')}"
-        )
+        TerminalUI.blank()
+        TerminalUI.dim("make sure Ollama is running: ollama serve")
 
     # api providers — ask for key
     if provider.needs_key:
-        console.print()
+        TerminalUI.blank()
         existing = get_api_key(provider.key_name)
 
         if existing:
             masked = existing[:8] + "..." + existing[-4:]
-            console.print(
-                f"  {TerminalUI.c(TerminalUI.GREEN, '✓')} found existing {provider.key_label}: {TerminalUI.c(TerminalUI.DIM, masked)}"
-            )
+            TerminalUI.success_inline(f"found existing {provider.key_label}: ")
+            TerminalUI.dim_inline(masked)
+            TerminalUI.blank()
             change = _select(
                 prompt      = "use existing key?",
                 options     = ["yes, use existing key", "no, enter a new key"],
@@ -435,30 +416,27 @@ def _step_llm() -> tuple[str, str, str]:
                 existing = None
 
         if not existing:
-            console.print(
-                f"\n  get your key at: [cyan]{provider.key_url}[/cyan]"
-            )
-            console.print()
+            TerminalUI.blank()
+            TerminalUI.cyan(f"get your key at: {provider.key_url}")
+            TerminalUI.blank()
             while True:
                 key = console.input(
                     f"  {TerminalUI.c(TerminalUI.BOLD, f'{provider.key_label}:')} "
                 ).strip()
 
                 if not key:
-                    console.print(f"  {TerminalUI.c(TerminalUI.RED, 'key cannot be empty')}")
+                    TerminalUI.error("key cannot be empty")
                     continue
 
                 if len(key) < 10:
-                    console.print(f"  {TerminalUI.c(TerminalUI.RED, 'that does not look like a valid key')}")
+                    TerminalUI.error("that does not look like a valid key")
                     continue
 
                 save_api_key(provider.key_name, key)
-                console.print(
-                    f"  {TerminalUI.c(TerminalUI.GREEN, '✓')} key saved to OS keychain securely"
-                )
+                TerminalUI.success("key saved to OS keychain securely")
                 break
 
-    console.print()
+    TerminalUI.blank()
 
     # model selection
     if not provider.models:
@@ -476,18 +454,17 @@ def _step_llm() -> tuple[str, str, str]:
     )
     model = provider.models[model_idx]
 
-    console.print(
-        f"\n  {TerminalUI.c(TerminalUI.GREEN, '✓')} {provider.label} / {model.label}\n"
-    )
+    TerminalUI.blank()
+    TerminalUI.success(f"{provider.label} / {model.label}")
+    TerminalUI.blank()
     return provider.id, model.id, provider.key_name
 
 
 def _step_embedding() -> str:
     """Guide user through embedding model selection. Returns model id."""
-    console.print(TerminalUI.c(TerminalUI.BOLD, "step 2 of 3 — embedding model"))
-    console.print(
-        f"{TerminalUI.c(TerminalUI.DIM, 'converts text to vectors for semantic search — runs locally')}\n"
-    )
+    TerminalUI.bold("step 2 of 3 — embedding model")
+    TerminalUI.dim("converts text to vectors for semantic search — runs locally")
+    TerminalUI.blank()
 
     default = next(
         (i for i, m in enumerate(EMBEDDING_MODELS) if m.is_default), 0
@@ -500,16 +477,17 @@ def _step_embedding() -> str:
         default_idx = default,
     )
     model = EMBEDDING_MODELS[idx]
-    console.print(f"\n  {TerminalUI.c(TerminalUI.GREEN, '✓')} {model.label}\n")
+    TerminalUI.blank()
+    TerminalUI.success(f"{model.label}")
+    TerminalUI.blank()
     return model.id
 
 
 def _step_reranker() -> str:
     """Guide user through reranker selection. Returns model id."""
-    console.print(TerminalUI.c(TerminalUI.BOLD, "step 3 of 3 — reranker"))
-    console.print(
-        f"{TerminalUI.c(TerminalUI.DIM, 'improves search result ordering — runs locally')}\n"
-    )
+    TerminalUI.bold("step 3 of 3 — reranker")
+    TerminalUI.dim("improves search result ordering — runs locally")
+    TerminalUI.blank()
 
     default = next(
         (i for i, m in enumerate(RERANKER_MODELS) if m.is_default), 0
@@ -522,7 +500,9 @@ def _step_reranker() -> str:
         default_idx = default,
     )
     model = RERANKER_MODELS[idx]
-    console.print(f"\n  {TerminalUI.c(TerminalUI.GREEN, '✓')} {model.label}\n")
+    TerminalUI.blank()
+    TerminalUI.success(f"{model.label}")
+    TerminalUI.blank()
     return model.id
 
 
@@ -533,17 +513,16 @@ def _print_summary(config: dict) -> None:
     embedding = config.get("embedding_model", "")
     reranker  = config.get("reranker_model", "")
 
-    console.print(Panel(
-        f"[bold green]darwin is ready[/bold green]\n\n"
-        f"  [dim]llm[/dim]        {llm_model or 'none'}\n"
-        f"  [dim]embedding[/dim]  {embedding}\n"
-        f"  [dim]reranker[/dim]   {reranker}\n\n"
-        f"[dim]change any setting later:[/dim]\n"
-        f"[cyan]  python main.py config[/cyan]",
-        border_style = "green",
-        padding      = (1, 2),
-    ))
-    console.print()
+    TerminalUI.blank()
+    TerminalUI.success("darwin is ready")
+    TerminalUI.blank()
+    TerminalUI.info("llm", llm_model or "none")
+    TerminalUI.info("embedding", embedding)
+    TerminalUI.info("reranker", reranker)
+    TerminalUI.blank()
+    TerminalUI.dim("change any setting later:")
+    TerminalUI.cyan("  python main.py config")
+    TerminalUI.blank()
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
@@ -559,7 +538,7 @@ def run_onboarding(store) -> dict:
     Returns:
         completed config dict
     """
-    _print_onboarding_splash()
+    TerminalUI.print_onboarding_splash()
 
     # run steps
     provider_id, model_id, key_name = _step_llm()
@@ -590,7 +569,6 @@ def run_onboarding(store) -> dict:
     _print_summary(config)
     return config
 
-
 def run_config(store) -> dict:
     """
     Change settings after initial onboarding.
@@ -604,15 +582,17 @@ def run_config(store) -> dict:
     """
     config = store.load_config()
 
-    console.print()
-    console.print(TerminalUI.c(TerminalUI.BOLD, "darwin config\n"))
+    TerminalUI.blank()
+    TerminalUI.bold("darwin config")
+    TerminalUI.blank()
 
     # show current settings
-    console.print("  current settings:\n")
-    console.print(f"  [dim]llm[/dim]        {config.get('llm_model') or 'none provided'}")
-    console.print(f"  [dim]embedding[/dim]  {config.get('embedding_model', 'none...try running onboarding if this is empty')}")
-    console.print(f"  [dim]reranker[/dim]   {config.get('reranker_model', 'none...try running onboarding if this is empty ')}")
-    console.print()
+    TerminalUI.dim("current settings:")
+    TerminalUI.blank()
+    TerminalUI.info("llm", config.get('llm_model') or 'none provided')
+    TerminalUI.info("embedding", config.get('embedding_model', 'none...try running onboarding if this is empty'))
+    TerminalUI.info("reranker", config.get('reranker_model', 'none...try running onboarding if this is empty'))
+    TerminalUI.blank()
 
     # what to change
     options = [
@@ -656,7 +636,8 @@ def run_config(store) -> dict:
             break
 
         store.save_config(config)
-        console.print(f"  {TerminalUI.c(TerminalUI.GREEN, '✓')} saved\n")
+        TerminalUI.success("saved")
+        TerminalUI.blank()
 
     return config
 

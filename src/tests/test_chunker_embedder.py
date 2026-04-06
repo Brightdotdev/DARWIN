@@ -9,6 +9,7 @@ from src.core.Chunker import chunk_document, Chunk, MIN_TOKENS, MAX_TOKENS
 from src.core.Embedder import Embedder
 
 
+
 # ── Sample texts ──────────────────────────────────────────────────────────────
 
 # short paragraph — should get buffered and merged
