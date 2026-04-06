@@ -50,7 +50,7 @@ from dataclasses import dataclass, asdict
 
 import numpy as np
 
-from core.Chunker import Chunk
+from src.core.Chunker import Chunk
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -65,8 +65,8 @@ DEFAULT_CONFIG = {
     "version":        "0.1.0",
     "embedding_tier": "light",        # light | medium | large
     "embedding_model": "intfloat/e5-small-v2",
-    "llm_mode":       "local",        # local | api | none
-    "llm_model":      "ollama/llama3.2",
+    "llm_mode":       "none",        # local | api | none
+    "llm_model":      "none",            # e.g. "ollama/llama3.2" or "gpt-4o" or none
     "reranker":       "ms-marco-TinyBERT-L-2-v2",
     "parser":         "light",        # light | high
     "top_k":          5,
@@ -157,29 +157,32 @@ class DarwinStore:
         Returns:
             True if freshly initialized, False if already existed
         """
-        if self.darwin_dir.exists():
-            return False   # already initialized
+        self.darwin_dir.mkdir(parents=True, exist_ok=True)
 
-        self.darwin_dir.mkdir(parents=True)
+        config_path = self.darwin_dir / CONFIG_FILE
 
-        # write default config
-        config = dict(DEFAULT_CONFIG)
-        config["created_at"] = _now()
-        self._write_json(self.darwin_dir / CONFIG_FILE, config)
+        if not config_path.exists():
+            config = dict(DEFAULT_CONFIG)
+            config["created_at"] = _now()
+            self._write_json(config_path, config)
+            return True
 
-        return True
+        return False
 
     def is_initialized(self) -> bool:
         return self.darwin_dir.exists()
 
     def _require_init(self):
-        if not self.is_initialized():
-            raise RuntimeError(
-                f"Darwin not initialized in {self.project_dir}\n"
-                f"Run: darwin init"
-            )
+        if not self.darwin_dir.exists():
+            self.init()
 
-    # ── Directory helpers ──────────────────────────────────────────────────────
+        config_path = self.darwin_dir / CONFIG_FILE
+
+        if not config_path.exists():
+            config = dict(DEFAULT_CONFIG)
+            config["created_at"] = _now()
+            self._write_json(config_path, config)
+        # ── Directory helpers ──────────────────────────────────────────────────────
 
     def _file_dir(self, filename: str) -> Path:
         """Returns .darwin/biology_pdf/ for "biology.pdf"."""
@@ -206,9 +209,14 @@ class DarwinStore:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
     def _read_json(self, path: Path) -> dict:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        if not path.exists():
+            return {}
 
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
     # ── Config ─────────────────────────────────────────────────────────────────
 
     def load_config(self) -> dict:

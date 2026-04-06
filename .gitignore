@@ -11,5 +11,6 @@ wheels/
 .env
 
 
+.darwin/**
 .agent
 *.pdf

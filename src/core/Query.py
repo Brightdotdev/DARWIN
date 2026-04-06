@@ -15,8 +15,8 @@ import re
 import asyncio
 import numpy as np
 from dataclasses import dataclass, field
-from Chunker import Chunk
-from Embedder import Embedder
+from src.core.Chunker import Chunk
+from src.core.Embedder import Embedder
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
