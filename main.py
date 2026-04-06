@@ -19,6 +19,8 @@ from pathlib import Path
 from rich.console import Console
 from rich.progress import track
 
+from src.core.LLM import LLM
+
 console = Console()
 
 
@@ -140,13 +142,6 @@ def cmd_search(args=None):
     search_main()
 
 
-def cmd_tui(args=None):
-    """Launch the Terminal UI"""
-    from src.ui.Cli import run_tui
-    
-    directory = Path(args.directory).resolve() if args and args.directory else Path.cwd()
-    run_tui(directory)
-
 
 
 
@@ -255,8 +250,9 @@ def cmd_graph(args=None):
         console.print("  usage: python main.py graph --file biology.pdf")
         return
 
-    config  = store.load_config()
-    llm     = LLM.from_config(config)
+    from src.core.Onboarding import get_llm_config
+    llm_config = get_llm_config(store)
+    llm   = LLM.from_config(llm_config)
     builder = GraphBuilder(store, llm)
 
     # --refine flag: rebuild with LLM even if graph exists
@@ -369,10 +365,6 @@ def main():
     # help
     subparsers.add_parser("help")
 
-    # tui
-    
-    p_tui = subparsers.add_parser("tui")
-    p_tui.add_argument("directory", nargs="?", default=str(Path.cwd()))
 
     args = parser.parse_args()
 
@@ -383,7 +375,6 @@ def main():
         "graph":  cmd_graph,
         "config": cmd_config,
         "status": cmd_status,
-        "tui":    cmd_tui, 
         "help":   cmd_help,
         None:     cmd_help,
     }

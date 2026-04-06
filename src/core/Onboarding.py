@@ -668,21 +668,31 @@ def needs_onboarding(store) -> bool:
     config = store.load_config()
     return not config.get("onboarded", False)
 
-
 def get_llm_config(store) -> dict:
     """
     Get LLM config with API key resolved from keychain.
     This is what LLM.py calls to get its full config.
 
     Returns dict with:
-        llm_mode, llm_model, api_key (from keychain or None)
+        llm_mode, llm_model, api_key (from keychain or None), llm_provider
     """
-    config   = store.load_config()
+    config = store.load_config()
     key_name = config.get("llm_key_name", "")
-    api_key  = get_api_key(key_name) if key_name else None
-
+    
+    # Special case for Ollama - no key needed
+    if config.get("llm_provider") == "ollama":
+        api_key = None
+    else:
+        api_key = get_api_key(key_name) if key_name else None
+    
+    # Debug output
+    console.print(f"[dim]DEBUG: llm_mode={config.get('llm_mode')}, provider={config.get('llm_provider')}, model={config.get('llm_model')}[/dim]")
+    if key_name:
+        console.print(f"[dim]DEBUG: key_name={key_name}, has_key={api_key is not None}[/dim]")
+    
     return {
-        "llm_mode":  config.get("llm_mode",  "none"),
+        "llm_mode":  config.get("llm_mode", "none"),
         "llm_model": config.get("llm_model", ""),
+        "llm_provider": config.get("llm_provider", ""),
         "api_key":   api_key,
     }
