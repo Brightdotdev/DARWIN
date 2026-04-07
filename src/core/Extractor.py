@@ -115,7 +115,8 @@ def _raw_concept(chunk: Chunk) -> Concept:
     even without clean labels.
     """
     # take first 120 chars, stop at last complete word
-    text = chunk.text.strip()
+    # use clean text for the label — no markdown symbols in node labels
+    text = chunk.clean.strip() if chunk.clean else chunk.text.strip()
     if len(text) > 120:
         text = text[:120].rsplit(" ", 1)[0] + "..."
 
@@ -139,6 +140,10 @@ Extract key ideas from document chunks as complete propositions.
 Always respond with valid XML exactly as specified. Nothing else."""
 
 def _extraction_prompt(chunk: Chunk) -> str:
+    # use chunk.clean for the prompt — no markdown noise for the LLM
+    text = chunk.clean if chunk.clean else chunk.text
+    section = f" (section: {chunk.heading})" if chunk.heading else ""
+    page = f" (page {chunk.page})" if chunk.page else ""
     return f"""Extract 2-4 key ideas from this text chunk.
 
 Rules:
@@ -156,8 +161,8 @@ Respond ONLY with this XML, no other text:
   </concept>
 </concepts>
 
-Chunk (index={chunk.index}, source={chunk.source}):
-{chunk.text}"""
+Chunk (index={chunk.index}, source={chunk.source}{section}{page}):
+{text}"""
 
 
 # ── Async extraction ───────────────────────────────────────────────────────────

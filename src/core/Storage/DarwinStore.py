@@ -1,12 +1,32 @@
 """
-darwin.core.store
------------------
-Handles all persistence for Darwin.
+darwin.core.Storage.DarwinStore
+=================
 
-Creates and manages the .darwin folder structure inside any directory
-the user points Darwin at. One subfolder per file, graph per file.
+Persistence layer for Darwin.
 
-Structure:
+This module defines the DarwinStore, which is responsible for managing
+all on-disk state inside a project’s `.darwin/` directory. It acts as the
+single source of truth for saving, loading, and validating processed data.
+
+Core Responsibilities
+--------------------
+- Initialize and maintain the `.darwin/` workspace
+- Persist intermediate and derived artifacts per file:
+    - parsed markdown
+    - chunks
+    - embeddings
+    - BM25 indices
+    - stopwords
+    - graph data
+- Track processing state via metadata (`meta.json`)
+- Detect file changes using content hashing
+- Provide fast reload paths for previously processed files
+- Maintain a lightweight audit log (`updates`) for pipeline stages
+
+Directory Layout
+----------------
+For a project directory:
+
     your-notes/
     ├── biology.pdf
     └── .darwin/
@@ -14,6 +34,7 @@ Structure:
         └── biology_pdf/
             ├── meta.json
             ├── chunks.json
+            ├── biology_pdf.md
             ├── embeddings.npy
             ├── bm25.pkl
             ├── stopwords.json
@@ -21,23 +42,53 @@ Structure:
                 ├── base_graph.json
                 └── meta.json
 
-Usage:
-    store = DarwinStore("/path/to/your/notes")
+Design Notes
+------------
+- One subdirectory per source file (sanitized filename)
+- All filesystem access is centralized in DarwinStore
+- Metadata is append-only in spirit (audit-style updates tracking)
+- Expensive computations (embeddings, graphs) are cached and reused
+- File freshness is determined via MD5 hash comparison
+- Methods are safe to call repeatedly (idempotent where possible)
+
+Typical Usage
+-------------
+Initialize a project:
+
+    store = DarwinStore("/path/to/notes")
     store.init()
 
-    # save after processing
+Processing pipeline:
+
     store.save_chunks("biology.pdf", chunks)
+    store.save_markdown("biology.pdf", parsed_doc)
     store.save_embeddings("biology.pdf", embeddings)
     store.save_bm25("biology.pdf", bm25_index)
     store.save_graph("biology.pdf", graph_data)
 
-    # load on next startup
-    if store.is_fresh("biology.pdf"):         # file unchanged?
+Reloading cached data:
+
+    if store.is_fresh("biology.pdf"):
         chunks = store.load_chunks("biology.pdf")
-        ...
+        embeddings = store.load_embeddings("biology.pdf")
     else:
-        # file changed — reprocess
+        # file changed → reprocess pipeline
+        ...
+
+Inspection:
+
+    store.status()              # project-level overview
+    store.get_file_meta(...)    # raw metadata
+    store._get_component_status(...)  # pipeline health snapshot
+
+Notes
+-----
+- This module does not implement parsing, embedding, or graph logic.
+  It strictly handles persistence and state tracking.
+- Higher-level orchestration should live outside this module (CLI/services).
 """
+
+
 
 import json
 import pickle
@@ -46,87 +97,17 @@ import shutil
 import re
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, asdict
-
+from dataclasses import  asdict
 import numpy as np
 
 from src.core.Chunker import Chunk
+from src.core.Parsing.ParserUtils import ParsedDocument
+from src.lib.Terminal import TerminalUI
 
+from src.core.Storage.StoreUtils import (
+    DEFAULT_CONFIG,DARWIN_DIR,DEFAULT_CONFIG,CONFIG_FILE,FILE_META, FileMeta, GraphMeta,file_hash,now,sanitize
+)
 
-# ── Constants ──────────────────────────────────────────────────────────────────
-
-DARWIN_DIR  = ".darwin"
-CONFIG_FILE = "config.json"
-
-
-# ── Default config ─────────────────────────────────────────────────────────────
-
-DEFAULT_CONFIG = {
-    "version":        "0.1.0",
-    "embedding_tier": "light",        # light | medium | large
-    "embedding_model": "intfloat/e5-small-v2",
-    "llm_mode":       "none",        # local | api | none
-    "llm_model":      "none",            # e.g. "ollama/llama3.2" or "gpt-4o" or none
-    "reranker":       "ms-marco-TinyBERT-L-2-v2",
-    "parser":         "light",        # light | high
-    "top_k":          5,
-    "graph_threshold": 0.40,          # default zoom level
-    "created_at":     None,           # set on init
-}
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def _sanitize(filename: str) -> str:
-    """
-    Turn "biology.pdf" into "biology_pdf".
-    Replaces dots, spaces, and special chars with underscores.
-    Folder names with dots cause occasional headaches on some systems.
-    """
-    name = Path(filename).name          # strip any directory prefix
-    name = re.sub(r"[^\w]", "_", name) # replace non-alphanumeric with _
-    name = re.sub(r"_+", "_", name)    # collapse multiple underscores
-    return name.strip("_").lower()
-
-
-def _file_hash(path: Path) -> str:
-    """
-    MD5 hash of file contents.
-    Used to detect if a file has changed since last processing.
-    If hash matches stored hash → skip reprocessing.
-    If hash differs            → file changed, reprocess.
-    """
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _now() -> str:
-    return datetime.utcnow().isoformat()
-
-
-# ── File store ─────────────────────────────────────────────────────────────────
-
-@dataclass
-class FileMeta:
-    filename:    str      # original filename e.g. "biology.pdf"
-    file_hash:   str      # md5 of file contents
-    chunk_count: int      # how many chunks were produced
-    page_count:  int      # how many pages the PDF has
-    parser:      str      # which parser was used: light | high
-    created_at:  str      # when first processed
-    updated_at:  str      # when last processed
-
-
-@dataclass
-class GraphMeta:
-    filename:       str    # which file this graph belongs to
-    concept_count:  int    # how many unique concept nodes
-    edge_count:     int    # edges at default threshold
-    threshold:      float  # threshold used when graph was built
-    built_at:       str    # when graph was built
 
 
 # ── Main store class ───────────────────────────────────────────────────────────
@@ -163,14 +144,83 @@ class DarwinStore:
 
         if not config_path.exists():
             config = dict(DEFAULT_CONFIG)
-            config["created_at"] = _now()
+            config["created_at"] = now()
             self._write_json(config_path, config)
             return True
 
         return False
+    
+
+    def has_markdown(self, filename: str) -> bool:
+        """
+        Checks if a processed markdown version of the source file exists.
+        Returns True if .darwin/sanitized_name/sanitized_name.md exists.
+        """
+        sanitized_name = sanitize(filename)
+        md_path = self._file_dir(filename) / f"{sanitized_name}.md"
+        
+        return md_path.exists()
+
+
+    
+
+
+    def _update_component(self, filename: str, component: str, extras: dict = None) -> None:
+        """
+        Atomically updates meta.json. 
+        Creates the file with defaults if it doesn't exist.
+        """
+        meta_path = self._file_dir(filename) / "meta.json"
+        meta = self._read_json(meta_path)
+        
+        # 1. THE INITIALIZATION CHECK
+        if not meta:
+            # This is the "First Time Setup" for this specific file
+            meta = {
+                "filename": filename,
+                "created_at": now(),
+                "updates": {},
+                "updated_at": now(),
+                "version": "1.0" # Good for future-proofing!
+            }
+        
+        # 2. Ensure nested structures exist (defensive)
+        if "updates" not in meta:
+            meta["updates"] = {}
+        
+        # 3. Update the Audit Log
+        timestamp = now()
+        meta["updates"][component] = timestamp
+        meta["updated_at"] = timestamp
+
+        # 4. Merge the extras (the ParsedDocument fields)
+        if extras:
+            # .update() merges dictionaries without wiping existing keys
+            meta.update(extras)
+
+        # 5. Commit to disk
+        self._write_json(meta_path, meta)
+
+    def _get_component_status(self, filename: str) -> dict:
+        """
+        Returns a health check of the file's processing pipeline.
+        """
+        meta = self.get_file_meta(filename)
+        updates = meta.get("updates", {})
+        
+        return {
+            "is_parsed": "parser" in updates,
+            "is_vectorized": "embeddings" in updates,
+            "has_search_index": "bm25" in updates,
+            "has_graph": "graph" in updates,
+            "last_activity": meta.get("updated_at", "never")
+        }
+
+
 
     def is_initialized(self) -> bool:
         return self.darwin_dir.exists()
+    
 
     def _require_init(self):
         if not self.darwin_dir.exists():
@@ -180,13 +230,13 @@ class DarwinStore:
 
         if not config_path.exists():
             config = dict(DEFAULT_CONFIG)
-            config["created_at"] = _now()
+            config["created_at"] = now()
             self._write_json(config_path, config)
         # ── Directory helpers ──────────────────────────────────────────────────────
 
     def _file_dir(self, filename: str) -> Path:
         """Returns .darwin/biology_pdf/ for "biology.pdf"."""
-        return self.darwin_dir / _sanitize(filename)
+        return self.darwin_dir / sanitize(filename)
 
     def _graph_dir(self, filename: str) -> Path:
         """Returns .darwin/biology_pdf/graph/"""
@@ -217,11 +267,19 @@ class DarwinStore:
                 return json.load(f)
         except Exception:
             return {}
+   
     # ── Config ─────────────────────────────────────────────────────────────────
 
     def load_config(self) -> dict:
         self._require_init()
         return self._read_json(self.darwin_dir / CONFIG_FILE)
+    
+    
+
+    def load_meta_file(self, filename: str) -> dict:
+        self._require_init()
+        return self._read_json(self._file_dir(filename) / FILE_META)
+
 
     def save_config(self, config: dict) -> None:
         self._require_init()
@@ -232,6 +290,8 @@ class DarwinStore:
         config = self.load_config()
         config.update(kwargs)
         self.save_config(config)
+
+
 
     # ── File freshness check ───────────────────────────────────────────────────
 
@@ -244,7 +304,7 @@ class DarwinStore:
         If False → file changed or never processed, must reprocess.
         """
         self._require_init()
-        meta_path = self._file_dir(filename) / "meta.json"
+        meta_path = self._file_dir(filename) / FILE_META
 
         if not meta_path.exists():
             return False   # never processed
@@ -254,7 +314,7 @@ class DarwinStore:
             return False   # source file gone
 
         stored_hash  = self._read_json(meta_path).get("file_hash", "")
-        current_hash = _file_hash(file_path)
+        current_hash = file_hash(file_path)
         return stored_hash == current_hash
 
     def has_graph(self, filename: str) -> bool:
@@ -270,7 +330,7 @@ class DarwinStore:
         result = []
         for d in self.darwin_dir.iterdir():
             if d.is_dir() and d.name != "graph":
-                meta_path = d / "meta.json"
+                meta_path = d / FILE_META
                 if meta_path.exists():
                     meta = self._read_json(meta_path)
                     result.append(meta.get("filename", d.name))
@@ -279,53 +339,136 @@ class DarwinStore:
     # ── Chunks ─────────────────────────────────────────────────────────────────
 
     def save_chunks(
-        self,
-        filename:   str,
-        chunks:     list[Chunk],
-        file_hash:  str  = "",
-        page_count: int  = 0,
-        parser:     str  = "light",
-    ) -> None:
-        """
-        Serialize and save chunks to .darwin/biology_pdf/chunks.json
-        Also writes meta.json with file hash for freshness checks.
-        """
-        self._require_init()
-        d = self._ensure_file_dir(filename)
+            self,
+            filename:   str,
+            chunks:     list[Chunk],
+            file_hash:  str  = "",
+            page_count: int  = 0,
+            parser:     str  = "light",
+        ) -> None:
+            """
+            Serialize and save chunks to .darwin/sanitized_name/chunks.json
+            Also writes meta.json using the update_component logic for consistency.
+            """
+            self._require_init()
+            d = self._ensure_file_dir(filename)
 
-        # serialize chunks — dataclass → dict
-        chunks_data = [asdict(c) for c in chunks]
-        self._write_json(d / "chunks.json", chunks_data)
+            # 1. Serialize and save the actual data
+            chunks_data = [asdict(c) for c in chunks]
+            self._write_json(d / "chunks.json", chunks_data)
 
-        # write meta
-        meta = FileMeta(
-            filename    = filename,
-            file_hash   = file_hash or _file_hash(self.project_dir / filename),
-            chunk_count = len(chunks),
-            page_count  = page_count,
-            parser      = parser,
-            created_at  = _now(),
-            updated_at  = _now(),
-        )
-        self._write_json(d / "meta.json", asdict(meta))
-
-    def load_chunks(self, filename: str) -> list[Chunk]:
-        """
-        Load chunks from disk and reconstruct Chunk dataclass objects.
-        """
-        self._require_init()
-        path = self._file_dir(filename) / "chunks.json"
-
-        if not path.exists():
-            raise FileNotFoundError(
-                f"No chunks found for {filename}. "
-                f"Has this file been processed? Run: darwin add {filename}"
+            # 2. Check for existing meta to preserve the 'created_at' and 'updates' log
+            meta_path = d / FILE_META
+            existing_meta = self._read_json(meta_path)
+            
+            # 3. Construct the FileMeta object
+            # We use existing values if they exist, otherwise defaults.
+            meta = FileMeta(
+                filename    = filename,
+                file_hash   = file_hash or file_hash(self.project_dir / filename),
+                chunk_count = len(chunks),
+                page_count  = existing_meta.get("page_count", page_count),
+                parser  = existing_meta.get("parser", parser),
+                created_at  = existing_meta.get("created_at", now()),
+                updates     = existing_meta.get("updates", {}), # Preserve existing audit log
+                updated_at  = now(),
             )
 
-        raw = self._read_json(path)
-        return [Chunk(**c) for c in raw]
+            # 4. Save the base meta file
+            self._write_json(meta_path, asdict(meta))
 
-    # ── Embeddings ─────────────────────────────────────────────────────────────
+            # 5. Use your new update_component method to mark 'chunks' as updated
+            # This ensures the 'chunks' key inside 'updates' is set/refreshed
+            self._update_component(filename, "chunks")
+
+
+
+    def load_chunks(self, filename: str) -> list[Chunk]:
+        path = self._file_dir(filename) / "chunks.json"
+        raw = self._read_json(path)
+        
+        # Get valid field names from the Chunk dataclass
+        import dataclasses
+        valid_fields = {f.name for f in dataclasses.fields(Chunk)}
+
+        processed = []
+        for c in raw:
+            # 1. Backwards Compatibility Defaults
+            c.setdefault("clean",    c.get("text", ""))
+            c.setdefault("page",     0)
+            c.setdefault("page_end", 0)
+            c.setdefault("heading",  "")
+            
+            # 2. Filter out any keys that aren't in the current Chunk class
+            # This prevents TypeError: __init__() got an unexpected keyword argument
+            filtered_c = {k: v for k, v in c.items() if k in valid_fields}
+            
+            processed.append(Chunk(**filtered_c))
+
+        return processed
+
+    # ─ Markdown ────────────────────────────────────────────────────────────────
+
+    def save_markdown(
+        self,
+        filename:   str,
+        mdDocument :  ParsedDocument,
+    ) -> None:
+        """
+        Save the parsed markdown text to .darwin/{filename}/{filename}.md
+        """
+
+        if mdDocument.error is not None:
+            TerminalUI.info(label="Markdown Error", value=f"⚠️ Not saving markdown for {filename} due to parsing error: {mdDocument.error}")
+            return
+
+        
+        if self.is_fresh(filename) and self.has_markdown(filename):
+            return
+        
+        self._require_init()
+        d = self._ensure_file_dir(filename)      
+
+        md_path = d / f"{sanitize(filename)}.md"
+
+        try:
+            # 1. Save the actual large text file
+            md_path.write_text(mdDocument.text, encoding="utf-8")
+
+            # 2. Prepare metadata by converting dataclass to dict
+            all_fields = asdict(mdDocument)
+            
+            # 3. Remove the heavy stuff we don't want in a small JSON file
+            # We also remove filename because it's already the folder name
+            for key in ["text", "images", "error", "filename"]:
+                all_fields.pop(key, None)
+
+            # 4. Pass the remaining fields (strategy, page_count, file_type, metadata)
+            self._update_component(filename, "markdown", extras=all_fields)
+
+        except Exception as e:
+            TerminalUI.error(f"⚠️ Failed to save markdown for {filename}: {e}")
+   
+    def load_markdown(self, filename: str) -> str | None:
+        """
+        Retrieves the full Markdown content for a file.
+        Returns an empty string if the file doesn't exist.
+        """
+        sanitized_name = sanitize(filename)
+        md_path = self._file_dir(filename) / f"{sanitized_name}.md"
+
+        if not md_path.exists():
+            return None
+
+        try:
+            return md_path.read_text(encoding="utf-8")
+        except Exception as e:
+            # Handle potential OS-level read errors
+            TerminalUI.error(f"❌ Error reading markdown for {filename}: {e}")
+            return None
+        
+
+    # ── Embeddings ────────────────────────────────────────────────────────────────
 
     def save_embeddings(self, filename: str, embeddings: np.ndarray) -> None:
         """
@@ -337,6 +480,7 @@ class DarwinStore:
         d    = self._ensure_file_dir(filename)
         path = d / "embeddings.npy"
         np.save(path, embeddings)
+        self._update_component(filename, "embeddings")
 
     def load_embeddings(self, filename: str) -> np.ndarray:
         """Load embedding matrix from .npy file."""
@@ -349,6 +493,8 @@ class DarwinStore:
             )
 
         return np.load(path)
+
+
 
     # ── BM25 index ─────────────────────────────────────────────────────────────
 
@@ -363,6 +509,8 @@ class DarwinStore:
         path = d / "bm25.pkl"
         with open(path, "wb") as f:
             pickle.dump(bm25_index, f)
+        self._update_component(filename, "bm25")
+
 
     def load_bm25(self, filename: str):
         """Load pickled BM25 index."""
@@ -389,6 +537,7 @@ class DarwinStore:
         d    = self._ensure_file_dir(filename)
         path = d / "stopwords.json"
         self._write_json(path, {"stopwords": sorted(stopwords)})
+        self._update_component(filename, "stopwords")
 
     def load_stopwords(self, filename: str) -> set[str]:
         """Load domain stopwords as a set."""
@@ -451,9 +600,10 @@ class DarwinStore:
             concept_count = n_concepts,
             edge_count    = edge_count,
             threshold     = threshold,
-            built_at      = _now(),
+            built_at      = now(),
         )
-        self._write_json(d / "meta.json", asdict(meta))
+        self._write_json(d / FILE_META, asdict(meta))
+        self._update_component(filename, "graph")
 
     def load_graph(self, filename: str) -> dict:
         """
@@ -474,7 +624,7 @@ class DarwinStore:
     def load_graph_meta(self, filename: str) -> dict:
         """Load graph metadata without loading the full similarity matrix."""
         self._require_init()
-        path = self._graph_dir(filename) / "meta.json"
+        path = self._graph_dir(filename) / FILE_META
 
         if not path.exists():
             raise FileNotFoundError(f"No graph meta found for {filename}.")
@@ -533,7 +683,7 @@ class DarwinStore:
             if not d.is_dir():
                 continue
 
-            meta_path = d / "meta.json"
+            meta_path = d / FILE_META
             if not meta_path.exists():
                 continue
 
@@ -549,7 +699,7 @@ class DarwinStore:
             graph_meta     = {}
             if has_graph:
                 try:
-                    graph_meta = self._read_json(d / "graph" / "meta.json")
+                    graph_meta = self._read_json(d / "graph" / FILE_META)
                 except Exception:
                     pass
 

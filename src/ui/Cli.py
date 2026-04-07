@@ -276,7 +276,7 @@ class IndexingScreen(Screen):
         stats_label = self.query_one("#stats")
         
         # Get all files to index
-        from src.core.Parser import SUPPORTED_TYPES
+        from src.core.Parsing.Parser import SUPPORTED_TYPES
         
         directory = self.app.project_dir
         
@@ -311,7 +311,7 @@ class IndexingScreen(Screen):
                 
                 try:
                     # Parse
-                    from src.core.Parser import parse
+                    from src.core.Parsing.Parser import parse
                     doc = parse(file_path, strategy="light")
                     
                     if doc.error:

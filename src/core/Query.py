@@ -134,7 +134,7 @@ class BM25Index:
         from rank_bm25 import BM25Okapi
 
         self._chunks = chunks
-        chunk_texts  = [c.text for c in chunks]
+        chunk_texts = [c.clean for c in chunks]
 
         # step 1 — discover domain stopwords from this document
         self._domain_stopwords = self._discover_stopwords(chunk_texts)

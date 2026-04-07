@@ -482,7 +482,7 @@ class GraphBuilder:
             TerminalUI.error("refine requires an LLM — set one up in config")
             raise RuntimeError("LLM not available for graph refinement")
 
-        TerminalUI.info("refining graph...")
+        TerminalUI.info( label="Building Refined Graph", value="refining graph...")
         return self.build(filename, chunks)
 
 

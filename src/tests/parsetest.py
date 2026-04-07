@@ -1,4 +1,4 @@
-from  src.core.Parser  import parse, scan_directory
+from  src.core.Parsing.Parser  import parse, scan_directory
 from src.core.Chunker import chunk_document
 from src.core.Store   import DarwinStore
 

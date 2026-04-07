@@ -16,15 +16,15 @@ import time
 import argparse
 from pathlib import Path
 
+from rich.console import Console
 from rich.progress import track
 
-from src.core.LLM import LLM
-from src.lib.Terminal import TerminalUI
+console = Console()
 
 
 def cmd_start(args=None):
     """Scan folder and index all supported files."""
-    from src.core.Parser  import parse, SUPPORTED_TYPES
+    from src.core.Parsing.Parser  import parse, SUPPORTED_TYPES,_sanitize
     from src.core.Chunker import chunk_document
     from src.core.Embedder import Embedder
     from src.core.Query   import BM25Index
@@ -35,19 +35,17 @@ def cmd_start(args=None):
     store     = DarwinStore(directory)
     store.init()
 
-    TerminalUI.blank()
-    TerminalUI.bold(f"darwin — indexing {directory}")
-    TerminalUI.blank()
+    console.print(f"\n[bold]darwin[/bold] — indexing [dim]{directory}[/dim]\n")
 
     # find supported files
     # if --file passed, only index that one file
     if args and args.file:
         target = directory / args.file
         if not target.exists():
-            TerminalUI.error(f"file not found: {args.file}")
+            console.print(f"[red]error:[/red] file not found: {args.file}")
             return
         if not target.suffix.lower() in SUPPORTED_TYPES:
-            TerminalUI.error(f"unsupported type: {target.suffix}")
+            console.print(f"[red]error:[/red] unsupported type: {target.suffix}")
             return
         all_files = [target]
     else:
@@ -59,13 +57,13 @@ def cmd_start(args=None):
         ]
 
     if not all_files:
-        TerminalUI.warn("no supported files found")
-        TerminalUI.dim(f"supported: {', '.join(SUPPORTED_TYPES.keys())}")
+        console.print(f"[yellow]no supported files found[/yellow]")
+        console.print(f"[dim]supported: {', '.join(SUPPORTED_TYPES.keys())}[/dim]")
         return
 
-    TerminalUI.success(f"found {len(all_files)} file(s)")
-    TerminalUI.blank()
+    console.print(f"found [bold]{len(all_files)}[/bold] file(s)\n")
 
+    config = store.load_config()
     new_files = skip_files = error_files = 0
 
     for file_path in track(all_files, description="indexing..."):
@@ -77,10 +75,17 @@ def cmd_start(args=None):
             continue
 
         try:
+            # resolve image settings from config
+            image_mode  = config.get("image_mode", "skip")
+            images_dir = (store.darwin_dir / f"{_sanitize(filename)}_images") if image_mode != "skip" else None
+
+
+            do_caption  = image_mode == "caption"
+
             # parse
-            doc = parse(file_path)
+            doc = parse(file_path, images_dir=images_dir, caption=do_caption)
             if doc.error:
-                TerminalUI.warn(f"{filename} — {doc.error}")
+                console.print(f"\n[yellow]⚠ {filename} — {doc.error}[/yellow]")
                 error_files += 1
                 continue
 
@@ -106,16 +111,15 @@ def cmd_start(args=None):
             new_files += 1
 
         except Exception as e:
-            TerminalUI.error(f"{filename} — {e}")
+            console.print(f"\n[red]✗ {filename} — {e}[/red]")
             error_files += 1
 
-    TerminalUI.blank()
-    TerminalUI.success("done")
-    TerminalUI.info("indexed", str(new_files))
-    TerminalUI.info("skipped", str(skip_files))
+    console.print(f"\n[bold green]✓ done[/bold green]")
+    console.print(f"  indexed  : [green]{new_files}[/green]")
+    console.print(f"  skipped  : [dim]{skip_files}[/dim]")
     if error_files:
-        TerminalUI.info("errors", str(error_files))
-    TerminalUI.blank()
+        console.print(f"  errors   : [red]{error_files}[/red]")
+    console.print()
 
 
 def cmd_search(args=None):
@@ -128,8 +132,8 @@ def cmd_search(args=None):
     query     = args.query     if args and args.query     else ""
 
     if not query:
-        TerminalUI.error("query is required")
-        TerminalUI.dim("usage: python main.py search . \"your question\"")
+        console.print("[red]error:[/red] query is required")
+        console.print("  usage: python main.py search . \"your question\"")
         return
 
     # patch sys.argv so Search.main()'s argparse sees the right args
@@ -146,55 +150,51 @@ def cmd_search(args=None):
 
 def cmd_parse(args=None):
     """Parse and chunk a single file — useful for debugging."""
-    from src.core.Parser  import parse
+    from src.core.Parsing.Parser  import parse
     from src.core.Chunker import chunk_document
 
     if not args or not args.file:
-        TerminalUI.error("file path required")
-        TerminalUI.dim("usage: python main.py parse path/to/file.pdf")
+        console.print("[red]error:[/red] file path required")
+        console.print("  usage: python main.py parse path/to/file.pdf")
         return
 
     file_path = Path(args.file)
     if not file_path.exists():
-        TerminalUI.error(f"file not found: {file_path}")
+        console.print(f"[red]error:[/red] file not found: {file_path}")
         return
 
-    TerminalUI.blank()
-    TerminalUI.bold(f"parsing: {file_path.name}")
-    TerminalUI.blank()
+    console.print(f"\n[bold]parsing:[/bold] {file_path.name}\n")
 
     t   = time.time()
     doc = parse(file_path, strategy=args.strategy if args else "light")
 
     if doc.error:
-        TerminalUI.error(f"failed: {doc.error}")
+        console.print(f"[red]✗ failed:[/red] {doc.error}")
         return
 
-    TerminalUI.info("pages", str(doc.page_count))
-    TerminalUI.info("characters", f"{len(doc.text):,}")
-    TerminalUI.info("file type", doc.file_type)
-    TerminalUI.info("parse time", f"{time.time()-t:.2f}s")
+    console.print(f"  pages      : {doc.page_count}")
+    console.print(f"  characters : {len(doc.text):,}")
+    console.print(f"  file type  : {doc.file_type}")
+    console.print(f"  parse time : {time.time()-t:.2f}s")
 
     if args and args.chunk:
-        TerminalUI.blank()
+        console.print()
         t      = time.time()
         chunks = chunk_document(doc.text, source=file_path.name)
-        TerminalUI.info("chunks", str(len(chunks)))
-        TerminalUI.info("chunk time", f"{time.time()-t:.2f}s")
-        TerminalUI.blank()
+        console.print(f"  chunks     : {len(chunks)}")
+        console.print(f"  chunk time : {time.time()-t:.2f}s\n")
 
         for i, chunk in enumerate(chunks[:5]):
-            TerminalUI.dim(f"[{i}] {chunk.token_count} tokens — {chunk.text[:80].strip()}...")
+            console.print(f"  [dim][{i}][/dim] {chunk.token_count} tokens — {chunk.text[:80].strip()}...")
         if len(chunks) > 5:
-            TerminalUI.dim(f"... and {len(chunks) - 5} more")
+            console.print(f"  [dim]... and {len(chunks) - 5} more[/dim]")
     else:
-        TerminalUI.blank()
-        TerminalUI.dim("preview:")
-        TerminalUI.divider()
-        TerminalUI.dim(doc.text[:500])
-        TerminalUI.divider()
+        console.print(f"\n[dim]preview:[/dim]")
+        console.print("─" * 50)
+        console.print(doc.text[:500])
+        console.print("─" * 50)
 
-    TerminalUI.blank()
+    console.print()
 
 
 def cmd_status(args=None):
@@ -205,42 +205,33 @@ def cmd_status(args=None):
     store     = DarwinStore(directory)
 
     if not store.is_initialized():
-        TerminalUI.blank()
-        TerminalUI.warn(f"darwin not initialized in {directory}")
-        TerminalUI.dim("run: python main.py start")
-        TerminalUI.blank()
+        console.print(f"\n[yellow]darwin not initialized in {directory}[/yellow]")
+        console.print("[dim]run: python main.py start[/dim]\n")
         return
 
     status = store.status()
     files  = status["files"]
 
-    TerminalUI.blank()
-    TerminalUI.bold(f"darwin status — {directory}")
-    TerminalUI.blank()
+    console.print(f"\n[bold]darwin status[/bold] — {directory}\n")
 
     if not files:
-        TerminalUI.dim("no files indexed yet")
-        TerminalUI.dim("run: python main.py start")
-        TerminalUI.blank()
+        console.print("[dim]no files indexed yet[/dim]")
+        console.print("[dim]run: python main.py start[/dim]\n")
         return
 
     for f in files:
-        fresh   = "fresh" if f["is_fresh"] else "stale"
-        fresh_color = TerminalUI.GREEN if f["is_fresh"] else TerminalUI.YELLOW
-        
+        fresh   = "[green]fresh[/green]"   if f["is_fresh"] else "[yellow]stale[/yellow]"
         has_all = all([f["has_chunks"], f["has_embeddings"], f["has_bm25"]])
-        indexed = "indexed" if has_all else "partial"
-        indexed_color = TerminalUI.GREEN if has_all else TerminalUI.YELLOW
-        
-        graph   = "graph ✓" if f["has_graph"] else "no graph"
-        graph_color = TerminalUI.GREEN if f["has_graph"] else TerminalUI.DIM
+        indexed = "[green]indexed[/green]" if has_all else "[yellow]partial[/yellow]"
+        graph   = "[green]graph ✓[/green]" if f["has_graph"] else "[dim]no graph[/dim]"
 
-        TerminalUI.bold(f.filename)
-        print(f"    {TerminalUI.c(fresh_color, fresh)} · {TerminalUI.c(indexed_color, indexed)} · {TerminalUI.c(graph_color, graph)}")
-        TerminalUI.dim(f"    {f['chunk_count']} chunks · {f['page_count']} pages")
+        console.print(f"  [bold]{f['filename']}[/bold]")
+        console.print(f"    {fresh} · {indexed} · {graph}")
+        console.print(f"    [dim]{f['chunk_count']} chunks · {f['page_count']} pages[/dim]")
         if f["concept_count"]:
-            TerminalUI.dim(f"    {f['concept_count']} concepts")
-        TerminalUI.blank()
+            console.print(f"    [dim]{f['concept_count']} concepts[/dim]")
+        console.print()
+
 
 
 def cmd_graph(args=None):
@@ -248,24 +239,22 @@ def cmd_graph(args=None):
     from src.core.Store import DarwinStore
     from src.core.LLM   import LLM
     from src.core.Graph import GraphBuilder
-    from src.core.Onboarding import get_llm_config
 
     directory = Path(args.directory).resolve() if args and args.directory else Path.cwd()
     store     = DarwinStore(directory)
 
     if not store.is_initialized():
-        TerminalUI.blank()
-        TerminalUI.error("darwin not initialized — run: python main.py start")
+        console.print(f"\n[red]error:[/red] darwin not initialized — run: python main.py start")
         return
 
     filename = args.file if args and args.file else None
     if not filename:
-        TerminalUI.error("--file required for graph command")
-        TerminalUI.dim("usage: python main.py graph --file biology.pdf")
+        console.print("[red]error:[/red] --file required for graph command")
+        console.print("  usage: python main.py graph --file biology.pdf")
         return
 
-    llm_config = get_llm_config(store)
-    llm = LLM.from_config(llm_config)
+    config  = store.load_config()
+    llm     = LLM.from_config(config)
     builder = GraphBuilder(store, llm)
 
     # --refine flag: rebuild with LLM even if graph exists
@@ -273,29 +262,29 @@ def cmd_graph(args=None):
 
     if refine:
         if not llm.is_available:
-            TerminalUI.error("--refine requires an LLM")
-            TerminalUI.dim("set one up: python main.py config")
+            console.print("[red]error:[/red] --refine requires an LLM")
+            console.print("  set one up: python main.py settings llm ollama/llama3.2")
             return
         chunks = store.load_chunks(filename)
         result = builder.refine(filename, chunks)
     elif not store.has_graph(filename):
         # build graph for first time
         if not store.is_fresh(filename):
-            TerminalUI.warn(f"{filename} not indexed yet")
-            TerminalUI.dim(f"run: python main.py start --file {filename}")
+            console.print(f"[yellow]warning:[/yellow] {filename} not indexed yet")
+            console.print(f"  run: python main.py start --file {filename}")
             return
         chunks = store.load_chunks(filename)
         result = builder.build(filename, chunks)
-        TerminalUI.blank()
-        TerminalUI.success(f"graph built — {result.concept_count} concepts")
+        console.print(f"\n[green]✓[/green] graph built — {result.concept_count} concepts")
         if result.is_raw:
-            TerminalUI.dim("tip: run with --refine after setting up an LLM for cleaner labels")
+            console.print(f"  [dim]tip: run with --refine after setting up an LLM for cleaner labels[/dim]")
     
     # render at threshold
     threshold = args.threshold if args and hasattr(args, "threshold") and args.threshold else 0.40
     html_path = builder.render(filename, threshold=threshold, open_browser=True)
-    TerminalUI.dim(f"opened in browser")
-    TerminalUI.blank()
+    console.print(f"  [dim]opened in browser[/dim]")
+    console.print()
+
 
 
 def cmd_config(args=None):
@@ -313,31 +302,17 @@ def cmd_config(args=None):
 
 
 def cmd_help(args=None):
-    TerminalUI.blank()
-    TerminalUI.bold("darwin — your knowledge. mapped.")
-    TerminalUI.blank()
-    TerminalUI.green("start")
-    TerminalUI.dim_inline("  <dir>              ")
-    TerminalUI.dim("scan and index all documents")
-    TerminalUI.green("search")
-    TerminalUI.dim_inline(" <dir> \"query\"      ")
-    TerminalUI.dim("search indexed documents")
-    TerminalUI.green("parse")
-    TerminalUI.dim_inline("  <file>              ")
-    TerminalUI.dim("parse and preview a single file")
-    TerminalUI.green("status")
-    TerminalUI.dim_inline(" <dir>              ")
-    TerminalUI.dim("show index status")
-    TerminalUI.green("help")
-    TerminalUI.dim_inline("                       ")
-    TerminalUI.dim("show this message")
-    TerminalUI.blank()
-    TerminalUI.dim("examples:")
-    TerminalUI.dim("  uv run main.py start")
-    TerminalUI.dim("  uv run main.py search . \"what is photosynthesis\"")
-    TerminalUI.dim("  uv run main.py parse biology.pdf --chunk")
-    TerminalUI.dim("  uv run main.py status")
-    TerminalUI.blank()
+    console.print("\n[bold]darwin[/bold] — your knowledge. mapped.\n")
+    console.print("  [green]start[/green]  [dim]<dir>[/dim]              scan and index all documents")
+    console.print("  [green]search[/green] [dim]<dir> \"query\"[/dim]      search indexed documents")
+    console.print("  [green]parse[/green]  [dim]<file>[/dim]              parse and preview a single file")
+    console.print("  [green]status[/green] [dim]<dir>[/dim]              show index status")
+    console.print("  [green]help[/green]                       show this message\n")
+    console.print("[dim]examples:[/dim]")
+    console.print("  uv run main.py start")
+    console.print("  uv run main.py search . \"what is photosynthesis\"")
+    console.print("  uv run main.py parse biology.pdf --chunk")
+    console.print("  uv run main.py status\n")
 
 
 # ── Argument parsing ───────────────────────────────────────────────────────────

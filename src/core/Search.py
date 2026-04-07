@@ -25,7 +25,7 @@ from pathlib import Path
 
 
 
-from src.core.Parser  import parse, scan_directory, ParsedDocument
+from src.core.Parsing.Parser  import parse, scan_directory, ParsedDocument
 from src.core.Chunker import chunk_document
 from src.core.Embedder import Embedder
 from src.core.Query   import QueryPipeline, BM25Index, SemanticIndex
@@ -53,7 +53,7 @@ def index_directory(
 
     Returns dict of filename → chunks for all successfully indexed files.
     """
-    from src.core.Parser import SUPPORTED_TYPES
+    from src.core.Parsing.Parser import SUPPORTED_TYPES
 
     # --file flag: index only one specific file
     if only_file:
