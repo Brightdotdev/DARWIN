@@ -6,9 +6,10 @@ Utility functions and data models for the document parser.
 
 import os
 from dataclasses import dataclass, field
+
 from pathlib import Path
 import re
-from typing import Optional, List, Callable
+from typing import Optional, List, Callable, Union
 import math
 import json
 
@@ -24,6 +25,22 @@ SUPPORTED_TYPES: dict[str, str] = {
 }
 
 
+
+def detect_type(path: Path) -> str | None:
+    return SUPPORTED_TYPES.get(path.suffix.lower())
+
+
+def is_supported(path: Path) -> bool:
+    return detect_type(path) is not None
+
+
+def is_good_enough(text: str) -> bool:
+    if not text or len(text.strip()) < 100:
+        return False
+    ascii_chars = sum(1 for c in text if ord(c) < 128)
+    return (ascii_chars / len(text)) > 0.6
+
+
 CPU_COUNT     = os.cpu_count() or 4
 LARGE_FILE_MB = 10
 
@@ -35,6 +52,13 @@ MAX_IMAGES_PER_DOC = 50     # cap to avoid processing book-length image dumps
 PARSE_TIMEOUT_SECONDS = 300  # 5 minutes per file
 CAPTION_TIMEOUT_SECONDS = 30  # 30 seconds per image
 CACHE_CAPTIONS = True  # Cache captions to avoid reprocessing
+
+
+
+@dataclass
+class FileWithImages:
+    file: Union[str, Path]
+    image_dir: Optional[Path] = None
 
 
 
@@ -55,12 +79,19 @@ class ParsedDocument:
     filename:   str
     page_count: int
     file_type:  str
-    strategy:   str
     metadata:   dict = field(default_factory=dict)
-    images:     list = field(default_factory=list)   # list[ExtractedImage]
     error:      str | None = None
 
 
+@dataclass
+class ParsingArgs:
+    target: str
+    projectDir : Optional[str] = None
+    images : bool = False
+    caption: bool = False
+    recursive: bool = False
+    rerun : bool = False
+    file : str | None = None
 
 
 

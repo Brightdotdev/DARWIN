@@ -78,8 +78,8 @@ Reloading cached data:
 Inspection:
 
     store.status()              # project-level overview
-    store.get_file_meta(...)    # raw metadata
-    store._get_component_status(...)  # pipeline health snapshot
+    store.load_meta_file(...)    # raw metadata
+    store.get_component_status(...)  # pipeline health snapshot
 
 Notes
 -----
@@ -157,12 +157,58 @@ class DarwinStore:
         Returns True if .darwin/sanitized_name/sanitized_name.md exists.
         """
         sanitized_name = sanitize(filename)
-        md_path = self._file_dir(filename) / f"{sanitized_name}.md"
+        md_path = self._file_dir(sanitized_name) / f"{sanitized_name}.md"
         
         return md_path.exists()
 
+    def has_chunks(self, filename: str) -> bool:
+        """
+        Checks if processed chunks of the source file exist.
+        Returns True if .darwin/sanitized_name/sanitized_name.chunks exists.
+        """
+        sanitized_name = sanitize(filename)
+        chunks_path = self._file_dir(sanitized_name) / f"{sanitized_name}.chunks"
+        
+        return chunks_path.exists()
+    
 
     
+    def has_embeddings(self, filename: str) -> bool:
+        """
+        Checks if embeddings of the source file exist.
+        Returns True if .darwin/sanitized_name/sanitized_name.embeddings exists.
+        """
+        sanitized_name = sanitize(filename)
+        config = self.load_config()
+        embeddings_path =self._file_dir(sanitized_name) / f"{sanitize(config["embedding_model"])}_{sanitize(filename)}_embeddings.npy"
+
+        return embeddings_path.exists()
+
+    def has_bm25(self, filename: str) -> bool:
+        """
+        Checks if a BM25 index of the source file exists.
+        Returns True if .darwin/sanitized_name/bm25.pkl exists.
+        """
+        sanitized_name = sanitize(filename)
+        bm25_path = self._file_dir(sanitized_name) / "bm25.pkl"
+        
+        return bm25_path.exists()
+
+    def has_stopwords(self, filename: str) -> bool:
+        """
+        Checks if domain stopwords for the source file exist.
+        Returns True if .darwin/sanitized_name/stopwords.json exists.
+        """
+        sanitized_name = sanitize(filename)
+        stopwords_path = self._file_dir(sanitized_name) / "stopwords.json"
+        
+        return stopwords_path.exists()
+
+    def has_graph(self, filename: str) -> bool:
+        """Returns True if a graph has been built for this file."""
+        return (self._graph_dir(filename) / "base_graph.json").exists()
+
+
 
 
     def _update_component(self, filename: str, component: str, extras: dict = None) -> None:
@@ -201,11 +247,12 @@ class DarwinStore:
         # 5. Commit to disk
         self._write_json(meta_path, meta)
 
-    def _get_component_status(self, filename: str) -> dict:
+    def get_component_status(self, filename: str) -> dict:
         """
-        Returns a health check of the file's processing pipeline.
+        Returns a health check of the file's processing pipeline. 
+        Just a snapshot of which components have been updated and when, based on meta.json.
         """
-        meta = self.get_file_meta(filename)
+        meta = self.load_meta_file(filename)
         updates = meta.get("updates", {})
         
         return {
@@ -213,7 +260,10 @@ class DarwinStore:
             "is_vectorized": "embeddings" in updates,
             "has_search_index": "bm25" in updates,
             "has_graph": "graph" in updates,
-            "last_activity": meta.get("updated_at", "never")
+            "last_activity": meta.get("updated_at", "never"),
+            "has_markdown": self.has_markdown(filename),
+            "has_chunks": self.has_chunks(filename),
+            "has_embeddings": self.has_embeddings(filename),
         }
 
 
@@ -237,6 +287,30 @@ class DarwinStore:
     def _file_dir(self, filename: str) -> Path:
         """Returns .darwin/biology_pdf/ for "biology.pdf"."""
         return self.darwin_dir / sanitize(filename)
+    
+    def image_dir(self, filename: str) -> Path:
+        """Returns the path for extracted images for a given file."""
+        return self._file_dir(filename) / "extracted_images"
+
+    def ensure_image_dir(self, filename: str) -> Path:
+        """
+        Ensure the image directory exists. 
+        Just creates it if missing.
+        """
+        img_dir = self.image_dir(filename)
+        img_dir.mkdir(parents=True, exist_ok=True)
+        return img_dir
+
+    def ensure_image_dir_and_check(self, filename: str) -> tuple[Path, bool]:
+        """
+        Ensure the image directory exists and check if it contains PNG images.
+        Returns: (directory path, has_png_images)
+        """
+        img_dir = self.ensure_image_dir(filename)
+        png_files = list(img_dir.glob("*.png"))
+        has_images = len(png_files) > 0
+        return img_dir, has_images
+
 
     def _graph_dir(self, filename: str) -> Path:
         """Returns .darwin/biology_pdf/graph/"""
@@ -278,7 +352,10 @@ class DarwinStore:
 
     def load_meta_file(self, filename: str) -> dict:
         self._require_init()
-        return self._read_json(self._file_dir(filename) / FILE_META)
+        metaJsonFIle = self._read_json(self._file_dir(filename) / FILE_META)
+        if not metaJsonFIle:
+            return {}
+        return metaJsonFIle
 
 
     def save_config(self, config: dict) -> None:
@@ -317,24 +394,6 @@ class DarwinStore:
         current_hash = file_hash(file_path)
         return stored_hash == current_hash
 
-    def has_graph(self, filename: str) -> bool:
-        """Returns True if a graph has been built for this file."""
-        return (self._graph_dir(filename) / "base_graph.json").exists()
-
-    def list_processed_files(self) -> list[str]:
-        """
-        Returns list of original filenames that have been processed.
-        Reads from meta.json in each subfolder.
-        """
-        self._require_init()
-        result = []
-        for d in self.darwin_dir.iterdir():
-            if d.is_dir() and d.name != "graph":
-                meta_path = d / FILE_META
-                if meta_path.exists():
-                    meta = self._read_json(meta_path)
-                    result.append(meta.get("filename", d.name))
-        return result
 
     # ── Chunks ─────────────────────────────────────────────────────────────────
 
@@ -352,6 +411,10 @@ class DarwinStore:
             """
             self._require_init()
             d = self._ensure_file_dir(filename)
+
+            if self.is_fresh(filename) and self.has_chunks(filename):
+                TerminalUI.bold("Skipping chunk saving (cached chunks found and file is fresh)")
+                return
 
             # 1. Serialize and save the actual data
             chunks_data = [asdict(c) for c in chunks]
@@ -407,92 +470,123 @@ class DarwinStore:
 
         return processed
 
-    # ─ Markdown ────────────────────────────────────────────────────────────────
-
+        # ─ Markdown ────────────────────────────────────────────────────────────────
     def save_markdown(
         self,
-        filename:   str,
-        mdDocument :  ParsedDocument,
+        filename: str,
+        mdDocument: ParsedDocument,
+        rerun: bool = False
     ) -> None:
         """
-        Save the parsed markdown text to .darwin/{filename}/{filename}.md
+        Saves parsed Markdown and metadata. 
+        Handles rerun logic if the user changes settings (like images/strategy).
         """
-
-        if mdDocument.error is not None:
-            TerminalUI.info(label="Markdown Error", value=f"⚠️ Not saving markdown for {filename} due to parsing error: {mdDocument.error}")
+        # 1. Immediate Safety Check
+        if mdDocument.error:
+            TerminalUI.info(
+                label="Markdown Error", 
+                value=f"⚠️ Skipping {filename}: {mdDocument.error}"
+            )
             return
 
-        
-        if self.is_fresh(filename) and self.has_markdown(filename):
-            return
-        
         self._require_init()
-        d = self._ensure_file_dir(filename)      
-
+        d = self._ensure_file_dir(filename)
         md_path = d / f"{sanitize(filename)}.md"
 
+        # 2. The "Should I Skip?" Logic
+        # We skip ONLY if it's not a rerun AND the file is fresh AND the file exists
+        if not rerun:
+            if self.is_fresh(filename) and md_path.exists():
+                TerminalUI.bold(f"Skipping: Fresh markdown found for {filename}")
+                return
+        else:
+            TerminalUI.bold(f"Rerunning Markdown generation for {filename}...")
+
+        # 3. Execution
         try:
-            # 1. Save the actual large text file
+            # Save the actual text content
             md_path.write_text(mdDocument.text, encoding="utf-8")
 
-            # 2. Prepare metadata by converting dataclass to dict
+            # 4. Meta Cleanup (Keeping meta.json light)
             all_fields = asdict(mdDocument)
             
-            # 3. Remove the heavy stuff we don't want in a small JSON file
-            # We also remove filename because it's already the folder name
-            for key in ["text", "images", "error", "filename"]:
+            
+            for key in ["text", "error", "filename"]:
                 all_fields.pop(key, None)
 
-            # 4. Pass the remaining fields (strategy, page_count, file_type, metadata)
+
+
             self._update_component(filename, "markdown", extras=all_fields)
+            
+            TerminalUI.success(f"Markdown saved: {md_path.name}")
 
         except Exception as e:
-            TerminalUI.error(f"⚠️ Failed to save markdown for {filename}: {e}")
+            TerminalUI.error(f"❌ Failed to save markdown for {filename}: {e}")
    
     def load_markdown(self, filename: str) -> str | None:
         """
         Retrieves the full Markdown content for a file.
         Returns an empty string if the file doesn't exist.
         """
-        sanitized_name = sanitize(filename)
-        md_path = self._file_dir(filename) / f"{sanitized_name}.md"
+        
 
-        if not md_path.exists():
+        if not self.has_markdown(filename):
+            TerminalUI.error(f"❌ Markdown not found for {filename}")
             return None
-
+        
+        md_path = self._file_dir(sanitize(filename)) / f"{sanitize(filename)}.md"
         try:
             return md_path.read_text(encoding="utf-8")
         except Exception as e:
             # Handle potential OS-level read errors
             TerminalUI.error(f"❌ Error reading markdown for {filename}: {e}")
             return None
-    
-    # I WAS HERE :: TRYING TO UNDERSTAND HOW TO CHUNK THE IMAGES INTO CHUNKS AND REGEX WITH MD :: SO I CAN CHUNK IMAGES :: THEN PARSE IMAGES TOO TO THE SAME CHUNK AND SAVE THEM TOO SO I CAN RUN PARSE AS A STANDALONE MODULE..SO I CAN MOVE ON TO CHUNKING...
+
 
     # ── Embeddings ────────────────────────────────────────────────────────────────
 
-    def save_embeddings(self, filename: str, embeddings: np.ndarray) -> None:
-        """
-        Save embedding matrix as .npy (numpy binary format).
-        Much faster to load than JSON — a 1000-chunk matrix loads
-        in milliseconds vs seconds.
-        """
+    def save_embeddings(self, filename: str, embeddings: np.ndarray, rerun: bool = False) -> None:
+        """Save the embedding matrix to a .npy file. Versioned by model name to allow multiple sets of embeddings."""
         self._require_init()
-        d    = self._ensure_file_dir(filename)
-        path = d / "embeddings.npy"
-        np.save(path, embeddings)
-        self._update_component(filename, "embeddings")
+        d = self._ensure_file_dir(filename)
+        
+        # 1. Always load config first so it's available everywhere in the method
+        config = self.load_config()
+        model_name = sanitize(config.get('embedding_model', 'default'))
+        file_name_clean = sanitize(filename)
+        path = d / f"{model_name}_{file_name_clean}_embeddings.npy"
+
+        # 2. Check for "Skip" conditions
+        if not rerun:
+            if self.is_fresh(filename) and path.exists():
+                TerminalUI.bold(f"Skipping: Fresh embeddings already exist for {filename}")
+                return
+        else:
+            # If rerunning, we only skip if the specific model's file already exists 
+            # (This matches your logic of not overwriting if already done)
+            if path.exists():
+                TerminalUI.bold(f"Model-specific embedding exists, skipping overwrite.")
+                return
+            TerminalUI.bold(f"Rerunning Embeddings for {filename}...")
+
+        # 3. Single Save Point
+        try:
+            np.save(path, embeddings)
+            self._update_component(filename, "embeddings")
+            TerminalUI.success(f"Saved embeddings: {path.name}")
+        except Exception as e:
+            TerminalUI.error(f"Failed to save embeddings: {e}")
 
     def load_embeddings(self, filename: str) -> np.ndarray:
         """Load embedding matrix from .npy file."""
         self._require_init()
-        path = self._file_dir(filename) / "embeddings.npy"
-
+        
+        config = self.load_config()
+        path = self._file_dir(filename) / f"{sanitize(config.get('embedding_model',''))}_{sanitize(filename)}_embeddings.npy"
         if not path.exists():
             raise FileNotFoundError(
                 f"No embeddings found for {filename}."
             )
-
         return np.load(path)
 
 
@@ -506,6 +600,10 @@ class DarwinStore:
         and rebuilding it from scratch on every startup is wasteful.
         """
         self._require_init()
+        if self.is_fresh(filename) and self.has_bm25(filename):
+            TerminalUI.bold("Skipping BM25 saving (cached index found and file is fresh)")
+            return
+        
         d    = self._ensure_file_dir(filename)
         path = d / "bm25.pkl"
         with open(path, "wb") as f:
@@ -515,6 +613,10 @@ class DarwinStore:
 
     def load_bm25(self, filename: str):
         """Load pickled BM25 index."""
+        if not self.has_bm25(filename):
+            TerminalUI.error(f"❌ BM25 index not found for {filename}")
+            return None
+    
         self._require_init()
         path = self._file_dir(filename) / "bm25.pkl"
 
@@ -534,6 +636,9 @@ class DarwinStore:
         Stored as a sorted list in JSON (sets aren't JSON serializable).
         Sorted so the file is human-readable and diff-friendly.
         """
+        if self.is_fresh(filename) and self.has_stopwords(filename):
+            TerminalUI.bold("Skipping stopwords saving (cached stopwords found and file is fresh)")
+            return
         self._require_init()
         d    = self._ensure_file_dir(filename)
         path = d / "stopwords.json"
@@ -542,6 +647,10 @@ class DarwinStore:
 
     def load_stopwords(self, filename: str) -> set[str]:
         """Load domain stopwords as a set."""
+        if not self.has_stopwords(filename):
+            TerminalUI.error(f"❌ Stopwords not found for {filename}")
+            return set()
+    
         self._require_init()
         path = self._file_dir(filename) / "stopwords.json"
 
@@ -580,6 +689,10 @@ class DarwinStore:
         The similarity matrix is the full n×n float matrix.
         The slider reads from this — never recomputed after build.
         """
+        if self.is_fresh(filename) and self.has_graph(filename):
+            TerminalUI.bold("Skipping graph saving (cached graph found and file is fresh)")
+            return
+        
         self._require_init()
         d = self._ensure_graph_dir(filename)
 
@@ -611,6 +724,9 @@ class DarwinStore:
         Load base graph data from disk.
         Returns the full dict with concepts + similarity matrix.
         """
+        if not self.has_graph(filename):
+            TerminalUI.error(f"❌ Graph not found for {filename}")
+            return {}
         self._require_init()
         path = self._graph_dir(filename) / "base_graph.json"
 
@@ -650,77 +766,3 @@ class DarwinStore:
         shutil.rmtree(d)
         return True
 
-    # ── Project status ─────────────────────────────────────────────────────────
-
-    def status(self) -> dict:
-        """
-        Returns a summary of the current project state.
-        Used by the CLI splash screen to show progress bars.
-
-        Returns:
-            {
-                "project_dir":  "/home/user/notes",
-                "files": [
-                    {
-                        "filename":    "biology.pdf",
-                        "is_fresh":    True,
-                        "has_chunks":  True,
-                        "has_embeddings": True,
-                        "has_bm25":    True,
-                        "has_graph":   True,
-                        "chunk_count": 42,
-                        "concept_count": 18,
-                        "page_count":  24,
-                    }
-                ],
-                "config": { ... }
-            }
-        """
-        self._require_init()
-
-        files_status = []
-
-        for d in sorted(self.darwin_dir.iterdir()):
-            if not d.is_dir():
-                continue
-
-            meta_path = d / FILE_META
-            if not meta_path.exists():
-                continue
-
-            meta     = self._read_json(meta_path)
-            filename = meta.get("filename", d.name)
-
-            # check what's been built
-            has_chunks     = (d / "chunks.json").exists()
-            has_embeddings = (d / "embeddings.npy").exists()
-            has_bm25       = (d / "bm25.pkl").exists()
-            has_graph      = (d / "graph" / "base_graph.json").exists()
-
-            graph_meta     = {}
-            if has_graph:
-                try:
-                    graph_meta = self._read_json(d / "graph" / FILE_META)
-                except Exception:
-                    pass
-
-            files_status.append({
-                "filename":      filename,
-                "sanitized":     d.name,
-                "is_fresh":      self.is_fresh(filename),
-                "has_chunks":    has_chunks,
-                "has_embeddings": has_embeddings,
-                "has_bm25":      has_bm25,
-                "has_graph":     has_graph,
-                "chunk_count":   meta.get("chunk_count", 0),
-                "page_count":    meta.get("page_count", 0),
-                "concept_count": graph_meta.get("concept_count", 0),
-                "parser":        meta.get("parser", "light"),
-                "processed_at":  meta.get("updated_at", ""),
-            })
-
-        return {
-            "project_dir": str(self.project_dir),
-            "files":       files_status,
-            "config":      self.load_config(),
-        }

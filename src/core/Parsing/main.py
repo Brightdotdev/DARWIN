@@ -4,165 +4,219 @@ src/core/parser.py - Document parser integrated with DarwinStore
 
 import sys
 from pathlib import Path
-from typing import Optional, List, Callable
-from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
+
+
+from src.core.Storage.StoreUtils import sanitize
 
 # Add parent to path if needed
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.core.Parsing.Parser import parse as _parse, parse_many as _parse_many
-from src.core.Parsing.ParserUtils import ParsedDocument
+from src.core.Parsing.Parser import (parse as _parse ,scan_directory)
+from src.core.Parsing.ParserUtils import (ParsedDocument, FileWithImages,CPU_COUNT,ParsingArgs,PARSE_TIMEOUT_SECONDS,detect_type)
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
+from src.lib.Utils import open_in_explorer
 
 
-def parse_and_store(
-    file_path: str | Path,
-    store: DarwinStore,
-    extract_images: bool = False,
+def parse_document(
+    path_with_images: FileWithImages,
     caption_images: bool = False,
-    strategy: str = "light",
-    progress_callback: Optional[Callable] = None,
+    timeout: int = PARSE_TIMEOUT_SECONDS,
 ) -> ParsedDocument:
     """
-    Parse a document and save results to DarwinStore.
-    
-    Args:
-        file_path: Path to the document
-        store: DarwinStore instance for the project
-        force_reprocess: If True, ignore cached data and reprocess
-        extract_images: Extract and save images
-        caption_images: Generate AI captions for images
-        strategy: "light" or "high"
-        progress_callback: Optional progress callback
-    
-    Returns:
-        ParsedDocument object
+    Parse a document with a hard timeout.
+    If parsing exceeds timeout seconds the worker is killed
+    and an error ParsedDocument is returned.
     """
-    file_path = Path(file_path).resolve()
-    filename = file_path.name
-    
-    # Check if we can use cached data
-    
-    if store.has_markdown(filename) :
-        TerminalUI.bold("Skipping parsing (cached markdown found)")
-        md_txt =  store.load_markdown(filename)
-        metadata = store.load_meta_file(filename)
+    file_path = Path(path_with_images.file)
+    image_dir = path_with_images.image_dir
+    filename  = file_path.name
 
-        return ParsedDocument(
-            filename=filename,
-            text=md_txt,
-            page_count=metadata.get("page_count"),
-            file_type=metadata.get("file_type"),
-            strategy=metadata.get("strategy"),
-            error=None,
+    # run the actual parse in a subprocess with a hard timeout
+    # this works on Windows unlike signal-based approaches
+    with ProcessPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            _parse_document_worker,
+            path_with_images,
+            caption_images,
         )
-    
-       # Parse the document
-    if progress_callback:
-        progress_callback(f"📄 Parsing {filename}...")
-    
-    # Setup image directory if needed
-    images_dir = None
-    if extract_images:
-        images_dir = store._file_dir(filename) / "extracted_images"
-    
-    doc = _parse(
-        file_path,
-        strategy=strategy,
-        images_dir=images_dir,
-        caption=caption_images,
-    )
-    
-    if doc.error:
-        if progress_callback:
-            progress_callback(f"❌ Failed: {doc.error}")
-        return doc
-    
-    if progress_callback:
-        progress_callback(f"✅ Parsed {filename}: {len(doc.text):,} chars, {doc.page_count} pages")
- 
+        try:
+            doc = future.result(timeout=timeout)
+        except TimeoutError:
+            # kill the worker process
+            executor.shutdown(wait=False, cancel_futures=True)
+            return ParsedDocument(
+                text       = "",
+                filename   = filename,
+                page_count = 0,
+                file_type  = detect_type(file_path) or "unknown",
+                strategy   = "light",
+                error      = f"parsing timed out after {timeout}s — file may be corrupted or too complex",
+            )
+        except Exception as e:
+            return ParsedDocument(
+                text       = "",
+                filename   = filename,
+                page_count = 0,
+                file_type  = detect_type(file_path) or "unknown",
+                strategy   = "light",
+                error      = f"{type(e).__name__}: {e}",
+            )
+
     return doc
 
 
-def parse_many_and_store(
-    file_paths: List[str | Path],
-    store: DarwinStore,
-    force_reprocess: bool = False,
-    extract_images: bool = False,
-    caption_images: bool = False,
-    strategy: str = "light",
-    progress_callback: Optional[Callable] = None,
-) -> List[ParsedDocument]:
+def _parse_document_worker(
+    path_with_images: FileWithImages,
+    caption_images: bool,
+) -> ParsedDocument:
     """
-    Parse multiple documents and save to DarwinStore.
+    The actual parse logic — runs inside a subprocess.
+    Separated so parse_document can enforce a timeout on it.
     """
-    results = []
-    
-    for i, file_path in enumerate(file_paths):
-        if progress_callback:
-            progress_callback(f"\n[{i+1}/{len(file_paths)}] Processing...")
-        
-        doc = parse_and_store(
-            file_path,
-            store,
-            force_reprocess=force_reprocess,
-            extract_images=extract_images,
-            caption_images=caption_images,
-            strategy=strategy,
-            progress_callback=progress_callback,
-        )
-        results.append(doc)
-    
-    return results
+    file_path = Path(path_with_images.file)
+    image_dir = path_with_images.image_dir
+    filename  = file_path.name
 
-
-def scan_and_store(
-    directory: str | Path,
-    store: DarwinStore,
-    recursive: bool = False,
-    force_reprocess: bool = False,
-    extract_images: bool = False,
-    caption_images: bool = False,
-    strategy: str = "light",
-    progress_callback: Optional[Callable] = None,
-) -> List[ParsedDocument]:
-    """
-    Scan a directory and parse all supported files, saving to DarwinStore.
-    """
-    from src.core.Parsing.Parser import scan_directory
-    
-    directory = Path(directory).resolve()
-    
-    if progress_callback:
-        progress_callback(f"🔍 Scanning {directory}...")
-    
-    # Get all files (this doesn't parse them yet)
-    all_files = []
-    pattern = "**/*" if recursive else "*"
-    
-    for p in directory.glob(pattern):
-        if p.is_file() and not any(part.startswith(".") for part in p.parts):
-            from src.core.Parsing.Parser import is_supported
-            if is_supported(p):
-                all_files.append(p)
-    
-    if progress_callback:
-        progress_callback(f"📁 Found {len(all_files)} supported files")
-    
-    # Parse and store
-    results = parse_many_and_store(
-        all_files,
-        store,
-        force_reprocess=force_reprocess,
-        extract_images=extract_images,
-        caption_images=caption_images,
-        strategy=strategy,
-        progress_callback=progress_callback,
+    doc = _parse(
+        file_path,
+        images_dir = image_dir,
+        caption    = caption_images,
     )
+
+    if doc.error:
+        return doc
+
+    return doc
+
+
+def parse_documents(
+    files:          list[FileWithImages],
+    caption_images: bool = False,
+    timeout:        int  = PARSE_TIMEOUT_SECONDS,
+) -> list[ParsedDocument]:
+
+    if not files:
+        return []
+
+    if len(files) == 1:
+        return [parse_document(files[0], caption_images=caption_images, timeout=timeout)]
+
+    indexed   = sorted(enumerate(files), key=lambda x: x[1].file.stat().st_size)
+
     
-    return results
+    paths = [fw.file for fw in files]
+
+    total_mb = sum([fw.file.stat().st_size / (1024 * 1024) for fw in files])
+    TerminalUI.dim(f"Queueing {len(paths)} files ({total_mb:.1f} MB total)")
+
+    n_workers = min(
+        len(files),
+        max(1, CPU_COUNT // 2) if caption_images else CPU_COUNT,
+    )
+
+    results: list[ParsedDocument | None] = [None] * len(files)
+
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        future_to_idx = {
+            executor.submit(
+                parse_document, fw, caption_images, timeout
+            ): original_idx
+            for original_idx, fw in indexed
+        }
+
+        for future in as_completed(future_to_idx):
+            original_idx = future_to_idx[future]
+            fw           = files[original_idx]
+
+            try:
+                # outer timeout is timeout + 30 to give parse_document
+                # time to handle its own timeout gracefully first
+                results[original_idx] = future.result(timeout=timeout + 30)
+            except Exception as e:
+                results[original_idx] = ParsedDocument(
+                    text       = "",
+                    filename   = Path(fw.file).name,
+                    page_count = 0,
+                    file_type  = "unknown",
+                    strategy   = "light",
+                    error      = f"worker failed: {type(e).__name__}: {e}",
+                )
+
+    return results  # type: ignore
+
+
+def handle_parsing(args: ParsingArgs):
+    targetPath = None
+    if args.file:
+        targetPath = scan_directory(args.file, recursive=False)
+    targetPath = scan_directory(args.target, recursive=args.recursive)
+
+    if not targetPath:
+        TerminalUI.error(f"No supported files found in {args.target}")
+        return
+
+    store = DarwinStore(Path(args.projectDir) if args.projectDir else Path.cwd())
+
+    # resolve image dirs per file
+    paths_with_images = [
+        (path, store.ensure_image_dir(path.name) if args.images else None)
+        for path in targetPath
+    ]
+
+    # filter cached — skip unless --rerun
+    to_process = []
+    for path, img_dir in paths_with_images:
+        if store.has_markdown(path.name) and not args.rerun:
+            TerminalUI.dim(f"skipping {path.name} (cached)")
+            continue
+        to_process.append((path, img_dir))
+
+    if not to_process:
+        TerminalUI.success("all files already parsed")
+        TerminalUI.dim("use --rerun to reprocess with different parameters")
+        return
+
+    # single file — show the open in explorer shortcut
+    if len(to_process) == 1 and not args.rerun:
+        path, img_dir = to_process[0]
+        if store.has_markdown(path.name):
+            TerminalUI.bold("Skipping parsing (cached markdown found)")
+            TerminalUI.dim("Opening existing markdown in explorer...")
+            open_in_explorer(store._file_dir(path.name) / f"{sanitize(path.name)}.md")
+            return
+
+    TerminalUI.bold(f"Parsing {len(to_process)} file(s)...")
+
+    files = [
+        FileWithImages(file=path, image_dir=img_dir)
+        for path, img_dir in to_process
+    ]
+
+    # delegate all parsing + parallelism to parse_documents
+    docs = parse_documents(files, caption_images=args.caption)
+
+    # save results and report
+    succeeded = failed = 0
+    for doc in docs:
+        if doc.error:
+            TerminalUI.error(f"{doc.filename} — {doc.error}")
+            failed += 1
+        else:
+            store.save_markdown(doc.filename, doc.text)
+            TerminalUI.success(
+                f"{doc.filename} — "
+                f"{doc.page_count} pages · "
+                f"{len(doc.text):,} chars"
+            )
+            succeeded += 1
+
+    TerminalUI.blank()
+    TerminalUI.success(f"done — {succeeded} parsed · {failed} failed")
+
+
 
 
 # ── CLI Integration ─────────────────────────────────────────────────────────
@@ -173,80 +227,24 @@ def main():
     
     parser = argparse.ArgumentParser(description="Parse documents and store in .darwin")
     parser.add_argument("path", nargs="?", default=".", help="File or directory to parse")
-    parser.add_argument("--force", "-f", action="store_true", help="Force reprocess (ignore cache)")
+    parser.add_argument("--rerun", "-R", action="store_true", help="Reprocess existing files")
     parser.add_argument("--recursive", "-r", action="store_true", help="Scan directories recursively")
     parser.add_argument("--images", "-i", action="store_true", help="Extract images")
     parser.add_argument("--caption", "-c", action="store_true", help="Generate image captions")
-    parser.add_argument("--strategy", "-s", choices=["light", "high"], default="light")
     parser.add_argument("--project", "-p", help="Project directory (default: current dir)")
+    
+    parser.add_argument("--file", "-f", default=None, help="Point to a file instead of the entire directory")
     
     args = parser.parse_args()
     
-    # Initialize store
-    project_dir = Path(args.project) if args.project else Path.cwd()
-    store = DarwinStore(project_dir)
-    store.init()
-    
-    print(f"📁 Project: {project_dir}")
-    print(f"💾 Store: {store.darwin_dir}")
-    print(f"🔄 Mode: {'Force reprocess' if args.force else 'Use cache if fresh'}")
-    
-    # Process
-    path = Path(args.path)
-    
-    if path.is_file():
-        doc = parse_and_store(
-            path,
-            store,
-            force_reprocess=args.force,
-            extract_images=args.images,
-            caption_images=args.caption,
-            strategy=args.strategy,
-            progress_callback=print,
-        )
-        
-        if doc.error:
-            print(f"\n❌ Error: {doc.error}")
-            return 1
-        else:
-            print(f"\n✅ Success! Saved to {store.darwin_dir}")
-            
-    elif path.is_dir():
-        docs = scan_and_store(
-            path,
-            store,
-            recursive=args.recursive,
-            force_reprocess=args.force,
-            extract_images=args.images,
-            caption_images=args.caption,
-            strategy=args.strategy,
-            progress_callback=print,
-        )
-        
-        successful = [d for d in docs if not d.error]
-        failed = [d for d in docs if d.error]
-        
-        print(f"\n{'='*60}")
-        print(f"📊 SUMMARY")
-        print(f"{'='*60}")
-        print(f"✅ Successful: {len(successful)}")
-        print(f"❌ Failed: {len(failed)}")
-        
-        if failed:
-            print(f"\nFailed files:")
-            for doc in failed[:5]:
-                print(f"  - {doc.filename}: {doc.error[:80]}")
-        
-        print(f"\n💾 All data saved to: {store.darwin_dir}")
-        
-    else:
-        print(f"❌ Path not found: {path}")
-        return 1
-    
-    # Show status
-    status = store.status()
-    print(f"\n📊 Project Status:")
-    print(f"   Total files processed: {len(status['files'])}")
+    handle_parsing(ParsingArgs(
+        target=args.path,
+        projectDir=args.project,
+        images=args.images,
+        caption=args.caption,
+        recursive=args.recursive,
+        rerun=args.rerun
+    ))
     
     return 0
 
