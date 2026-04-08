@@ -100,7 +100,7 @@ def parse(
         return ParsedDocument(
             text=text, filename=path.name, page_count=page_count,
             file_type=file_type,
-            metadata=metadata, images=images, error=None,
+            metadata=metadata,  error=None,
         )
 
     except TimeoutError:
@@ -159,7 +159,10 @@ def scan_directory(
         ]
 
         if found_files:
-            TerminalUI.info(f"Scanner found {len(found_files)} supported files in {path.name}")
+            TerminalUI.info(
+            label="Found Files",
+            value=f"Scanner found {len(found_files)} supported files in {path.name}"
+             )
         else:
             TerminalUI.warning(f"No supported files found in directory: {path}")
             

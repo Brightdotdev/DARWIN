@@ -91,7 +91,6 @@ def _parse_document_worker(
 
     return doc
 
-
 def parse_documents(
     files:          list[FileWithImages],
     caption_images: bool = False,
@@ -101,17 +100,24 @@ def parse_documents(
     if not files:
         return []
 
-    if len(files) == 1:
-        return [parse_document(files[0], caption_images=caption_images, timeout=timeout)]
+    # 1. Grab the names safely from the dataclass attributes
+    file_names = [fw.file.name for fw in files]
+    
+    # 2. UX: List the files (with a cap so we don't scroll-bomb the user)
+    if len(file_names) <= 10:
+        names_str = ", ".join(file_names)
+    else:
+        names_str = ", ".join(file_names[:10]) + f" ...and {len(file_names) - 10} more"
+    
+    TerminalUI.dim(f"Working on: {names_str}")
+
+    # 3. Size Calculation
+    total_mb = sum([fw.file.stat().st_size / (1024 * 1024) for fw in files])
+    TerminalUI.dim(f"Queueing {len(files)} files ({total_mb:.1f} MB total)")
 
     indexed   = sorted(enumerate(files), key=lambda x: x[1].file.stat().st_size)
 
     
-    paths = [fw.file for fw in files]
-
-    total_mb = sum([fw.file.stat().st_size / (1024 * 1024) for fw in files])
-    TerminalUI.dim(f"Queueing {len(paths)} files ({total_mb:.1f} MB total)")
-
     n_workers = min(
         len(files),
         max(1, CPU_COUNT // 2) if caption_images else CPU_COUNT,
@@ -152,7 +158,9 @@ def handle_parsing(args: ParsingArgs):
     targetPath = None
     if args.file:
         targetPath = scan_directory(args.file, recursive=False)
-    targetPath = scan_directory(args.target, recursive=args.recursive)
+    else:
+        targetPath = scan_directory(args.target, recursive=args.recursive)
+        
 
     if not targetPath:
         TerminalUI.error(f"No supported files found in {args.target}")
@@ -205,7 +213,7 @@ def handle_parsing(args: ParsingArgs):
             TerminalUI.error(f"{doc.filename} — {doc.error}")
             failed += 1
         else:
-            store.save_markdown(doc.filename, doc.text)
+            store.save_markdown(doc.filename, doc, rerun=args.rerun)
             TerminalUI.success(
                 f"{doc.filename} — "
                 f"{doc.page_count} pages · "
@@ -243,7 +251,8 @@ def main():
         images=args.images,
         caption=args.caption,
         recursive=args.recursive,
-        rerun=args.rerun
+        rerun=args.rerun,
+        file=args.file
     ))
     
     return 0

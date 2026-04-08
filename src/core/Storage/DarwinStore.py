@@ -180,7 +180,7 @@ class DarwinStore:
         """
         sanitized_name = sanitize(filename)
         config = self.load_config()
-        embeddings_path =self._file_dir(sanitized_name) / f"{sanitize(config["embedding_model"])}_{sanitize(filename)}_embeddings.npy"
+        embeddings_path =self._file_dir(sanitized_name) / f"{sanitize(config['embedding_model'])}_{sanitize(filename)}_embeddings.npy"
 
         return embeddings_path.exists()
 

@@ -149,36 +149,38 @@ def save_caption_cache(images_dir: Path, cache: dict):
     except Exception as e:
         logger.warning(f"Failed to save caption cache: {e}")
 
-
-# Todo :: make dynamic with llm config
 def load_caption_model(model_id: str = "HuggingFaceTB/SmolVLM-256M-Instruct"):
-    from transformers import AutoProcessor, AutoModelForVision2Seq
+    # FIX: Use ConditionalGeneration for SmolVLM
+    from transformers import AutoProcessor, AutoModelForConditionalGeneration
     import torch
 
-    # 1. Auto-detect the best device
-    # Note: 'mps' is for Mac M1/M2/M3 chips!
+    # 1. Device Detection
     if torch.cuda.is_available():
         device = "cuda"
-        dtype = torch.float16 # GPUs love float16 (faster/less VRAM)
+        dtype = torch.float16
     elif torch.backends.mps.is_available():
         device = "mps"
         dtype = torch.float16
     else:
         device = "cpu"
-        dtype = torch.float32 # CPUs are safer with float32
+        dtype = torch.float32
 
+    TerminalUI.dim(f"Loading {model_id} on {device} ({dtype})...")
+
+    # 2. Load Processor
     processor = AutoProcessor.from_pretrained(model_id)
 
-    # 2. The Multi-Device Config
-    model = AutoModelForVision2Seq.from_pretrained(
+    # 3. Load Model (The Fix)
+    model = AutoModelForConditionalGeneration.from_pretrained(
         model_id,
         torch_dtype=dtype,
         low_cpu_mem_usage=True,
-        device_map="auto" # Let Transformers handle the switching logic
+        # device_map="auto" is great, but sometimes on Windows + CUDA 
+        # it gets confused if you don't have 'accelerate' installed.
+        device_map="auto" 
     )
     
     return processor, model, device
-
 
 
 
