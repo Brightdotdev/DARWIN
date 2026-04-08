@@ -4,8 +4,6 @@ ParserUtils.py
 Utility functions and data models for the document parser.
 """
 
-
-from asyncio.log import logger
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +11,9 @@ import re
 from typing import Optional, List, Callable
 import math
 import json
+
+import logging
+logger = logging.getLogger(__name__)
 
 SUPPORTED_TYPES: dict[str, str] = {
     ".pdf":  "pdf",
@@ -116,8 +117,6 @@ def save_caption_cache(images_dir: Path, cache: dict):
             json.dump(cache, f, indent=2)
     except Exception as e:
         logger.warning(f"Failed to save caption cache: {e}")
-
-
 
 
 # Todo :: make dynamic with llm config
@@ -348,24 +347,8 @@ def strip_image_markers(text: str) -> str:
     return text.strip()
 
 
-# ── Worker / page range helpers ────────────────────────────────────────────────
-
-def workers_for_pages(page_count: int) -> int:
-    if page_count <= 20: return 1
-    if page_count <= 50: return 2
-    if page_count <= 100: return 4
-    return min(8, CPU_COUNT)
 
 
-def split_page_ranges(page_count: int, n_workers: int) -> list[list[int]]:
-    all_pages = list(range(page_count))
-    chunk_size = math.ceil(page_count / n_workers)
-    return [all_pages[i: i + chunk_size] for i in range(0, page_count, chunk_size)]
-
-
-def parse_pdf_pages(file_path: str, pages: list[int]) -> str:
-    import pymupdf4llm
-    return pymupdf4llm.to_markdown(file_path, pages=pages)
 
 
 def parse_markitdown(path: Path) -> tuple[str, int, dict, list]:
@@ -397,8 +380,6 @@ def parse_pdf(
     # Determine if we are even touching images
     do_images = bool(images_dir)
 
-    # 2. THE FAST PARSE
-    # If do_images is False, pymupdf4llm ignores them entirely.
     text = pymupdf4llm.to_markdown(
         str(path), 
         write_images=do_images, 
@@ -407,21 +388,24 @@ def parse_pdf(
     )
 
     all_images: list[ExtractedImage] = []
-
-    # 3. THE "DOPAMINE" LOGIC
+    
     if not do_images:
-        # Tier 1: Just clean up any stray markers and return
         text = strip_image_markers(text)
         return text, page_count, metadata, []
 
-    # If we are here, we are Tier 2 or 3
+
+
+
     image_files = sorted(list(images_dir.glob("*.png")))
     
     # Load VLM ONLY if Tier 3 (captioning) is requested
     processor = model = None
     cache = {}
     if caption and caption_model_available() and image_files:
-        if progress_callback: progress_callback("Loading Vision AI...")
+
+        if progress_callback: 
+            progress_callback("Loading Vision AI...")
+        
         processor, model, device = load_caption_model()
         cache = load_caption_cache(images_dir)
 
@@ -434,8 +418,10 @@ def parse_pdf(
             img_caption = caption_image(img_path, processor, model, cache, progress_callback)
         
         all_images.append(ExtractedImage(
-            path=img_path, page=0, index=idx, caption=img_caption
+            path=img_path, page=0, index=idx, caption=img_caption,
+            width=0, height=0
         ))
+        
 
         # Update the Markdown
         placeholder = f"![]({img_path.name})"

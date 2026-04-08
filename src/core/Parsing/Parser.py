@@ -11,11 +11,11 @@ from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 from pathlib import Path
 from typing import Callable, Optional
 from datetime import datetime
+from src.lib.Terminal import TerminalUI
 
 from src.core.Parsing.ParserUtils import (
-    SUPPORTED_TYPES, CPU_COUNT, LARGE_FILE_MB, MAX_FILE_SIZE_MB,
-    MIN_IMAGE_SIZE_PX, ExtractedImage, ParsedDocument,
-    PARSE_TIMEOUT_SECONDS, CACHE_CAPTIONS,CACHE_CAPTIONS, check_file_size,  save_caption_cache,workers_for_pages,split_page_ranges,parse_pdf_pages,extract_pdf_images,inject_captions,strip_image_markers,parse_markitdown,parse_pdf
+    SUPPORTED_TYPES, CPU_COUNT, ParsedDocument,
+    PARSE_TIMEOUT_SECONDS, check_file_size,parse_markitdown,parse_pdf
 )
 
 
@@ -140,38 +140,51 @@ def parse(
 
 
 # ── Multi-file parsing ─────────────────────────────────────────────────────────
-
 def parse_many(
     file_paths: list[str | Path],
     strategy: str = "light",
-    skip_unsupported: bool = True,
     images_dir: Path | None = None,
     caption: bool = False,
     timeout: int = PARSE_TIMEOUT_SECONDS,
     progress_callback: Optional[Callable] = None,
 ) -> list[ParsedDocument]:
-    """Parse multiple files in parallel. Results in same order as input."""
-    paths = [Path(p).resolve() for p in file_paths]
+    """
+    Parse multiple files in parallel, optimized for user experience:
+    1. Sorts by size (Smallest -> Largest) for fast initial feedback.
+    2. Adjusts worker count based on resource-heavy tasks (captioning).
+    3. Handles results in sorted order.
+    """
+    
+    # 1. Resolve and SORT by size (Ascending for the dopamine hit)
+    paths = sorted(
+        [Path(p).resolve() for p in file_paths], 
+        key=lambda p: p.stat().st_size
+    )
+    
     results: list[ParsedDocument | None] = [None] * len(paths)
     to_parse: list[tuple[int, Path]] = []
 
+    # 2. Filtering and UI Feedback
+    total_mb = sum(p.stat().st_size for p in paths) / (1024 * 1024)
+    if progress_callback:
+        progress_callback(f"Queueing {len(paths)} files ({total_mb:.1f} MB total)")
+
     for idx, path in enumerate(paths):
         if not is_supported(path):
-            if skip_unsupported:
-                warnings.warn(f"skipping unsupported file: {path.name}", stacklevel=2)
-                results[idx] = ParsedDocument(
-                    text="", filename=path.name, page_count=0,
-                    file_type="unsupported", strategy=strategy,
-                    error=f"unsupported type: {path.suffix}",
-                )
-            else:
-                to_parse.append((idx, path))
+            warnings.warn(f"skipping unsupported file: {path.name}", stacklevel=2)
+            TerminalUI.error(f"Unsupported: {path.name}")
+            results[idx] = ParsedDocument(
+                text="", filename=path.name, page_count=0,
+                file_type="unsupported", strategy=strategy,
+                error=f"unsupported type: {path.suffix}",
+            )
         else:
             to_parse.append((idx, path))
 
     if not to_parse:
         return [r for r in results if r is not None]
 
+    # 3. Handle Single File Case (Bypass Pool)
     if len(to_parse) == 1:
         idx, path = to_parse[0]
         file_imgs_dir = (images_dir / path.stem) if images_dir else None
@@ -180,26 +193,44 @@ def parse_many(
             images_dir=file_imgs_dir, caption=caption,
             timeout=timeout, progress_callback=progress_callback,
         )
-        return results  # type: ignore
+        return results # type: ignore
 
-    n_workers = min(len(to_parse), CPU_COUNT)
+    # 4. Determine Worker Count
+    # If captioning is ON, we use fewer workers to avoid OOM (Out of Memory)
+    # captioning involves loading a VLM per process.
+    if caption:
+        n_workers = min(len(to_parse), max(1, CPU_COUNT // 2))
+    else:
+        n_workers = min(len(to_parse), CPU_COUNT)
+        
     logger.info(f"Parsing {len(to_parse)} files with {n_workers} workers")
     
+    # 5. Parallel Execution
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         ftoi = {
             executor.submit(
                 parse, path, strategy,
                 (images_dir / path.stem) if images_dir else None,
-                caption, timeout, None,  # No progress callback in workers
+                caption, timeout, None, # No nested callbacks
             ): idx
             for idx, path in to_parse
         }
+        
         for future in as_completed(ftoi):
             idx = ftoi[future]
             try:
                 results[idx] = future.result(timeout=timeout + 10)
-                if progress_callback:
-                    progress_callback(f"Completed {results[idx].filename}")
+                
+                # Update UI immediately as each file finishes
+                if progress_callback and results[idx]:
+                    progress_callback(f"Finished {results[idx].filename}")
+                
+                TerminalUI.success(
+                    f"Parsed {results[idx].filename}: "
+                    f"{len(results[idx].text):,} chars, "
+                    f"{results[idx].page_count} pages"
+                )
+                
             except TimeoutError:
                 path = paths[idx]
                 results[idx] = ParsedDocument(
@@ -215,40 +246,49 @@ def parse_many(
                     error=f"worker failed: {type(e).__name__}: {e}",
                 )
 
-    return results  # type: ignore
+    return results 
 
 
-# ── Directory scanning ─────────────────────────────────────────────────────────
+
 
 def scan_directory(
-    directory: str | Path,
+    target: str | Path,
     recursive: bool = False,
-    strategy: str = "light",
-    images_dir: Path | None = None,
-    caption: bool = False,
-    timeout: int = PARSE_TIMEOUT_SECONDS,
-    progress_callback: Optional[Callable] = None,
-) -> list[ParsedDocument]:
-    """Find and parse all supported files in a directory."""
-    directory = Path(directory).resolve()
-    if not directory.is_dir():
-        raise NotADirectoryError(f"not a directory: {directory}")
-
-    pattern = "**/*" if recursive else "*"
-    all_files = [
-        p for p in directory.glob(pattern)
-        if p.is_file()
-        and is_supported(p)
-        and not any(part.startswith(".") for part in p.parts)
-    ]
-
-    if not all_files:
+) -> list[Path]:
+    """
+    Detects if the input is a single file or a directory.
+    Returns a list of valid, supported Path objects.
+    """
+    path = Path(target).resolve()
+    
+    # 1. Check if it even exists
+    if not path.exists():
+        TerminalUI.error(f"Path does not exist: {path}")
         return []
 
-    logger.info(f"Found {len(all_files)} files in {directory}")
-    
-    return parse_many(
-        all_files, strategy=strategy,
-        images_dir=images_dir, caption=caption,
-        timeout=timeout, progress_callback=progress_callback,
-    )
+    # 2. Case: Single File
+    if path.is_file():
+        if is_supported(path):
+            return [path]
+        else:
+            TerminalUI.warning(f"File type not supported: {path.suffix}")
+            return []
+
+    # 3. Case: Directory
+    if path.is_dir():
+        pattern = "**/*" if recursive else "*"
+        found_files = [
+            p for p in path.glob(pattern)
+            if p.is_file() 
+            and is_supported(p)
+            and not any(part.startswith(".") for part in p.parts)
+        ]
+
+        if found_files:
+            TerminalUI.info(f"Scanner found {len(found_files)} supported files in {path.name}")
+        else:
+            TerminalUI.warning(f"No supported files found in directory: {path}")
+            
+        return found_files
+
+    return []

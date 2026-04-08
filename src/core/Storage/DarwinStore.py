@@ -466,7 +466,8 @@ class DarwinStore:
             # Handle potential OS-level read errors
             TerminalUI.error(f"❌ Error reading markdown for {filename}: {e}")
             return None
-        
+    
+    # I WAS HERE :: TRYING TO UNDERSTAND HOW TO CHUNK THE IMAGES INTO CHUNKS AND REGEX WITH MD :: SO I CAN CHUNK IMAGES :: THEN PARSE IMAGES TOO TO THE SAME CHUNK AND SAVE THEM TOO SO I CAN RUN PARSE AS A STANDALONE MODULE..SO I CAN MOVE ON TO CHUNKING...
 
     # ── Embeddings ────────────────────────────────────────────────────────────────
 
