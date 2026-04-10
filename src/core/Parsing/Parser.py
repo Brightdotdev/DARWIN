@@ -29,12 +29,13 @@ logger = logging.getLogger(__name__)
 
 def parse(
     file_path: str | Path,
-
     images_dir: Path | None = None,
     caption: bool = False,
     timeout: int = PARSE_TIMEOUT_SECONDS,
     progress_callback: Optional[Callable] = None,
+    project_dir: Path | None = None,       # ← add this
 ) -> ParsedDocument:
+    
     """
     Parse a single file into a ParsedDocument.
     Never raises — errors go into .error field.
@@ -53,7 +54,7 @@ def parse(
 
     if not path.exists():
         return ParsedDocument(
-            text="", filename=path.name, page_count=0,
+            display_text="",embedding_text="", filename=path.name, page_count=0,
             file_type="unknown",
             error=f"file not found: {path}",
         )
@@ -61,7 +62,7 @@ def parse(
     size_error = check_file_size(path)
     if size_error:
         return ParsedDocument(
-            text="", filename=path.name, page_count=0,
+            display_text="",embedding_text="", filename=path.name, page_count=0,
             file_type="unknown",
             error=size_error,
         )
@@ -70,7 +71,7 @@ def parse(
     if file_type is None:
         supported = ", ".join(SUPPORTED_TYPES.keys())
         return ParsedDocument(
-            text="", filename=path.name, page_count=0,
+            display_text="",embedding_text="", filename=path.name, page_count=0,
             file_type="unsupported",
             error=f"unsupported type '{path.suffix}' — supported: {supported}",
         )
@@ -80,39 +81,46 @@ def parse(
             progress_callback(f"Parsing {path.name}...")
 
         if file_type == "pdf":
-            text, page_count, metadata, images = parse_pdf(
-                path, images_dir=images_dir, caption=caption,
-                progress_callback=progress_callback,
-            )
+               display_text, embedding_text, page_count, metadata, all_images = parse_pdf(
+        path,
+        images_dir        = images_dir,
+        caption           = caption,
+        project_dir       = project_dir,   # ← add this
+        progress_callback = progress_callback,
+    )
         else:
             text, page_count, metadata, images = parse_markitdown(path)
+            display_text = text
+            embedding_text = text
+            all_images = []
 
-        if not is_good_enough(text):
+        if not is_good_enough(embedding_text):
             return ParsedDocument(
-                text="", filename=path.name, page_count=page_count,
+                 display_text="", embedding_text="", filename=path.name, page_count=page_count,
                 file_type=file_type, metadata=metadata,
                 error="parsed text is empty or garbled",
             )
 
         elapsed = (datetime.now() - start_time).total_seconds()
-        logger.info(f"Parsed {path.name} in {elapsed:.1f}s ({len(text):,} chars, {page_count} pages)")
+        logger.info(f"Parsed {path.name} in {elapsed:.1f}s ({len(display_text):,} chars, {page_count} pages)")
 
         return ParsedDocument(
-            text=text, filename=path.name, page_count=page_count,
+           display_text=display_text, embedding_text=embedding_text, filename=path.name, page_count=page_count,
             file_type=file_type,
+            images=all_images,
             metadata=metadata,  error=None,
         )
 
     except TimeoutError:
         return ParsedDocument(
-            text="", filename=path.name, page_count=0,
+            display_text="",embedding_text="", filename=path.name, page_count=0,
             file_type=file_type,
             error=f"parsing timed out after {timeout} seconds",
         )
     except Exception as e:
         logger.exception(f"Failed to parse {path.name}")
         return ParsedDocument(
-            text="", filename=path.name, page_count=0,
+            display_text="",embedding_text="", filename=path.name, page_count=0,
             file_type=file_type,
             error=f"{type(e).__name__}: {e}",
         )

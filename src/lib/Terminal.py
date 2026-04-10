@@ -11,10 +11,20 @@ Usage:
     TerminalUI.done("42 chunks in 0.3s")
     TerminalUI.dim("this text is dimmed")
     TerminalUI.bold("this text is bold")
+
+    # Parsing progress:
+    with TerminalUI.parse_progress("OpenClaw.pdf") as update:
+        parse_pdf(..., progress_callback=update)
 """
+
+from contextlib import contextmanager
 
 from rich.console import Console
 from rich.panel   import Panel
+from rich.live    import Live
+from rich.spinner import Spinner
+from rich.text    import Text
+from rich.columns import Columns
 
 console = Console()
 
@@ -25,7 +35,7 @@ class TerminalUI:
         "  ██████╗  █████╗ ██████╗ ██╗    ██╗██╗███╗   ██╗",
         "  ██╔══██╗██╔══██╗██╔══██╗██║    ██║██║████╗  ██║",
         "  ██║  ██║███████║██████╔╝██║ █╗ ██║██║██╔██╗ ██║",
-        "  ██║  ██║██╔══██║██╔══██╗██║███╗██║██║██║╚██╗██║",
+        "  ██║  ██║██╔══██║██╔══██╗██║███╗██║██║╚██╗██║",
         "  ██████╔╝██║  ██║██║  ██║╚███╔███╔╝██║██║ ╚████║",
         "  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝",
     ]
@@ -94,90 +104,226 @@ class TerminalUI:
         console.print("  " + "─" * 50)
         console.print()
 
+    # ── Parsing progress ───────────────────────────────────────────────────────
+
+    @classmethod
+    @contextmanager
+    def parse_progress(cls, filename: str):
+        """
+        Context manager that shows a live spinner while a file is being parsed.
+        Yields an `update(msg)` callable — pass it as progress_callback.
+
+        Usage:
+            with TerminalUI.parse_progress("Bible.pdf") as update:
+                doc = parse_pdf(..., progress_callback=update)
+
+        The spinner shows the filename and updates the status line in-place.
+        On exit it collapses to a single ✓ / ✗ line.
+        """
+        # Mutable state shared between the yielded callback and the Live renderer
+        state = {"msg": "starting...", "done": False, "error": False}
+
+        def _render():
+            spinner = Spinner("dots", style="cyan")
+            name_text  = Text(f"  {filename}", style="bold white")
+            status_text = Text(f"  {state['msg']}", style="dim")
+            # Two-line render: filename on top, status below
+            from rich.console import Group
+            return Group(
+                Text.assemble(("  ", ""), spinner.render(0), (" ", ""), (filename, "bold white")),
+                Text(f"     {state['msg']}", style="dim"),
+            )
+
+        # Use a simple approach that works reliably across Windows + uv:
+        # print spinner frames manually via Live
+        from rich.table import Table
+
+        def _make_renderable(frame: str = "⠋"):
+            t = Table.grid(padding=(0, 1))
+            t.add_column(width=3)
+            t.add_column()
+            t.add_column()
+            t.add_row(
+                f"[cyan]{frame}[/cyan]",
+                f"[bold white]{filename}[/bold white]",
+                f"[dim]{state['msg']}[/dim]",
+            )
+            return t
+
+        frames = ["⠋", "⠙", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        frame_idx = [0]
+
+        def update(msg: str) -> None:
+            """Call this from progress_callback — updates the status line."""
+            state["msg"] = msg
+            # tick the frame forward
+            frame_idx[0] = (frame_idx[0] + 1) % len(frames)
+
+        try:
+            with Live(
+                _make_renderable(),
+                console  = console,
+                refresh_per_second = 8,
+                transient = True,   # clears the live area on exit
+            ) as live:
+                # Patch update so it also refreshes the live display
+                def update(msg: str) -> None:  # noqa: F811
+                    state["msg"] = msg
+                    frame_idx[0] = (frame_idx[0] + 1) % len(frames)
+                    live.update(_make_renderable(frames[frame_idx[0]]))
+
+                yield update
+
+            # transient=True already cleared the spinner — print final status
+            console.print(
+                f"  [green]✓[/green] [bold white]{filename}[/bold white]  "
+                f"[dim]{state['msg']}[/dim]"
+            )
+
+        except Exception:
+            state["error"] = True
+            console.print(
+                f"  [red]✗[/red] [bold white]{filename}[/bold white]  "
+                f"[dim]{state['msg']}[/dim]"
+            )
+            raise
+
+    @classmethod
+    @contextmanager
+    def multi_parse_progress(cls, filenames: list[str]):
+        """
+        Progress display for parsing multiple files at once.
+        Shows one spinner row per file, all updating live.
+
+        Usage:
+            states = {}
+            with TerminalUI.multi_parse_progress(file_names) as get_callback:
+                for fw in files:
+                    cb = get_callback(fw.file.name)
+                    # pass cb as progress_callback for that file
+        """
+        states: dict[str, str] = {name: "queued" for name in filenames}
+        frames = ["⠋", "⠙", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        ticks:  dict[str, int] = {name: 0 for name in filenames}
+        done:   set[str]       = set()
+
+        def _make_renderable():
+            from rich.table import Table
+            t = Table.grid(padding=(0, 1))
+            t.add_column(width=3)
+            t.add_column(min_width=30)
+            t.add_column()
+            for name in filenames:
+                if name in done:
+                    icon   = "[green]✓[/green]"
+                    status = f"[dim]{states[name]}[/dim]"
+                    label  = f"[dim]{name}[/dim]"
+                else:
+                    frame  = frames[ticks[name] % len(frames)]
+                    icon   = f"[cyan]{frame}[/cyan]"
+                    status = f"[dim]{states[name]}[/dim]"
+                    label  = f"[white]{name}[/white]"
+                t.add_row(icon, label, status)
+            return t
+
+        def get_callback(filename: str):
+            """Returns an update(msg) callback for the given filename."""
+            def _update(msg: str) -> None:
+                states[filename] = msg
+                ticks[filename] += 1
+                # Mark done on terminal messages
+                if any(kw in msg.lower() for kw in ("done", "complete", "saved")):
+                    done.add(filename)
+                live.update(_make_renderable())
+            return _update
+
+        with Live(
+            _make_renderable(),
+            console = console,
+            refresh_per_second = 8,
+            transient = True,
+        ) as live:
+            yield get_callback
+
+        # Final summary after live area clears
+        console.print()
+        for name in filenames:
+            final_status = states[name]
+            icon = "[green]✓[/green]" if name in done else "[dim]·[/dim]"
+            console.print(
+                f"  {icon} [bold white]{name}[/bold white]  [dim]{final_status}[/dim]"
+            )
+        console.print()
+
+    # ── All existing methods below — unchanged ─────────────────────────────────
+
     @classmethod
     def step(cls, label: str) -> None:
-        """Print a step in progress — no newline, waits for done()."""
         console.print(f"  [cyan]→[/cyan] {label}...", end="")
 
     @classmethod
     def done(cls, extra: str = "") -> None:
-        """Complete a step started with step()."""
         suffix = f" [dim]{extra}[/dim]" if extra else ""
         console.print(f" [green]done[/green]{suffix}")
 
     @classmethod
     def dim(cls, text: str) -> None:
-        """Print dimmed text (useful for hints, footnotes, metadata)."""
         console.print(f"  [dim]{text}[/dim]")
 
     @classmethod
     def dim_inline(cls, text: str) -> None:
-        """Print dimmed text without newline."""
         console.print(f"[dim]{text}[/dim]", end="")
 
     @classmethod
     def bold(cls, text: str) -> None:
-        """Print bold text (useful for emphasis, titles, important info)."""
         console.print(f"  [bold]{text}[/bold]")
 
     @classmethod
     def bold_inline(cls, text: str) -> None:
-        """Print bold text without newline."""
         console.print(f"[bold]{text}[/bold]", end="")
 
     @classmethod
     def success_inline(cls, text: str) -> None:
-        """Print success text without newline."""
         console.print(f"[green]{text}[/green]", end="")
 
     @classmethod
     def cyan(cls, text: str) -> None:
-        """Print cyan text (useful for commands, filenames)."""
         console.print(f"  [cyan]{text}[/cyan]")
 
     @classmethod
     def yellow(cls, text: str) -> None:
-        """Print yellow text (useful for warnings, queries)."""
         console.print(f"  [yellow]{text}[/yellow]")
 
     @classmethod
     def green(cls, text: str) -> None:
-        """Print green text (useful for success messages)."""
         console.print(f"  [green]{text}[/green]")
 
     @classmethod
     def error(cls, message: str) -> None:
-        """Print an error line."""
         console.print(f"  [red]✗[/red] {message}")
 
     @classmethod
     def warn(cls, message: str) -> None:
-        """Print a warning line."""
         console.print(f"  [yellow]⚠[/yellow] {message}")
 
     @classmethod
     def success(cls, message: str) -> None:
-        """Print a success line."""
         console.print(f"  [green]✓[/green] {message}")
 
     @classmethod
     def info(cls, label: str, value: str) -> None:
-        """Print a labelled info line."""
         console.print(f"  [dim]{label}[/dim]  [white]{value}[/white]")
 
     @classmethod
     def divider(cls) -> None:
-        """Print a visual divider line."""
         console.print(f"  {'─' * 60}")
 
     @classmethod
     def blank(cls) -> None:
-        """Print a blank line."""
         console.print()
 
     @classmethod
     def header(cls, text: str, level: int = 1) -> None:
-        """Print a formatted header with different levels."""
         if level == 1:
             console.print(f"\n[bold cyan]{text}[/bold cyan]")
             console.print(f"[dim]{'─' * len(text)}[/dim]")
@@ -188,56 +334,45 @@ class TerminalUI:
 
     @classmethod
     def table(cls, headers: list, rows: list) -> None:
-        """Print a simple formatted table."""
         from rich.table import Table
-        
         table = Table(show_header=True, header_style="bold cyan")
         for header in headers:
             table.add_column(header)
-        
         for row in rows:
             table.add_row(*[str(cell) for cell in row])
-        
         console.print(table)
 
     @classmethod
     def progress_bar(cls, current: int, total: int, label: str = "") -> None:
-        """Print a simple progress bar (non-refreshing, for logs)."""
         percentage = (current / total) * 100
         bar_length = 30
-        filled = int(bar_length * current // total)
-        bar = "█" * filled + "░" * (bar_length - filled)
-        
-        prefix = f"{label} " if label else ""
+        filled     = int(bar_length * current // total)
+        bar        = "█" * filled + "░" * (bar_length - filled)
+        prefix     = f"{label} " if label else ""
         console.print(f"  {prefix}[cyan]{bar}[/cyan] [dim]{percentage:.1f}%[/dim]")
 
     @classmethod
     def code_block(cls, text: str, language: str = "") -> None:
-        """Print a code block with syntax highlighting."""
         from rich.syntax import Syntax
-        
         syntax = Syntax(text, language or "text", theme="monokai", line_numbers=False)
         console.print(syntax)
 
     @classmethod
     def panel(cls, text: str, title: str = "", border_style: str = "blue") -> None:
-        """Print content in a bordered panel."""
         console.print(Panel(
             text,
-            title=title if title else None,
-            border_style=border_style,
-            padding=(1, 2)
+            title        = title if title else None,
+            border_style = border_style,
+            padding      = (1, 2)
         ))
 
     @classmethod
     def rule(cls, title: str = "") -> None:
-        """Print a horizontal rule with optional title."""
         from rich.rule import Rule
         console.print(Rule(title, style="dim"))
 
     @classmethod
     def print_onboarding_splash(cls) -> None:
-        """Print the full onboarding splash screen with ASCII art and welcome panel."""
         cls.blank()
         for line in cls.ASCII:
             console.print(f"[cyan]{line}[/cyan]")
@@ -251,10 +386,3 @@ class TerminalUI:
             padding=(1, 2),
         ))
         cls.blank()
-
-
-
-
-
-
-

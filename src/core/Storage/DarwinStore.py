@@ -505,13 +505,13 @@ class DarwinStore:
         # 3. Execution
         try:
             # Save the actual text content
-            md_path.write_text(mdDocument.text, encoding="utf-8")
+            md_path.write_text(mdDocument.display_text, encoding="utf-8")
 
             # 4. Meta Cleanup (Keeping meta.json light)
             all_fields = asdict(mdDocument)
             
             
-            for key in ["text", "error", "filename"]:
+            for key in ["text", "error", "filename", "images", "embedding_text", "display_text"]:
                 all_fields.pop(key, None)
 
 

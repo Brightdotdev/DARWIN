@@ -85,5 +85,5 @@ litellm for model handling
 
 vision model:
 SmolVLM-256M :: light
-SmolVLM-500M :: medium
+Moondream2 :: medium
 LightOnOCR-2-1B :: overkill
