@@ -7,6 +7,11 @@ Windows multiprocessing note
    called inside the worker, not a launcher of more workers.
 2. The if __name__ == "__main__" guard at the bottom is mandatory.
 3. Never pass callbacks/closures to worker processes — they can't be pickled.
+
+Modes
+-----
+Default (fast):   fitz get_text("dict") — seconds for any PDF
+--precise:        pymupdf4llm.to_markdown() — layout-accurate, slower
 """
 
 import sys
@@ -14,6 +19,12 @@ import multiprocessing
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed, TimeoutError
 from typing import Optional
+
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+
+
+
 
 from src.core.Storage.StoreUtils import sanitize
 
@@ -37,16 +48,17 @@ from src.lib.Terminal import TerminalUI
 from src.lib.Utils import open_in_explorer
 
 
-
-
 def progress_callback(msg: str) -> None:
     TerminalUI.dim(msg)
+
+
 # ── Single document parse (runs INSIDE a worker process) ──────────────────────
 
 def parse_document(
     path_with_images: FileWithImages,
     caption_images:   bool = False,
     project_dir:      Optional[Path] = None,
+    precise:          bool = False,    # ← new
 ) -> ParsedDocument:
     """
     Parse one document. Runs inside a subprocess.
@@ -61,6 +73,7 @@ def parse_document(
             caption           = caption_images,
             project_dir       = project_dir,
             progress_callback = progress_callback,
+            precise           = precise,        
         )
     except Exception as e:
         return ParsedDocument(
@@ -80,14 +93,16 @@ def parse_documents(
     caption_images: bool = False,
     timeout:        int  = PARSE_TIMEOUT_SECONDS,
     project_dir:    Optional[Path] = None,
+    precise:        bool = False,      # ← new
 ) -> list[ParsedDocument]:
     """
     Parse a list of documents in parallel using a single ProcessPoolExecutor.
-    Logs completion of each file as it finishes.
     """
     if not files:
         return []
+    
 
+    time = TerminalUI.timer("Loading files")
     file_names = [Path(fw.file).name for fw in files]
     if len(file_names) <= 10:
         TerminalUI.dim(f"Working on: {', '.join(file_names)}")
@@ -95,7 +110,8 @@ def parse_documents(
         TerminalUI.dim(f"Working on: {', '.join(file_names[:10])} ...and {len(file_names) - 10} more")
 
     total_mb = sum(Path(fw.file).stat().st_size / (1024 * 1024) for fw in files)
-    TerminalUI.dim(f"Queueing {len(files)} files ({total_mb:.1f} MB total)")
+    mode_label = "precise" if precise else "fast"
+    time.split(msg=f"Queueing {len(files)} files ({total_mb:.1f} MB total) [{mode_label} mode]")
 
     indexed   = sorted(enumerate(files), key=lambda x: Path(x[1].file).stat().st_size)
     n_workers = min(
@@ -107,7 +123,9 @@ def parse_documents(
 
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         future_to_idx = {
-            executor.submit(parse_document, fw, caption_images, project_dir): orig_idx
+            executor.submit(
+                parse_document, fw, caption_images, project_dir, precise
+            ): orig_idx
             for orig_idx, fw in indexed
         }
         for future in as_completed(future_to_idx):
@@ -149,6 +167,12 @@ def parse_documents(
 # ── High-level handler ─────────────────────────────────────────────────────────
 
 def handle_parsing(args: ParsingArgs) -> None:
+
+
+    TerminalUI.loading_with_ascii()
+    
+
+
     if args.file:
         target_paths = scan_directory(args.file, recursive=False)
     else:
@@ -160,7 +184,6 @@ def handle_parsing(args: ParsingArgs) -> None:
 
     store = DarwinStore(Path(args.project_dir) if args.project_dir else Path.cwd())
 
-    # Filter cached files unless --rerun
     to_process = []
     for path in target_paths:
         if store.has_markdown(path.name) and not args.rerun:
@@ -173,7 +196,6 @@ def handle_parsing(args: ParsingArgs) -> None:
         TerminalUI.dim("use --rerun to reprocess with different settings")
         return
 
-    # Single cached file shortcut
     if len(to_process) == 1 and not args.rerun:
         path = to_process[0]
         if store.has_markdown(path.name):
@@ -196,9 +218,9 @@ def handle_parsing(args: ParsingArgs) -> None:
         files,
         caption_images = args.caption,
         project_dir    = store.project_dir,
+        precise        = args.precise,     # ← thread through
     )
 
-    # Persist
     succeeded = failed = 0
     for doc in docs:
         if not doc:
@@ -206,11 +228,13 @@ def handle_parsing(args: ParsingArgs) -> None:
         if doc.error:
             failed += 1
         else:
-            store.save_markdown(doc.filename, doc, rerun=args.rerun)
+            if args.save : 
+                store.save_markdown(doc.filename, doc, rerun=args.rerun)
             succeeded += 1
 
     TerminalUI.blank()
     TerminalUI.success(f"done — {succeeded} parsed · {failed} failed")
+    TerminalUI.print_project_status(store)
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
@@ -226,6 +250,8 @@ def main() -> int:
     parser.add_argument("--caption",   "-c", action="store_true", help="Generate captions (requires --images)")
     parser.add_argument("--project",   "-p", default=None,        help="Project directory (default: cwd)")
     parser.add_argument("--file",      "-f", default=None,        help="Parse a single file instead of a directory")
+    parser.add_argument("--precise",         action="store_true", help="Use pymupdf4llm for layout-accurate extraction (slower)")
+    parser.add_argument("--save",         action="store_true", help="Save markdown files")
 
     args = parser.parse_args()
 
@@ -237,6 +263,8 @@ def main() -> int:
         recursive   = args.recursive,
         rerun       = args.rerun,
         file        = args.file,
+        precise     = args.precise,    # ← new
+        save        = args.save
     ))
 
     return 0

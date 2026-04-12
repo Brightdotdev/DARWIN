@@ -765,4 +765,110 @@ class DarwinStore:
 
         shutil.rmtree(d)
         return True
+    
+    def status(self) -> dict:
+        """
+        Returns a full project-level status snapshot.
+
+        Structure:
+        {
+            "project_dir": "...",
+            "initialized": True,
+            "files": {
+                "biology.pdf": {
+                    "fresh": True,
+                    "exists": True,
+                    "components": {...},
+                    "pipeline": {...},
+                    "meta": {...}
+                }
+            }
+        }
+        """
+        self._require_init()
+
+        result = {
+            "project_dir": str(self.project_dir),
+            "initialized": self.is_initialized(),
+            "files": {}
+        }
+
+        # Get all source files (ignore .darwin)
+        source_files = [
+            f for f in self.project_dir.iterdir()
+            if f.is_file() and f.name != DARWIN_DIR
+        ]
+
+        for file_path in source_files:
+            filename = file_path.name
+
+            # Safe meta load
+            meta = self.load_meta_file(filename) or {}
+
+            # Component existence checks
+            components = {
+                "markdown": self.has_markdown(filename),
+                "chunks": self.has_chunks(filename),
+                "embeddings": self.has_embeddings(filename),
+                "bm25": self.has_bm25(filename),
+                "stopwords": self.has_stopwords(filename),
+                "graph": self.has_graph(filename),
+            }
+
+            # Pipeline state (logical state)
+            pipeline = self.get_component_status(filename)
+
+            result["files"][filename] = {
+                "exists": file_path.exists(),
+                "fresh": self.is_fresh(filename),
+                "components": components,
+                "pipeline": pipeline,
+                "meta": {
+                    "chunk_count": meta.get("chunk_count"),
+                    "page_count": meta.get("page_count"),
+                    "parser": meta.get("parser"),
+                    "updated_at": meta.get("updated_at"),
+                    "created_at": meta.get("created_at"),
+                }
+            }
+
+        return result
+    
+    def file_status(self, filename: str) -> dict:
+        """
+        Detailed status for a single file.
+        """
+        self._require_init()
+
+        file_path = self.project_dir / filename
+        meta = self.load_meta_file(filename) or {}
+
+        components = {
+            "markdown": self.has_markdown(filename),
+            "chunks": self.has_chunks(filename),
+            "embeddings": self.has_embeddings(filename),
+            "bm25": self.has_bm25(filename),
+            "stopwords": self.has_stopwords(filename),
+            "graph": self.has_graph(filename),
+        }
+
+        pipeline = self.get_component_status(filename)
+
+        return {
+            "filename": filename,
+            "exists": file_path.exists(),
+            "fresh": self.is_fresh(filename),
+            "components": components,
+            "pipeline": pipeline,
+            "meta": {
+                "chunk_count": meta.get("chunk_count"),
+                "page_count": meta.get("page_count"),
+                "parser": meta.get("parser"),
+                "updated_at": meta.get("updated_at"),
+                "created_at": meta.get("created_at"),
+            },
+            # 🔥 useful derived states
+            "ready_for_search": components["chunks"] and components["embeddings"],
+            "fully_processed": all(components.values()),
+        }
 

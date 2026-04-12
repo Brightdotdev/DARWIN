@@ -14,3 +14,6 @@ wheels/
 .darwin/**
 .agent
 *.pdf
+
+commands
+.darwin
