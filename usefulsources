@@ -1,0 +1,101 @@
+https://openlibrary.org
+
+
+
+
+[
+  {
+    "method": "Socratic Method",
+    "explanation": "A form of cooperative argumentative dialogue that uses questioning to stimulate critical thinking and illuminate ideas, often leading the interlocutor to recognize contradictions in their beliefs.",
+    "origin": "Ancient Greece, developed by Socrates in the 5th century BC, as recorded in Plato's dialogues.",
+    "example": "In Plato's 'Meno', Socrates questions a slave boy about geometry, guiding him to discover a mathematical truth without direct instruction."
+  },
+  {
+    "method": "Dialectic (Platonic Method)",
+    "explanation": "A constructive philosophical method that moves beyond refutation to build coherent theories through systematic classification and examination of concepts.",
+    "origin": "Developed by Plato in his later dialogues, such as 'Theaetetus' and 'Sophist', as an evolution from Socratic elenchus.",
+    "example": "In 'The Sophist', Plato uses dialectic to define the nature of a 'sophist' by dividing and categorizing concepts logically."
+  },
+  {
+    "method": "Inquiry-Based Learning (IBL)",
+    "explanation": "A student-centered approach that emphasizes curiosity, where learners generate questions, investigate, and explore topics to construct understanding.",
+    "origin": "Rooted in John Dewey's educational philosophy in the 1910s; formalized in science education in the 1960s by Joseph Schwab and Robert Karplus.",
+    "example": "Students observe plant growth under different light conditions and design experiments to understand photosynthesis."
+  },
+  {
+    "method": "Problem-Based Learning (PBL)",
+    "explanation": "An active learning method where students solve complex, real-world problems collaboratively, promoting deeper integration of knowledge.",
+    "origin": "Developed in the 1960s at McMaster University Medical School in Canada as a response to traditional lecture-based medical education.",
+    "example": "Medical students are given a patient case with symptoms and must research, diagnose, and propose a treatment plan."
+  },
+  {
+    "method": "Case-Based Learning (CBL)",
+    "explanation": "Involves analyzing real-life scenarios or case studies to apply knowledge, think critically, and develop solutions to presented problems.",
+    "origin": "Established in the 1920s at Harvard Medical School as a way to apply theoretical knowledge to clinical decision-making.",
+    "example": "Law students analyze a past court ruling to discuss legal principles and potential outcomes in a similar modern case."
+  },
+  {
+    "method": "Feynman Technique",
+    "explanation": "A learning method where one explains a concept in simple terms as if teaching it to a child, revealing gaps in understanding.",
+    "origin": "Named after physicist Richard Feynman; popularized in its modern form by Scott Young around 2011 based on Feynman's study habits.",
+    "example": "A student trying to understand photosynthesis explains it using only basic vocabulary and analogies like 'plants eating sunlight'."
+  },
+  {
+    "method": "Dialogic Teaching",
+    "explanation": "An approach that prioritizes dialogue as the goal of teaching, encouraging shared thinking and engagement with broader cultural and historical conversations.",
+    "origin": "Influenced by the work of Mikhail Bakhtin and developed in educational theory to promote open-ended inquiry and collaborative knowledge construction.",
+    "example": "A history class discusses the causes of World War I by connecting student ideas to primary sources and global perspectives."
+  },
+  {
+    "method": "Philosophy for Children (P4C)",
+    "explanation": "Encourages students to 'do philosophy' through community inquiry, using stories or stimuli to generate questions and engage in philosophical dialogue.",
+    "origin": "Founded by Matthew Lipman in the 1970s, inspired by John Dewey and Socratic dialogue, to foster critical and collaborative thinking in young learners.",
+    "example": "Elementary students read a story about fairness and lead a discussion on what justice means, guided by a facilitator."
+  },
+  {
+    "method": "Freirean Dialogic Pedagogy",
+    "explanation": "A liberatory educational approach based on dialogue, critical consciousness, and mutual respect, opposing the 'banking model' of education.",
+    "origin": "Developed by Brazilian educator Paulo Freire in the 1960s, particularly in 'Pedagogy of the Oppressed', as a tool for social transformation.",
+    "example": "Adult literacy students discuss local social issues and co-create lessons that reflect their lived experiences and challenges."
+  },
+  {
+    "method": "Bakhtinian Dialogism",
+    "explanation": "A theory that all language and thought are shaped by multiple voices and perspectives, emphasizing the transformative power of dialogue.",
+    "origin": "Developed by Russian philosopher Mikhail Bakhtin in the early 20th century, emphasizing heteroglossia and the interplay of voices in discourse.",
+    "example": "A student incorporates language from books, media, and family stories to create an original narrative during play."
+  }
+]   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+{ "frameworks": [ { "name": "IRAC", "acronym": "Issue, Rule, Application, Conclusion", "best_domain": "Law (Academic & Exams)", "why_it_shines": "Provides a clear, neutral structure for identifying legal issues and analyzing them step-by-step. Ideal for law school exams and objective legal memos.", "example": "Issue: Is the defendant liable for negligence? Rule: Negligence requires duty, breach, causation, and damages. Application: The defendant owed a duty of care, breached it by speeding, which caused the plaintiff’s injury. Conclusion: Yes, the defendant is liable for negligence." }, { "name": "CRAC", "acronym": "Conclusion, Rule, Application, Conclusion", "best_domain": "Law (Persuasive Writing)", "why_it_shines": "Starts with the conclusion, making arguments immediately clear and persuasive. Preferred for briefs and motions.", "example": "Conclusion: The contract is void. Rule: A contract requires mutual assent. Application: There was no mutual assent because the defendant was intoxicated. Conclusion: Therefore, the contract is void due to lack of mutual assent." }, { "name": "CREAC", "acronym": "Conclusion, Rule, Explanation, Application, Conclusion", "best_domain": "Law (Complex Legal Analysis)", "why_it_shines": "Adds an 'Explanation' step to clarify complex rules with case examples, enhancing depth and understanding.", "example": "Conclusion: The search was unconstitutional. Rule: Warrantless searches violate the Fourth Amendment. Explanation: In Mapp v. Ohio, evidence from illegal searches was excluded. Application: Police entered without a warrant. Conclusion: The evidence must be suppressed." }, { "name": "FIRAC", "acronym": "Facts, Issue, Rule, Application, Conclusion", "best_domain": "Law (Case Briefing & Detailed Analysis)", "why_it_shines": "Begins with a detailed facts section, making it ideal for thorough case analysis and legal writing where factual context is critical.", "example": "Facts: The plaintiff slipped on a wet floor. Issue: Was the store owner negligent? Rule: Property owners must warn of known hazards. Application: The owner knew the floor was wet but didn’t place a sign. Conclusion: Yes, the owner was negligent." }, { "name": "ALAC", "acronym": "Answer, Legal Basis, Application, Conclusion", "best_domain": "Law (Bar Exams - e.g., Philippines)", "why_it_shines": "Concise and direct, perfect for time-pressured bar exams where clarity and speed are essential.", "example": "Answer: Yes. Legal Basis: Under the Family Code, spouses have a duty to support each other. Application: The husband refused to provide financial support. Conclusion: The husband violated his legal duty." }, { "name": "TREACC", "acronym": "Topic, Rule, Explanation, Application, Counterargument, Conclusion", "best_domain": "Law (Appellate Briefs)", "why_it_shines": "Includes a 'Counterargument' section, making it highly effective for persuasive appellate writing where addressing opposing views is crucial.", "example": "Topic: First Amendment rights. Rule: Speech is protected unless it incites violence. Explanation: Brandenburg v. Ohio set this standard. Application: The speech was political, not inciting. Counterargument: The state claims it was threatening. Rebuttal: No imminent lawless action was evident. Conclusion: The speech is protected." } ] }

@@ -1,124 +1,103 @@
-"""
-src/core/Embedder.py
---------------------
-Converts chunks into embedding vectors using e5-small (default).
 
-e5-small specifics
-------------------
-intfloat/e5-small-v2 was trained with task prefixes — skipping them
-tanks retrieval quality significantly:
+"""
+src/core/Embedding/Embedder.py
+------------------------------
+Converts chunked document text into embedding vectors using
+SentenceTransformers models (default: e5-small-v2).
+
+Designed for Retrieval-Augmented Generation (RAG) pipelines where
+chunk-level semantic search is required.
+
+Model behavior (e5 family)
+-------------------------
+e5 models are trained with asymmetric prefixes. Using them correctly
+is critical for retrieval quality:
 
     passage: {chunk text}   → used when embedding document chunks
-    query:   {query text}   → used when embedding a search query
+    query:   {query text}   → used when embedding search queries
 
-Always use _prefix_passage() before embedding chunks.
-Always use _prefix_query() before embedding a query.
+This module enforces that:
+- chunk.clean is always prefixed with "passage:"
+- queries are prefixed with "query:"
 
-Both are exported so the search layer can use _prefix_query directly.
+Failing to apply these prefixes will significantly degrade search accuracy.
 
 Pipeline
 --------
-    chunks → batch → encode → L2 normalize → np.float32 array
+    chunks (Chunk.clean)
+        → prefix_passage()
+        → batch encoding (SentenceTransformer)
+        → L2 normalization
+        → float32 numpy array
 
-L2 normalization means cosine similarity at search time is just a
-dot product — no division needed, faster on CPU.
+L2 normalization ensures cosine similarity reduces to a dot product,
+which improves retrieval speed and simplifies scoring.
 
 Batching
 --------
-Batch size is configurable. On CPU:
-    batch_size=32  → safe for 8GB RAM
-    batch_size=64  → fine for 16GB+ RAM
-    batch_size=16  → conservative for low-end hardware
+Batch size is configurable depending on hardware:
 
-The model is lazy-loaded on first call and cached for the session.
-Not reloaded between documents.
+    batch_size=32  → safe default (≈8GB RAM)
+    batch_size=64  → faster on higher memory systems
+    batch_size=16  → conservative fallback
 
-Config integration
+Model Loading
+-------------
+Models are:
+- lazily loaded on first use
+- cached per session (no reload between documents)
+
+Model resolution supports:
+- short names via MODEL_REGISTRY (e.g. "e5-small")
+- direct HuggingFace model IDs
+
+Outputs
+-------
+- Chunk embeddings: np.ndarray (N, D)
+- Query embedding: np.ndarray (D,)
+
+For e5-small-v2:
+    D = 384
+
+Storage Integration
 ------------------
-Reads embedding_model from DarwinStore config (default: e5-small).
-Model name stored in config so DarwinStore can version the .npz files
-correctly per model.
+Embeddings are saved via DarwinStore as .npz bundles alongside chunks.
+
+The embedding model name is stored in config to:
+- version embeddings correctly
+- prevent mixing incompatible vector spaces
+
+Entry Points
+------------
+embed_chunks(chunks)
+    → embeds document chunks
+
+embed_query(query)
+    → embeds search query
+
+run_embedding_pipeline(...)
+    → full pipeline: chunk → embed → store
+
+Notes
+-----
+- Always embed chunk.clean, not chunk.text (clean removes markdown noise)
+- Embeddings are normalized in-model (normalize_embeddings=True)
+- Output is cast to float32 to reduce memory footprint
 """
 
 import numpy as np
 from pathlib import Path
 from typing import List, Optional
 
-from src.core.Chunker import Chunk
+from src.core.Chunking.Chunker import Chunk
 from src.lib.Terminal import TerminalUI
-
-
-# ============================================================================
-# Constants
-# ============================================================================
-
-DEFAULT_MODEL      = "intfloat/e5-small-v2"
-DEFAULT_BATCH_SIZE = 32
-
-# model registry — maps short config name → HuggingFace model id
-MODEL_REGISTRY = {
-    "e5-small":  "intfloat/e5-small-v2",
-    "e5-small-v2": "intfloat/e5-small-v2",
-}
-
-
-# ============================================================================
-# e5 prefix helpers
-# These must be used consistently — passages during indexing,
-# queries during search. Asymmetric by design.
-# ============================================================================
-
-def prefix_passage(text: str) -> str:
-    """Prepend passage prefix for e5 models. Use when embedding chunks."""
-    return f"passage: {text}"
-
-
-def prefix_query(text: str) -> str:
-    """Prepend query prefix for e5 models. Use when embedding search queries."""
-    return f"query: {text}"
-
-
-# ============================================================================
-# Model loader — lazy, cached per session
-# ============================================================================
-
-_model_cache: dict = {}
-
-
-def _load_model(model_id: str):
-    """
-    Lazy load a SentenceTransformer model.
-    Cached by model_id so it's only loaded once per session.
-    """
-    if model_id in _model_cache:
-        return _model_cache[model_id]
-
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        raise ImportError(
-            "sentence-transformers is required for embedding. "
-            "Install with: pip install sentence-transformers"
-        )
-
-    t = TerminalUI.timer(f"load_model:{model_id.split('/')[-1]}")
-    TerminalUI.dim(f"Loading embedding model: {model_id}")
-
-    model = SentenceTransformer(model_id)
-    _model_cache[model_id] = model
-
-    t.done()
-    return model
-
-
-def _resolve_model_id(model_name: str) -> str:
-    """
-    Resolve a short config name to a HuggingFace model id.
-    Falls back to treating the name as a full model id if not in registry.
-    """
-    return MODEL_REGISTRY.get(model_name.lower(), model_name)
-
-
+from src.core.Embedding.EmbedderUtils import (
+    DEFAULT_BATCH_SIZE,
+    prefix_passage,
+    resolve_model_id,
+    load_model,
+    prefix_query,
+)
 # ============================================================================
 # Core embedding function
 # ============================================================================
@@ -147,8 +126,8 @@ def embed_chunks(
     if not chunks:
         return np.array([], dtype=np.float32)
 
-    model_id = _resolve_model_id(model_name)
-    model    = _load_model(model_id)
+    model_id = resolve_model_id(model_name)
+    model    = load_model(model_id)
 
     # apply e5 passage prefix to clean text
     texts = [prefix_passage(c.clean) for c in chunks]
@@ -202,8 +181,8 @@ def embed_query(
     Returns:
         np.ndarray shape (384,) for e5-small-v2
     """
-    model_id = _resolve_model_id(model_name)
-    model    = _load_model(model_id)
+    model_id = resolve_model_id(model_name)
+    model    = load_model(model_id)
 
     prefixed = prefix_query(query)
 
