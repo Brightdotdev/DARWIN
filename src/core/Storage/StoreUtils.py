@@ -3,6 +3,7 @@ import hashlib
 import re
 from datetime import datetime
 from dataclasses import dataclass, asdict, field
+import json
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -61,6 +62,23 @@ def file_hash(path: Path) -> str:
 def now() -> str:
     return datetime.now().isoformat()
 
+
+
+
+# ── JSON helpers ───────────────────────────────────────────────────────────
+
+def write_json(path: Path, data: dict) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+def read_json(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 

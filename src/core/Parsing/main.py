@@ -166,7 +166,7 @@ def parse_documents(
 
 # ── High-level handler ─────────────────────────────────────────────────────────
 
-def handle_parsing(args: ParsingArgs) -> None:
+def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
 
 
     TerminalUI.loading_with_ascii()
@@ -235,6 +235,8 @@ def handle_parsing(args: ParsingArgs) -> None:
     TerminalUI.blank()
     TerminalUI.success(f"done — {succeeded} parsed · {failed} failed")
     TerminalUI.print_project_status(store)
+    return docs
+
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
@@ -251,7 +253,7 @@ def main() -> int:
     parser.add_argument("--project",   "-p", default=None,        help="Project directory (default: cwd)")
     parser.add_argument("--file",      "-f", default=None,        help="Parse a single file instead of a directory")
     parser.add_argument("--precise",         action="store_true", help="Use pymupdf4llm for layout-accurate extraction (slower)")
-    parser.add_argument("--save",         action="store_true", help="Save markdown files")
+    parser.add_argument("--save",        default=True, help="Save markdown files")
 
     args = parser.parse_args()
 

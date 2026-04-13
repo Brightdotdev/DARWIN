@@ -410,3 +410,59 @@ class TerminalUI:
 
         cls.console.print()
         cls.rule()
+    
+    @classmethod
+    def table(cls, headers: List[str], rows: List[List[str]], title: str = "") -> None:
+        """
+        Display a formatted table using Rich.
+        
+        Args:
+            headers: Column headers
+            rows: List of rows, each row is a list of strings
+            title: Optional table title (shown in panel header)
+        """
+        t = Table(show_header=True, header_style="bold cyan", title=title or None)
+        
+        for header in headers:
+            t.add_column(header)
+        
+        for row in rows:
+            # Pad row if it has fewer columns than headers
+            padded = row + [""] * (len(headers) - len(row))
+            t.add_row(*padded)
+    
+        cls.console.print(t)
+
+    
+    @classmethod
+    def divider(
+        cls, 
+        text: str = "", 
+        style: str = "dim", 
+        char: str = "─",
+        width: Optional[int] = None
+    ) -> None:
+        """
+        Print a horizontal divider, optionally with centered text.
+        
+        Args:
+            text: Optional text to center in the divider
+            style: Rich style string
+            char: Character to repeat for the line
+            width: Width of the line (defaults to console width)
+        """
+        if width is None:
+            width = cls.console.width or 80
+        
+        if text:
+            # Center text with divider chars on both sides
+            text = f" {text} "
+            padding = (width - len(text)) // 2
+            line = (char * padding) + text + (char * padding)
+            # Handle odd width
+            if len(line) < width:
+                line += char
+        else:
+            line = char * width
+        
+        cls.console.print(f"[{style}]{line}[/{style}]")

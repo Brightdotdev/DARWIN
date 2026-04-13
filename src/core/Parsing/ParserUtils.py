@@ -84,6 +84,7 @@ LARGE_HEADING_RATIO = 1.50
 TABLE_X_SPREAD      = 0.35
 TABLE_MIN_SPANS     = 3
 COLUMN_BUCKETS      = 2
+TABLE_Y_GAP_RATIO   = 2.5 
 
 
 # ============================================================================
@@ -116,7 +117,7 @@ class ParsingArgs:
     rerun:       bool = False
     file:        Optional[str] = None
     precise:     bool = False         # ← new: use pymupdf4llm instead of fitz
-    save : bool = False
+    save : bool = True
 
 
 @dataclass
@@ -186,6 +187,164 @@ def normalize_image_path(img_path: Path, project_dir: Path) -> str:
         return img_path.name
 
 
+
+
+def _is_table_block(all_spans: List[dict], page_w: float) -> bool:
+    """
+    Distinguish actual tables from multi-column text layouts.
+    
+    Key differences:
+    - Tables: tight vertical clustering, grid-like structure, similar line counts per cell
+    - Columns: continuous flowing text, variable line counts, paragraph breaks
+    """
+    if len(all_spans) < TABLE_MIN_SPANS:
+        return False
+    
+    spans = [s for s in all_spans if s.get("text", "").strip()]
+    if len(spans) < TABLE_MIN_SPANS:
+        return False
+    
+    # Get bounding boxes
+    xs = [s.get("bbox", [0, 0, 0, 0])[0] for s in spans]
+    ys = [s.get("bbox", [0, 0, 0, 0])[1] for s in spans]
+    
+    x_range = (max(xs) - min(xs)) / max(page_w, 1.0)
+    
+    # Cluster into rows
+    rows = _cluster_rows(spans)
+    row_count = len(rows)
+    
+    if row_count < 2:
+        return False
+    
+    # ─────────────────────────────────────────────────────────────
+    # KEY DISTINCTION: Column detection vs Table detection
+    # ─────────────────────────────────────────────────────────────
+    
+    # 1. Check for vertical gaps (paragraph breaks) - columns have them, tables don't
+    y_gaps = []
+    for i in range(1, len(rows)):
+        prev_row_max_y = max(s.get("bbox", [0, 0, 0, 0])[3] for s in rows[i-1])
+        curr_row_min_y = min(s.get("bbox", [0, 0, 0, 0])[1] for s in rows[i])
+        gap = curr_row_min_y - prev_row_max_y
+        if gap > 0:
+            y_gaps.append(gap)
+    
+    # Columns have irregular large gaps (paragraphs). Tables have uniform small gaps.
+    if y_gaps:
+        avg_gap = sum(y_gaps) / len(y_gaps)
+        max_gap = max(y_gaps)
+        # If there's a gap > 2x average, it's probably column text with paragraphs
+        if max_gap > avg_gap * 2.5:
+            return False
+    
+    # 2. Check span count per row - tables are uniform, columns vary
+    spans_per_row = [len(row) for row in rows]
+    if spans_per_row:
+        avg_spans = sum(spans_per_row) / len(spans_per_row)
+        # High variance in spans per row = flowing text, not tabular data
+        variance = sum((s - avg_spans) ** 2 for s in spans_per_row) / len(spans_per_row)
+        if variance > avg_spans * 2:  # Too irregular to be a table
+            return False
+    
+    # 3. Check X-position clustering - tables have clear column boundaries
+    x_positions = sorted(set(round(x, 0) for x in xs))
+    if len(x_positions) > 20:  # Too many X positions = scattered, not tabular
+        return False
+    
+    # 4. Check for table-like row alignment
+    # Tables: each row has spans at similar X positions
+    # Columns: X positions drift as text flows
+    row_x_sets = []
+    for row in rows:
+        row_xs = sorted(s.get("bbox", [0, 0, 0, 0])[0] for s in row)
+        row_x_sets.append(tuple(round(x, 0) for x in row_xs))
+    
+    # Count how many rows share the same X pattern
+    from collections import Counter
+    pattern_counts = Counter(row_x_sets)
+    most_common_count = pattern_counts.most_common(1)[0][1] if pattern_counts else 0
+    
+    # If < 50% of rows share the same column pattern, it's not a table
+    if most_common_count < row_count * 0.5:
+        return False
+    
+    # 5. Original checks (still useful)
+    col_count = len(set(round(x, 1) for x in xs))
+    
+    return (
+        x_range > TABLE_X_SPREAD
+        and row_count >= 2
+        and col_count >= 3
+    )
+
+
+def _cluster_rows(all_spans: List[dict], y_threshold: float = 3.0) -> List[List[dict]]:
+    """
+    Groups spans into rows using Y-axis proximity.
+    Improved: uses span height to determine threshold dynamically.
+    """
+    spans = [s for s in all_spans if s.get("text", "").strip()]
+    if not spans:
+        return []
+    
+    # Sort by Y position
+    spans.sort(key=lambda s: s.get("bbox", [0, 0, 0, 0])[1])
+    
+    # Calculate dynamic threshold based on average span height
+    heights = []
+    for s in spans:
+        bbox = s.get("bbox", [0, 0, 0, 0])
+        heights.append(bbox[3] - bbox[1])
+    
+    avg_height = sum(heights) / len(heights) if heights else 10
+    dynamic_threshold = avg_height * 0.4  # 40% of line height
+    
+    rows: List[List[dict]] = []
+    
+    for span in spans:
+        y = span.get("bbox", [0, 0, 0, 0])[1]
+        placed = False
+        
+        for row in rows:
+            row_y = sum(s.get("bbox", [0, 0, 0, 0])[1] for s in row) / len(row)
+            
+            if abs(y - row_y) <= max(y_threshold, dynamic_threshold):
+                row.append(span)
+                placed = True
+                break
+        
+        if not placed:
+            rows.append([span])
+    
+    return rows
+
+
+
+
+
+
+def _format_table(rows: List[List[dict]]) -> str:
+    """
+    Converts clustered rows into clean structured text.
+    """
+
+    formatted_rows = []
+
+    for row in rows:
+        # sort left → right inside row
+        row = sorted(row, key=lambda s: s.get("bbox", [0, 0, 0, 0])[0])
+
+        cells = [
+            s.get("text", "").strip()
+            for s in row
+            if s.get("text", "").strip()
+        ]
+
+        if cells:
+            formatted_rows.append(" ".join(cells))
+
+    return "\n".join(formatted_rows)
 # ============================================================================
 # _fitz_extract — FAST MODE
 # get_text("dict") + our own post-processor. Seconds for any PDF.
@@ -342,22 +501,25 @@ def _fitz_extract(
 
             # ── table detection ───────────────────────────────────────────────
             all_spans = [s for ln in lines for s in ln.get("spans", [])]
-            is_table  = False
-            if len(all_spans) >= TABLE_MIN_SPANS:
-                xs      = [s.get("bbox", [0])[0] for s in all_spans]
-                x_range = (max(xs) - min(xs)) / page_w
-                is_table = x_range > TABLE_X_SPREAD
+            is_table = _is_table_block(all_spans, page_w)
+
+
 
             if is_table:
-                raw = " | ".join(
-                    s.get("text", "").strip()
-                    for s in all_spans if s.get("text", "").strip()
-                )
-                if raw:
-                    display_parts.append(f"\n\n{raw}\n\n")
-                    embedding_parts.append(f"\n\n[Table] {raw}\n\n")
+
+                rows = _cluster_rows(
+                sorted(all_spans, key=lambda s: s.get("bbox", [0, 0, 0, 0])[1]))
+
+
+                table_text = _format_table(rows)
+
+                if table_text.strip():
+                    display_parts.append(f"\n\n[TABLE]\n{table_text}\n\n[/TABLE]\n")
+                    embedding_parts.append(f"\n\n[Table]\n{table_text}\n\n")
+
                 prev_was_image = False
                 continue
+           
 
             # ── regular text ──────────────────────────────────────────────────
             block_display:   List[str] = []
