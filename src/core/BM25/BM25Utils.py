@@ -96,7 +96,6 @@ def tokenize_text(
             # Filter: length, digits, stopwords
             if (len(w_lower) >= MIN_TOKEN_LENGTH and
                 w_lower not in standard_stops and
-                w_lower not in domain_stops and
                 not w_lower.isdigit()):
                 tokens.append(w_lower)
         
@@ -106,7 +105,7 @@ def tokenize_text(
         # Fallback to simple regex (should never happen, but graceful)
         TerminalUI.warn("BlingFire not available, using regex fallback")
         words = re.findall(r"[a-zA-Z]{2,}", text.lower())
-        return [w for w in words if w not in standard_stops and w not in domain_stops]
+        return [w for w in words if w not in standard_stops ]
 
 
 def tokenize_chunks(

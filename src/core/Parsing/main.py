@@ -59,6 +59,7 @@ def parse_document(
     caption_images: bool = False,
     project_dir: Optional[Path] = None,
     precise: bool = False,
+    args: Optional[ParsingArgs] = None,
 ) -> ParsedDocument:
     """
     Parse one document. Runs inside a subprocess.
@@ -79,7 +80,7 @@ def parse_document(
             images_dir=path_with_images.image_dir,
             caption=caption_images,
             project_dir=project_dir,
-            progress_callback=progress_callback,
+            progress_callback= progress_callback if args.inspect else progress_callback,
             precise=precise,
         )
     except Exception as e:
@@ -101,6 +102,7 @@ def parse_documents(
     timeout: int = PARSE_TIMEOUT_SECONDS,
     project_dir: Optional[Path] = None,
     precise: bool = False,
+    args: Optional[ParsingArgs] = None,
 ) -> list[ParsedDocument]:
     """
     Parse a list of documents in parallel using a single ProcessPoolExecutor.
@@ -146,7 +148,8 @@ def parse_documents(
                     progress_queue,  # Pass the queue
                     caption_images, 
                     project_dir, 
-                    precise
+                    precise,
+                    args
                 )
                 future_to_info[future] = (orig_idx, filename)
             
@@ -224,7 +227,11 @@ def parse_documents(
 def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
 
 
-    TerminalUI.loading_with_ascii()
+    TerminalUI.print_darwin()
+    TerminalUI.blank()
+    TerminalUI.bold(f"Parsing {args.target}")
+    TerminalUI.dim(f"Images: {args.images} | Rerun: {args.rerun} | Recursive: {args.recursive} | Timeout: {args.timeout}")
+    TerminalUI.blank()
     
 
 
@@ -262,10 +269,13 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
     ]
 
     docs = parse_documents(
+
         files,
         caption_images = args.caption,
         project_dir    = store.project_dir,
         precise        = args.precise,     # ← thread through
+        args=args
+
     )
 
     succeeded = failed = 0
@@ -295,12 +305,13 @@ def main() -> int:
     parser.add_argument("path",        nargs="?", default=".",    help="File or directory to parse")
     parser.add_argument("--rerun",     "-R", action="store_true", help="Reprocess cached files")
     parser.add_argument("--recursive", "-r", action="store_true", help="Scan directories recursively")
-    parser.add_argument("--images",    "-i", action="store_true", help="Extract images")
+    parser.add_argument("--images",    "-img", action="store_true", help="Extract images")
     parser.add_argument("--caption",   "-c", action="store_true", help="Generate captions (requires --images)")
     parser.add_argument("--project",   "-p", default=None,        help="Project directory (default: cwd)")
     parser.add_argument("--file",      "-f", default=None,        help="Parse a single file instead of a directory")
     parser.add_argument("--precise",         action="store_true", help="Use pymupdf4llm for layout-accurate extraction (slower)")
     parser.add_argument("--save",        default=True, help="Save markdown files")
+    parser.add_argument("--inspect",  "-i",       default=True, help="Watch parsing progress")
 
     args = parser.parse_args()
 
@@ -313,7 +324,8 @@ def main() -> int:
         rerun       = args.rerun,
         file        = args.file,
         precise     = args.precise,    # ← new
-        save        = args.save
+        save        = args.save,
+        inspect=args.inspect
     ))
 
     return 0

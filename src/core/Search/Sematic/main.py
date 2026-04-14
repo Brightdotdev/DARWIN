@@ -103,6 +103,8 @@ def handle_search(args: SearchArgs) -> None:
     config = store.load_config()
     model_name = config.get("embedding_model", args.model)
     
+    TerminalUI.print_darwin()
+    TerminalUI.blank()
     TerminalUI.bold(f"Searching: '{args.query}'")
     TerminalUI.dim(f"Model: {model_name} | Top-K: {args.top_k}")
     TerminalUI.blank()

@@ -127,6 +127,12 @@ def _print_chunk(chunk: Chunk) -> None:
 def handle_chunking(args: ChunkingArgs) -> None:
     store = DarwinStore(Path(args.project) if args.project else Path.cwd())
 
+
+    TerminalUI.print_darwin()
+    TerminalUI.blank()
+    TerminalUI.bold("Chunking")
+    TerminalUI.dim(f"Model: {args.model} | Rerun: {args.rerun} | Inspect: {args.inspect}")
+    TerminalUI.blank()
     # resolve which files to chunk
     if args.file:
         filenames = [args.file]

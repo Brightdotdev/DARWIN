@@ -117,6 +117,7 @@ class ParsingArgs:
     file:        Optional[str] = None
     precise:     bool = False         # ← new: use pymupdf4llm instead of fitz
     save : bool = True
+    inspect : bool = False
 
 
 @dataclass

@@ -109,7 +109,12 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
 def handle_embedding(args: EmbeddingArgs) -> None:
     store = DarwinStore(Path(args.project) if args.project else Path.cwd())
 
-    # resolve which files to embed
+    TerminalUI.print_darwin()
+    TerminalUI.blank()
+    TerminalUI.bold("Embedding")
+    TerminalUI.dim(f"Model: {args.model} | Rerun: {args.rerun} | Inspect: {args.inspect}")
+    TerminalUI.blank()  
+    # resolve which files to embed  
     if args.file:
         filenames = [args.file]
     else:

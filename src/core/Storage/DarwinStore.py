@@ -511,9 +511,9 @@ class DarwinStore:
 
     # ── BM25 ───────────────────────────────────────────────────────────────────
 
-    def save_bm25(self, filename: str, bm25_index) -> None:
+    def save_bm25(self, filename: str, bm25_index, rerun: bool = False) -> None:
         self._require_init()
-        if self.is_fresh(filename) and self.has_bm25(filename):
+        if self.is_fresh(filename) and self.has_bm25(filename) and not rerun:
             TerminalUI.bold("Skipping BM25 saving (cached index found and file is fresh)")
             return
 

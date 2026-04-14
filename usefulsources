@@ -67,7 +67,52 @@ https://openlibrary.org
 ]   
 
 
-
+{
+"frameworks": [
+{
+"name": "IRAC",
+"acronym": "Issue, Rule, Application, Conclusion",
+"best_domain": "Law (Academic & Exams)",
+"why_it_shines": "Provides a clear, neutral structure for identifying legal issues and analyzing them step-by-step. Ideal for law school exams and objective legal memos.",
+"example": "Issue: Is the defendant liable for negligence? Rule: Negligence requires duty, breach, causation, and damages. Application: The defendant owed a duty of care, breached it by speeding, which caused the plaintiff’s injury. Conclusion: Yes, the defendant is liable for negligence."
+},
+{
+"name": "CRAC",
+"acronym": "Conclusion, Rule, Application, Conclusion",
+"best_domain": "Law (Persuasive Writing)",
+"why_it_shines": "Starts with the conclusion, making arguments immediately clear and persuasive. Preferred for briefs and motions.",
+"example": "Conclusion: The contract is void. Rule: A contract requires mutual assent. Application: There was no mutual assent because the defendant was intoxicated. Conclusion: Therefore, the contract is void due to lack of mutual assent."
+},
+{
+"name": "CREAC",
+"acronym": "Conclusion, Rule, Explanation, Application, Conclusion",
+"best_domain": "Law (Complex Legal Analysis)",
+"why_it_shines": "Adds an 'Explanation' step to clarify complex rules with case examples, enhancing depth and understanding.",
+"example": "Conclusion: The search was unconstitutional. Rule: Warrantless searches violate the Fourth Amendment. Explanation: In Mapp v. Ohio, evidence from illegal searches was excluded. Application: Police entered without a warrant. Conclusion: The evidence must be suppressed."
+},
+{
+"name": "FIRAC",
+"acronym": "Facts, Issue, Rule, Application, Conclusion",
+"best_domain": "Law (Case Briefing & Detailed Analysis)",
+"why_it_shines": "Begins with a detailed facts section, making it ideal for thorough case analysis and legal writing where factual context is critical.",
+"example": "Facts: The plaintiff slipped on a wet floor. Issue: Was the store owner negligent? Rule: Property owners must warn of known hazards. Application: The owner knew the floor was wet but didn’t place a sign. Conclusion: Yes, the owner was negligent."
+},
+{
+"name": "ALAC",
+"acronym": "Answer, Legal Basis, Application, Conclusion",
+"best_domain": "Law (Bar Exams - e.g., Philippines)",
+"why_it_shines": "Concise and direct, perfect for time-pressured bar exams where clarity and speed are essential.",
+"example": "Answer: Yes. Legal Basis: Under the Family Code, spouses have a duty to support each other. Application: The husband refused to provide financial support. Conclusion: The husband violated his legal duty."
+},
+{
+"name": "TREACC",
+"acronym": "Topic, Rule, Explanation, Application, Counterargument, Conclusion",
+"best_domain": "Law (Appellate Briefs)",
+"why_it_shines": "Includes a 'Counterargument' section, making it highly effective for persuasive appellate writing where addressing opposing views is crucial.",
+"example": "Topic: First Amendment rights. Rule: Speech is protected unless it incites violence. Explanation: Brandenburg v. Ohio set this standard. Application: The speech was political, not inciting. Counterargument: The state claims it was threatening. Rebuttal: No imminent lawless action was evident. Conclusion: The speech is protected."
+}
+]
+}
 
 
 
