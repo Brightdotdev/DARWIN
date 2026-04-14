@@ -92,81 +92,71 @@ from typing import List, Optional
 from src.core.Chunking.Chunker import Chunk
 from src.lib.Terminal import TerminalUI
 from src.core.Embedding.EmbedderUtils import (
-    DEFAULT_BATCH_SIZE,
     prefix_passage,
-    resolve_model_id,
-    load_model,
     prefix_query,
+)
+from src.core.Embedding.EmbeddingModel import (
+    DEFAULT_BATCH_SIZE,
+    load_model,
+    get_optimal_batch_size,
+    DEFAULT_MODEL
+
 )
 # ============================================================================
 # Core embedding function
 # ============================================================================
 
+
 def embed_chunks(
     chunks:     List[Chunk],
-    model_name: str = "e5-small",
+    file_name : str,
+    model_name: str,
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> np.ndarray:
-    """
-    Embed a list of chunks using e5-small (or configured model).
-
-    Uses chunk.clean (stripped plain text) for embedding — not chunk.text.
-    Applies e5 passage prefix before encoding.
-    Returns L2-normalized float32 vectors.
-
-    Args:
-        chunks:     list of Chunk objects from chunk_document()
-        model_name: short name from MODEL_REGISTRY or full HF model id
-        batch_size: chunks per batch — lower if running out of RAM
-
-    Returns:
-        np.ndarray shape (len(chunks), embedding_dim)
-        e5-small-v2 embedding_dim = 384
-    """
     if not chunks:
         return np.array([], dtype=np.float32)
 
-    model_id = resolve_model_id(model_name)
-    model    = load_model(model_id)
 
-    # apply e5 passage prefix to clean text
+    model    = load_model(model_name)
+
+    # 1. Prepare all texts at once
     texts = [prefix_passage(c.clean) for c in chunks]
+    n_batches = (len(texts) + batch_size - 1) // batch_size
+    TerminalUI.dim(f"The optimal batch size is: {get_optimal_batch_size(batch_size)}")
 
-    t = TerminalUI.timer("embed_chunks")
-    TerminalUI.dim(f"Embedding {len(chunks)} chunks in batches of {batch_size}...")
+    # 2. Use our cool new Live Tracker
+    with TerminalUI.track_embedding(n_batches, model_name=model_name.split('/')[-1],file_name=file_name) as update_progress:
+        
+        # We still loop so we can update the UI, but we let 
+        # SentenceTransformers handle the internal optimization
+        all_vectors = []
+        
+        for i in range(0, len(texts), batch_size):
+            batch_num = i // batch_size + 1
+            batch = texts[i : i + batch_size]
+            
+            update_progress(batch_num, msg=f"Encoding batch {batch_num}...")
 
-    all_vectors = []
-    n_batches   = (len(texts) + batch_size - 1) // batch_size
+            vecs = model.encode(
+                batch,
+                batch_size           = len(batch),
+                show_progress_bar    = False, # We have our own cool bar now
+                convert_to_numpy     = True,
+                normalize_embeddings = True,
+            )
+            all_vectors.append(vecs)
 
-    for i in range(0, len(texts), batch_size):
-        batch      = texts[i : i + batch_size]
-        batch_num  = i // batch_size + 1
-
-        if batch_num % 5 == 0 or batch_num == 1 or batch_num == n_batches:
-            TerminalUI.dim(f"  batch {batch_num}/{n_batches}")
-
-        vecs = model.encode(
-            batch,
-            batch_size        = len(batch),
-            show_progress_bar = False,
-            convert_to_numpy  = True,
-            normalize_embeddings = True,   # L2 normalize in-model
-        )
-        all_vectors.append(vecs)
-
-    t.split("encoding")
-
+    # 3. Finalize
     vectors = np.vstack(all_vectors).astype(np.float32)
-
-    t.done()
-    TerminalUI.success(f"Embedded {len(chunks)} chunks → shape {vectors.shape}")
-
+    TerminalUI.success(f"Embedded {len(chunks)} chunks -> {vectors.shape}")
+    
     return vectors
+
 
 
 def embed_query(
     query:      str,
-    model_name: str = "e5-small",
+    model_name: str,
 ) -> np.ndarray:
     """
     Embed a single search query.
@@ -181,8 +171,8 @@ def embed_query(
     Returns:
         np.ndarray shape (384,) for e5-small-v2
     """
-    model_id = resolve_model_id(model_name)
-    model    = load_model(model_id)
+    
+    model    = load_model(model_name)
 
     prefixed = prefix_query(query)
 
@@ -203,8 +193,7 @@ def embed_query(
 def run_embedding_pipeline(
     filename:   str,
     chunks:     List[Chunk],
-    store,                      # DarwinStore instance
-    model_name: str = "e5-small",
+    store,
     batch_size: int = DEFAULT_BATCH_SIZE,
     rerun:      bool = False,
 ) -> Optional[np.ndarray]:
@@ -233,14 +222,14 @@ def run_embedding_pipeline(
     if not rerun and store.is_fresh(filename) and store.has_embeddings(filename):
         TerminalUI.dim(f"Skipping embedding: fresh index exists for {filename}")
         return None
+    
+    config = store.load_config()
+    model_name = config.get("embedding_model", DEFAULT_MODEL)
 
     TerminalUI.bold(f"Embedding {filename} ({len(chunks)} chunks)")
 
-    vectors = embed_chunks(chunks, model_name=model_name, batch_size=batch_size)
+    vectors = embed_chunks(chunks,filename, model_name=model_name, batch_size=batch_size)
 
     store.save_embeddings(filename, vectors, chunks, rerun=rerun)
-
-    # update config so DarwinStore versions future .npz files correctly
-    store.update_config(embedding_model=model_name)
 
     return vectors

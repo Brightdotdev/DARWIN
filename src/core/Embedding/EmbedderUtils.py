@@ -65,24 +65,9 @@ Notes
 - Designed to be lightweight and dependency-isolated
 """
 
-from src.lib.Terminal import TerminalUI
 from typing import Optional
 from dataclasses import dataclass
-
-
-# ============================================================================
-# Constants
-# ============================================================================
-
-DEFAULT_MODEL      = "intfloat/e5-small-v2"
-DEFAULT_BATCH_SIZE = 32
-
-# model registry — maps short config name → HuggingFace model id
-MODEL_REGISTRY = {
-    "e5-small":  "intfloat/e5-small-v2",
-    "e5-small-v2": "intfloat/e5-small-v2",
-}
-
+from src.core.Embedding.EmbeddingModel import (DEFAULT_BATCH_SIZE,DEFAULT_MODEL)
 
 
 # ============================================================================
@@ -94,7 +79,7 @@ class EmbeddingArgs:
     target:     str
     file:       Optional[str] = None
     project:    Optional[str] = None
-    model:      str  = "e5-small"
+    model:       str  = DEFAULT_MODEL
     batch_size: int  = DEFAULT_BATCH_SIZE
     inspect:    bool = False
     rerun:      bool = False
@@ -113,45 +98,4 @@ def prefix_passage(text: str) -> str:
 def prefix_query(text: str) -> str:
     """Prepend query prefix for e5 models. Use when embedding search queries."""
     return f"query: {text}"
-
-
-# ============================================================================
-# Model loader — lazy, cached per session
-# ============================================================================
-
-_model_cache: dict = {}
-
-
-def load_model(model_id: str):
-    """
-    Lazy load a SentenceTransformer model.
-    Cached by model_id so it's only loaded once per session.
-    """
-    if model_id in _model_cache:
-        return _model_cache[model_id]
-
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        raise ImportError(
-            "sentence-transformers is required for embedding. "
-            "Install with: pip install sentence-transformers"
-        )
-
-    t = TerminalUI.timer(f"load_model:{model_id.split('/')[-1]}")
-    TerminalUI.dim(f"Loading embedding model: {model_id}")
-
-    model = SentenceTransformer(model_id)
-    _model_cache[model_id] = model
-
-    t.done()
-    return model
-
-
-def resolve_model_id(model_name: str) -> str:
-    """
-    Resolve a short config name to a HuggingFace model id.
-    Falls back to treating the name as a full model id if not in registry.
-    """
-    return MODEL_REGISTRY.get(model_name.lower(), model_name)
 

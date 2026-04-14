@@ -66,11 +66,9 @@ Design Notes
 - Methods are safe to call repeatedly (idempotent where possible)
 """
 
-import json
+
 import pickle
-import hashlib
 import shutil
-import re
 from datetime import datetime
 from pathlib import Path
 from dataclasses import asdict
@@ -161,7 +159,7 @@ class DarwinStore:
         e.g. .darwin/biology_pdf/e5_small_biology_pdf.npz
         """
         config     = self.load_config()
-        model_name = sanitize(config.get("embedding_model", "default"))
+        model_name = sanitize(config.get("embedding_model", "intfloat/e5-small-v2"))
         file_clean = sanitize(filename)
         return self._file_dir(filename) / f"{model_name}_{file_clean}.npz"
 

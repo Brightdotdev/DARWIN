@@ -466,3 +466,45 @@ class TerminalUI:
             line = char * width
         
         cls.console.print(f"[{style}]{line}[/{style}]")
+
+
+    @classmethod
+    @contextmanager
+    def track_embedding(cls, total_batches: int, model_name: str,file_name :str):
+        state = {
+            "current": 0, 
+            "status": "Initializing...", 
+            "start_time": time.perf_counter(),
+            "last_batch_time": 0.0
+        }
+
+        def _make_renderable():
+            elapsed = time.perf_counter() - state["start_time"]
+            # Avoid division by zero
+            avg_speed = elapsed / state["current"] if state["current"] > 0 else 0
+            
+            # Use standard chars if UTF-8 is failing you
+            bar_width = 30
+            filled = int(bar_width * state["current"] // total_batches)
+            # Using '#' and '-' as a fallback for the "question mark" ick
+            bar = "#" * filled + "-" * (bar_width - filled)
+            
+            pct = (state["current"] / total_batches) * 100
+            
+            content = (
+                f"[white]Model  :[/white] [cyan]{model_name}[/cyan]\n"
+                f"[white]Status :[/white] [yellow]{state['status']}[/yellow]\n"
+                f"[white]Speed  :[/white] [magenta]{avg_speed:.2f}s / batch[/magenta]\n\n"
+                f"[cyan][{bar}][/cyan] [bold]{pct:.1f}%[/bold]\n"
+                f"[dim]Completed {state['current']} of {total_batches} batches[/dim]"
+            )
+            return Panel(content, title=f"[bold]Embedding...{file_name}[/bold]", border_style="white", expand=False)
+
+        with Live(_make_renderable(), console=cls.console, refresh_per_second=4) as live:
+            def update(step: int, msg: Optional[str] = None):
+                state["current"] = step
+                if msg:
+                    state["status"] = msg
+                live.update(_make_renderable())
+            
+            yield update

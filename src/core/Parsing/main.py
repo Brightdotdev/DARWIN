@@ -48,52 +48,59 @@ from src.lib.Terminal import TerminalUI
 from src.lib.Utils import open_in_explorer
 
 
-def progress_callback(msg: str) -> None:
-    TerminalUI.dim(msg)
+
 
 
 # ── Single document parse (runs INSIDE a worker process) ──────────────────────
 
 def parse_document(
     path_with_images: FileWithImages,
-    caption_images:   bool = False,
-    project_dir:      Optional[Path] = None,
-    precise:          bool = False,    # ← new
+    progress_queue: multiprocessing.Queue,
+    caption_images: bool = False,
+    project_dir: Optional[Path] = None,
+    precise: bool = False,
 ) -> ParsedDocument:
     """
     Parse one document. Runs inside a subprocess.
-    No callbacks — closures can't be pickled on Windows.
+    Progress reported through multiprocessing.Queue (pickle-safe).
     """
     file_path = Path(path_with_images.file)
-
+    
+    def progress_callback(msg: str) -> None:
+        """Send progress updates through the queue"""
+        try:
+            progress_queue.put((file_path.name, msg))
+        except:
+            pass  # Queue might be closed, ignore
+    
     try:
         return _parse(
             file_path,
-            images_dir        = path_with_images.image_dir,
-            caption           = caption_images,
-            project_dir       = project_dir,
-            progress_callback = progress_callback,
-            precise           = precise,        
+            images_dir=path_with_images.image_dir,
+            caption=caption_images,
+            project_dir=project_dir,
+            progress_callback=progress_callback,
+            precise=precise,
         )
     except Exception as e:
         return ParsedDocument(
-            display_text   = "",
-            embedding_text = "",
-            filename       = file_path.name,
-            page_count     = 0,
-            file_type      = detect_type(file_path) or "unknown",
-            error          = f"{type(e).__name__}: {e}",
+            display_text="",
+            embedding_text="",
+            filename=file_path.name,
+            page_count=0,
+            file_type=detect_type(file_path) or "unknown",
+            error=f"{type(e).__name__}: {e}",
         )
+    
 
 
 # ── Parallel document parsing ──────────────────────────────────────────────────
-
 def parse_documents(
-    files:          list[FileWithImages],
+    files: list[FileWithImages],
     caption_images: bool = False,
-    timeout:        int  = PARSE_TIMEOUT_SECONDS,
-    project_dir:    Optional[Path] = None,
-    precise:        bool = False,      # ← new
+    timeout: int = PARSE_TIMEOUT_SECONDS,
+    project_dir: Optional[Path] = None,
+    precise: bool = False,
 ) -> list[ParsedDocument]:
     """
     Parse a list of documents in parallel using a single ProcessPoolExecutor.
@@ -101,68 +108,116 @@ def parse_documents(
     if not files:
         return []
     
-
     time = TerminalUI.timer("Loading files")
     file_names = [Path(fw.file).name for fw in files]
-    if len(file_names) <= 10:
-        TerminalUI.dim(f"Working on: {', '.join(file_names)}")
-    else:
-        TerminalUI.dim(f"Working on: {', '.join(file_names[:10])} ...and {len(file_names) - 10} more")
-
     total_mb = sum(Path(fw.file).stat().st_size / (1024 * 1024) for fw in files)
     mode_label = "precise" if precise else "fast"
-    time.split(msg=f"Queueing {len(files)} files ({total_mb:.1f} MB total) [{mode_label} mode]")
+    
+    TerminalUI.dim(f"Queueing {len(files)} files ({total_mb:.1f} MB total) [{mode_label} mode]")
+    time.split()
 
-    indexed   = sorted(enumerate(files), key=lambda x: Path(x[1].file).stat().st_size)
+    indexed = sorted(enumerate(files), key=lambda x: Path(x[1].file).stat().st_size)
     n_workers = min(
         len(files),
         max(1, CPU_COUNT // 2) if caption_images else CPU_COUNT,
     )
 
     results: list[Optional[ParsedDocument]] = [None] * len(files)
+    
+    # 🔥 Create a manager and queue for cross-process communication
+    import multiprocessing as mp
+    manager = mp.Manager()
+    progress_queue = manager.Queue()
+    
+    # Track completion and errors
+    completed_files = set()
+    file_errors = {}
 
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        future_to_idx = {
-            executor.submit(
-                parse_document, fw, caption_images, project_dir, precise
-            ): orig_idx
-            for orig_idx, fw in indexed
-        }
-        for future in as_completed(future_to_idx):
-            orig_idx = future_to_idx[future]
-            fw       = files[orig_idx]
-            filename = Path(fw.file).name
-
-            try:
-                doc = future.result(timeout=timeout)
-                results[orig_idx] = doc
-                if doc.error:
-                    TerminalUI.error(f"{filename} — {doc.error}")
-                else:
-                    TerminalUI.success(
-                        f"{filename} — "
-                        f"{doc.page_count} pages · "
-                        f"{len(doc.embedding_text):,} chars"
-                    )
-            except TimeoutError:
-                results[orig_idx] = ParsedDocument(
-                    display_text="", embedding_text="",
-                    filename=filename, page_count=0,
-                    file_type=detect_type(Path(fw.file)) or "unknown",
-                    error=f"timed out after {timeout}s",
+    # 🔥 Use multi-parse progress UI
+    with TerminalUI.multi_parse_progress(file_names) as get_callback:
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            # Submit all jobs with the queue
+            future_to_info = {}
+            for orig_idx, fw in indexed:
+                filename = Path(fw.file).name
+                future = executor.submit(
+                    parse_document, 
+                    fw, 
+                    progress_queue,  # Pass the queue
+                    caption_images, 
+                    project_dir, 
+                    precise
                 )
-                TerminalUI.error(f"{filename} — timed out after {timeout}s")
-            except Exception as e:
-                results[orig_idx] = ParsedDocument(
-                    display_text="", embedding_text="",
-                    filename=filename, page_count=0,
-                    file_type="unknown",
-                    error=f"worker failed: {type(e).__name__}: {e}",
-                )
-                TerminalUI.error(f"{filename} — {type(e).__name__}: {e}")
-
+                future_to_info[future] = (orig_idx, filename)
+            
+            # Process completions and queue messages
+            futures_remaining = set(future_to_info.keys())
+            
+            while futures_remaining:
+                # Check queue for progress updates
+                try:
+                    while True:  # Drain all available messages
+                        filename, msg = progress_queue.get_nowait()
+                        update_progress = get_callback(filename)
+                        update_progress(msg)
+                except:
+                    pass  # Queue empty
+                
+                # Check for completed futures (non-blocking)
+                done_futures = {f for f in futures_remaining if f.done()}
+                
+                for future in done_futures:
+                    orig_idx, filename = future_to_info[future]
+                    update_progress = get_callback(filename)
+                    
+                    try:
+                        doc = future.result(timeout=0)  # Already done, no wait
+                        results[orig_idx] = doc
+                        
+                        if doc.error:
+                            file_errors[filename] = doc.error
+                            update_progress(f"❌ {doc.error}")
+                        else:
+                            completed_files.add(filename)
+                            update_progress(
+                                f"✓ {doc.page_count} pages · {len(doc.embedding_text):,} chars"
+                            )
+                            
+                    except TimeoutError:
+                        results[orig_idx] = ParsedDocument(
+                            display_text="", embedding_text="",
+                            filename=filename, page_count=0,
+                            file_type=detect_type(Path(fw.file)) or "unknown",
+                            error=f"timed out after {timeout}s",
+                        )
+                        file_errors[filename] = f"timed out after {timeout}s"
+                        update_progress(f"❌ timed out")
+                        
+                    except Exception as e:
+                        results[orig_idx] = ParsedDocument(
+                            display_text="", embedding_text="",
+                            filename=filename, page_count=0,
+                            file_type="unknown",
+                            error=f"worker failed: {type(e).__name__}: {e}",
+                        )
+                        file_errors[filename] = f"{type(e).__name__}: {e}"
+                        update_progress(f"❌ {type(e).__name__}")
+                    
+                    futures_remaining.remove(future)
+                
+                # Small sleep to prevent CPU spinning
+                if futures_remaining:
+                    time.sleep(0.05)
+    
+    # Final summary
+    TerminalUI.blank()
+    for filename in file_names:
+        if filename in completed_files:
+            TerminalUI.success(f"{filename} — parsed successfully")
+        elif filename in file_errors:
+            TerminalUI.error(f"{filename} — {file_errors[filename]}")
+    
     return results  # type: ignore
-
 
 # ── High-level handler ─────────────────────────────────────────────────────────
 
@@ -195,14 +250,6 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         TerminalUI.success("all files already parsed")
         TerminalUI.dim("use --rerun to reprocess with different settings")
         return
-
-    if len(to_process) == 1 and not args.rerun:
-        path = to_process[0]
-        if store.has_markdown(path.name):
-            TerminalUI.bold("Skipping (cached markdown found)")
-            TerminalUI.dim("Opening existing markdown in explorer...")
-            open_in_explorer(store._file_dir(path.name) / f"{sanitize(path.name)}.md")
-            return
 
     TerminalUI.bold(f"Parsing {len(to_process)} file(s)...")
 

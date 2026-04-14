@@ -33,7 +33,6 @@ Key design decisions
 
 import os
 import re
-import json
 import logging
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor, as_completed
