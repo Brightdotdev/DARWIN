@@ -28,7 +28,7 @@ Directory Layout
 For a project directory:
 
     your-notes/
-    ├── biology.pdf
+    ├── biology_pdf (sanitized from "biology.pdf")
     └── .darwin/
         ├── config.json
         └── biology_pdf/
@@ -69,9 +69,9 @@ Design Notes
 
 import pickle
 import shutil
-from datetime import datetime
 from pathlib import Path
 from dataclasses import asdict
+from typing import Optional
 import numpy as np
 
 from src.core.Chunking.ChunkerUtils import Chunk
@@ -200,7 +200,46 @@ class DarwinStore:
 
 
 
+    # ------ multi processing shenanigans
+    # In DarwinStore class, add these methods:
 
+    def get_markdown_path(self, filename: str) -> Path:
+        sanitized_name = sanitize(filename)
+        return self._file_dir(sanitized_name) / f"{sanitized_name}.md"
+    def get_image_dir(self,filename: str) -> Path:
+        sanitized_name = sanitize(filename)
+        return self._file_dir(sanitized_name) / "images"
+    def get_temp_directory(self) -> Optional[Path]:
+        """Get the temporary directory for this store"""
+        return self.project_dir / ".temp"
+
+    def cleanup_partial_parsing(self, filename: str):
+        """
+        Clean up partial/incomplete results for a file.
+        Called when parsing is cancelled mid-way.
+        """
+        # Remove partial markdown file
+        md_path = self.get_markdown_path(filename)
+        if md_path.exists():
+            md_path.unlink()
+        
+        # Remove partial images directory
+        img_dir = self.get_image_dir(filename)
+        if img_dir and img_dir.exists():
+            import shutil
+            shutil.rmtree(img_dir)
+        
+        # Remove any lock files
+        lock_file = self.project_dir / f".{filename}.lock"
+        if lock_file.exists():
+            lock_file.unlink()
+        
+        # Remove any temporary directory
+        temp_dir = self.get_temp_directory()
+        if temp_dir and temp_dir.exists():
+            import shutil
+            shutil.rmtree(temp_dir)
+            
 
     def get_component_status(self, filename: str) -> dict:
         meta    = self.load_meta_file(filename)

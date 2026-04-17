@@ -260,4 +260,4 @@ Tested on a 4-core Windows machine, no GPU.
 | OpenClaw ebook | 41 | fast | ~2s |
 | OpenClaw ebook | 41 | precise | ~24s |
 
-The fast mode is 20–25× faster than precise for large documents. For RAG pipelines where you only need clean extractable text, fast mode quality is indistinguishable in retrieval results.
+The fast mode is 20–25× faster than precise for large documents...but ofc there is a trade off in accuracy compared to using pmdf4llm directly.

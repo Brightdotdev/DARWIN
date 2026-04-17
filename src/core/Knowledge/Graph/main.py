@@ -52,27 +52,6 @@ from src.lib.Terminal import TerminalUI
 
 
 # ============================================================================
-# Embed function loader
-# ============================================================================
-
-def _load_embed_fn(store: DarwinStore):
-    """
-    Try to load the project's configured embedding model.
-    Returns a callable (List[str]) -> np.ndarray, or None on failure.
-    """
-    try:
-        from sentence_transformers import SentenceTransformer
-        config     = store.load_config()
-        model_name = config.get("embedding_model", "intfloat/e5-small-v2")
-        TerminalUI.dim(f"Loading embedding model: {model_name}")
-        model = SentenceTransformer(model_name)
-        return lambda texts: model.encode(texts, show_progress_bar=False)
-    except Exception as e:
-        TerminalUI.warn(f"Could not load embedding model ({e}) — using co-occurrence fallback")
-        return None
-
-
-# ============================================================================
 # Inspect
 # ============================================================================
 
@@ -136,20 +115,15 @@ def handle_graph_extraction(args: GraphExtractionArgs) -> None:
         TerminalUI.error("No chunked files found. Run chunking first.")
         return
 
-    TerminalUI.print_darwin()
-    TerminalUI.blank()
     TerminalUI.bold(f"Extracting graphs from {len(filenames)} file(s)")
     TerminalUI.dim(
         f"Mode: {args.extraction_mode} | "
         f"Min freq: {args.min_freq} | "
         f"Max concepts: {args.max_concepts} | "
-        f"Similarity threshold: {args.similarity_threshold} | "
+        f"Threshold: {args.similarity_threshold if args.similarity_threshold else 'auto'} | "
         f"AI elevation: {'✨ on' if args.use_ai else 'off'}"
     )
     TerminalUI.blank()
-
-    # Load embedding model once for all files
-    embed_fn = _load_embed_fn(store)
 
     succeeded = failed = skipped = 0
 
@@ -175,7 +149,6 @@ def handle_graph_extraction(args: GraphExtractionArgs) -> None:
                 min_rel_freq=args.min_rel_freq,
                 similarity_threshold=args.similarity_threshold,
                 extraction_mode=args.extraction_mode,
-                embed_fn=embed_fn,
                 use_ai=args.use_ai,
                 visualize=args.visualize,
                 rerun=args.rerun,

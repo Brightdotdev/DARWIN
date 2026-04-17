@@ -49,8 +49,8 @@ class GraphData:
                 {
                     "id": n.id,
                     "label": n.label,
-                    "frequency": n.frequency,
-                    "chunk_indices": n.chunk_indices,
+                    "freq": n.frequency,
+                    "chunks": n.chunk_indices,
                 }
                 for n in self.nodes
             ],
@@ -90,14 +90,13 @@ class GraphExtractionArgs:
     min_freq: int = DEFAULT_MIN_CONCEPT_FREQ
     max_concepts: int = DEFAULT_MAX_CONCEPTS
     min_rel_freq: int = DEFAULT_MIN_RELATION_FREQ
-    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD
+    similarity_threshold: Optional[float] = None  # None = auto
     extraction_mode: str = "yake"   # "yake" | "regex" | "spacy"
     visualize: bool = False
     inspect: bool = False
     json_output: bool = False
     rerun: bool = False
-    use_ai : bool = False
-
+    use_ai: bool = False
 
 
 # ============================================================================

@@ -275,6 +275,10 @@ class TerminalUI:
         cls.console.print(f"  [dim]{label}[/dim]  [white]{value}[/white]")
 
     @classmethod
+    def text(cls, text: str) -> None:
+        cls.console.print(f"  {text}")
+
+    @classmethod
     def yellow(cls, text: str) -> None:
         cls.console.print(f"  [yellow]{text}[/yellow]")
 

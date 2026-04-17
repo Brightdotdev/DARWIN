@@ -149,31 +149,106 @@ def _cosine_similarity_matrix(vectors: np.ndarray) -> np.ndarray:
     return (normalized @ normalized.T).astype(float)
 
 
+def _concept_context_vectors(
+    sorted_concepts: List[Tuple[str, List[int]]],
+    chunk_vectors: np.ndarray,
+) -> np.ndarray:
+    """
+    Build one context vector per concept by averaging the embeddings
+    of all chunks the concept appears in.
+
+    This measures how a concept is *used* in the document rather than
+    how its label sounds — so "god" and "covenant" get different vectors
+    based on which chunks they appear in, not because their names differ.
+
+    Args:
+        sorted_concepts:  [(label, [chunk_indices]), ...]
+        chunk_vectors:    shape (n_chunks, dim) — pre-computed from .npz
+
+    Returns:
+        np.ndarray shape (n_concepts, dim)
+    """
+    n_chunks, dim = chunk_vectors.shape
+    context_vecs  = np.zeros((len(sorted_concepts), dim), dtype=np.float32)
+
+    for i, (_, chunk_indices) in enumerate(sorted_concepts):
+        # Keep only valid indices
+        valid = [idx for idx in chunk_indices if idx < n_chunks]
+        if valid:
+            context_vecs[i] = chunk_vectors[valid].mean(axis=0)
+
+    return context_vecs
+
+
+def _auto_threshold(sim_matrix: np.ndarray, target_avg_degree: float = 3.0) -> float:
+    """
+    Find a threshold that gives roughly target_avg_degree edges per node.
+
+    Instead of a fixed cutoff, we pick the threshold that produces a
+    graph with meaningful structure — connected enough to show clusters
+    but sparse enough that nodes are clearly separated.
+
+    target_avg_degree=3.0 means each concept connects to ~3 others on average,
+    which produces the obsidian-graph feel: clusters with bridges, not a hairball.
+    """
+    n = sim_matrix.shape[0]
+    if n < 2:
+        return 0.75
+
+    # Collect upper triangle similarities (excluding self)
+    upper = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            upper.append(float(sim_matrix[i, j]))
+
+    if not upper:
+        return 0.75
+
+    upper.sort(reverse=True)
+
+    # Target number of edges for desired avg degree
+    target_edges = int((n * target_avg_degree) / 2)
+    target_edges = max(n - 1, min(target_edges, len(upper)))  # clamp
+
+    # Threshold is just below the target_edges-th highest similarity
+    threshold = upper[min(target_edges, len(upper) - 1)]
+
+    # Hard clamp: never go below 0.50 (too noisy) or above 0.90 (too sparse)
+    threshold = max(0.50, min(0.90, threshold))
+
+    TerminalUI.dim(f"Auto threshold: {threshold:.3f} (targeting ~{target_avg_degree} edges/node)")
+    return threshold
+
+
 def build_semantic_graph(
     concepts: Dict[str, List[int]],
     chunks: List[Chunk],
-    embed_fn: Callable[[List[str]], np.ndarray],
+    chunk_vectors: np.ndarray,
     min_freq: int = DEFAULT_MIN_CONCEPT_FREQ,
     max_concepts: int = DEFAULT_MAX_CONCEPTS,
-    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
+    similarity_threshold: Optional[float] = None,
 ) -> GraphData:
     """
-    Build a semantic similarity graph from extracted concepts.
+    Build a concept graph using context vectors from chunk embeddings.
 
-    Concepts are connected when their embedding vectors exceed
-    the similarity threshold — capturing semantic relationships
-    even when concepts never appear in the same chunk.
+    Each concept gets a vector = mean of all chunk embeddings it appears in.
+    Two concepts connect when their context vectors are similar — meaning
+    they appear in similar parts of the document, not just that their
+    names sound alike.
+
+    If similarity_threshold is None, auto-threshold is used to target
+    ~3 edges per node (good obsidian-graph structure).
 
     Args:
         concepts:             concept_label → list of chunk indices
-        chunks:               source chunks (for metadata)
-        embed_fn:             function (List[str]) → np.ndarray shape (n, dim)
+        chunks:               source Chunk objects
+        chunk_vectors:        pre-computed embeddings shape (n_chunks, dim)
         min_freq:             minimum chunk appearances to keep a concept
-        max_concepts:         max concepts in the final graph
-        similarity_threshold: cosine similarity cutoff for edges (0–1)
+        max_concepts:         max concepts in final graph
+        similarity_threshold: cosine similarity cutoff, or None for auto
 
     Returns:
-        GraphData with semantically connected concept nodes
+        GraphData with context-vector-connected concept nodes
     """
     # Filter by frequency
     filtered = {
@@ -206,18 +281,18 @@ def build_semantic_graph(
         for c, idx in sorted_concepts
     ]
 
-    # Embed all concept labels in one batch (fast — short phrases)
-    TerminalUI.dim(f"Embedding {len(concept_labels)} concept labels...")
-    try:
-        vectors = embed_fn(concept_labels)  # (n_concepts, dim)
-        if not isinstance(vectors, np.ndarray):
-            vectors = np.array(vectors)
-    except Exception as e:
-        TerminalUI.error(f"Embedding failed: {e} — falling back to co-occurrence graph")
-        return build_cooccurrence_graph_fallback(concepts, chunks, min_freq, max_concepts)
+    # Build context vectors from chunk embeddings
+    TerminalUI.dim(f"Building context vectors for {len(concept_labels)} concepts...")
+    context_vecs = _concept_context_vectors(sorted_concepts, chunk_vectors)
 
-    # Pairwise cosine similarity
-    sim_matrix = _cosine_similarity_matrix(vectors)
+    # Pairwise cosine similarity in chunk-embedding space
+    sim_matrix = _cosine_similarity_matrix(context_vecs)
+
+    # Auto threshold if not specified
+    if similarity_threshold is None:
+        threshold = _auto_threshold(sim_matrix, target_avg_degree=3.0)
+    else:
+        threshold = similarity_threshold
 
     # Build edges above threshold
     edges = []
@@ -225,13 +300,15 @@ def build_semantic_graph(
     for i in range(n):
         for j in range(i + 1, n):
             sim = float(sim_matrix[i, j])
-            if sim >= similarity_threshold:
+            if sim >= threshold:
                 edges.append(Relationship(
                     source=concept_to_id[concept_labels[i]],
                     target=concept_to_id[concept_labels[j]],
                     weight=round(sim, 4),
-                    relation_type="semantic_similarity",
+                    relation_type="context_similarity",
                 ))
+
+    TerminalUI.dim(f"Threshold: {threshold:.3f} → {len(edges)} edges")
 
     return GraphData(
         filename="",
@@ -311,13 +388,21 @@ def extract_graph_from_chunks(
     min_freq: int,
     max_concepts: int,
     min_rel_freq: int,
-    similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
-    extraction_mode: str = "yake",   # "yake" | "regex" | "spacy"
-    embed_fn: Optional[Callable] = None,
+    chunk_vectors: Optional[np.ndarray] = None,
+    similarity_threshold: Optional[float] = None,
+    extraction_mode: str = "yake",
     use_ai: bool = False,
 ) -> GraphData:
     """
-    Extract a semantic knowledge graph from document chunks.
+    Extract a concept graph from document chunks.
+
+    Concepts are connected by context similarity — the mean of the
+    chunk embeddings they appear in — not by label name similarity.
+    This means "atonement" and "sacrifice" connect because they appear
+    in similar chunks, not because the words sound related.
+
+    If similarity_threshold is None, auto-threshold picks a value that
+    produces ~3 edges per node (good obsidian-graph structure).
 
     Args:
         chunks:               List of Chunk objects
@@ -325,9 +410,10 @@ def extract_graph_from_chunks(
         min_freq:             Minimum concept occurrences
         max_concepts:         Max concepts to include
         min_rel_freq:         Min co-occurrences (fallback only)
-        similarity_threshold: Cosine similarity cutoff for edges
+        chunk_vectors:        Pre-computed chunk embeddings (n_chunks, dim).
+                              If None, falls back to co-occurrence.
+        similarity_threshold: Cosine similarity cutoff, or None for auto
         extraction_mode:      "yake" (default) | "regex" | "spacy"
-        embed_fn:             Embedding function — if None, falls back to co-occurrence
         use_ai:               Elevate raw keywords to real concepts via LLM ✨
 
     Returns:
@@ -335,7 +421,7 @@ def extract_graph_from_chunks(
     """
     TerminalUI.bold(f"Extracting concept graph from {filename} ({len(chunks)} chunks)")
 
-    # ── Step 1: Extract raw keywords ─────────────────────────────────────────
+    # ── Step 1: Extract raw keywords ────────────────────────────────────────
     t = TerminalUI.timer("concept_extraction")
 
     if extraction_mode == "spacy":
@@ -351,7 +437,7 @@ def extract_graph_from_chunks(
     TerminalUI.dim(f"Extracted {len(concepts)} raw keywords ({mode_label} mode)")
     t.done()
 
-    # ── Step 1b: Elevate to real concepts via LLM (optional ✨) ──────────────
+    # ── Step 1b: Elevate to real concepts via LLM (optional ✨) ─────────────
     if use_ai:
         t = TerminalUI.timer("concept_elevation")
         from src.core.Knowledge.Graph.ConceptElevator import elevate_concepts
@@ -361,18 +447,19 @@ def extract_graph_from_chunks(
     # ── Step 2: Build graph ──────────────────────────────────────────────────
     t = TerminalUI.timer("graph_building")
 
-    if embed_fn is not None:
+    if chunk_vectors is not None:
         graph = build_semantic_graph(
             concepts=concepts,
             chunks=chunks,
-            embed_fn=embed_fn,
+            chunk_vectors=chunk_vectors,
             min_freq=min_freq,
             max_concepts=max_concepts,
-            similarity_threshold=similarity_threshold,
+            similarity_threshold=similarity_threshold,  # None = auto
         )
-        graph_type = "semantic"
+        graph_type = "context-vector"
     else:
-        TerminalUI.warn("No embed_fn provided — using co-occurrence fallback")
+        TerminalUI.warn("No chunk vectors available — using co-occurrence fallback")
+        TerminalUI.warn("Run the embedding pipeline first for better graph quality")
         graph = build_cooccurrence_graph_fallback(
             concepts=concepts,
             chunks=chunks,
@@ -410,7 +497,6 @@ def run_graph_extraction_pipeline(
     min_rel_freq: int = DEFAULT_MIN_RELATION_FREQ,
     similarity_threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     extraction_mode: str = "yake",
-    embed_fn: Optional[Callable] = None,
     use_ai: bool = False,
     visualize: bool = False,
     rerun: bool = False,
@@ -427,7 +513,6 @@ def run_graph_extraction_pipeline(
         min_rel_freq:         Minimum co-occurrence (fallback only)
         similarity_threshold: Cosine similarity cutoff
         extraction_mode:      "yake" | "regex" | "spacy"
-        embed_fn:             Embedding function for semantic graph
         use_ai:               Elevate keywords to real concepts via LLM ✨
         visualize:            Generate HTML visualization
         rerun:                Force re-extraction
@@ -451,15 +536,28 @@ def run_graph_extraction_pipeline(
     # so relax min_freq — don't filter keywords before LLM sees them
     effective_min_freq = 1 if use_ai else min_freq
 
+    # Load pre-computed chunk vectors from store (.npz bundle)
+    chunk_vectors = None
+    if store.has_embeddings(filename):
+        try:
+            embeddings   = store.load_embeddings(filename)
+            chunk_vectors = embeddings["vectors"]  # shape (n_chunks, dim)
+            TerminalUI.dim(f"Loaded chunk vectors: {chunk_vectors.shape}")
+        except Exception as e:
+            TerminalUI.warn(f"Could not load chunk embeddings ({e}) — using co-occurrence fallback")
+    else:
+        TerminalUI.warn(f"No embeddings found for {filename} — using co-occurrence fallback")
+        TerminalUI.warn("Run: uv run src/core/Embedding/main.py to generate embeddings first")
+
     graph = extract_graph_from_chunks(
         chunks=chunks,
         filename=filename,
         min_freq=effective_min_freq,
         max_concepts=max_concepts,
         min_rel_freq=min_rel_freq,
-        similarity_threshold=similarity_threshold,
+        chunk_vectors=chunk_vectors,
+        similarity_threshold=similarity_threshold if similarity_threshold != DEFAULT_SIMILARITY_THRESHOLD else None,
         extraction_mode=extraction_mode,
-        embed_fn=embed_fn,
         use_ai=use_ai,
     )
 

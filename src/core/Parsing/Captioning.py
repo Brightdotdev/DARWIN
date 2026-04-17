@@ -96,7 +96,6 @@ def caption_image(
     processor,
     model,
     cache: Dict[str, str],
-    watch : bool = False
 ) -> str:
     """Caption one image. Cache key is bare filename — never absolute."""
     import torch
@@ -107,8 +106,8 @@ def caption_image(
 
     try:
         from PIL import Image as PILImage
-        if watch:
-            TerminalUI.dim(f"Captioning {image_path.name}")
+        
+        TerminalUI.dim(f"Captioning {image_path.name}")
 
         image    = PILImage.open(image_path).convert("RGB")
         messages = [{

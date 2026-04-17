@@ -87,3 +87,24 @@ vision model:
 SmolVLM-256M :: light
 Moondream2 :: medium
 LightOnOCR-2-1B :: overkill
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Your approach is actually solid because it decomposes a hard problem into understandable stages: you first chunk documents to preserve local structure, then extract concepts into a graph to capture relationships, and finally use embeddings as an additional semantic signal. That combination already gives you something most systems don’t have, which is structured grounding instead of pure vector noise. The weakness isn’t the design, it’s that each layer currently operates independently, so you don’t get a single “truth” about what a concept is.
+
+The new idea is to add a resolver layer that sits on top of everything and decides what a concept actually is. Instead of treating graph nodes, embeddings, and chunk references as separate outputs, you merge them into a single canonical “ConceptEntity” per real-world idea. This layer clusters similar nodes using embeddings, merges duplicates, aggregates chunk evidence, and then assigns a unified score based on frequency, graph importance, and semantic coherence. The result is that your system stops producing fragmented or inconsistent concepts and instead produces stable, reusable concept objects that every other part of your system can rely on, turning your pipeline from a set of tools into a coherent knowledge system.
