@@ -80,7 +80,10 @@ from src.lib.Terminal import TerminalUI
 
 from src.core.Storage.StoreUtils import (
     DEFAULT_CONFIG, DARWIN_DIR, CONFIG_FILE, FILE_META,
-    FileMeta, GraphMeta, file_hash, now, sanitize, read_json, write_json
+    FileMeta, file_hash, now, sanitize, read_json, write_json
+)
+from src.core.Knowledge.Graph.GraphUtils import(
+    GraphData
 )
 
 
@@ -149,7 +152,11 @@ class DarwinStore:
         return stopwords_path.exists()
 
     def has_graph(self, filename: str) -> bool:
-        return (self._graph_dir(filename) / "base_graph.json").exists()
+        g_fname =  f"{sanitize(filename)}_graph.json"
+        return (self._graph_dir(filename) / g_fname).exists()
+    def has_graph_html(self, filename: str) -> bool:
+        g_html_name =  f"{sanitize(filename)}_graph.html"
+        return (self._graph_dir(filename) / g_html_name).exists()
 
     # ── Internal helpers ───────────────────────────────────────────────────────
 
@@ -164,17 +171,16 @@ class DarwinStore:
         return self._file_dir(filename) / f"{model_name}_{file_clean}.npz"
 
     def _update_component(self, filename: str, component: str, extras: dict = None) -> None:
-        """Atomically updates meta.json."""
         meta_path = self._file_dir(filename) / "meta.json"
         meta = read_json(meta_path)
 
         if not meta:
             meta = {
-                "filename":   filename,
+                "filename": filename,
                 "created_at": now(),
-                "updates":    {},
+                "updates": {},
                 "updated_at": now(),
-                "version":    "1.0",
+                "version": "1.0",
             }
 
         if "updates" not in meta:
@@ -185,9 +191,16 @@ class DarwinStore:
         meta["updated_at"] = timestamp
 
         if extras:
-            meta.update(extras)
-
+            for key, value in extras.items():
+                if isinstance(value, dict) and isinstance(meta.get(key), dict):
+                    meta[key].update(value) 
+                else:
+                    meta[key] = value
         write_json(meta_path, meta)
+
+
+
+
 
     def get_component_status(self, filename: str) -> dict:
         meta    = self.load_meta_file(filename)
@@ -197,7 +210,7 @@ class DarwinStore:
             "is_parsed":        "parser"     in updates,
             "is_vectorized":    "embeddings" in updates,
             "has_search_index": "bm25"       in updates,
-            "has_graph":        "graph"      in updates,
+            "has_graph":       self.has_graph(filename) ,
             "last_activity":    meta.get("updated_at", "never"),
             "has_markdown":     self.has_markdown(filename),
             "has_chunks":       self.has_chunks(filename),
@@ -210,14 +223,19 @@ class DarwinStore:
     def _require_init(self):
         if not self.darwin_dir.exists():
             self.init()
+    
 
         config_path = self.darwin_dir / CONFIG_FILE
         if not config_path.exists():
             config = dict(DEFAULT_CONFIG)
             config["created_at"] = now()
             write_json(config_path, config)
+    
 
     # ── Directory helpers ──────────────────────────────────────────────────────
+
+
+
 
     def _file_dir(self, filename: str) -> Path:
         return self.darwin_dir / sanitize(filename)
@@ -247,6 +265,19 @@ class DarwinStore:
         d = self._graph_dir(filename)
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+
+    def wiki_dir(self, filename: str) -> Path:
+        return self._file_dir(filename)/"wiki"
+    def _ensure_wiki_dir(self, filename: str) -> Path:
+        """Ensure wiki directory exists."""
+        wiki_dir = self.wiki_dir(filename)
+        wiki_dir.mkdir(parents=True, exist_ok=True)
+        return wiki_dir
+
+    def _wiki_dir(self, filename: str) -> Path:
+        """Get wiki directory for document."""
+        return self._ensure_wiki_dir(filename)
 
 
     # ── Config ─────────────────────────────────────────────────────────────────
@@ -569,36 +600,69 @@ class DarwinStore:
     def save_graph(
         self,
         filename:   str,
-        graph_data: dict,
-        threshold:  float = 0.40,
+        graph_data: GraphData,
+        rerun : bool = False,
     ) -> None:
-        if self.is_fresh(filename) and self.has_graph(filename):
-            TerminalUI.bold("Skipping graph saving (cached graph found and file is fresh)")
+        if not rerun and self.is_fresh(filename) and self.has_graph(filename):
+            TerminalUI.bold("Skipping graph saving (cached graph found)")
             return
 
         self._require_init()
         d = self._ensure_graph_dir(filename)
 
-        write_json(d / "base_graph.json", graph_data)
+        grap_dict = graph_data.to_dict()
+        
+        g_fname =f"{sanitize(filename)}_graph.json"
+        write_json(d / g_fname, grap_dict)
 
-        n_concepts = len(graph_data.get("concepts", []))
-        matrix     = graph_data.get("similarity_matrix", [])
 
-        edge_count = 0
-        for i in range(len(matrix)):
-            for j in range(i + 1, len(matrix)):
-                if matrix[i][j] > threshold:
-                    edge_count += 1
+        n_nodes = len(graph_data.nodes)
+        n_edges = len(graph_data.edges)
+        chunk_count = graph_data.chunk_count
+        total_concepts_extracted = graph_data.total_concepts_extracted
 
-        meta = GraphMeta(
-            filename      = filename,
-            concept_count = n_concepts,
-            edge_count    = edge_count,
-            threshold     = threshold,
-            built_at      = now(),
-        )
-        write_json(d / FILE_META, asdict(meta))
-        self._update_component(filename, "graph")
+        meta = {
+            "graph" : {
+            "concept_count" : n_nodes,
+            "edge_count"    : n_edges,
+            "chunk_count"   : chunk_count,
+            "total_concepts_extracted" : total_concepts_extracted,
+            "built_at"      : now()}}
+        
+
+        
+        self._update_component(filename, "graph", extras=meta)
+
+
+
+   
+   
+    def save_graph_html(
+        self,
+        filename:   str,
+        html_graph: str,
+        rerun : bool = False,
+    ) -> None:
+        
+        if html_graph is None:
+            TerminalUI.error(f"Graph not found for {filename}")
+            return
+        
+        if not rerun and self.is_fresh(filename) and self.has_graph_html(filename):
+            TerminalUI.bold("Skipping graph saving (cached graph found)")
+            return
+
+        self._require_init()
+
+        d = self._ensure_graph_dir(filename)
+        g_html_name = d / f"{sanitize(filename)}_graph.html"
+        
+        with open(g_html_name, "w", encoding="utf-8") as f:
+            f.write(html_graph)
+        
+        self._update_component(filename, "graph_vis")
+
+
 
     def load_graph(self, filename: str) -> dict:
         if not self.has_graph(filename):
@@ -606,21 +670,78 @@ class DarwinStore:
             return {}
 
         self._require_init()
-        path = self._graph_dir(filename) / "base_graph.json"
+        g_fname =f"{sanitize(filename)}_graph.json"
+
+        path = self._graph_dir(filename) / g_fname
 
         if not path.exists():
             raise FileNotFoundError(f"No graph found for {filename}.")
 
         return read_json(path)
 
-    def load_graph_meta(self, filename: str) -> dict:
+
+
+
+    def save_wiki(self, filename: str, wiki, rerun: bool = False) -> None:
+        """Save generated wiki to .darwin directory."""
+        import json
+        
         self._require_init()
-        path = self._graph_dir(filename) / FILE_META
+        wiki_dir = self._ensure_wiki_dir(filename)
+        
+        wiki_path = wiki_dir / f"{sanitize(filename)}_wiki.json"
+        
+        if not rerun and wiki_path.exists():
+            TerminalUI.dim("Skipping wiki save (cached wiki found)")
+            return
+        
+        # Convert to serializable
+        wiki_dict = {
+            "filename": wiki.filename,
+            "mode": wiki.mode,
+            "concept_count": wiki.concept_count,
+            "pages": [
+                {
+                    "title": p.title,
+                    "content": p.content,
+                    "concept": p.concept,
+                    "chunk_count": p.chunk_count,
+                    "related": p.related,
+                }
+                for p in wiki.pages
+            ]
+        }
 
-        if not path.exists():
-            raise FileNotFoundError(f"No graph meta found for {filename}.")
+        wiki_update_dict ={
+            
+            "mode": wiki.mode,
+            "concept_count": wiki.concept_count,
+            "pages": [
+                {
+                    "title": p.title,
+                    "content": p.content,
+                    "concept": p.concept,
+                    "chunk_count": p.chunk_count,
+                    "related": p.related,
+                }
+                for p in wiki.pages
+            ],
+            "page_num" : len(wiki.pages)
+        }
+        
+        write_json(wiki_path, wiki_dict)
+        
+        self._update_component(filename, "wiki", extras=wiki_update_dict)
 
-        return read_json(path)
+
+    def has_wiki(self, filename: str) -> bool:
+        """Check if wiki exists for document."""
+        self._require_init()
+        wiki_path = self._wiki_dir(filename) / f"{sanitize(filename)}_wiki.json"
+        return wiki_path.exists()
+
+
+
 
     # ── File removal ───────────────────────────────────────────────────────────
 

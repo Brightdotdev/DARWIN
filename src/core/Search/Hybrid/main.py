@@ -195,6 +195,10 @@ def main() -> int:
     parser.add_argument("--pool-size", type=int, default=DEFAULT_POOL_SIZE, help="Candidates per retriever")
     parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
     parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
+    parser.add_argument("--parallel", action="store_true", default=True, 
+                   help="Enable parallel retrieval (default: True)")
+    parser.add_argument("--no-parallel", action="store_false", dest="parallel",
+                   help="Disable parallel retrieval")
     
     args = parser.parse_args()
     
@@ -209,6 +213,7 @@ def main() -> int:
         pool_size=args.pool_size,
         inspect=args.inspect,
         json_output=args.json,
+        parallel=args.parallel
     ))
     
     return 0

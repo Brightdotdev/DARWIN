@@ -99,15 +99,6 @@ class FileMeta:
     parser:      str
     version:     str = "1.0"
     created_at:  str = ""
-    # The 'Overengineered' Audit Log
-    # e.g., {"markdown": "2026-04-07T...", "embeddings": "2026-04-07T..."}
     updates:     dict[str, str] = field(default_factory=dict)
     updated_at:  str = ""
 
-@dataclass
-class GraphMeta:
-    filename:       str    # which file this graph belongs to
-    concept_count:  int    # how many unique concept nodes
-    edge_count:     int    # edges at default threshold
-    threshold:      float  # threshold used when graph was built
-    built_at:       str    # when graph was built

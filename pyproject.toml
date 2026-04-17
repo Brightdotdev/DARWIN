@@ -35,6 +35,7 @@ dependencies = [
     "toml>=0.10.2",
     "transformers>=4.49.0",
     "typer>=0.24.1",
+    "yake>=0.7.3",
 ]
 
 [tool.uv.sources]

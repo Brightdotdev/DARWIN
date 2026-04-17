@@ -107,6 +107,7 @@ class TerminalUI:
     
     @classmethod
     def print_darwin(cls) -> None:
+        cls.console.clear()
         cls.console.print()
         for line in cls.ASCII:
             cls.console.print(f"[cyan]{line}[/cyan]")
