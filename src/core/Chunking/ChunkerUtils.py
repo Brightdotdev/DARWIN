@@ -66,7 +66,7 @@ def _get_tiktoken_encoder():
         return None
 
 
-def _tokens(text: str) -> int:
+def tokens(text: str) -> int:
     """
     Estimate token count.
 
@@ -113,7 +113,7 @@ def dynamic_chunk_params(model_name: str, doc_tokens: int) -> dict:
 
 def get_dynamic_chunk_params_for_text(text: str, model_name: str = DEFAULT_MODEL) -> dict:
     """Analyse text and return optimal chunking parameters + metadata."""
-    total_tokens = _tokens(text)
+    total_tokens = tokens(text)
     params       = dynamic_chunk_params(model_name, total_tokens)
     params.update({
         "doc_tokens":        total_tokens,
@@ -287,7 +287,7 @@ def _make_chunk(
         clean       = clean,
         index       = index,
         source      = source,
-        token_count = _tokens(clean),
+        token_count = tokens(clean),
         heading     = heading,
         page        = page,
         page_end    = page_end,
@@ -337,7 +337,7 @@ def _split_with_overlap(
 
     for i, (sent_clean, sent_orig) in enumerate(zip(sentences, orig_sents)):
         trial_clean = window_clean + [sent_clean]
-        if _tokens(" ".join(trial_clean)) > max_tokens and window_clean:
+        if tokens(" ".join(trial_clean)) > max_tokens and window_clean:
             _flush(is_overlap_flag=(i > 0))
             window_orig  = window_orig[-overlap:]  if overlap else []
             window_clean = window_clean[-overlap:] if overlap else []
@@ -374,7 +374,7 @@ def section_to_chunks(
     body_links = extract_links(body)
     body_clean = prepare_embedding_text(body, DEFAULT_MODEL)
 
-    if _tokens(body_clean) <= max_tokens:
+    if tokens(body_clean) <= max_tokens:
         c = _make_chunk(
             body, source, index, heading,
             page, page + count_page_seps(body),
@@ -421,7 +421,7 @@ def section_to_chunks(
             if chunks:
                 last     = chunks[-1]
                 combined = last.text + "\n" + para
-                if _tokens(prepare_embedding_text(combined, DEFAULT_MODEL)) <= max_tokens:
+                if tokens(prepare_embedding_text(combined, DEFAULT_MODEL)) <= max_tokens:
                     chunks[-1] = _make_chunk(
                         combined, source, last.index,
                         last.heading, last.page, current_page,
@@ -438,8 +438,8 @@ def section_to_chunks(
                 chunks.append(c)
             continue
 
-        para_tokens    = _tokens(prepare_embedding_text(para, DEFAULT_MODEL))
-        pending_tokens = _tokens(" ".join(pending)) if pending else 0
+        para_tokens    = tokens(prepare_embedding_text(para, DEFAULT_MODEL))
+        pending_tokens = tokens(" ".join(pending)) if pending else 0
 
         if para_tokens <= max_tokens:
             if pending_tokens + para_tokens <= max_tokens:
@@ -450,7 +450,7 @@ def section_to_chunks(
                 pending.append(prepare_embedding_text(para, DEFAULT_MODEL))
                 pending_orig.append(para)
 
-            if _tokens(" ".join(pending)) >= min_tokens:
+            if tokens(" ".join(pending)) >= min_tokens:
                 _flush_pending()
         else:
             _flush_pending()

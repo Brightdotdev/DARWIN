@@ -170,6 +170,7 @@ def handle_chunking(args: ChunkingArgs) -> None:
                 filename   = filename,
                 chunks     = chunks,
                 chunk_meta = {**chunk_metadata, "total_links": total_links},
+                rerun      = args.rerun,
             )
 
             TerminalUI.success(

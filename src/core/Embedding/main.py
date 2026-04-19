@@ -112,7 +112,7 @@ def handle_embedding(args: EmbeddingArgs) -> None:
     TerminalUI.print_darwin()
     TerminalUI.blank()
     TerminalUI.bold("Embedding")
-    TerminalUI.dim(f"Model: {args.model} | Rerun: {args.rerun} | Inspect: {args.inspect}")
+    TerminalUI.dim(f" Rerun: {args.rerun} | Inspect: {args.inspect}")
     TerminalUI.blank()  
     # resolve which files to embed  
     if args.file:
@@ -128,7 +128,7 @@ def handle_embedding(args: EmbeddingArgs) -> None:
         TerminalUI.error("No chunked files found. Run chunking first.")
         return
 
-    TerminalUI.bold(f"Embedding {len(filenames)} file(s) — model={args.model} batch={args.batch_size}")
+    TerminalUI.bold(f"Embedding {len(filenames)} file(s)")
 
     succeeded = failed = skipped = 0
 
@@ -149,8 +149,6 @@ def handle_embedding(args: EmbeddingArgs) -> None:
                 filename   = filename,
                 chunks     = chunks,
                 store      = store,
-                model_name = args.model,
-                batch_size = args.batch_size,
                 rerun      = args.rerun,
             )
 
@@ -180,8 +178,6 @@ def main() -> int:
     parser.add_argument("path",           nargs="?", default=".",  help="Project directory")
     parser.add_argument("--file",    "-f", default=None,           help="Embed a single file")
     parser.add_argument("--project", "-p", default=None,           help="Project directory (default: cwd)")
-    parser.add_argument("--model",   "-m", default="e5-small",     help="Embedding model (default: e5-small)")
-    parser.add_argument("--batch-size",    type=int, default=DEFAULT_BATCH_SIZE, help="Chunks per batch")
     parser.add_argument("--inspect", "-i", action="store_true",    help="Print vector stats and sample chunks")
     parser.add_argument("--rerun",   "-R", action="store_true",    help="Re-embed even if fresh embeddings exist")
 
@@ -191,8 +187,6 @@ def main() -> int:
         target     = args.path,
         file       = args.file,
         project    = args.project or args.path,
-        model      = args.model,
-        batch_size = args.batch_size,
         inspect    = args.inspect,
         rerun      = args.rerun,
     ))

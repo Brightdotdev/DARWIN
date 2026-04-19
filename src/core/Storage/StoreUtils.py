@@ -16,13 +16,10 @@ FILE_META   = "meta.json"
 
 DEFAULT_CONFIG = {
     "version":        "0.1.0",
-    "embedding_tier": "light",        # light | medium | large
     "embedding_model": "intfloat/e5-small-v2",
     "llm_mode":       "none",        # local | api | none
     "llm_model":      "none",            # e.g. "ollama/llama3.2" or "gpt-4o" or none
     "reranker":       "ms-marco-TinyBERT-L-2-v2",
-    "parser":         "light",        # light | high
-    "top_k":          5,
     "graph_threshold": 0.40,          # default zoom level
     "created_at":     None,           # set on init
     "updated_at":     None,           # set on each update

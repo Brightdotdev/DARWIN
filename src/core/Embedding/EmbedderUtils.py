@@ -67,35 +67,14 @@ Notes
 
 from typing import Optional
 from dataclasses import dataclass
-from src.core.Embedding.EmbeddingModel import (DEFAULT_BATCH_SIZE,DEFAULT_MODEL)
 
 
-# ============================================================================
-# Args
-# ============================================================================
 
 @dataclass
 class EmbeddingArgs:
     target:     str
     file:       Optional[str] = None
     project:    Optional[str] = None
-    model:       str  = DEFAULT_MODEL
-    batch_size: int  = DEFAULT_BATCH_SIZE
     inspect:    bool = False
     rerun:      bool = False
-
-# ============================================================================
-# e5 prefix helpers
-# These must be used consistently — passages during indexing,
-# queries during search. Asymmetric by design.
-# ============================================================================
-
-def prefix_passage(text: str) -> str:
-    """Prepend passage prefix for e5 models. Use when embedding chunks."""
-    return f"passage: {text}"
-
-
-def prefix_query(text: str) -> str:
-    """Prepend query prefix for e5 models. Use when embedding search queries."""
-    return f"query: {text}"
 
