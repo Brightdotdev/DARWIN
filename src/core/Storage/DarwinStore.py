@@ -71,7 +71,7 @@ import pickle
 import shutil
 from pathlib import Path
 from dataclasses import asdict
-from typing import Optional
+from typing import Optional,Any
 import numpy as np
 
 from src.core.Chunking.ChunkerUtils import Chunk
@@ -80,7 +80,7 @@ from src.lib.Terminal import TerminalUI
 
 from src.core.Storage.StoreUtils import (
     DEFAULT_CONFIG, DARWIN_DIR, CONFIG_FILE, FILE_META,
-    FileMeta, file_hash, now, sanitize, read_json, write_json
+     file_hash, now, sanitize, read_json, write_json
 )
 from src.core.Knowledge.Graph.GraphUtils import(
     GraphData
@@ -171,7 +171,7 @@ class DarwinStore:
         return self._file_dir(filename) / f"{model_name}_{file_clean}.npz"
 
     def _update_component(self, filename: str, component: str, extras: dict = None) -> None:
-        meta_path = self._file_dir(filename) / "meta.json"
+        meta_path = self._file_dir(filename) / FILE_META
         meta = read_json(meta_path)
 
         if not meta:
@@ -198,48 +198,6 @@ class DarwinStore:
                     meta[key] = value
         write_json(meta_path, meta)
 
-
-
-    # ------ multi processing shenanigans
-    # In DarwinStore class, add these methods:
-
-    def get_markdown_path(self, filename: str) -> Path:
-        sanitized_name = sanitize(filename)
-        return self._file_dir(sanitized_name) / f"{sanitized_name}.md"
-    def get_image_dir(self,filename: str) -> Path:
-        sanitized_name = sanitize(filename)
-        return self._file_dir(sanitized_name) / "images"
-    def get_temp_directory(self) -> Optional[Path]:
-        """Get the temporary directory for this store"""
-        return self.project_dir / ".temp"
-
-    def cleanup_partial_parsing(self, filename: str):
-        """
-        Clean up partial/incomplete results for a file.
-        Called when parsing is cancelled mid-way.
-        """
-        # Remove partial markdown file
-        md_path = self.get_markdown_path(filename)
-        if md_path.exists():
-            md_path.unlink()
-        
-        # Remove partial images directory
-        img_dir = self.get_image_dir(filename)
-        if img_dir and img_dir.exists():
-            import shutil
-            shutil.rmtree(img_dir)
-        
-        # Remove any lock files
-        lock_file = self.project_dir / f".{filename}.lock"
-        if lock_file.exists():
-            lock_file.unlink()
-        
-        # Remove any temporary directory
-        temp_dir = self.get_temp_directory()
-        if temp_dir and temp_dir.exists():
-            import shutil
-            shutil.rmtree(temp_dir)
-            
 
     def get_component_status(self, filename: str) -> dict:
         meta    = self.load_meta_file(filename)
@@ -272,10 +230,6 @@ class DarwinStore:
     
 
     # ── Directory helpers ──────────────────────────────────────────────────────
-
-
-
-
     def _file_dir(self, filename: str) -> Path:
         return self.darwin_dir / sanitize(filename)
 
@@ -364,12 +318,8 @@ class DarwinStore:
     def save_chunks(
         self,
         filename:       str,
-        chunks:         list[Chunk],
-        source_hash:    str = "",       # ← was `file_hash` — shadowed the import
-        page_count:     int = 0,
-        parser:         str = "light",
-        max_tokens:     int = 0,        # ← new: chunking settings for staleness check
-        chunk_model:    str = "",       # ← new: which embedding model these chunks target
+        chunks:         list[Chunk],  
+        chunk_meta:    dict[str, Any] = {},
     ) -> None:
         """
         Serialize and save chunks to .darwin/sanitized_name/chunks.json.
@@ -387,29 +337,7 @@ class DarwinStore:
         chunks_data = [asdict(c) for c in chunks]
         write_json(d / "chunks.json", chunks_data)
 
-        meta_path     = d / FILE_META
-        existing_meta = read_json(meta_path)
-
-        # resolve hash — parameter name no longer shadows the imported function
-        resolved_hash = source_hash or file_hash(self.project_dir / filename)
-
-        meta = FileMeta(
-            filename    = filename,
-            file_hash   = resolved_hash,
-            chunk_count = len(chunks),
-            page_count  = existing_meta.get("page_count", page_count),
-            parser      = existing_meta.get("parser", parser),
-            created_at  = existing_meta.get("created_at", now()),
-            updates     = existing_meta.get("updates", {}),
-            updated_at  = now(),
-        )
-
-        write_json(meta_path, asdict(meta))
-
-        self._update_component(filename, "chunks", extras={
-            "chunk_max_tokens": max_tokens,
-            "chunk_model":      chunk_model,
-        })
+        self._update_component(filename, "chunks", extras={ **chunk_meta, "chunk_count": len(chunks)})
 
     def load_chunks(self, filename: str) -> list[Chunk]:
         path = self._file_dir(filename) / "chunks.json"

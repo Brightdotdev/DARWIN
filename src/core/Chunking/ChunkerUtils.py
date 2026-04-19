@@ -1,4 +1,3 @@
-
 """
 Document chunking pipeline for embedding and retrieval (RAG).
 
@@ -14,14 +13,7 @@ Core responsibilities:
 - Maintain metadata for retrieval and citation (source, page, heading)
 - Add overlap between chunks to preserve context across boundaries
 - Merge small chunks to avoid low-quality embeddings
-
-Chunking strategy:
-1. Markdown cleaning removes formatting while preserving content meaning.
-2. Documents are split into sections using heading structure.
-3. Each section is converted into one or more chunks based on token limits.
-4. Large paragraphs are split into sentence-level windows with overlap.
-5. Special blocks like tables and captions are handled explicitly.
-6. Small chunks are merged post-processing to improve embedding quality.
+- Attach per-chunk link metadata extracted from source document
 
 Key design goals:
 - Keep chunks within embedding model token limits
@@ -32,33 +24,26 @@ Key design goals:
 
 Outputs:
 List[Chunk] where each Chunk contains:
-- text: original content for LLM context
-- clean: normalized text for embeddings
-- index: stable ordering
-- source: document identifier
+- text:        original content for LLM context
+- clean:       normalized text for embeddings
+- index:       stable ordering
+- source:      document identifier
 - token_count: estimated size
-- heading: nearest section title
+- heading:     nearest section title
 - page / page_end: document location tracking
-- is_overlap: whether chunk includes context overlap
+- is_overlap:  whether chunk includes context overlap
+- links:       hyperlinks whose page falls within this chunk's page range
 """
 
-
-
 import re
+import functools
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
 from src.lib.Terminal import TerminalUI
+from src.core.Chunking.ChunkCleaners import prepare_embedding_text, get_model_config
 
-
-
-
-# ============================================================================
-# Constants — overridden by caller via chunk_document() parameters
-# ============================================================================
-
-DEFAULT_MAX_TOKENS  = 350    # safe for e5-small (512 token window)
-DEFAULT_MIN_TOKENS  = 80     # below this we merge with neighbour
-DEFAULT_OVERLAP     = 2      # sentences of overlap between chunks
+DEFAULT_MODEL = "intfloat/e5-small-v2"
 
 # signals from our parser — never split mid-token
 TABLE_TOKEN   = "[Table]"
@@ -66,107 +51,148 @@ CAPTION_TOKEN = "[Caption:"
 PAGE_SEP      = "---"
 
 
-# ============================================================================
-# Data model
-# ============================================================================
+# ── Token counting ─────────────────────────────────────────────────────────────
 
-@dataclass
-class Chunk:
-    text:        str     # original text → shown to user, sent to LLM
-    clean:       str     # stripped plain text → fed to embedding model
-    index:       int     # position in document (0-based)
-    source:      str     # filename for citations
-    token_count: int     # estimated tokens of clean text
-    heading:     str     # nearest section heading above this chunk
-    page:        int     # page number (0 if unknown)
-    page_end:    int     # last page this chunk touches
-    is_overlap:  bool    # True if this chunk contains overlap from previous
+@functools.lru_cache(maxsize=1)
+def _get_tiktoken_encoder():
+    """
+    Load the tiktoken encoder once and cache it for the process lifetime.
+    Returns None if tiktoken is not installed.
+    """
+    try:
+        import tiktoken
+        return tiktoken.get_encoding("cl100k_base")
+    except ImportError:
+        return None
 
-
-# ============================================================================
-# Token estimation
-# Deliberately simple — no tokenizer dependency.
-# word_count / 0.75 approximates subword token count closely enough
-# for chunking decisions. Real token count from your embedding model
-# will differ by <5% for English academic text.
-# ============================================================================
 
 def _tokens(text: str) -> int:
+    """
+    Estimate token count.
+
+    Uses tiktoken (cl100k_base) when available. Falls back to words / 0.75
+    which handles Latin text well; note it under-counts for CJK / code-heavy
+    content, so callers should treat the fallback as a lower-bound estimate.
+    """
+    enc = _get_tiktoken_encoder()
+    if enc is not None:
+        return len(enc.encode(text))
     return max(1, int(len(text.split()) / 0.75))
 
 
-# ============================================================================
-# Markdown cleaning
-# Strips formatting symbols from embedding_text to produce clean text.
-# Preserves all actual content — removes only markdown syntax.
-# ============================================================================
+def dynamic_chunk_params(model_name: str, doc_tokens: int) -> dict:
+    """
+    Scale chunk size to document length.
+    Longer docs need smaller chunks for retrieval precision.
+    """
+    base         = get_model_config(model_name)
+    max_capacity = base["max_tokens"]
 
-_LINK_RE    = re.compile(r"\[([^\]]+)\]\([^)]+\)")   # [text](url) → text
-_BOLD_RE    = re.compile(r"\*\*([^*]+)\*\*")          # **bold** → bold
-_ITALIC_RE  = re.compile(r"\*([^*]+)\*")              # *italic* → italic
-_IMAGE_RE   = re.compile(r"!\[.*?\]\(.*?\)")           # images → remove
-_CODE_RE    = re.compile(r"```[\s\S]*?```|`[^`]+`")   # code → remove
-_HTML_RE    = re.compile(r"<[^>]+>|<!--.*?-->", re.DOTALL)
-_MARKER_RE  = re.compile(r"==>.*?<==", re.DOTALL)     # pymupdf4llm markers
+    if doc_tokens < 2_000:
+        chunk_ratio, overlap_add = 1.0, 0
+    elif doc_tokens < 10_000:
+        chunk_ratio, overlap_add = 0.9, 0
+    elif doc_tokens < 50_000:
+        chunk_ratio, overlap_add = 0.75, 1
+    elif doc_tokens < 200_000:
+        chunk_ratio, overlap_add = 0.6, 2
+    else:
+        chunk_ratio, overlap_add = 0.5, 3
 
+    min_chunk_size = max(150, int(max_capacity * 0.4))
+    optimal_max    = max(min_chunk_size, int(max_capacity * chunk_ratio))
 
-def _clean(text: str) -> str:
-    """Strip markdown formatting, preserve content."""
-    text = _LINK_RE.sub(r"\1", text)
-    text = _BOLD_RE.sub(r"\1", text)
-    text = _ITALIC_RE.sub(r"\1", text)
-    text = _IMAGE_RE.sub("", text)
-    text = _CODE_RE.sub("", text)
-    text = _HTML_RE.sub("", text)
-    text = _MARKER_RE.sub("", text)
-    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
-    text = re.sub(r"\[Table\]\s*", "", text)
-    text = re.sub(r"\[Caption:\s*", "", text)
-    text = re.sub(r"\[Image[^\]]*\]", "", text)
-    text = re.sub(r"[*_#>~|\\]", " ", text)
-    text = re.sub(r"-{3,}", " ", text)          # page separators
-    text = re.sub(r" {2,}", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    return {
+        "max_tokens": optimal_max,
+        "min_tokens": base["min_tokens"],
+        "overlap":    base["overlap"] + overlap_add,
+        "base_max":   max_capacity,
+        "strategy":   f"{optimal_max}/{max_capacity} tokens per chunk",
+    }
 
 
+def get_dynamic_chunk_params_for_text(text: str, model_name: str = DEFAULT_MODEL) -> dict:
+    """Analyse text and return optimal chunking parameters + metadata."""
+    total_tokens = _tokens(text)
+    params       = dynamic_chunk_params(model_name, total_tokens)
+    params.update({
+        "doc_tokens":        total_tokens,
+        "estimated_chunks":  max(1, total_tokens // params["max_tokens"]),
+        "model":             model_name,
+    })
+    return params
 
 
+# ── Data model ─────────────────────────────────────────────────────────────────
 
-# ============================================================================
-# Args
-# ============================================================================
+@dataclass
+class ChunkLink:
+    """
+    A hyperlink scoped to a chunk. Mirrors ExtractedLink but is kept
+    separate so ChunkerUtils has no hard import dependency on ParserUtils.
+    """
+    url:  str
+    text: str = ""
+
+
+@dataclass
+class Chunk:
+    text:        str               # original text → shown to user / sent to LLM
+    clean:       str               # stripped plain text → fed to embedding model
+    index:       int               # position in document (0-based)
+    source:      str               # filename for citations
+    token_count: int               # estimated tokens of clean text
+    heading:     str               # nearest section heading above this chunk
+    page:        int               # first page this chunk touches
+    page_end:    int               # last page this chunk touches
+    is_overlap:  bool              # True if chunk contains overlap from previous
+    links:       List[ChunkLink]   = field(default_factory=list)
+
 
 @dataclass
 class ChunkingArgs:
-    target:     str
-    file:       Optional[str] = None
-    project:    Optional[str] = None
-
-    min_tokens: int  = DEFAULT_MIN_TOKENS
-    overlap:    int  = DEFAULT_OVERLAP
-    model:      str  = "e5-small"
-    inspect:    bool = False
-    rerun:      bool = False
-    embedding_text : str = ""
+    target:         str
+    file:           Optional[str] = None
+    project:        Optional[str] = None
+    inspect:        bool = False
+    rerun:          bool = False
+    embedding_text: str  = ""
 
 
+# ── Link extraction ────────────────────────────────────────────────────────────
 
-# ============================================================================
-# Sentence splitting
-# BlingFire for maximum speed + multilingual support, regex fallback.
-# ============================================================================
+def extract_links(text: str) -> List[ChunkLink]:
+    """
+    Extract markdown and bare-URL links from text.
+    Returns a deduplicated list of ChunkLink objects.
+    """
+    links: List[ChunkLink] = []
+
+    # Markdown links: [text](url)
+    for link_text, url in re.findall(r"\[(.*?)\]\((.*?)\)", text):
+        links.append(ChunkLink(text=link_text, url=url))
+
+    # Bare URLs — skip any already captured above
+    existing_urls = {l.url for l in links}
+    for url in re.findall(r"(?<![(\[])(https?://[^\s<>\"')\]]+)", text):
+        if url not in existing_urls:
+            links.append(ChunkLink(text="", url=url))
+            existing_urls.add(url)
+
+    return links
+
+
+# ── Sentence splitting ─────────────────────────────────────────────────────────
 
 _BLINGFIRE_AVAILABLE = False
-_BLINGFIRE_CHECKED = False
+_BLINGFIRE_CHECKED   = False
 
 
 def _init_blingfire() -> bool:
-    """Lazy-load BlingFire once per session."""
     global _BLINGFIRE_AVAILABLE, _BLINGFIRE_CHECKED
     if not _BLINGFIRE_CHECKED:
         try:
-            from blingfire import text_to_sentences
+            from blingfire import text_to_sentences  # noqa: F401
             _BLINGFIRE_AVAILABLE = True
         except ImportError:
             _BLINGFIRE_AVAILABLE = False
@@ -175,27 +201,18 @@ def _init_blingfire() -> bool:
 
 
 def _split_sentences(text: str) -> List[str]:
-    """
-    Split text into sentences using fastest available method.
-    BlingFire handles 100+ languages with near-instant cold start.
-    """
     if _init_blingfire():
         from blingfire import text_to_sentences
-        # BlingFire returns sentences separated by \n
         result = text_to_sentences(text).strip()
         if result:
-            return [s.strip() for s in result.split('\n') if s.strip()]
-    
-    # Regex fallback — handles common abbreviations
+            return [s.strip() for s in result.split("\n") if s.strip()]
+
     abbrev = r"(?<!\b(?:Mr|Mrs|Dr|Prof|Sr|Jr|Fig|vs|etc|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec))"
-    parts = re.split(abbrev + r"(?<=[.!?])\s+", text.strip())
+    parts  = re.split(abbrev + r"(?<=[.!?])\s+", text.strip())
     return [s.strip() for s in parts if s.strip()]
 
-# ============================================================================
-# Section splitting
-# Splits embedding_text into (heading, body) pairs at ## / ### boundaries.
-# Falls back to paragraph splitting if no headings found.
-# ============================================================================
+
+# ── Section splitting ──────────────────────────────────────────────────────────
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
@@ -203,32 +220,21 @@ _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 def split_into_sections(text: str) -> List[Tuple[str, str, int]]:
     """
     Split text at heading boundaries.
-
-    Returns list of (heading_text, body_text, heading_level) tuples.
-    heading_level: 1 for #, 2 for ##, 3 for ### etc.
-    If no headings, returns [("", full_text, 0)] — single section.
-
-    Page separators (---) are kept in body text so page tracking works.
+    Returns list of (heading_text, body_text, heading_level).
     """
     matches = list(_HEADING_RE.finditer(text))
-
     if not matches:
         return [("", text, 0)]
 
     sections = []
-
     for i, match in enumerate(matches):
-        level   = len(match.group(1))
-        heading = match.group(2).strip()
-
-        # body is from end of this heading line to start of next heading
+        level      = len(match.group(1))
+        heading    = match.group(2).strip()
         body_start = match.end()
         body_end   = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         body       = text[body_start:body_end].strip()
-
         sections.append((heading, body, level))
 
-    # text before first heading (preamble) — treat as headingless section
     first_heading_start = matches[0].start()
     if first_heading_start > 0:
         preamble = text[:first_heading_start].strip()
@@ -238,21 +244,14 @@ def split_into_sections(text: str) -> List[Tuple[str, str, int]]:
     return sections
 
 
-# ============================================================================
-# Page number tracking
-# Our parser inserts --- as page separators.
-# We track how many separators appear before each chunk to estimate page.
-# ============================================================================
+# ── Page tracking ──────────────────────────────────────────────────────────────
 
 def count_page_seps(text: str) -> int:
-    """Count page separator markers in text."""
+    """Count page separator markers (---) in text."""
     return len(re.findall(r"^---\s*$", text, re.MULTILINE))
 
 
-# ============================================================================
-# Table detection
-# [Table] blocks from our parser should never be split mid-table.
-# ============================================================================
+# ── Table / caption detection ──────────────────────────────────────────────────
 
 def _is_table_block(text: str) -> bool:
     return text.strip().startswith(TABLE_TOKEN)
@@ -262,11 +261,7 @@ def _is_caption_block(text: str) -> bool:
     return text.strip().startswith(CAPTION_TOKEN)
 
 
-# ============================================================================
-# Core chunk builder
-# Takes a piece of text that fits within the token budget and wraps it
-# into a Chunk with all metadata attached.
-# ============================================================================
+# ── Chunk builder ──────────────────────────────────────────────────────────────
 
 def _make_chunk(
     text:       str,
@@ -276,15 +271,14 @@ def _make_chunk(
     page:       int,
     page_end:   int,
     is_overlap: bool = False,
+    links:      Optional[List[ChunkLink]] = None,   # FIX: no mutable default
 ) -> Optional[Chunk]:
     """Build one Chunk. Returns None if text has no real content."""
     text = text.strip()
     if not text:
         return None
 
-    clean = _clean(text)
-
-    # skip if nothing real left after cleaning
+    clean = prepare_embedding_text(text, DEFAULT_MODEL)
     if len(clean.split()) < 4:
         return None
 
@@ -298,13 +292,11 @@ def _make_chunk(
         page        = page,
         page_end    = page_end,
         is_overlap  = is_overlap,
+        links       = links if links is not None else [],
     )
 
 
-# ============================================================================
-# Sentence-level splitting with overlap
-# Used when a paragraph/section is too large for the token budget.
-# ============================================================================
+# ── Sentence-level splitting with overlap ─────────────────────────────────────
 
 def _split_with_overlap(
     text:       str,
@@ -317,50 +309,47 @@ def _split_with_overlap(
 ) -> List[Chunk]:
     """
     Split text into sentence-windowed chunks with overlap.
-    overlap = number of sentences to prepend from previous window.
     """
-    sentences = _split_sentences(_clean(text))
-    orig_sents = _split_sentences(text)   # parallel original text sentences
+    links      = extract_links(text)
+    sentences  = _split_sentences(prepare_embedding_text(text, DEFAULT_MODEL))
+    orig_sents = _split_sentences(text)
 
     # align lengths — fallback if sentence counts differ
     if len(orig_sents) != len(sentences):
         orig_sents = sentences
 
-    chunks  = []
-    window_clean: List[str] = []
-    window_orig:  List[str] = []
+    chunks:       List[Chunk] = []
+    window_orig:  List[str]   = []
+    window_clean: List[str]   = []
 
-    def _flush(is_overlap: bool = False) -> None:
-        if not window_clean:
+    def _flush(is_overlap_flag: bool = False) -> None:
+        if not window_orig:
             return
         c = _make_chunk(
             " ".join(window_orig),
             source, index + len(chunks),
             heading, page, page,
-            is_overlap,
+            is_overlap_flag,
+            links,
         )
         if c:
             chunks.append(c)
 
-    for i, (sent, orig) in enumerate(zip(sentences, orig_sents)):
-        trial = window_clean + [sent]
-        if _tokens(" ".join(trial)) > max_tokens and window_clean:
-            _flush(is_overlap=(i > 0))
-            # keep last `overlap` sentences as context for next chunk
-            window_clean = window_clean[-overlap:] if overlap else []
+    for i, (sent_clean, sent_orig) in enumerate(zip(sentences, orig_sents)):
+        trial_clean = window_clean + [sent_clean]
+        if _tokens(" ".join(trial_clean)) > max_tokens and window_clean:
+            _flush(is_overlap_flag=(i > 0))
             window_orig  = window_orig[-overlap:]  if overlap else []
+            window_clean = window_clean[-overlap:] if overlap else []
 
-        window_clean.append(sent)
-        window_orig.append(orig)
+        window_orig.append(sent_orig)
+        window_clean.append(sent_clean)
 
-    _flush(is_overlap=bool(window_clean))
+    _flush(is_overlap_flag=bool(window_orig))
     return chunks
 
 
-# ============================================================================
-# Section → chunks
-# Handles one (heading, body) section.
-# ============================================================================
+# ── Section → chunks ───────────────────────────────────────────────────────────
 
 def section_to_chunks(
     heading:    str,
@@ -373,92 +362,101 @@ def section_to_chunks(
     overlap:    int,
 ) -> List[Chunk]:
     """
-    Convert one section into one or more chunks.
+    Convert one (heading, body) section into one or more chunks.
 
-    Rules:
-    - [Table] paragraphs → always their own chunk, never split
-    - [Caption] paragraphs → prepend to previous chunk or own chunk
-    - Section fits in budget → one chunk
-    - Section too big → split paragraphs, each inherits heading
-    - Paragraph still too big → sentence split with overlap
-    - Tiny paragraphs → collected and merged at end
+    Page tracking inside a section:
+    We walk paragraphs in order and count any --- markers we pass so
+    page_end advances correctly even within a multi-page section.
     """
     if not body.strip():
         return []
 
-    paragraphs = [p.strip() for p in body.split("\n\n") if p.strip()]
+    body_links = extract_links(body)
+    body_clean = prepare_embedding_text(body, DEFAULT_MODEL)
 
-    # if section fits whole → one chunk
-    body_clean = _clean(body)
     if _tokens(body_clean) <= max_tokens:
-        c = _make_chunk(body, source, index, heading, page, page)
+        c = _make_chunk(
+            body, source, index, heading,
+            page, page + count_page_seps(body),
+            links=body_links,
+        )
         return [c] if c else []
 
-    # section too big → process paragraph by paragraph
-    chunks:  List[Chunk]  = []
-    pending: List[str]    = []   # accumulate small paragraphs
-    pending_orig: List[str] = []
+    paragraphs   = [p.strip() for p in body.split("\n\n") if p.strip()]
+    chunks:       List[Chunk] = []
+    pending:      List[str]   = []
+    pending_orig: List[str]   = []
+    current_page = page
 
     def _flush_pending() -> None:
         if not pending:
             return
         merged = " ".join(pending_orig)
-        c = _make_chunk(merged, source, index + len(chunks), heading, page, page)
+        # FIX: pass body_links so pending-flush chunks keep their links
+        c = _make_chunk(
+            merged, source, index + len(chunks),
+            heading, current_page, current_page,
+            links=body_links,
+        )
         if c:
             chunks.append(c)
         pending.clear()
         pending_orig.clear()
 
     for para in paragraphs:
-        # table block — always its own chunk, flush pending first
+        current_page += count_page_seps(para)
+
         if _is_table_block(para):
             _flush_pending()
-            c = _make_chunk(para, source, index + len(chunks), heading, page, page)
+            c = _make_chunk(
+                para, source, index + len(chunks),
+                heading, current_page, current_page,
+                links=extract_links(para),
+            )
             if c:
                 chunks.append(c)
             continue
 
-        # caption — try to attach to previous chunk, else own chunk
         if _is_caption_block(para):
             if chunks:
-                last = chunks[-1]
+                last     = chunks[-1]
                 combined = last.text + "\n" + para
-                if _tokens(_clean(combined)) <= max_tokens:
+                if _tokens(prepare_embedding_text(combined, DEFAULT_MODEL)) <= max_tokens:
                     chunks[-1] = _make_chunk(
                         combined, source, last.index,
-                        last.heading, last.page, last.page_end,
+                        last.heading, last.page, current_page,
                         last.is_overlap,
+                        links=last.links,
                     ) or last
                     continue
-            c = _make_chunk(para, source, index + len(chunks), heading, page, page)
+            c = _make_chunk(
+                para, source, index + len(chunks),
+                heading, current_page, current_page,
+                links=extract_links(para),
+            )
             if c:
                 chunks.append(c)
             continue
 
-        para_tokens = _tokens(_clean(para))
+        para_tokens    = _tokens(prepare_embedding_text(para, DEFAULT_MODEL))
+        pending_tokens = _tokens(" ".join(pending)) if pending else 0
 
-        # paragraph fits in budget
         if para_tokens <= max_tokens:
-            # can we merge with pending?
-            pending_tokens = _tokens(" ".join(pending)) if pending else 0
             if pending_tokens + para_tokens <= max_tokens:
-                pending.append(_clean(para))
+                pending.append(prepare_embedding_text(para, DEFAULT_MODEL))
                 pending_orig.append(para)
             else:
                 _flush_pending()
-                pending.append(_clean(para))
+                pending.append(prepare_embedding_text(para, DEFAULT_MODEL))
                 pending_orig.append(para)
 
-            # if pending is big enough, flush it
             if _tokens(" ".join(pending)) >= min_tokens:
                 _flush_pending()
-
-        # paragraph too big → sentence split
         else:
             _flush_pending()
             sub = _split_with_overlap(
                 para, source, index + len(chunks),
-                heading, page, max_tokens, overlap,
+                heading, current_page, max_tokens, overlap,
             )
             chunks.extend(sub)
 
@@ -466,21 +464,26 @@ def section_to_chunks(
     return chunks
 
 
-# ============================================================================
-# Small chunk merging
-# After section processing, merge any chunks still under min_tokens.
-# ============================================================================
+# ── Small chunk merging ────────────────────────────────────────────────────────
 
 def merge_small(
     chunks:     List[Chunk],
     min_tokens: int,
     max_tokens: int,
 ) -> List[Chunk]:
-    """Merge consecutive undersized chunks that share the same heading."""
+    """
+    Merge consecutive undersized chunks.
+
+    Normal case (both small, same heading): always merge if fits.
+    Cross-heading case (both tiny, < min_tokens/2): merge if fits, but
+      the heading of the *first* chunk is kept so citations still point
+      to the correct section.
+    """
     if not chunks:
         return []
 
-    merged = []
+    tiny_threshold = min_tokens // 2
+    merged         = []
     buf: Optional[Chunk] = None
 
     for chunk in chunks:
@@ -488,12 +491,17 @@ def merge_small(
             buf = chunk
             continue
 
-        # only merge if both are small and same heading
-        both_small = buf.token_count < min_tokens
-        same_section = buf.heading == chunk.heading
-        fits = buf.token_count + chunk.token_count <= max_tokens
+        fits       = buf.token_count + chunk.token_count <= max_tokens
+        both_small = buf.token_count < min_tokens and chunk.token_count < min_tokens
+        both_tiny  = buf.token_count < tiny_threshold and chunk.token_count < tiny_threshold
+        same_sec   = buf.heading == chunk.heading
 
-        if both_small and same_section and fits:
+        should_merge = fits and (
+            (both_small and same_sec) or
+            (both_tiny)
+        )
+
+        if should_merge:
             buf = Chunk(
                 text        = buf.text  + "\n\n" + chunk.text,
                 clean       = buf.clean + " "    + chunk.clean,
@@ -504,6 +512,7 @@ def merge_small(
                 page        = buf.page,
                 page_end    = chunk.page_end,
                 is_overlap  = buf.is_overlap,
+                links       = buf.links + chunk.links,   # FIX: merge links
             )
         else:
             merged.append(buf)

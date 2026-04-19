@@ -67,7 +67,6 @@ def parse_documents(
     caption_images: bool = False,
     project_dir: Optional[Path] = None,
     precise: bool = False,
-    store: Optional[DarwinStore] = None,
 ) -> list[ParsedDocument]:
 
     if not files:
@@ -126,7 +125,7 @@ def parse_documents(
 
                         if doc.error:
                             file_errors[filename] = doc.error
-                            update_progress(f"❌ {doc.error}")
+                            update_progress(f" {doc.error}")
                         else:
                             completed_files.add(filename)
                             update_progress(
@@ -143,7 +142,7 @@ def parse_documents(
                             error=f"{type(e).__name__}: {e}",
                         )
                         file_errors[filename] = str(e)
-                        update_progress(f"❌ {type(e).__name__}")
+                        update_progress(f" {type(e).__name__}")
                         processed_count += 1
 
                 TerminalUI.success(f"\n✨ All {processed_count} files processed!")
@@ -156,9 +155,9 @@ def parse_documents(
     TerminalUI.blank()
 
     if completed_files:
-        TerminalUI.success(f"✅ Parsed: {len(completed_files)} files")
+        TerminalUI.success(f" Parsed: {len(completed_files)} files")
     if file_errors:
-        TerminalUI.error(f"❌ Failed: {len(file_errors)} files")
+        TerminalUI.error(f" Failed: {len(file_errors)} files")
         for name, err in list(file_errors.items())[:5]:
             TerminalUI.dim(f"  • {name}: {err}")
         if len(file_errors) > 5:
@@ -180,6 +179,7 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         f"| Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}"
     )
     TerminalUI.blank()
+    target_paths: list[Path] = []
 
     if args.file:
         target_paths = scan_directory(args.file, recursive=False)
@@ -205,11 +205,11 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         TerminalUI.dim(f"Skipped {skipped_count} cached files (use --rerun to reprocess)")
 
     if not to_process:
-        TerminalUI.success("✨ All files already parsed!")
+        TerminalUI.success(" All files already parsed!")
         TerminalUI.dim("Use --rerun to reprocess with different settings")
         return []
 
-    TerminalUI.bold(f"\n📚 Processing {len(to_process)} file(s)...")
+    TerminalUI.bold(f"\n Processing {len(to_process)} file(s)...")
 
     files = [
         FileWithImages(
@@ -218,13 +218,12 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         )
         for path in to_process
     ]
-
+    TerminalUI.bold("Parsing files....this might take a while and the steps will be shown in the logs...try not to abrupt the process by closing the terminal or interrupting the process...")
     docs = parse_documents(
         files,
         caption_images=args.caption,
         project_dir=store.project_dir,
         precise=args.precise,
-        store=store,
     )
 
     succeeded = failed = 0
@@ -233,7 +232,7 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
             continue
         if doc.error:
             failed += 1
-            TerminalUI.error(f"❌ {doc.filename} - {doc.error}")
+            TerminalUI.error(f" {doc.filename} - {doc.error}")
         else:
             if args.save:
                 store.save_markdown(doc.filename, doc, rerun=args.rerun)
@@ -241,9 +240,9 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
 
     TerminalUI.blank()
     if succeeded > 0:
-        TerminalUI.success(f"✅ Success: {succeeded} files parsed and saved")
+        TerminalUI.success(f" Success: {succeeded} files parsed and saved")
     if failed > 0:
-        TerminalUI.error(f"❌ Failed: {failed} files")
+        TerminalUI.error(f" Failed: {failed} files")
 
     return docs
 

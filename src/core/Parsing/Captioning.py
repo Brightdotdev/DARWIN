@@ -1,9 +1,7 @@
-
 from pathlib import Path
-from typing import  Dict
+from typing import Dict
 import json
 from src.lib.Terminal import TerminalUI
-
 
 
 # data stuff
@@ -11,10 +9,10 @@ CACHE_CAPTIONS = True
 
 
 # ============================================================================
-# Caption cache # Todo :: move this to the models moodule
+# Caption cache
 # ============================================================================
 
-def get_caption_cache_path(images_dir: Path ) -> Path:
+def get_caption_cache_path(images_dir: Path) -> Path:
     return images_dir / ".captions_cache.json"
 
 
@@ -32,7 +30,6 @@ def load_caption_cache(images_dir: Path) -> Dict[str, str]:
     return {}
 
 
-
 def save_caption_cache(images_dir: Path, cache: Dict[str, str]) -> None:
     if not CACHE_CAPTIONS:
         return
@@ -42,6 +39,7 @@ def save_caption_cache(images_dir: Path, cache: Dict[str, str]) -> None:
     except Exception as e:
         TerminalUI.warning(f"Failed to save caption cache: {e}")
 
+
 def migrate_caption_cache(images_dir: Path) -> int:
     """Migrate absolute-path cache keys to bare filenames. Safe to call repeatedly."""
     cache    = load_caption_cache(images_dir)
@@ -49,12 +47,12 @@ def migrate_caption_cache(images_dir: Path) -> int:
     count    = sum(1 for k in cache if Path(k).name != k)
     if count > 0:
         save_caption_cache(images_dir, migrated)
-        TerminalUI.info(label="Caption Progress" ,  value=f"Migrated {count} caption cache keys to bare filenames")
+        TerminalUI.info(label="Caption Progress", value=f"Migrated {count} caption cache keys to bare filenames")
     return count
 
 
 # ============================================================================
-# Caption model # Todo :: move this to the models moodule
+# Caption model
 # ============================================================================
 
 def caption_model_available() -> bool:
@@ -63,8 +61,6 @@ def caption_model_available() -> bool:
         return True
     except ImportError:
         return False
-
-
 
 
 def load_caption_model(model_id: str = "HuggingFaceTB/SmolVLM-256M-Instruct"):
@@ -89,8 +85,6 @@ def load_caption_model(model_id: str = "HuggingFaceTB/SmolVLM-256M-Instruct"):
     return processor, model, device
 
 
-
-
 def caption_image(
     image_path: Path,
     processor,
@@ -106,7 +100,7 @@ def caption_image(
 
     try:
         from PIL import Image as PILImage
-        
+
         TerminalUI.dim(f"Captioning {image_path.name}")
 
         image    = PILImage.open(image_path).convert("RGB")

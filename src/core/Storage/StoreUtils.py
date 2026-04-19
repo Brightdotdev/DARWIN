@@ -79,26 +79,3 @@ def read_json(path: Path) -> dict:
             return json.load(f)
     except Exception:
         return {}
-
-
-
-
-
-
-
-
-# ── File store ─────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class FileMeta:
-    filename:    str
-    file_hash:   str
-    chunk_count: int
-    page_count:  int
-    parser:      str
-    version:     str = "1.0"
-    created_at:  str = ""
-    updates:     dict[str, str] = field(default_factory=dict)
-    updated_at:  str = ""
-
