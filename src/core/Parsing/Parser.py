@@ -61,7 +61,6 @@ def parse(
         )
 
     try:
-
         TerminalUI.dim(f"Parsing {path.name}...")
 
         if file_type == "pdf":
@@ -73,12 +72,10 @@ def parse(
                 precise=precise,
             )
         else:
-            text, page_count, metadata, images = parse_markitdown(path)
-            display_text   = text
-            embedding_text = text
-            all_images     = []
+            # parse_markitdown returns (display_text, embedding_text, page_count, metadata, images)
+            display_text, embedding_text, page_count, metadata, all_images = parse_markitdown(path)
             if images_dir:
-                TerminalUI.dim(f"Image extraction for {path.suffix} files is not supported yet")
+                TerminalUI.warn(f"Image extraction is not supported for {path.suffix} files")
 
         if not is_good_enough(embedding_text):
             return ParsedDocument(
@@ -87,7 +84,7 @@ def parse(
                 error="parsed text is empty or garbled",
             )
 
-        timer.done(msg=f"[green]✓[/green] Parsed {path.name} Successfully")
+        timer.done(msg=f"[green]✓[/green] Parsed {path.name} successfully")
 
         return ParsedDocument(
             display_text=display_text,

@@ -253,6 +253,7 @@ class TerminalUI:
                 progress.update(task_id, description=f"[red]✗ Failed {filename}[/red]")
                 raise
 
+ 
     @classmethod
     @contextmanager
     def multi_parse_progress(cls, filenames: List[str]):
@@ -264,29 +265,49 @@ class TerminalUI:
             for name in filenames
         }
         
-        with cls.progress_bar(
-            description="Processing files",
-            total=len(filenames),
+        
+        progress = Progress(
+            TextColumn("[cyan]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("[bold]{task.percentage:>5.1f}%"),
+            TextColumn("•"),
+            TextColumn("{task.fields[status]}"),
+            console=cls.console,
             transient=False,
-        ) as (progress, task_id):
+            auto_refresh=True, 
+        )
+        
+        with progress:
+            task_id = progress.add_task(
+                "Processing files",
+                total=len(filenames),
+                status="[dim]starting...[/dim]"
+            )
             
             def get_callback(filename: str):
                 def _update(msg: str):
                     states[filename]["status"] = msg
-                    if any(kw in msg.lower() for kw in ("done", "complete", "saved", "success")):
+                    if any(kw in msg.lower() for kw in ("done", "complete", "saved", "success", "✓", "pages")):
                         states[filename]["done"] = True
                     
                     # Count completed files
                     completed = sum(1 for s in states.values() if s["done"])
-                    progress.update(task_id, completed=completed)
                     
-                    # Show current file status
+                    # Find current file being processed
                     current = next((n for n in filenames if not states[n]["done"]), "")
+                    
+                    # Build status display
                     if current:
-                        progress.update(
-                            task_id,
-                            description=f"[cyan]{current}[/cyan] — [dim]{states[current]['status']}[/dim]"
-                        )
+                        status_text = f"[cyan]{current[:20]}[/cyan] [dim]{states[current]['status']}[/dim]"
+                    else:
+                        status_text = f"[green]✓ Complete ({completed}/{len(filenames)})[/green]"
+                    
+                    
+                    if states[filename]["done"] and completed > progress.tasks[task_id].completed:
+                        progress.advance(task_id)
+                    
+                    # Update the status text
+                    progress.update(task_id, status=status_text)
                 
                 return _update
             

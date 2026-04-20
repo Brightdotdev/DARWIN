@@ -10,7 +10,8 @@ The parser already bakes structure signals into embedding_text:
   ## / ###     section boundaries
   [Table]      structured data block
   [Caption:]   figure caption
-  ---          page separator
+  [Page N]     page boundary (new extractor)
+  ---          page boundary (legacy pymupdf4llm)
 
 We exploit those signals directly instead of blindly splitting on \\n\\n
 and trying to fix size problems after the fact.
@@ -29,22 +30,17 @@ Two text fields per chunk:
   text   → original text shown to user / sent to LLM
   clean  → stripped plain text used for embedding
 
-Token budget is a parameter — caller sets it based on their embedding model:
-  e5-small        →  350  (512 window, leave headroom)
-  BGE-M3          →  800  (8192 window)
-  GritLM-7B       →  512  (4096 window)
-
-Link assignment:
-  Pass raw_links (from ParsedDocument.links via links_to_dict()) to
-  chunk_document() or chunk_for_model() and each chunk will have its
-  .links field populated with the hyperlinks whose page falls within
-  that chunk's [page, page_end] range.
+Token budget comes from model_name via get_model_config():
+  e5-small   →  480  tokens
+  BGE-M3     →  8000 tokens
+  GritLM-7B  →  3800 tokens
 """
 
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from src.core.Chunking.ChunkerUtils import (
     Chunk,
+    DEFAULT_MODEL,
     split_into_sections,
     count_page_seps,
     merge_small,
@@ -56,11 +52,12 @@ from src.core.Chunking.ChunkerUtils import (
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def chunk_document(
-    text:       str,
-    source:     str,
-    max_tokens: int,
-    min_tokens: int,
-    overlap:    int,
+    text:        str,
+    source:      str,
+    max_tokens:  int,
+    min_tokens:  int,
+    overlap:     int,
+    model_name:  str = DEFAULT_MODEL,
 ) -> List[Chunk]:
     """
     Convert parser embedding_text into chunks ready for embedding.
@@ -68,56 +65,58 @@ def chunk_document(
     Args:
         text:       embedding_text from ParsedDocument
         source:     filename — attached to every chunk for citations
-        max_tokens: maximum chunk size — set based on your embedding model
-                    e5-small → 350, BGE-M3 → 800, GritLM → 512
-        min_tokens: chunks below this get merged with neighbours
-        overlap:    sentences of overlap between chunks when sentence-splitting
-        raw_links:  optional list of link dicts from ParsedDocument.links
-                    (use links_to_dict() from ParserUtils to serialise them).
-                    When supplied, each chunk's .links field is populated with
-                    hyperlinks whose page falls within that chunk's page range.
+        max_tokens: maximum chunk size (tokens)
+        min_tokens: chunks below this are merged with neighbours
+        overlap:    sentences of overlap when sentence-splitting large paragraphs
+        model_name: embedding model key — controls cleaning mode inside
+                    section_to_chunks (plain_text vs semantic_markdown).
+                    Defaults to DEFAULT_MODEL if not supplied.
 
     Returns:
-        List[Chunk] — ordered, re-indexed from 0.
+        List[Chunk] ordered and re-indexed from 0.
         Each chunk has:
             .text        original text (send to LLM)
             .clean       stripped text (feed to embedder)
-            .heading     nearest section heading (use for citations)
-            .page        first page of this chunk (1-based, 0 if unknown)
-            .page_end    last page of this chunk
+            .heading     nearest section heading (for citations)
+            .page        first page this chunk touches
+            .page_end    last page this chunk touches
             .token_count estimated token count of .clean
-            .links       hyperlinks scoped to this chunk's page range
+            .links       always [] — populate externally if needed
     """
     if not text or not text.strip():
         return []
 
-    page     = 1
-    sections = split_into_sections(text)
-
+    sections    = split_into_sections(text)
     all_chunks: List[Chunk] = []
 
-    for heading, body, _level in sections:
-        page += count_page_seps(body)
+    # Page tracking: walk section bodies in order, counting boundary markers
+    # *as we finish each section* so each section's start page is the page
+    # we were on when we entered it, not after counting its own separators.
+    current_page = 1
 
+    for heading, body, _level in sections:
         new_chunks = section_to_chunks(
             heading    = heading,
             body       = body,
-            source     = source if source else "unknown",
+            source     = source or "unknown",
             index      = len(all_chunks),
-            page       = page,
+            page       = current_page,
             max_tokens = max_tokens,
             min_tokens = min_tokens,
             overlap    = overlap,
+            model_name = model_name,
         )
         all_chunks.extend(new_chunks)
 
-    # final merge pass for any remaining small chunks
+        # Advance page counter after processing the section so the *next*
+        # section starts on the correct page.
+        current_page += count_page_seps(body)
+
     all_chunks = merge_small(all_chunks, min_tokens, max_tokens)
 
-    # re-index cleanly from 0
+    # Re-index cleanly from 0 after merging may have collapsed chunks
     for i, chunk in enumerate(all_chunks):
         chunk.index = i
-
 
     return all_chunks
 
@@ -125,31 +124,36 @@ def chunk_document(
 # ── Convenience — auto model preset ───────────────────────────────────────────
 
 def chunk_for_model(
-    text:      str,
-    source:    str = "unknown",
+    text:       str,
+    source:     str = "unknown",
+    model_name: str = DEFAULT_MODEL,
 ) -> Tuple[List[Chunk], dict]:
     """
-    Convert parser embedding_text into chunks using auto-detected parameters.
+    Convert parser embedding_text into chunks using model-aware auto parameters.
 
-    Model-specific parameters (max_tokens, min_tokens, overlap) are resolved
-    from the user's config via get_dynamic_chunk_params_for_text().
+    Resolves max_tokens / min_tokens / overlap from the model preset and
+    scales them to the document length via get_dynamic_chunk_params_for_text().
 
     Args:
-        text:      embedding_text from ParsedDocument
-        source:    filename for citations
-        raw_links: optional link dicts — see chunk_document() for details
+        text:       embedding_text from ParsedDocument
+        source:     filename for citations
+        model_name: embedding model key — drives both parameter selection and
+                    the cleaning mode used when building each chunk's .clean field
 
     Returns:
-        (chunks, chunk_metadata) tuple.
-        chunk_metadata contains the resolved params + doc stats and is
-        suitable for passing to store.save_chunks(..., chunk_meta=...).
+        (chunks, chunk_metadata) where chunk_metadata contains the resolved
+        params plus doc stats (doc_tokens, estimated_chunks, strategy).
+        Pass chunk_metadata to store.save_chunks(..., chunk_meta=...).
     """
-    chunk_metadata = get_dynamic_chunk_params_for_text(text)
+    chunk_metadata = get_dynamic_chunk_params_for_text(text, model_name=model_name)
+
     chunks = chunk_document(
         text       = text,
         source     = source,
         max_tokens = chunk_metadata["max_tokens"],
         min_tokens = chunk_metadata["min_tokens"],
         overlap    = chunk_metadata["overlap"],
+        model_name = model_name,
     )
+
     return chunks, chunk_metadata
