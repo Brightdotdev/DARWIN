@@ -151,3 +151,15 @@ if __name__ == "__main__":
     else:
         console.print(f"[red]Unknown command: {cmd}[/red]")
         cmd_help()
+
+
+
+"""
+Darwin RAG System
+Core built by BrightDotDev
+Licensed under MIT with Attribution
+"""
+
+__version__ = "0.1.0"
+__author__ = "BrightDotDev"
+__license__ = "MIT with Attribution"
