@@ -3,23 +3,35 @@ src/lib/Terminal.py
 -------------------
 All terminal UI for Darwin.
 Pure rich — no raw ANSI codes anywhere.
+
+Design Philosophy:
+- One progress pattern: @contextmanager + Progress()
+- All trackers build on the same foundation
+- Consistent API across all progress displays
 """
 
 import time
 from contextlib import contextmanager
-from typing import List, Dict, Optional
-
+from typing import List, Dict, Optional, Callable, Any
+from rich.progress import (
+    Progress, 
+    BarColumn, 
+    TextColumn, 
+    TimeElapsedColumn,
+    SpinnerColumn,
+    TaskProgressColumn,
+)
 from rich.console import Console
-from rich.panel   import Panel
-from rich.live    import Live
-from rich.table   import Table
-from rich.syntax  import Syntax
-from rich.rule    import Rule
+from rich.panel import Panel
+from rich.live import Live
+from rich.table import Table
+from rich.syntax import Syntax
+from rich.rule import Rule
 from rich.spinner import Spinner
 
-# 1. Initialize the global console instance
-# We force 'utf-8' here as a secondary fallback for Windows environments
+# Initialize the global console instance
 _console = Console(force_terminal=True)
+
 
 class Timer:
     """Stage timer that prints through a specific rich console."""
@@ -68,7 +80,8 @@ class Timer:
 
 
 class TerminalUI:
-    # Use the shared console instance as a class attribute
+    """Unified terminal UI using Rich."""
+    
     console = _console
 
     ASCII = [
@@ -79,16 +92,234 @@ class TerminalUI:
         "  ██████╔╝██║  ██║██║  ██║╚███╔███╔╝██║██║ ╚████║",
         "  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝",
     ]
-    # -- Timer factory --
+
+    # =========================================================================
+    # Timer Factory
+    # =========================================================================
 
     @classmethod
     def timer(cls, name: str) -> Timer:
+        """Create a named timer for tracking stage durations."""
         return Timer(name, console=cls.console)
 
-    # -- Splash Screens --
+    # =========================================================================
+    # Core Progress Pattern (The Foundation)
+    # =========================================================================
+
+    @classmethod
+    @contextmanager
+    def progress_bar(
+        cls,
+        description: str = "Processing",
+        total: Optional[int] = None,
+        transient: bool = True,
+        show_speed: bool = False,
+    ):
+        """
+        Core progress bar pattern. All other progress methods build on this.
+        
+        Args:
+            description: Task description text
+            total: Total steps (None for indeterminate)
+            transient: Clear bar when done
+            show_speed: Show items/second
+            
+        Yields:
+            progress: Rich Progress instance
+            task_id: ID of the created task
+        """
+        columns = [
+            TextColumn("[cyan]{task.description}"),
+            BarColumn(bar_width=30),
+        ]
+        
+        if show_speed:
+            columns.append(TaskProgressColumn())
+        else:
+            columns.append(TextColumn("[bold]{task.percentage:>5.1f}%"))
+        
+        columns.append(TimeElapsedColumn())
+        
+        progress = Progress(
+            *columns,
+            console=cls.console,
+            transient=transient,
+            auto_refresh=True,
+        )
+        
+        with progress:
+            task_id = progress.add_task(description, total=total)
+            yield progress, task_id
+
+    @classmethod
+    @contextmanager
+    def spinner_progress(cls, description: str = "Working"):
+        """
+        Simple spinner with text for indeterminate operations.
+        """
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[cyan]{task.description}"),
+            console=cls.console,
+            transient=True,
+        )
+        
+        with progress:
+            task_id = progress.add_task(description, total=None)
+            yield progress, task_id
+
+    # =========================================================================
+    # Specialized Progress Trackers (Built on Core Pattern)
+    # =========================================================================
+
+    @classmethod
+    @contextmanager
+    def track_embedding(cls, total_batches: int, model_name: str, file_name: str):
+        """
+        Specialized tracker for embedding progress.
+        Shows model info and batch speed.
+        """
+        state = {
+            "start_time": time.perf_counter(),
+            "batch_times": [],
+        }
+        
+        progress = Progress(
+            TextColumn("[cyan]Embedding {task.fields[file]}"),
+            BarColumn(bar_width=30),
+            TextColumn("[bold]{task.percentage:>5.1f}%"),
+            TextColumn("•"),
+            TextColumn("[magenta]{task.fields[speed]:>6}s/batch"),
+            TextColumn("•"),
+            TextColumn("[dim]{task.fields[model]}[/dim]"),
+            console=cls.console,
+            transient=False,
+        )
+        
+        with progress:
+            task_id = progress.add_task(
+                f"[{model_name}]",
+                total=total_batches,
+                file=file_name[:20],
+                model=model_name.split('/')[-1],
+                speed="0.00",
+            )
+            
+            def update(step: int, msg: Optional[str] = None):
+                """Update progress and recalculate speed."""
+                now = time.perf_counter()
+                state["batch_times"].append(now)
+                
+                # Calculate average speed over last 5 batches
+                if len(state["batch_times"]) > 1:
+                    recent = state["batch_times"][-5:] if len(state["batch_times"]) >= 5 else state["batch_times"]
+                    if len(recent) > 1:
+                        avg = (recent[-1] - recent[0]) / (len(recent) - 1)
+                    else:
+                        avg = 0
+                else:
+                    avg = 0
+                
+                progress.update(
+                    task_id,
+                    completed=step,
+                    speed=f"{avg:.2f}",
+                    description=f"[cyan]Embedding[/cyan] {msg}" if msg else None,
+                )
+            
+            try:
+                yield update
+            finally:
+                # Ensure 100% completion display
+                progress.update(task_id, completed=total_batches)
+
+    @classmethod
+    @contextmanager
+    def parse_progress(cls, filename: str):
+        """
+        Single file parsing progress with spinner animation.
+        """
+        with cls.spinner_progress(f"Parsing {filename}") as (progress, task_id):
+            state = {"status": "starting..."}
+            
+            def update(msg: str):
+                state["status"] = msg
+                progress.update(task_id, description=f"[cyan]Parsing {filename}[/cyan] — [dim]{msg}[/dim]")
+            
+            try:
+                yield update
+                progress.update(task_id, description=f"[green]✓ Parsed {filename}[/green] — [dim]{state['status']}[/dim]")
+            except Exception:
+                progress.update(task_id, description=f"[red]✗ Failed {filename}[/red]")
+                raise
+
+    @classmethod
+    @contextmanager
+    def multi_parse_progress(cls, filenames: List[str]):
+        """
+        Multiple file parsing progress with per-file status.
+        """
+        states: Dict[str, Dict] = {
+            name: {"status": "queued", "done": False}
+            for name in filenames
+        }
+        
+        with cls.progress_bar(
+            description="Processing files",
+            total=len(filenames),
+            transient=False,
+        ) as (progress, task_id):
+            
+            def get_callback(filename: str):
+                def _update(msg: str):
+                    states[filename]["status"] = msg
+                    if any(kw in msg.lower() for kw in ("done", "complete", "saved", "success")):
+                        states[filename]["done"] = True
+                    
+                    # Count completed files
+                    completed = sum(1 for s in states.values() if s["done"])
+                    progress.update(task_id, completed=completed)
+                    
+                    # Show current file status
+                    current = next((n for n in filenames if not states[n]["done"]), "")
+                    if current:
+                        progress.update(
+                            task_id,
+                            description=f"[cyan]{current}[/cyan] — [dim]{states[current]['status']}[/dim]"
+                        )
+                
+                return _update
+            
+            yield get_callback
+
+    @classmethod
+    @contextmanager
+    def track_chunking(cls, total_chunks: int, filename: str):
+        """
+        Track chunking progress.
+        """
+        with cls.progress_bar(
+            description=f"Chunking {filename}",
+            total=total_chunks,
+            transient=False,
+        ) as (progress, task_id):
+            
+            def update(chunks_done: int, msg: str = ""):
+                progress.update(
+                    task_id,
+                    completed=chunks_done,
+                    description=f"[cyan]Chunking {filename}[/cyan] — [dim]{msg}[/dim]" if msg else None,
+                )
+            
+            yield update
+
+    # =========================================================================
+    # Splash Screens & Headers
+    # =========================================================================
 
     @classmethod
     def print_ascii_splash(cls) -> None:
+        """Print welcome splash screen."""
         cls.console.print()
         for line in cls.ASCII:
             cls.console.print(f"[cyan]{line}[/cyan]")
@@ -102,45 +333,28 @@ class TerminalUI:
             padding=(1, 2),
         ))
         cls.console.print()
-    
+
     @classmethod
     def print_darwin(cls) -> None:
+        """Clear screen and print ASCII logo."""
         cls.console.clear()
         cls.console.print()
         for line in cls.ASCII:
             cls.console.print(f"[cyan]{line}[/cyan]")
         cls.console.print()
 
-    @classmethod
-    def loading_with_ascii(cls):
-        spinner = Spinner("dots", text="Starting...")
 
-        with Live(spinner, refresh_per_second=10):
-            time.sleep(4)
 
-        cls.console.clear()
-        for line in cls.ASCII:
-            cls.console.print(line, style="bold cyan")
-        cls.console.print()
-        
+    # =========================================================================
+    # Status Displays
+    # =========================================================================
 
     @classmethod
-    def fade_in_ascii(cls):
-        styles = ["dim", "cyan", "bold cyan"]
-
-        for style in styles:
-            cls.console.clear()
-            for line in cls.ASCII:
-                cls.console.print(line, style=style)
-            time.sleep(0.2)
-
-
-
-    @classmethod
-    def print_project_status(cls, store, query: str) -> None:
+    def print_project_status(cls, store, query: str = "") -> None:
+        """Display full project status with all files."""
         status = store.status()
         config = status.get("config", {})
-        files = status.get("files", [])
+        files = status.get("files", {})
 
         llm_display = config.get("llm_model") or "none"
 
@@ -150,18 +364,47 @@ class TerminalUI:
         cls.console.print()
 
         cls.console.print(f"  [dim]project[/dim]  →  [white]{status.get('project_dir', 'unknown')}[/white]")
-        cls.console.print(f"  [dim]query[/dim]    →  [yellow]{query}[/yellow]")
+        if query:
+            cls.console.print(f"  [dim]query[/dim]    →  [yellow]{query}[/yellow]")
         cls.console.print(f"  [dim]llm[/dim]      →  [white]{llm_display}[/white]")
         cls.console.print()
 
         if files:
-            for f in files:
-                chunks = f.get("chunk_count", 0)
-                fresh = "[green]fresh[/green]" if f.get("is_fresh") else "[yellow]stale[/yellow]"
-                has_all = all([f.get("has_chunks"), f.get("has_embeddings"), f.get("has_bm25")])
-                indexed = "[green]indexed[/green]" if has_all else "[yellow]not indexed[/yellow]"
-                name = f.get("filename", "unnamed")[:30]
-                cls.console.print(f"  [dim]{name}[/dim] → {fresh} · {indexed} · {chunks} chunks")
+            # Summary
+            total = len(files)
+            ready = sum(1 for f in files.values() if f.get("ready_for_search"))
+            complete = sum(1 for f in files.values() if f.get("fully_processed"))
+            
+            cls.console.print(Panel(
+                f"[bold]Files:[/bold] {total}    "
+                f"[green]Ready:[/green] {ready}    "
+                f"[cyan]Complete:[/cyan] {complete}",
+                border_style="dim"
+            ))
+            cls.console.print()
+            
+            # Table
+            table = Table(show_header=True, header_style="bold cyan")
+            table.add_column("File", style="white")
+            table.add_column("Fresh")
+            table.add_column("Chunks")
+            table.add_column("Embed")
+            table.add_column("BM25")
+            
+            def icon(v): 
+                return "[green]✓[/green]" if v else "[dim]·[/dim]"
+            
+            for filename, f in files.items():
+                comp = f.get("components", {})
+                table.add_row(
+                    filename[:30],
+                    "[green]✓[/green]" if f.get("fresh") else "[yellow]~[/yellow]",
+                    icon(comp.get("chunks")),
+                    icon(comp.get("embeddings")),
+                    icon(comp.get("bm25")),
+                )
+            
+            cls.console.print(table)
         else:
             cls.console.print("  [dim]no files indexed yet[/dim]")
 
@@ -169,75 +412,65 @@ class TerminalUI:
         cls.rule()
         cls.console.print()
 
-    # -- Progress Displays --
-
     @classmethod
-    @contextmanager
-    def parse_progress(cls, filename: str):
-        state = {"msg": "starting...", "done": False}
+    def print_file_status(cls, store, filename: str) -> None:
+        """Display detailed status for a single file."""
+        f = store.file_status(filename)
 
-        def _make_renderable(frame: str = "⠋"):
-            t = Table.grid(padding=(0, 1))
-            t.add_column(width=3)
-            t.add_column()
-            t.add_column()
-            t.add_row(f"[cyan]{frame}[/cyan]", f"[bold white]{filename}[/bold white]", f"[dim]{state['msg']}[/dim]")
-            return t
+        cls.console.clear()
+        cls.print_darwin()
 
-        frames = ["⠋", "⠙", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        frame_idx = [0]
+        cls.console.print(f"  [bold white]{filename}[/bold white]")
+        cls.console.print()
 
-        try:
-            with Live(_make_renderable(), console=cls.console, refresh_per_second=10, transient=True) as live:
-                def update(msg: str) -> None:
-                    state["msg"] = msg
-                    frame_idx[0] = (frame_idx[0] + 1) % len(frames)
-                    live.update(_make_renderable(frames[frame_idx[0]]))
-                yield update
-            cls.success(f"{filename} [dim]— {state['msg']}[/dim]")
-        except Exception as e:
-            cls.error(f"{filename} failed: {e}")
-            raise
+        freshness = "[green]fresh[/green]" if f["fresh"] else "[yellow]stale[/yellow]"
 
-    @classmethod
-    @contextmanager
-    def multi_parse_progress(cls, filenames: List[str]):
-        states: Dict[str, str] = {name: "queued" for name in filenames}
-        frames = ["⠋", "⠙", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-        ticks: Dict[str, int] = {name: 0 for name in filenames}
-        done: set = set()
+        if f["fully_processed"]:
+            state = "[green]complete[/green]"
+        elif f["ready_for_search"]:
+            state = "[cyan]ready for search[/cyan]"
+        else:
+            state = "[yellow]partial[/yellow]"
 
-        def _make_renderable():
-            t = Table.grid(padding=(0, 1))
-            t.add_column(width=3)
-            t.add_column(min_width=30)
-            t.add_column()
-            for name in filenames:
-                if name in done:
-                    icon, label = "[green]✓[/green]", f"[dim]{name}[/dim]"
-                else:
-                    frame = frames[ticks[name] % len(frames)]
-                    icon, label = f"[cyan]{frame}[/cyan]", f"[white]{name}[/white]"
-                t.add_row(icon, label, f"[dim]{states[name]}[/dim]")
-            return t
+        cls.console.print(Panel(f"{freshness} · {state}", border_style="dim"))
+        cls.console.print()
 
-        with Live(_make_renderable(), console=cls.console, refresh_per_second=10, transient=True) as live:
-            def get_callback(filename: str):
-                def _update(msg: str) -> None:
-                    states[filename] = msg
-                    ticks[filename] += 1
-                    if any(kw in msg.lower() for kw in ("done", "complete", "saved", "success")):
-                        done.add(filename)
-                    live.update(_make_renderable())
-                return _update
-            yield get_callback
+        table = Table(show_header=False)
+        table.add_column("Component", style="dim")
+        table.add_column("Status")
 
-        cls.blank()
-        for name in filenames:
-            icon = "[green]✓[/green]" if name in done else "[red]✗[/red]"
-            cls.console.print(f"  {icon} [bold white]{name}[/bold white]  [dim]{states[name]}[/dim]")
+        comp = f["components"]
 
-    # -- Basic Messaging --
+        def row(name, val):
+            icon = "[green]✓[/green]" if val else "[red]✗[/red]"
+            table.add_row(name, icon)
+
+        row("Markdown", comp["markdown"])
+        row("Chunks", comp["chunks"])
+        row("Embeddings", comp["embeddings"])
+        row("BM25", comp["bm25"])
+        row("Stopwords", comp["stopwords"])
+        row("Graph", comp["graph"])
+
+        cls.console.print(table)
+        cls.console.print()
+
+        meta = f["meta"]
+        cls.console.print(Panel(
+            f"[dim]pages[/dim]      : {meta.get('page_count','-')}\n"
+            f"[dim]chunks[/dim]     : {meta.get('chunk_count','-')}\n"
+            f"[dim]parser[/dim]     : {meta.get('parser','-')}\n"
+            f"[dim]updated[/dim]    : {meta.get('updated_at','-')}",
+            title="meta",
+            border_style="dim"
+        ))
+
+        cls.console.print()
+        cls.rule()
+
+    # =========================================================================
+    # Basic Messaging
+    # =========================================================================
 
     @classmethod
     def step(cls, label: str) -> None:
@@ -274,7 +507,7 @@ class TerminalUI:
 
     @classmethod
     def text(cls, text: str) -> None:
-        cls.console.print(f"  {text}")
+        cls.console.print(f"[white]  {text} [/white]")
 
     @classmethod
     def yellow(cls, text: str) -> None:
@@ -297,146 +530,20 @@ class TerminalUI:
         syntax = Syntax(text, language, theme="monokai", line_numbers=False)
         cls.console.print(syntax)
 
-    
-    @classmethod
-    def print_project_status(cls, store) -> None:
-        status = store.status()
-        summary = status.get("summary", {})
-        files = status.get("files", {})
-
-        cls.console.clear()
-        cls.print_darwin()
-
-        cls.console.print(f"  [dim]project[/dim] → [white]{status.get('project_dir')}[/white]")
-        cls.console.print()
-
-        # 🔹 Summary panel
-        cls.console.print(Panel(
-            f"[bold]Files:[/bold] {summary.get('total_files',0)}    "
-            f"[green]Ready:[/green] {summary.get('ready_for_search',0)}    "
-            f"[cyan]Complete:[/cyan] {summary.get('fully_processed',0)}    "
-            f"[yellow]Fresh:[/yellow] {summary.get('fresh_files',0)}",
-            border_style="dim"
-        ))
-
-        cls.console.print()
-
-        # 🔹 Table
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("File", style="white", no_wrap=True)
-        table.add_column("Fresh")
-        table.add_column("Chunks")
-        table.add_column("Embed")
-        table.add_column("BM25")
-        table.add_column("Graph")
-        table.add_column("Status")
-
-        for filename, f in files.items():
-            comp = f["components"]
-
-            def icon(v): return "[green]✓[/green]" if v else "[dim]·[/dim]"
-
-
-
-            table.add_row(
-                filename[:25],
-                "[green]✓[/green]" if f["fresh"] else "[yellow]~[/yellow]",
-                icon(comp["chunks"]),
-                icon(comp["embeddings"]),
-                icon(comp["bm25"]),
-                icon(comp["graph"])
-            )
-
-        cls.console.print(table)
-        cls.console.print()
-        cls.rule()
-    
-    @classmethod
-    def print_file_status(cls, store, filename: str) -> None:
-        f = store.file_status(filename)
-
-        cls.console.clear()
-        cls.print_darwin()
-
-        cls.console.print(f"  [bold white]{filename}[/bold white]")
-        cls.console.print()
-
-        # 🔹 Top status
-        freshness = "[green]fresh[/green]" if f["fresh"] else "[yellow]stale[/yellow]"
-
-        if f["fully_processed"]:
-            state = "[green]complete[/green]"
-        elif f["ready_for_search"]:
-            state = "[cyan]ready for search[/cyan]"
-        else:
-            state = "[yellow]partial[/yellow]"
-
-        cls.console.print(Panel(
-            f"{freshness} · {state}",
-            border_style="dim"
-        ))
-
-        cls.console.print()
-
-        # 🔹 Components table
-        table = Table(show_header=False)
-        table.add_column("Component", style="dim")
-        table.add_column("Status")
-
-        comp = f["components"]
-
-        def row(name, val):
-            icon = "[green]✓[/green]" if val else "[red]✗[/red]"
-            table.add_row(name, icon)
-
-        row("Markdown", comp["markdown"])
-        row("Chunks", comp["chunks"])
-        row("Embeddings", comp["embeddings"])
-        row("BM25", comp["bm25"])
-        row("Stopwords", comp["stopwords"])
-        row("Graph", comp["graph"])
-
-        cls.console.print(table)
-        cls.console.print()
-
-        # 🔹 Meta info
-        meta = f["meta"]
-
-        cls.console.print(Panel(
-            f"[dim]pages[/dim]      : {meta.get('page_count','-')}\n"
-            f"[dim]chunks[/dim]     : {meta.get('chunk_count','-')}\n"
-            f"[dim]parser[/dim]     : {meta.get('parser','-')}\n"
-            f"[dim]updated[/dim]    : {meta.get('updated_at','-')}",
-            title="meta",
-            border_style="dim"
-        ))
-
-        cls.console.print()
-        cls.rule()
-    
     @classmethod
     def table(cls, headers: List[str], rows: List[List[str]], title: str = "") -> None:
-        """
-        Display a formatted table using Rich.
-        
-        Args:
-            headers: Column headers
-            rows: List of rows, each row is a list of strings
-            title: Optional table title (shown in panel header)
-        """
+        """Display a formatted table."""
         t = Table(show_header=True, header_style="bold cyan", title=title or None)
         
         for header in headers:
             t.add_column(header)
         
         for row in rows:
-            # Pad row if it has fewer columns than headers
             padded = row + [""] * (len(headers) - len(row))
             t.add_row(*padded)
     
         cls.console.print(t)
 
-    
     @classmethod
     def divider(
         cls, 
@@ -445,78 +552,17 @@ class TerminalUI:
         char: str = "─",
         width: Optional[int] = None
     ) -> None:
-        """
-        Print a horizontal divider, optionally with centered text.
-        
-        Args:
-            text: Optional text to center in the divider
-            style: Rich style string
-            char: Character to repeat for the line
-            width: Width of the line (defaults to console width)
-        """
+        """Print a horizontal divider."""
         if width is None:
             width = cls.console.width or 80
         
         if text:
-            # Center text with divider chars on both sides
             text = f" {text} "
             padding = (width - len(text)) // 2
             line = (char * padding) + text + (char * padding)
-            # Handle odd width
             if len(line) < width:
                 line += char
         else:
             line = char * width
         
         cls.console.print(f"[{style}]{line}[/{style}]")
-
-
-    @classmethod
-    @contextmanager
-    def track_embedding(cls, total_batches: int, model_name: str, file_name: str):
-        state = {
-            "current": 0,
-            "status": "Initializing...",
-            "start_time": time.perf_counter(),
-            "last_batch_time": 0.0,
-        }
-
-        def _make_renderable():
-            elapsed  = time.perf_counter() - state["start_time"]
-            avg_speed = elapsed / state["current"] if state["current"] > 0 else 0
-            bar_width = 30
-            filled   = int(bar_width * state["current"] // total_batches)
-            bar      = "#" * filled + "-" * (bar_width - filled)
-            pct      = (state["current"] / total_batches) * 100
-            content  = (
-                f"[white]Model  :[/white] [cyan]{model_name}[/cyan]\n"
-                f"[white]Status :[/white] [yellow]{state['status']}[/yellow]\n"
-                f"[white]Speed  :[/white] [magenta]{avg_speed:.2f}s / batch[/magenta]\n\n"
-                f"[cyan][{bar}][/cyan] [bold]{pct:.1f}%[/bold]\n"
-                f"[dim]Completed {state['current']} of {total_batches} batches[/dim]"
-            )
-            return Panel(
-                content,
-                title=f"[bold]Embedding... {file_name}[/bold]",
-                border_style="white",
-                expand=False,
-            )
-
-        with Live(
-            _make_renderable(),
-            console=cls.console,
-            refresh_per_second=4,
-            transient=False,   # keep last frame visible after exit
-        ) as live:
-            def update(step: int, msg: Optional[str] = None):
-                state["current"] = step
-                if msg:
-                    state["status"] = msg
-                live.update(_make_renderable())
-
-            try:
-                yield update
-            finally:
-                # Render one final frame with whatever state we ended at
-                # (100% complete, or mid-way if an exception was raised)
-                live.update(_make_renderable())

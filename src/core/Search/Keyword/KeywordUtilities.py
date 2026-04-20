@@ -17,14 +17,12 @@ This ensures query tokens match the BM25 index vocabulary.
 """
 
 from dataclasses import dataclass
-from typing import List, Set, Optional
-import numpy as np
-from typing import List, Optional, Dict
-from math import log
+from typing import List, Optional
 
-from src.core.BM25.BM25Utils import STANDARD_STOPS, MIN_TOKEN_LENGTH
-
-
+from src.core.BM25.BM25Utils import (
+    BM25Data,compute_idf
+    
+)
 
 # ============================================================================
 # Data model
@@ -40,6 +38,7 @@ class KeywordSearchResult:
     page: int           # Page number
     heading: str        # Section heading
     chunk_index: int    # Original chunk position
+    matched_terms: List[str]
     
     def __repr__(self) -> str:
         return f"KeywordSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
@@ -70,47 +69,57 @@ class KeywordSearchArgs:
     json_output: bool = False
 
 
-# ============================================================================
-# Query tokenization
-# ============================================================================
 
-def tokenize_query(
-    query: str,
-    standard_stops: Set[str] = STANDARD_STOPS,
-) -> List[str]:
+
+def calculate_bm25(
+    query_terms: List[str],
+    chunk_idx:   int,
+    data:        BM25Data,
+    k1:          float,
+    b:           float,
+) -> tuple[float, List[str]]:
     """
-    Tokenize search query for BM25 matching.
-    
-    Uses same tokenization as indexing to ensure vocabulary match.
-    
-    Args:
-        query: Raw user query string
-        standard_stops: Standard English stopwords to remove
-    
-    Returns:
-        List of lowercase tokens
+    Compute BM25 score for one chunk against a list of query terms.
+
+    Returns (score, matched_terms).
+
+    Formula per term:
+        tf_norm = (tf × (k1 + 1)) / (tf + k1 × (1 − b + b × dl/avgdl))
+        score  += IDF × tf_norm
     """
-    try:
-        from blingfire import text_to_words
-        
-        words = text_to_words(query).split()
-        
-        tokens = []
-        for w in words:
-            w_lower = w.lower().strip()
-            
-            if (len(w_lower) >= MIN_TOKEN_LENGTH and
-                w_lower not in standard_stops and
-                not w_lower.isdigit()):
-                tokens.append(w_lower)
-        
-        return tokens
-        
-    except ImportError:
-        # Fallback to simple regex
-        import re
-        words = re.findall(r"[a-zA-Z]{2,}", query.lower())
-        return [w for w in words if w not in standard_stops]
+    if data.avgdl == 0:
+        return 0.0, []
+
+    dl           = data.doc_lengths[chunk_idx]
+    length_norm  = 1 - b + b * (dl / data.avgdl)
+    chunk_tokens = data.tokens[chunk_idx]
+
+    # Build a term→frequency map for this chunk (once per score call)
+    tf_map: dict[str, int] = {}
+    for token in chunk_tokens:
+        tf_map[token] = tf_map.get(token, 0) + 1
+
+    score         = 0.0
+    matched_terms = []
+
+    idfs = data.precomputed_idfs or {}
+
+    for term in set(query_terms):          # deduplicate query terms
+        tf = tf_map.get(term, 0)
+        if tf == 0:
+            continue
+
+        idf      = idfs.get(term)
+        if idf is None:
+            # term not in index vocab — compute on the fly (OOV at index time)
+            df  = data.doc_freqs.get(term, 0)
+            idf = compute_idf(df, data.chunk_count, data.idf_smoothing)
+
+        tf_norm  = (tf * (k1 + 1)) / (tf + k1 * length_norm)
+        score   += idf * tf_norm
+        matched_terms.append(term)
+
+    return score, matched_terms
 
 
 # ============================================================================
@@ -169,56 +178,3 @@ def to_llm_context(results: list, max_chunks: int = 5) -> str:
 
 
 
-
-
-# ============================================================================
-# BM25 scoring (from saved data)
-# ============================================================================
-def compute_bm25_scores(
-    query_tokens: List[str],
-    data,  # This is a BM25Data object, not a dict!
-    k1: float = DEFAULT_K1,
-    b: float = DEFAULT_B,
-) -> np.ndarray:
-    """
-    Compute BM25 scores for all chunks from saved index data.
-    
-    Args:
-        query_tokens: Tokenized query
-        data: BM25Data object from store.load_bm25()
-        k1: Term frequency saturation parameter
-        b: Length normalization parameter
-    
-    Returns:
-        np.ndarray of scores, shape (N,)
-    """
-    # Access attributes, not dict keys
-    tokens_corpus = data.tokens          # ← data.tokens (not data["tokens"])
-    doc_freqs = data.doc_freqs           # ← data.doc_freqs
-    avgdl = data.avgdl                   # ← data.avgdl
-    doc_lengths = data.doc_lengths       # ← data.doc_lengths
-    N = data.chunk_count                 # ← data.chunk_count
-    
-    scores = np.zeros(N)
-    
-    for term in query_tokens:
-        # IDF: inverse document frequency
-        df = doc_freqs.get(term, 0)
-        if df == 0:
-            continue
-        
-        idf = log((N - df + 0.5) / (df + 0.5) + 1)
-        
-        # TF: term frequency per document
-        for i, doc_tokens in enumerate(tokens_corpus):
-            freq = doc_tokens.count(term)
-            if freq == 0:
-                continue
-            
-            # BM25 TF component
-            len_norm = 1 - b + b * (doc_lengths[i] / avgdl)
-            tf = (freq * (k1 + 1)) / (freq + k1 * len_norm)
-            
-            scores[i] += idf * tf
-    
-    return scores

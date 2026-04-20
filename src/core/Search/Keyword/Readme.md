@@ -209,4 +209,6 @@ CLI args
 | Speed | ~10ms per 10k chunks | ~5ms per 10k chunks |
 | Best for | Broad topics, paraphrased content | Specific terms, proper nouns |
 
+
+key note : when you want to search for a specific concpet or sometinhh....you can always single it out or specify it with "" marks e.g instead of searching "what are the core neurual network practices" search "what are the core "neural network practicees" "
 ---

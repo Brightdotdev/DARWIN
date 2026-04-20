@@ -26,8 +26,10 @@ uv run src/core/KeywordSearch/main.py "DNA replication" --inspect
 
 import sys
 import argparse
+import time
 from pathlib import Path
 from typing import List
+
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
@@ -77,6 +79,7 @@ def _print_inspection(results: List[KeywordSearchResult], query: str) -> None:
         TerminalUI.info("source", r.source)
         TerminalUI.info("page", str(r.page))
         TerminalUI.info("heading", r.heading or "(none)")
+        TerminalUI.info("matches", ", ".join(r.matched_terms))
         TerminalUI.blank()
         
         # Show first 500 chars
@@ -92,53 +95,130 @@ def _print_inspection(results: List[KeywordSearchResult], query: str) -> None:
 
 
 # ============================================================================
-# Core handler
+# Fancy Search with Spinner
 # ============================================================================
 
-def handle_keyword_search(args: KeywordSearchArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
-    
-    TerminalUI.print_darwin()
-    TerminalUI.blank()
-    TerminalUI.bold(f"Keyword search: '{args.query}'")
-    TerminalUI.dim(f"BM25: k1={args.k1}, b={args.b} | Top-K: {args.top_k}")
-    TerminalUI.blank()
-    
-    # Execute search
+def _search_wrapper(
+    store: DarwinStore,
+    args: KeywordSearchArgs,
+) -> List[KeywordSearchResult]:
+    """
+    Execute search with fancy spinner animation.
+    """
+    # Determine search scope for spinner message
     if args.file:
-        results = search_single_document_keyword(
-            query=args.query,
-            filename=args.file,
-            store=store,
-            top_k=args.top_k,
-            k1=args.k1,
-            b=args.b,
-        )
+        search_scope = f"in {args.file}"
     else:
-        results = search_across_documents_keyword(
-            query=args.query,
-            store=store,
-            top_k=args.top_k,
-            k1=args.k1,
-            b=args.b,
+        # Count available files with BM25 indexes
+        status = store.status()
+        files_with_bm25 = sum(
+            1 for fname, info in status.get("files", {}).items()
+            if info.get("components", {}).get("bm25")
         )
+        search_scope = f"across {files_with_bm25} document(s)"
     
-    # Display results
+    results = []
+    
+    
+    with TerminalUI.spinner_progress(
+        description=f"[cyan]Searching[/cyan] '{args.query}' {search_scope}"
+    ) as (progress, task_id):
+        
+        # Simulate search time (optional - makes spinner visible for fast searches)
+        start_time = time.perf_counter()
+        
+        # Execute search
+        if args.file:
+            bm25Data = store.load_bm25(args.file)
+            if not bm25Data:
+                TerminalUI.error(f"Could not find BM25 data for '{args.file}' exiting...")
+                return
+            chunks = store.load_chunks(args.file)
+            if not chunks:
+                TerminalUI.error(f"Could not find chunks for '{args.file}' exiting...")
+                return
+            
+            results = search_single_document_keyword(
+                filename=args.file,
+                query=args.query,
+                data=bm25Data,
+                chunks=chunks,
+                top_k=args.top_k,
+                k1=args.k1,
+                b=args.b,
+            )
+        else:
+            results = search_across_documents_keyword(
+                query=args.query,
+                store=store,
+                top_k=args.top_k,
+                k1=args.k1,
+                b=args.b,
+            )
+        
+        # Ensure spinner shows for at least 0.5s (feels more satisfying)
+        elapsed = time.perf_counter() - start_time
+        if elapsed < 0.5:
+            time.sleep(0.5 - elapsed)
+        
+        # Update spinner with completion message
+        if results:
+            progress.update(
+                task_id,
+                description=f"[green]✓ Found {len(results)} results[/green] for '[cyan]{args.query}[/cyan]'"
+            )
+        else:
+            progress.update(
+                task_id,
+                description=f"[yellow]⚠ No results found[/yellow] for '[cyan]{args.query}[/cyan]'"
+            )
+    
+    return results
+
+
+# ============================================================================
+# Results Display with Animation
+# ============================================================================
+
+def _display_search_results(results: List[KeywordSearchResult], args: KeywordSearchArgs) -> None:
+    """Display results with fancy formatting."""
+    
     if not results:
-        TerminalUI.warn("No results found")
+        TerminalUI.blank()
+        TerminalUI.panel(
+            f"No results found for '[cyan]{args.query}[/cyan]'\n\n"
+            "Try:\n"
+            "  • Using fewer or different keywords\n"
+            "  • Checking spelling\n"
+            "  • Searching a specific file with --file",
+            title=" Search Results",
+            border_style="yellow"
+        )
         return
     
-    TerminalUI.success(f"Found {len(results)} results")
     TerminalUI.blank()
     
-    # Table view
+    # Animated count reveal (optional - feels premium)
+    TerminalUI.success(f"Found {len(results)} results for '[cyan]{args.query}[/cyan]'")
+    TerminalUI.blank()
+    
+    # Table view with color-coded scores
     table_rows = []
-    for i, r in enumerate(results[:10], 1):
-        preview = r.text[:60].replace('\n', ' ')
+    for i, r in enumerate(results[:args.top_k], 1):
+        preview = r.text[:60].replace('\n', ' ').strip()
+        
+        # Color code scores
+        if r.score > 10:
+            score_display = f"[green]{r.score:.3f}[/green]"
+        elif r.score > 5:
+            score_display = f"[yellow]{r.score:.3f}[/yellow]"
+        else:
+            score_display = f"[dim]{r.score:.3f}[/dim]"
+        
         table_rows.append([
             str(i),
-            f"{r.score:.3f}",
-            r.source[:20],
+            score_display,
+            r.source[:25],
             str(r.page),
             preview + "..."
         ])
@@ -146,45 +226,107 @@ def handle_keyword_search(args: KeywordSearchArgs) -> None:
     TerminalUI.table(
         headers=["#", "Score", "Source", "Page", "Preview"],
         rows=table_rows,
-        title="keyword search results"
+        title=f"BM25 Search Results (k1={args.k1}, b={args.b})"
     )
     
-    # Show LLM context preview
+    # Show LLM context preview with animation feel
     TerminalUI.blank()
-    TerminalUI.dim("── LLM context preview (first 3 chunks) ──")
+    TerminalUI.divider("LLM Context Preview")
     TerminalUI.blank()
-    context = to_llm_context(results, max_chunks=3)
-    TerminalUI.panel(context, title="context", border_style="dim")
     
-    if args.inspect:
+    context = to_llm_context(results, max_chunks=3)
+    TerminalUI.panel(
+        context, 
+        title="Ready for LLM", 
+        border_style="cyan"
+    )
+    
+    # Show search stats
+    TerminalUI.blank()
+    TerminalUI.dim(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    TerminalUI.dim(f"  BM25 parameters: k1={args.k1}, b={args.b}")
+    TerminalUI.dim(f"  Top score: {results[0].score:.3f}")
+    TerminalUI.dim(f"  Sources: {len(set(r.source for r in results))} files")
+    TerminalUI.dim(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+
+# ============================================================================
+# Core handler
+# ============================================================================
+
+def handle_keyword_search(args: KeywordSearchArgs) -> None:
+    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    
+    
+    TerminalUI.print_darwin()
+    TerminalUI.blank()
+    
+    # Show search configuration
+    config_panel = (
+        f"[cyan]Query:[/cyan] {args.query}\n"
+        f"[cyan]BM25:[/cyan] k1={args.k1}, b={args.b}\n"
+        f"[cyan]Top-K:[/cyan] {args.top_k}\n"
+        f"[cyan]Scope:[/cyan] {args.file if args.file else 'all documents'}"
+    )
+    TerminalUI.panel(config_panel, title="Keyword Search", border_style="cyan")
+    TerminalUI.blank()
+    
+    
+    results = _search_wrapper(store, args)
+    
+    
+    _display_search_results(results, args)
+    
+    # Inspection mode
+    if args.inspect and results:
         _print_inspection(results, args.query)
     
     # JSON output if requested
     if args.json_output:
+        TerminalUI.blank()
+        TerminalUI.dim("── JSON Output ──")
         print(format_keyword_results(results, json_output=True))
 
 
 # ============================================================================
 # CLI
-# ============================================================================
-
+# =============
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="BM25 keyword search over indexed documents"
     )
-    parser.add_argument("query", help="Search query string")
+    
+    # Make query flexible - positional OR flag
+    parser.add_argument(
+        "query", 
+        nargs="?",  # Optional positional
+        default=None,
+        help="Search query string"
+    )
+    parser.add_argument(
+        "--query", "-q", 
+        dest="query_flag",
+        help="Search query (alternative to positional)"
+    )
     parser.add_argument("--file", "-f", default=None, help="Search specific file")
     parser.add_argument("--project", "-p", default=None, help="Project directory")
-    parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K, help="Number of results")
-    parser.add_argument("--k1", type=float, default=DEFAULT_K1, help="BM25 term frequency saturation")
-    parser.add_argument("--b", type=float, default=DEFAULT_B, help="BM25 length normalization")
-    parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
-    parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
+    parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K)
+    parser.add_argument("--k1", type=float, default=DEFAULT_K1)
+    parser.add_argument("--b", type=float, default=DEFAULT_B)
+    parser.add_argument("--inspect", "-i", action="store_true")
+    parser.add_argument("--json", "-j", action="store_true")
     
     args = parser.parse_args()
     
+    # Resolve query from either source
+    query = args.query or args.query_flag
+    
+    if not query:
+        parser.error("Query required (either as positional or --query)")
+
+
     handle_keyword_search(KeywordSearchArgs(
-        query=args.query,
+        query=query,
         file=args.file,
         project=args.project,
         top_k=args.top_k,

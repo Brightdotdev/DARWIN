@@ -27,6 +27,7 @@ from src.core.Chunking.ChunkerUtils import Chunk
 from src.core.Parsing.ParserUtils import ParsedDocument
 from src.core.Storage.StoreUtils import file_hash, now, read_json, write_json
 from src.lib.Terminal import TerminalUI
+from src.core.BM25.BM25Utils import BM25Data
 
 
 # ── Internal shared helpers ────────────────────────────────────────────────────
@@ -295,23 +296,95 @@ class BM25Mixin:
     def has_bm25(self, filename: str) -> bool:
         return self.paths.bm25_path(filename).exists()
 
-    def save_bm25(self, filename: str, bm25_index: Any, rerun: bool = False) -> None:
+    
+    def save_bm25(self, filename: str, data: BM25Data, rerun: bool = False) -> None:
+        """
+        Persist BM25Data as two files:
+
+            bm25.npz        — tokens (object array) + doc_lengths (int32)
+            bm25_meta.json  — everything else: doc_freqs, IDFs, stopwords,
+                            avgdl, chunk_count, vocab_size, threshold,
+                            idf_smoothing
+
+        Both files are written in the same call so they are always in sync.
+        If the process is interrupted mid-write the next run re-writes both
+        (is_fresh returns False on a partial write).
+        """
         if not rerun and self.is_fresh(filename) and self.has_bm25(filename):
             TerminalUI.dim(f"Skipping BM25 (fresh): {filename}")
             return
 
         self.paths.ensure_file_dir(filename)
-        with open(self.paths.bm25_path(filename), "wb") as f:
-            pickle.dump(bm25_index, f)
-        self._update_meta(filename, "bm25")
+        npz_path  = self.paths.bm25_path(filename)
+        meta_path = npz_path.with_name("bm25_meta.json")
 
-    def load_bm25(self, filename: str) -> Any:
-        path = self.paths.bm25_path(filename)
-        if not path.exists():
-            raise FileNotFoundError(f"No BM25 index found for '{filename}'.")
-        with open(path, "rb") as f:
-            return pickle.load(f)
+        try:
+            # ── numpy bundle ──────────────────────────────────────────────────────
+            # Variable-length token lists cannot go in a regular 2-D array,
+            # so we use a 1-D object array — each element is a Python list.
+            tokens_arr = np.empty(len(data.tokens), dtype=object)
+            for i, tok_list in enumerate(data.tokens):
+                tokens_arr[i] = tok_list
 
+            np.savez_compressed(
+                npz_path,
+                tokens      = tokens_arr,
+                doc_lengths = np.array(data.doc_lengths, dtype=np.int32),
+            )
+
+            # ── JSON sidecar ──────────────────────────────────────────────────────
+            write_json(meta_path, {
+                "avgdl":            data.avgdl,
+                "chunk_count":      data.chunk_count,
+                "vocab_size":       data.vocab_size,
+                "threshold":        data.threshold,
+                "idf_smoothing":    data.idf_smoothing,
+                "domain_stopwords": data.domain_stopwords,
+                "doc_freqs":        data.doc_freqs,
+                "precomputed_idfs": data.precomputed_idfs or {},
+            })
+
+            self._update_meta(filename, "bm25")
+            TerminalUI.success(f"Saved BM25 index: {npz_path.name}")
+
+        except Exception as e:
+            TerminalUI.error(f"Failed to save BM25 for {filename}: {e}")
+
+
+    def load_bm25(self, filename: str) -> BM25Data:
+        """
+        Reload BM25Data from the npz + json sidecar pair.
+
+        Raises FileNotFoundError if either file is missing — callers should
+        treat this as "index not built yet" and reindex.
+        """
+        npz_path  = self.paths.bm25_path(filename)
+        meta_path = npz_path.with_name("bm25_meta.json")
+
+        if not npz_path.exists():
+            raise FileNotFoundError(f"No BM25 index found for '{filename}'. Run indexing first.")
+        if not meta_path.exists():
+            raise FileNotFoundError(f"BM25 metadata missing for '{filename}'. Re-index required.")
+
+        raw  = np.load(npz_path, allow_pickle=True)
+        meta = read_json(meta_path)
+
+        # Object array → list of lists
+        tokens = [list(tok_list) for tok_list in raw["tokens"]]
+
+        return BM25Data(
+            tokens           = tokens,
+            doc_freqs        = meta["doc_freqs"],
+            avgdl            = meta["avgdl"],
+            doc_lengths      = raw["doc_lengths"].tolist(),
+            domain_stopwords = meta["domain_stopwords"],
+            threshold        = meta["threshold"],
+            chunk_count      = meta["chunk_count"],
+            vocab_size       = meta["vocab_size"],
+            idf_smoothing    = meta["idf_smoothing"],
+            # Reload precomputed IDFs so __post_init__ doesn't recompute them
+            precomputed_idfs = meta.get("precomputed_idfs") or None,
+        )
 
 # ── Mixin: Stopwords ───────────────────────────────────────────────────────────
 

@@ -15,6 +15,8 @@ uv run src/core/BM25/main.py --file biology.pdf
 
 # adjust domain stopword threshold (lower = more aggressive filtering)
 uv run src/core/BM25/main.py --threshold 0.25
+# use aggressive IDF smoothing (boost rare terms more)
+uv run src/core/BM25/main.py --idf-smoothing 1.0
 
 # inspect output — show vocabulary stats and sample tokens
 uv run src/core/BM25/main.py --inspect
@@ -26,7 +28,7 @@ uv run src/core/BM25/main.py --rerun
 All flags can be combined. Example — index a single file with custom threshold and inspection:
 
 ```bash
-uv run src/core/BM25/main.py --file bible.pdf --threshold 0.2 --inspect
+uv run src/core/BM25/main.py --file biology.pdf --threshold 0.2 --inspect
 ```
 
 ---

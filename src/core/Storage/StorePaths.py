@@ -57,7 +57,7 @@ class StorePaths:
         return self.file_dir(filename) / "links.json"
 
     def bm25_path(self, filename: str) -> Path:
-        return self.file_dir(filename) / "bm25.pkl"
+        return self.file_dir(filename) / "bm25.npz"
 
     def stopwords_path(self, filename: str) -> Path:
         return self.file_dir(filename) / "stopwords.json"
