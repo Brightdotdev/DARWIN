@@ -40,20 +40,19 @@ from src.core.Search.Sematic.SematicSearchUtils import (
     DEFAULT_TOP_K,
     DEFAULT_MIN_SCORE,
     format_results,
-    SearchResult,
+    SematicSearchResult,
 
     to_llm_context,
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
-from src.core.Embedding.EmbedderUtils import DEFAULT_MODEL
 
 
 # ============================================================================
 # Inspect — detailed view of results
 # ============================================================================
 
-def _print_inspection(results: list[SearchResult], query: str) -> None:
+def _print_inspection(results: list[SematicSearchResult], query: str) -> None:
     """Print detailed inspection of search results."""
     TerminalUI.blank()
     TerminalUI.rule(f"search inspection — '{query}'")
@@ -99,14 +98,20 @@ def _print_inspection(results: list[SearchResult], query: str) -> None:
 def handle_search(args: SearchArgs) -> None:
     store = DarwinStore(Path(args.project) if args.project else Path.cwd())
     
-    # Load config for model name
-    config = store.load_config()
-    model_name = config.get("embedding_model", args.model)
-    
+    model_name = store.load_config().get("embedding_model")    
     TerminalUI.print_darwin()
     TerminalUI.blank()
     TerminalUI.bold(f"Searching: '{args.query}'")
-    TerminalUI.dim(f"Model: {model_name} | Top-K: {args.top_k}")
+    TerminalUI.dim(f"File: {args.file if args.file else 'all files'} | Top-K: {args.top_k}")
+    TerminalUI.dim(f"Model: {model_name if model_name else 'default'} ")
+    TerminalUI.blank()
+    
+
+       # Show USearch status
+    if args.file and store.has_vector(args.file):
+        TerminalUI.dim("⚡ Using USearch index (fast)")
+    elif not args.file:
+        TerminalUI.dim("⚡ Using USearch where available")
     TerminalUI.blank()
     
     # Execute search
@@ -116,7 +121,6 @@ def handle_search(args: SearchArgs) -> None:
             filename=args.file,
             store=store,
             top_k=args.top_k,
-            model_name=model_name,
             min_score=args.min_score,
         )
     else:
@@ -124,7 +128,6 @@ def handle_search(args: SearchArgs) -> None:
             query=args.query,
             store=store,
             top_k=args.top_k,
-            model_name=model_name,
             min_score=args.min_score,
         )
     
@@ -172,16 +175,26 @@ def handle_search(args: SearchArgs) -> None:
 # ============================================================================
 # CLI
 # ============================================================================
-
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Semantic search over embedded documents",
-        usage="darwin search QUERY [options]"
+        usage="darwin search [QUERY] [options]"
     )
-    parser.add_argument("query", help="Search query string")
+    
+    # Make query flexible - positional OR flag
+    parser.add_argument(
+        "query", 
+        nargs="?",  # Optional positional
+        default=None,
+        help="Search query string (positional)"
+    )
+    parser.add_argument(
+        "--query", "-q", 
+        dest="query_flag",
+        help="Search query string (flag alternative)"
+    )
     parser.add_argument("--file", "-f", default=None, help="Search specific file")
     parser.add_argument("--project", "-p", default=None, help="Project directory")
-    parser.add_argument("--model", "-m", default=DEFAULT_MODEL, help="Embedding model")
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K, help="Number of results")
     parser.add_argument("--min-score", "-s", type=float, default=DEFAULT_MIN_SCORE, help="Minimum score threshold (0-1)")
     parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
@@ -189,11 +202,21 @@ def main() -> int:
     
     args = parser.parse_args()
     
+    # Resolve query from either source
+    query = args.query or args.query_flag
+    
+    if not query:
+        parser.error("❌ Query required (either as positional argument or --query flag)")
+    
+    # Show which method was used (helpful for debugging)
+    if args.query and args.query_flag:
+        TerminalUI.warn(f"Both positional and --query provided. Using positional: '{args.query}'")
+        query = args.query  # Prefer positional if both given
+    
     handle_search(SearchArgs(
-        query=args.query,
+        query=query,  
         file=args.file,
         project=args.project,
-        model=args.model,
         top_k=args.top_k,
         min_score=args.min_score,
         inspect=args.inspect,

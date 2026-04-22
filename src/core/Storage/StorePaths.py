@@ -45,22 +45,21 @@ class StorePaths:
     # ── Artifact paths ─────────────────────────────────────────────────────────
 
     def meta_path(self, filename: str) -> Path:
-        return self.file_dir(filename) / "meta.json"
+        return self.file_dir(filename) / f"{sanitize(filename)}_meta.json"
 
     def markdown_path(self, filename: str) -> Path:
         return self.file_dir(filename) / f"{sanitize(filename)}.md"
 
     def chunks_path(self, filename: str) -> Path:
-        return self.file_dir(filename) / "chunks.json"
+        return self.file_dir(filename) / f"{sanitize(filename)}_chunks.json"
 
-    def links_path(self, filename: str) -> Path:
-        return self.file_dir(filename) / "links.json"
 
     def bm25_path(self, filename: str) -> Path:
-        return self.file_dir(filename) / "bm25.npz"
+        return self.file_dir(filename) / f"{sanitize(filename)}_bm25.npz"
 
     def stopwords_path(self, filename: str) -> Path:
-        return self.file_dir(filename) / "stopwords.json"
+        return self.file_dir(filename) / f"{sanitize(filename)}_stopwords.json"
+    
 
     def npz_path(self, filename: str, model_name: str) -> Path:
         """
@@ -115,3 +114,21 @@ class StorePaths:
 
     def wiki_json_path(self, filename: str) -> Path:
         return self.wiki_dir(filename) / f"{sanitize(filename)}_wiki.json"
+    
+    # ─── Vector store paths ──────────────────────────────────────────────────────────────────────────
+
+    def vector_dir(self, filename: str) -> Path:
+        return self.file_dir(filename) / "vectors"
+
+    def ensure_vector_dir(self, filename: str) -> Path:
+        d = self.vector_dir(filename)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def vector_json_path(self, filename: str) -> Path:
+        return self.vector_dir(filename) / f"{sanitize(filename)}_vector.json"
+    
+    
+    def vector_index_path(self, filename: str) -> Path:
+        return self.vector_dir(filename) / f"{sanitize(filename)}_vector.usearch"
+    

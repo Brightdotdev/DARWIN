@@ -17,10 +17,7 @@ All public methods follow one of two signatures:
 """
 
 import dataclasses
-import pickle
-from pathlib import Path
 from typing import Any
-
 import numpy as np
 
 from src.core.Chunking.ChunkerUtils import Chunk
@@ -28,6 +25,7 @@ from src.core.Parsing.ParserUtils import ParsedDocument
 from src.core.Storage.StoreUtils import file_hash, now, read_json, write_json
 from src.lib.Terminal import TerminalUI
 from src.core.BM25.BM25Utils import BM25Data
+from src.core.Storage.StoreUtils import ( DEFAULT_EMBEDDING_MODEL)
 
 
 # ── Internal shared helpers ────────────────────────────────────────────────────
@@ -157,26 +155,6 @@ class MarkdownMixin:
             return None
 
 
-# ── Mixin: Links ───────────────────────────────────────────────────────────────
-
-class LinksMixin:
-    """Hyperlinks extracted during parsing — saved alongside markdown."""
-
-    def has_links(self, filename: str) -> bool:
-        return self.paths.links_path(filename).exists()
-
-    def load_links(self, filename: str) -> list[dict]:
-        """
-        Returns raw link dicts (url, page, text, rect).
-        Pass directly to assign_links_to_chunks() in the chunker.
-        Returns [] if no links file exists (non-PDF sources, old parsed files).
-        """
-        path = self.paths.links_path(filename)
-        if not path.exists():
-            return []
-        return read_json(path) or []
-
-
 # ── Mixin: Chunks ──────────────────────────────────────────────────────────────
 
 class ChunksMixin:
@@ -198,8 +176,118 @@ class ChunksMixin:
     def load_chunks(self, filename: str) -> list[Chunk]:
         path = self.paths.chunks_path(filename)
         if not path.exists():
-            raise FileNotFoundError(f"No chunks found for '{filename}'.")
+            return []
         return [_chunk_from_dict(c) for c in (read_json(path) or [])]
+
+
+
+# ── Mixin : VECTOR (USearch) ───────────────────────────────────────────────────
+class VectorMixin:
+
+    def has_vector(self, filename: str) -> bool:
+        return self.paths.vector_index_path(filename).exists()
+
+    def save_vector(
+        self, 
+        filename: str, 
+        vectors: np.ndarray, 
+        chunk_ids: list[str],
+        model_name: str,
+        rerun: bool = False
+    ) -> None:
+        """Build and save USearch index."""
+        if not rerun and self.is_fresh(filename) and self.has_vector(filename):
+            TerminalUI.dim(f"Skipping vector index (fresh): {filename}")
+            return
+
+        self.paths.ensure_vector_dir(filename)
+        
+        # 🔁 CHANGED: FAISS → USearch
+        from usearch.index import Index
+        
+        dimension = vectors.shape[1]
+        index = Index(ndim=dimension, metric='cos', dtype='f32')
+        index.add(
+            keys=np.arange(len(vectors), dtype=np.int64),
+            vectors=vectors.astype(np.float32)
+        )
+        
+        # Save index
+        index.save(str(self.paths.vector_index_path(filename)))
+        
+        
+        meta_data = {
+                "dimension": dimension,
+                "chunk_ids": chunk_ids,
+                "total_vectors": len(vectors),
+                "model": model_name if model_name else DEFAULT_EMBEDDING_MODEL
+            }
+        
+        write_json(self.paths.vector_json_path(filename), meta_data)
+
+        self._update_meta(filename, "vector")
+        TerminalUI.success(f"Vector index saved: {len(vectors)} vectors")
+
+    def load_vector(self, filename: str):
+        """Load USearch index and return (index, chunk_ids)."""
+        index_path = self.paths.vector_index_path(filename)
+        meta_path = self.paths.vector_json_path(filename)
+        
+        if not index_path.exists() or not meta_path.exists():
+            raise FileNotFoundError(f"No vector index found for '{filename}'")
+        
+        meta = read_json(meta_path)
+        
+        # 🔁 CHANGED: FAISS → USearch
+        from usearch.index import Index
+        index = Index.restore(str(index_path))
+        
+        return index, meta["chunk_ids"]
+    
+    def search_vector(
+    self, 
+    filename: str, 
+    query_vec: np.ndarray, 
+    k: int = 10
+    ) -> list[tuple[str, float]]:
+        """Search vector index and return (chunk_id, score) pairs."""
+        index, chunk_ids = self.load_vector(filename)
+        
+        if query_vec.ndim == 1:
+            query_vec = query_vec.reshape(1, -1)
+        
+        matches = index.search(query_vec.astype(np.float32), k)
+        
+        results = []
+        
+        
+        if matches is None:
+            return results
+        
+        # USearch v2.x returns object with .keys and .distances
+        if hasattr(matches, 'keys') and hasattr(matches, 'distances'):
+            for key, dist in zip(matches.keys, matches.distances):
+                idx = int(key)
+                score = 1.0 - float(dist)
+                if 0 <= idx < len(chunk_ids):
+                    results.append((chunk_ids[idx], score))
+        else:
+            # USearch v1.x returns list of Match objects
+            for match in matches:
+                idx = int(match.key)
+                score = 1.0 - float(match.distance)
+                if 0 <= idx < len(chunk_ids):
+                    results.append((chunk_ids[idx], score))
+        
+        return results
+    
+    def load_vector_metadata(self, filename: str):
+        path = self.paths.vector_json_path(filename)
+        if not path.exists():
+            return None
+        return read_json(path)
+
+
 
 
 # ── Mixin: Embeddings ──────────────────────────────────────────────────────────
@@ -231,6 +319,8 @@ class EmbeddingsMixin:
             source    object   filename repeated
         """
        
+        path = self.paths.npz_path(filename, self._embedding_model())
+        
         if not rerun and self.is_fresh(filename) and path.exists():
             TerminalUI.dim(f"Skipping embeddings (fresh): {filename}")
             return
@@ -241,7 +331,6 @@ class EmbeddingsMixin:
                 f"vectors ({len(vectors)}) and chunks ({len(chunks)}) must be the same length."
             )
 
-        path = self.paths.npz_path(filename, self._embedding_model())
 
        
 
@@ -256,6 +345,7 @@ class EmbeddingsMixin:
                 headings = np.array([c.heading for c in chunks], dtype=object),
                 pages    = np.array([c.page    for c in chunks], dtype=np.int32),
                 source   = np.array([c.source  for c in chunks], dtype=object),
+        
             )
             self._update_meta(filename, "embeddings")
             TerminalUI.success(f"Saved embeddings: {path.name}")
@@ -351,20 +441,19 @@ class BM25Mixin:
             TerminalUI.error(f"Failed to save BM25 for {filename}: {e}")
 
 
-    def load_bm25(self, filename: str) -> BM25Data:
+    def load_bm25(self, filename: str) -> BM25Data | None:
         """
         Reload BM25Data from the npz + json sidecar pair.
 
-        Raises FileNotFoundError if either file is missing — callers should
-        treat this as "index not built yet" and reindex.
+        
         """
         npz_path  = self.paths.bm25_path(filename)
         meta_path = npz_path.with_name("bm25_meta.json")
 
         if not npz_path.exists():
-            raise FileNotFoundError(f"No BM25 index found for '{filename}'. Run indexing first.")
+            return None
         if not meta_path.exists():
-            raise FileNotFoundError(f"BM25 metadata missing for '{filename}'. Re-index required.")
+            return None
 
         raw  = np.load(npz_path, allow_pickle=True)
         meta = read_json(meta_path)

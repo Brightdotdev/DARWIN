@@ -1,6 +1,6 @@
 MIT License with Attribution
 
-Copyright (c) 2024 BrightDotDev
+Copyright (c) 2024 Akinola Bright (also known as BrightDotDev)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -13,13 +13,7 @@ furnished to do so, subject to the following conditions:
    copies or substantial portions of the Software.
 
 2. Any use of this Software that results in a publicly available product or 
-   service must display the attribution "Core built by BrightDotDev" in a 
-   visible location (e.g., documentation, about page, README, or CLI help text).
+   service must display the attribution: "Core built by Akinola Bright (BrightDotDev)"
+   in a visible location (e.g., documentation, about page, or CLI help text).
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND...

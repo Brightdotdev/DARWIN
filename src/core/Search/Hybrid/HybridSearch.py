@@ -10,13 +10,15 @@ from typing import List, Optional
 from src.core.Search.Sematic.SematicSearch import (
     search_single_document as semantic_search_single,
     search_across_documents as semantic_search_all,
-    SearchResult,
 )
+from src.core.Search.Sematic.SematicSearchUtils import SematicSearchResult
+
 from src.core.Search.Keyword.KeywordSearch import (
     search_single_document_keyword,
     search_across_documents_keyword,
     KeywordSearchResult,
 )
+
 from src.core.Search.Hybrid.HybridSearchUtils import (
     reciprocal_rank_fusion,
     merge_results,
@@ -40,8 +42,7 @@ from src.lib.Terminal import TerminalUI
 # ============================================================================
 
 def hybrid_search(
-    query: str,
-    semantic_results: List[SearchResult],
+    semantic_results: List[SematicSearchResult],
     keyword_results: List[KeywordSearchResult],
     top_k: int = DEFAULT_TOP_K,
     rrf_k: int = DEFAULT_RRF_K,
@@ -144,6 +145,7 @@ def search_across_documents_hybrid(
     
     if not filenames:
         TerminalUI.warn("No documents with both embeddings and BM25 index found")
+        TerminalUI.dim("Try running 'darwin embeddings' and 'darwin index-bm25' first")
         return []
     
     if parallel:

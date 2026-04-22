@@ -16,7 +16,7 @@ Query gets same treatment as chunks:
 This ensures query tokens match the BM25 index vocabulary.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass,field
 from typing import List, Optional
 
 from src.core.BM25.BM25Utils import (
@@ -39,6 +39,8 @@ class KeywordSearchResult:
     heading: str        # Section heading
     chunk_index: int    # Original chunk position
     matched_terms: List[str]
+    is_overlap: bool 
+    links: List[tuple[str, str]] = field(default_factory=list)
     
     def __repr__(self) -> str:
         return f"KeywordSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"

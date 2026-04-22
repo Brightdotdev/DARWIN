@@ -51,7 +51,7 @@ from src.core.Storage.StoreArtifacts import (
     MetaMixin,
     ConfigMixin,
     MarkdownMixin,
-    LinksMixin,
+    VectorMixin,
     ChunksMixin,
     EmbeddingsMixin,
     BM25Mixin,
@@ -69,13 +69,13 @@ class DarwinStore(
     MetaMixin,
     ConfigMixin,
     MarkdownMixin,
-    LinksMixin,
+    VectorMixin,
     ChunksMixin,
     EmbeddingsMixin,
     BM25Mixin,
     StopwordsMixin,
     GraphMixin,
-    WikiMixin,
+    WikiMixin
 ):
     """
     One instance per project directory.
@@ -153,6 +153,8 @@ class DarwinStore(
             "bm25":       self.has_bm25(filename),
             "stopwords":  self.has_stopwords(filename),
             "graph":      self.has_graph(filename),
+            "wiki":       self.has_wiki(filename),
+            "vectors":     self.has_vector(filename),
         }
 
     def _pipeline_flags(self, filename: str) -> dict:
@@ -167,6 +169,8 @@ class DarwinStore(
             "has_markdown":     self.has_markdown(filename),
             "has_chunks":       self.has_chunks(filename),
             "has_embeddings":   self.has_embeddings(filename),
+            "has_vector":       self.has_vector(filename),
+            "has_wiki":         self.has_wiki(filename),
         }
 
     def _meta_summary(self, filename: str) -> dict:
@@ -192,7 +196,7 @@ class DarwinStore(
             "components":       components,
             "pipeline":         self._pipeline_flags(filename),
             "meta":             self._meta_summary(filename),
-            "ready_for_search": components["chunks"] and components["embeddings"],
+            "ready_for_search": components["chunks"] and components["embeddings"] and components["bm25"] and components["vectors"],
             "fully_processed":  all(components.values()),
         }
 

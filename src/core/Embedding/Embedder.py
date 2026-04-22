@@ -13,7 +13,7 @@ This module enforces them at embed time.
 """
 
 import numpy as np
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 import torch
 
 from src.core.Chunking.Chunker import Chunk
@@ -219,10 +219,11 @@ def run_embedding_pipeline(
         filename,
         model_name=model_name,
     )
+        
 
     if vectors is None:
         return None
-    
+
     # Store with model metadata
     store.save_embeddings(
         filename, 
@@ -231,4 +232,7 @@ def run_embedding_pipeline(
         rerun=rerun,
     )
     
+    chunk_ids = [c.index for c in chunks]
+    store.save_vector(filename, vectors, chunk_ids, model_name, rerun=rerun)
+        
     return vectors

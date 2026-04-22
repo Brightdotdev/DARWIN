@@ -4,7 +4,7 @@ src/core/HybridSearch/HybridSearchUtils.py
 Utilities for hybrid search: RRF fusion, result merging, and formatting.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -29,14 +29,18 @@ class HybridSearchResult:
     """Single hybrid search result with scores from both retrievers."""
     text: str
     clean: str
-    rrf_score: float = 0.0                    # Combined RRF score (default 0.0)
-    final_score: float = 0.0                  # Hybrid score (RRF + weighted original scores)
-    semantic_score: Optional[float] = None    # Original semantic score
-    keyword_score: Optional[float] = None     # Original BM25 score
+    rrf_score: float = 0.0
+    final_score: float = 0.0
+    semantic_score: Optional[float] = None
+    keyword_score: Optional[float] = None
     source: str = ""
     page: int = 0
+    page_end: int = 0
     heading: str = ""
     chunk_index: int = 0
+    links: List[tuple] = field(default_factory=list)
+    is_overlap: bool = False
+    matched_terms: List[str] = field(default_factory=list)
     
     def __repr__(self) -> str:
         return (f"HybridSearchResult(rrf={self.rrf_score:.3f}, "
@@ -57,7 +61,7 @@ class HybridSearchArgs:
     semantic_weight: float = DEFAULT_SEMANTIC_WEIGHT
     keyword_weight: float = DEFAULT_KEYWORD_WEIGHT
     pool_size: int = DEFAULT_POOL_SIZE
-    parallel: bool = True          # Enable parallel retrieval
+    parallel: bool = True
     inspect: bool = False
     json_output: bool = False
 
@@ -72,17 +76,27 @@ def build_unified_result(
     keyword_score: Optional[float] = None,
 ) -> HybridSearchResult:
     """Create a HybridSearchResult from a semantic or keyword result."""
+    # Handle both result types
+    links = getattr(result, 'links', [])
+    is_overlap = getattr(result, 'is_overlap', False)
+    matched_terms = getattr(result, 'matched_terms', [])
+    page_end = getattr(result, 'page_end', result.page)
+    
     return HybridSearchResult(
         text=result.text,
         clean=result.clean,
-        rrf_score=0.0,              # Will be set by RRF
-        final_score=0.0,            # Will be set by hybrid scoring
+        rrf_score=0.0,
+        final_score=0.0,
         semantic_score=semantic_score,
         keyword_score=keyword_score,
         source=result.source,
         page=result.page,
+        page_end=page_end,
         heading=result.heading,
         chunk_index=result.chunk_index,
+        links=links,
+        is_overlap=is_overlap,
+        matched_terms=matched_terms,
     )
 
 
@@ -110,6 +124,9 @@ def merge_results(semantic_results: List, keyword_results: List) -> List[HybridS
             seen_items[key] = build_unified_result(r, keyword_score=r.score)
         else:
             seen_items[key].keyword_score = r.score
+            # Merge matched terms from BM25
+            if hasattr(r, 'matched_terms') and r.matched_terms:
+                seen_items[key].matched_terms.extend(r.matched_terms)
     
     return list(seen_items.values())
 
@@ -192,12 +209,12 @@ def apply_hybrid_scoring(
     """
     Apply hybrid scoring: final = RRF + alpha * semantic + beta * keyword.
     
-    Optimized: Single pass, no lambda in sort key (pre-compute).
+    Optimized: Single pass, pre-computed normalization.
     """
     if not items:
         return []
     
-    # Normalize semantic and keyword scores to 0-1 range for fair combination
+    # Normalize semantic and keyword scores to 0-1 range
     sem_scores = [item.semantic_score for item in items if item.semantic_score is not None]
     kw_scores = [item.keyword_score for item in items if item.keyword_score is not None]
     
@@ -212,7 +229,7 @@ def apply_hybrid_scoring(
         # Compute final score
         item.final_score = item.rrf_score + alpha * norm_sem + beta * norm_kw
     
-    # Sort by final_score (pre-computed, no lambda overhead)
+    # Sort by final_score
     items.sort(key=lambda x: x.final_score, reverse=True)
     return items
 
@@ -309,7 +326,9 @@ def format_hybrid_results(results: List[HybridSearchResult], json_output: bool =
                 "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
                 "source": r.source,
                 "page": r.page,
+                "page_end": r.page_end,
                 "heading": r.heading,
+                "matched_terms": r.matched_terms,
                 "text": r.text[:500] + "..." if len(r.text) > 500 else r.text,
             })
         return json.dumps(output, indent=2)
@@ -321,8 +340,12 @@ def format_hybrid_results(results: List[HybridSearchResult], json_output: bool =
             lines.append(f"    └─ semantic: {r.semantic_score:.3f}")
         if r.keyword_score:
             lines.append(f"    └─ keyword:  {r.keyword_score:.3f}")
+        if r.matched_terms:
+            lines.append(f"    └─ matched: {', '.join(r.matched_terms[:5])}")
         if r.heading:
             lines.append(f"    └─ {r.heading}")
+        if r.links:
+            lines.append(f"    └─ {len(r.links)} link(s)")
         preview = r.text[:200].replace('\n', ' ').strip()
         lines.append(f"       {preview}...")
         lines.append("")
@@ -338,7 +361,12 @@ def to_llm_context(results: List[HybridSearchResult], max_chunks: int = 5) -> st
         part = f"[Document: {r.source}, Page: {r.page}]"
         if r.heading:
             part += f"\nHeading: {r.heading}"
-        part += f"\nContent: {r.text}\n---"
+        part += f"\nContent: {r.text}"
+        if r.links:
+            part += "\nReferences:"
+            for text, url in r.links:
+                part += f"\n  - {text}: {url}"
+        part += "\n---"
         context_parts.append(part)
     
     return "\n".join(context_parts)

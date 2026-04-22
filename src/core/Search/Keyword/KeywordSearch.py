@@ -35,16 +35,9 @@ Used by:
 """
 
 import numpy as np
-from typing import List, Optional, Dict
-
+from typing import List
 from src.core.Chunking.Chunker import Chunk
-from src.core.Search.Keyword.KeywordUtilities import (
-    DEFAULT_TOP_K,
-    DEFAULT_K1,
-    DEFAULT_B,
-    KeywordSearchResult,
-)
-from src.core.Storage.DarwinStore import DarwinStore
+from src.core.Search.Keyword.KeywordUtilities import KeywordSearchResult
 from src.lib.Terminal import TerminalUI
 
 
@@ -125,8 +118,9 @@ def search_single_document_keyword(
                 page=chunks[chunk_idx].page,
                 heading=chunks[chunk_idx].heading,
                 chunk_index=chunk_idx,
-                matched_terms=matched
-                
+                matched_terms=matched,
+                links=chunks[chunk_idx].links if chunks[chunk_idx].links else [],
+                is_overlap=chunks[chunk_idx].is_overlap
             ))
 
     results.sort(key=lambda r: r.score, reverse=True)

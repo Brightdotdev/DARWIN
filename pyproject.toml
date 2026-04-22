@@ -9,7 +9,7 @@ name = "DARWIN"
 version = "0.1.0"
 description = "DARWIN-CLI a SOTA RAG ai agent for your personal and local use, it has both llm api support and bring your own model support too"
 authors = [
-    {name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}
+    {name = "Brightdotdev", email = "mail.bright.dev@gmail.com"},
     {name = "Akinola Bright", email ="iamtherealbright@gmail.com"}
 ]
 readme = "README.md"
@@ -39,6 +39,7 @@ dependencies = [
     "toml>=0.10.2",
     "transformers>=4.49.0",
     "typer>=0.24.1",
+    "usearch>=2.25.1",
     "yake>=0.7.3",
 ]
 

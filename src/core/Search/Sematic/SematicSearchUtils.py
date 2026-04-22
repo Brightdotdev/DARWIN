@@ -3,7 +3,7 @@
 from src.core.Chunking.Chunker import Chunk
 from typing import List
 
-from dataclasses import dataclass
+from dataclasses import dataclass,field
 
 
 # ============================================================================
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 # ============================================================================
 
 @dataclass
-class SearchResult:
+class SematicSearchResult:
     """Single search result with all metadata needed for RAG."""
     text: str           # Original text (for LLM context)
     clean: str          # Cleaned text (what was embedded)
@@ -20,9 +20,12 @@ class SearchResult:
     page: int           # Page number
     heading: str        # Section heading
     chunk_index: int    # Original chunk position
+    is_overlap: bool 
+    links: List[tuple[str, str]] = field(default_factory=list)
+    
     
     def __repr__(self) -> str:
-        return f"SearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
+        return f"SematicSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
 
 
 
@@ -60,7 +63,6 @@ Utilities and argument handling for semantic search.
 from dataclasses import dataclass
 from typing import Optional
 
-from src.core.Embedding.EmbedderUtils import DEFAULT_MODEL
 
 
 # ============================================================================
@@ -80,7 +82,6 @@ class SearchArgs:
     query: str
     file: Optional[str] = None
     project: Optional[str] = None
-    model: str = DEFAULT_MODEL
     top_k: int = DEFAULT_TOP_K
     min_score: float = DEFAULT_MIN_SCORE
     inspect: bool = False

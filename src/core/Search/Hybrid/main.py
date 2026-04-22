@@ -11,6 +11,9 @@ uv run src/core/HybridSearch/main.py "photosynthesis"
 # Search specific document
 uv run src/core/HybridSearch/main.py "david covenant" --file bible.pdf
 
+# Use query flag
+uv run src/core/HybridSearch/main.py --query "cell division" --file bio.pdf
+
 # Adjust RRF parameters
 uv run src/core/HybridSearch/main.py "cell division" --rrf-k 30 --semantic-weight 1.5
 
@@ -35,10 +38,10 @@ if __name__ == "__main__":
 from src.core.Search.Hybrid.HybridSearch import (
     search_single_document_hybrid,
     search_across_documents_hybrid,
-    HybridSearchResult,
 )
 from src.core.Search.Hybrid.HybridSearchUtils import (
     HybridSearchArgs,
+    HybridSearchResult,
     DEFAULT_TOP_K,
     DEFAULT_RRF_K,
     DEFAULT_SEMANTIC_WEIGHT,
@@ -66,6 +69,7 @@ def _print_inspection(results: List[HybridSearchResult], query: str) -> None:
         rows=[
             ["total results", str(len(results))],
             ["top RRF score", f"{results[0].rrf_score:.4f}" if results else "N/A"],
+            ["top final score", f"{results[0].final_score:.4f}" if results else "N/A"],
         ],
     )
     
@@ -75,14 +79,21 @@ def _print_inspection(results: List[HybridSearchResult], query: str) -> None:
     
     for i, r in enumerate(results[:5], 1):
         TerminalUI.info("rank", str(i))
+        TerminalUI.info("final score", f"{r.final_score:.4f}")
         TerminalUI.info("RRF score", f"{r.rrf_score:.4f}")
         if r.semantic_score:
             TerminalUI.info("semantic", f"{r.semantic_score:.4f}")
         if r.keyword_score:
             TerminalUI.info("keyword", f"{r.keyword_score:.4f}")
+        if r.matched_terms:
+            TerminalUI.info("matched terms", ", ".join(r.matched_terms[:10]))
         TerminalUI.info("source", r.source)
-        TerminalUI.info("page", str(r.page))
+        TerminalUI.info("page", f"{r.page}" + (f"-{r.page_end}" if r.page_end != r.page else ""))
         TerminalUI.info("heading", r.heading or "(none)")
+        if r.links:
+            TerminalUI.info("links", f"{len(r.links)} found")
+        if r.is_overlap:
+            TerminalUI.info("overlap", "⚠️ This chunk overlaps with adjacent chunks")
         TerminalUI.blank()
         
         preview = r.text[:500].replace("\n", " ").strip()
@@ -107,34 +118,40 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
     TerminalUI.blank()
     TerminalUI.bold(f"Hybrid search: '{args.query}'")
     TerminalUI.dim(f"RRF k={args.rrf_k} | Semantic weight={args.semantic_weight} | Keyword weight={args.keyword_weight}")
-    TerminalUI.dim(f"Pool size={args.pool_size} | Top-K={args.top_k}")
+    TerminalUI.dim(f"Pool size={args.pool_size} | Top-K={args.top_k} | Parallel={args.parallel}")
     TerminalUI.blank()
 
-
     if args.top_k == 0:
-        TerminalUI.dim("Retrn no results?? lmao okay...defaulting to default topk")
+        TerminalUI.dim("Return no results?? lmao okay...defaulting to default topk")
+        args.top_k = DEFAULT_TOP_K
     
-    if args.file:
-        results = search_single_document_hybrid(
-            query=args.query,
-            filename=args.file,
-            store=store,
-            top_k=args.top_k,
-            rrf_k=args.rrf_k,
-            semantic_weight=args.semantic_weight,
-            keyword_weight=args.keyword_weight,
-            pool_size=args.pool_size,
-        )
-    else:
-        results = search_across_documents_hybrid(
-            query=args.query,
-            store=store,
-            top_k=args.top_k,
-            rrf_k=args.rrf_k,
-            semantic_weight=args.semantic_weight,
-            keyword_weight=args.keyword_weight,
-            pool_size=args.pool_size,
-        )
+    results = []
+    with TerminalUI.spinner_progress("Searching...") as (progress, task_id):
+        if args.file:
+            results = search_single_document_hybrid(
+                query=args.query,
+                filename=args.file,
+                store=store,
+                top_k=args.top_k,
+                rrf_k=args.rrf_k,
+                semantic_weight=args.semantic_weight,
+                keyword_weight=args.keyword_weight,
+                pool_size=args.pool_size,
+                parallel=args.parallel,
+            )
+        else:
+            results = search_across_documents_hybrid(
+                query=args.query,
+                store=store,
+                top_k=args.top_k,
+                rrf_k=args.rrf_k,
+                semantic_weight=args.semantic_weight,
+                keyword_weight=args.keyword_weight,
+                pool_size=args.pool_size,
+                parallel=args.parallel,
+            )
+        
+        progress.update(task_id, description=f"[green]✓ Found {len(results)} results[/green]")
     
     if not results:
         TerminalUI.warn("No results found")
@@ -150,6 +167,7 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
         source_str = f"{r.source[:15]} (p{r.page})"
         table_rows.append([
             str(i),
+            f"{r.final_score:.3f}",
             f"{r.rrf_score:.3f}",
             f"{r.semantic_score:.3f}" if r.semantic_score else "—",
             f"{r.keyword_score:.3f}" if r.keyword_score else "—",
@@ -158,7 +176,7 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
         ])
     
     TerminalUI.table(
-        headers=["#", "RRF", "Sem", "KW", "Source", "Preview"],
+        headers=["#", "Final", "RRF", "Sem", "KW", "Source", "Preview"],
         rows=table_rows,
         title="hybrid search results"
     )
@@ -185,7 +203,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Hybrid search combining semantic and keyword retrieval"
     )
-    parser.add_argument("query", help="Search query string")
+    
+    # Flexible query - positional OR flag
+    parser.add_argument(
+        "query", 
+        nargs="?",
+        default=None,
+        help="Search query string (positional)"
+    )
+    parser.add_argument(
+        "--query", "-q",
+        dest="query_flag",
+        help="Search query string (flag alternative)"
+    )
     parser.add_argument("--file", "-f", default=None, help="Search specific file")
     parser.add_argument("--project", "-p", default=None, help="Project directory")
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K, help="Final results to return")
@@ -202,8 +232,17 @@ def main() -> int:
     
     args = parser.parse_args()
     
+    # Resolve query
+    query = args.query or args.query_flag
+    if not query:
+        parser.error("❌ Query required (either as positional argument or --query flag)")
+    
+    if args.query and args.query_flag:
+        TerminalUI.warn(f"Both positional and --query provided. Using positional: '{args.query}'")
+        query = args.query
+    
     handle_hybrid_search(HybridSearchArgs(
-        query=args.query,
+        query=query,
         file=args.file,
         project=args.project,
         top_k=args.top_k,
