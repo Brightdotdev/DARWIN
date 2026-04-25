@@ -17,6 +17,7 @@ PyMuPDF4LLM injection tokens before any model-specific logic runs.
 import re
 import unicodedata
 
+from src.core.Chunking.ChunkConfig import get_chunk_config
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Compiled regex library
@@ -121,7 +122,7 @@ def _normalise_table(table_text: str, for_embedding: bool = True) -> str:
         if not line:
             continue
         # Drop pure separator rows
-        if re.match(r"^\|[\s\-:|]+\|$", line):
+        if re.match(r"^\|[-:\s|]+\|$", line):
             continue
         if line.startswith("|"):
             cells = [c.strip() for c in line.strip("|").split("|")]
@@ -377,66 +378,33 @@ def _extract_image_semantic(match: re.Match) -> str:
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+
 def prepare_embedding_text(
     text: str,
-    model_name: str,
     preserve_line_breaks: bool = True,
 ) -> str:
     """
-    Prepare text for embedding based on model capabilities.
+    Prepare text for embedding based on the currently loaded model.
 
     Pipeline:
-      1. _remove_artefacts  — shared pre-pass (PyMuPDF4LLM tokens, Unicode noise,
-                               extractor slots, page headers)
+      1. _remove_artefacts  — shared pre-pass
       2. mode-specific cleaner (plain_text or semantic_markdown)
 
     Args:
         text:                Raw markdown/formatted text from extractor.
-        model_name:          Key into PRESETS (or unknown → semantic_markdown).
         preserve_line_breaks: Keep paragraph structure (recommended for chunkers).
 
     Returns:
-        Cleaned text optimised for the specific embedding model.
+        Cleaned text optimised for the active embedding model.
     """
     if not text or not text.strip():
         return ""
 
     text = _remove_artefacts(text)
-    cfg  = get_model_config(model_name)
+    config = get_chunk_config()
 
-    if cfg["category"] == "plain_text":
+    if config.category == "plain_text":
         return _clean_plain_text(text, preserve_line_breaks)
     else:
-        # semantic_markdown — also the safe default for unknown models
         return _clean_semantic_markdown(text, preserve_line_breaks)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Model registry
-# ─────────────────────────────────────────────────────────────────────────────
-
-def get_model_config(model_name: str) -> dict:
-    """
-    Return chunking/cleaning parameters for a known embedding model.
-
-    Keys:
-        max_tokens   Hard upper limit for one chunk.
-        min_tokens   Soft lower limit; chunks below this are merge candidates.
-        overlap      Number of sentences to carry over between chunks.
-        category     "plain_text" | "semantic_markdown"
-    """
-    PRESETS: dict[str, dict] = {
-        # ── Plain-text models ────────────────────────────────────────────────
-        "intfloat/e5-base-v2":            {"max_tokens": 480,  "min_tokens": 120, "overlap": 3, "category": "plain_text"},
-        "intfloat/multilingual-e5-large": {"max_tokens": 480,  "min_tokens": 120, "overlap": 3, "category": "plain_text"},
-
-        # ── Semantic-markdown models ─────────────────────────────────────────
-        "GritLM/GritLM-7B":               {"max_tokens": 3800, "min_tokens": 300, "overlap": 4, "category": "semantic_markdown"},
-        "BAAI/bge-m3":                    {"max_tokens": 8000, "min_tokens": 400, "overlap": 5, "category": "semantic_markdown"},
-    }
-
-    if model_name in PRESETS:
-        return PRESETS[model_name]
-
-    # Unknown model: default to semantic_markdown (conservative, loses nothing)
-    return {"max_tokens": 512, "min_tokens": 100, "overlap": 3, "category": "semantic_markdown"}

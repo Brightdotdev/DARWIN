@@ -214,25 +214,18 @@ def fitz_extract(
     embedding_pages: List[str] = []
     extracted_imgs:  List[Dict] = []
 
-    # Build a label map: page index → PDF page label (e.g. "iv", "1", "A-3")
-    # fitz exposes this via doc.get_page_labels() when available, otherwise fall back to 1-based index.
+
+    label_map: Dict[int, str] = {}
     try:
-        label_map: Dict[int, str] = {
-            entry["startpage"] + i: str(entry.get("prefix", "") or (entry["startpage"] + i + 1))
-            for entry in (doc.get_page_labels() or [])
-            for i in range(
-                0,
-                (
-                    next(
-                        (e["startpage"] for e in doc.get_page_labels()
-                         if e["startpage"] > entry["startpage"]),
-                        doc.page_count,
-                    ) - entry["startpage"]
-                ),
-            )
-        }
+        page_labels = doc.get_page_labels() or []
+        for idx, entry in enumerate(page_labels):
+            start = entry["startpage"]
+            end   = page_labels[idx + 1]["startpage"] if idx + 1 < len(page_labels) else doc.page_count
+            for i in range(end - start):
+                label_map[start + i] = str(entry.get("prefix", "") or (start + i + 1))
     except Exception:
         label_map = {}
+    
 
     def _page_label(idx: int) -> str:
         """Return a human-readable page label for page index `idx`."""

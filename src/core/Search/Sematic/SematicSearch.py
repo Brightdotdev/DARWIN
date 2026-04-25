@@ -247,7 +247,8 @@ def _execute_numpy_search(
     """Execute search using numpy fallback."""
     data = store.load_embeddings(filename)
     if data is None:
-        raise ValueError(f"No embeddings found for {filename}")
+        TerminalUI.dim(f"No embeddings found for {filename}")
+        return []
     
     vectors = data["vectors"]
     chunks = reconstruct_chunks(data, filename)
@@ -309,7 +310,7 @@ def search_across_documents(
             progress.update(task_id, description=f"[cyan]Searching[/cyan] {filename}")
             
             try:
-                # 🔍 Validate and choose method
+                
                 method = _get_validated_search_method(
                     filename=filename,
                     store=store,
@@ -331,6 +332,10 @@ def search_across_documents(
                         top_k=per_doc_k,
                         min_score=min_score,
                     )
+                    if doc_results is None or len(doc_results) == 0:
+                        TerminalUI.dim(f"  No results for {filename}, skipping")
+                        stats["failed"] += 1
+                        continue
                     stats["usearch"] += 1
                 else:  # numpy
                     doc_results = _execute_numpy_search(
@@ -340,6 +345,10 @@ def search_across_documents(
                         top_k=per_doc_k,
                         min_score=min_score,
                     )
+                    if doc_results is None or len(doc_results) == 0:
+                        TerminalUI.dim(f"  No results for {filename}, skipping")
+                        stats["failed"] += 1
+                        continue
                     stats["numpy"] += 1
                 
                 all_results.extend(doc_results)
@@ -380,7 +389,7 @@ def search_single_document(
     """
     try:
         config = store.load_config()
-        model_name = config.get("embedding_model", "intfloat/e5-small-v2")
+        model_name = config.get("embedding_model")
         
         # Embed query once
         query_vec = embed_query(query, model_name)

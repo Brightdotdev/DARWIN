@@ -96,7 +96,7 @@ def _print_inspection(results: list[SematicSearchResult], query: str) -> None:
 # ============================================================================
 
 def handle_search(args: SearchArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
     
     model_name = store.load_config().get("embedding_model")    
     TerminalUI.print_darwin()

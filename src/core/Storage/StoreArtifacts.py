@@ -3,21 +3,19 @@ src/core/Storage/StoreArtifacts.py
 -----------------------------------
 Save / load operations for every artifact type Darwin persists.
 
-Grouped into one mixin per artifact family so each section is easy to
-find and test in isolation.  DarwinStore inherits all of them.
+All mixins inherit _PathResolverMixin which resolves a bare filename
+string → file hash → index directory via the FileRegistry. This is the
+bridge between the calling code (which only knows filenames) and the
+content-addressed StorePaths (which only knows hashes).
 
 Mixin classes here must NOT define __init__ — they rely on the attributes
 set by DarwinStore.__init__:
-    self.paths   : StorePaths
-    self.project_dir : Path
-
-All public methods follow one of two signatures:
-    save_X(filename, data, rerun=False) -> None
-    load_X(filename) -> data | raises FileNotFoundError
+    self.paths    : StorePaths
+    self.registry : FileRegistry
 """
 
 import dataclasses
-from typing import Any
+from typing import Any, Optional
 import numpy as np
 
 from src.core.Chunking.ChunkerUtils import Chunk
@@ -25,10 +23,11 @@ from src.core.Parsing.ParserUtils import ParsedDocument
 from src.core.Storage.StoreUtils import file_hash, now, read_json, write_json
 from src.lib.Terminal import TerminalUI
 from src.core.BM25.BM25Utils import BM25Data
-from src.core.Storage.StoreUtils import ( DEFAULT_EMBEDDING_MODEL)
 
 
-# ── Internal shared helpers ────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Internal helpers
+# ═══════════════════════════════════════════════════════════════════════════
 
 def _chunk_from_dict(raw: dict) -> Chunk:
     """Safely reconstruct a Chunk, back-filling fields added in later versions."""
@@ -41,9 +40,75 @@ def _chunk_from_dict(raw: dict) -> Chunk:
     return Chunk(**{k: v for k, v in raw.items() if k in valid_fields})
 
 
-# ── Mixin: Meta / freshness ────────────────────────────────────────────────────
+def _get_current_model_name() -> str:
+    """Resolve the currently active embedding model name. Safe fallback."""
+    try:
+        from src.core.Chunking.ChunkConfig import get_preset
+        return get_preset().model_name
+    except Exception:
+        return "unknown"
 
-class MetaMixin:
+
+def _get_current_model_dimensions() -> int:
+    """Expected embedding dimensions for the active model. Safe fallback."""
+    try:
+        from src.core.Models import get_loader, ModelCategory
+        loader = get_loader()
+        key = loader.get_model_key(ModelCategory.EMBEDDING)
+        dims = {
+            "e5-small-v2": 384,
+            "bge-m3":      1024,
+            "gritlm-7b":   4096,
+        }
+        return dims.get(key, 0)
+    except Exception:
+        return 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Base mixin — filename → hash → directory resolution
+# ═══════════════════════════════════════════════════════════════════════════
+
+class _PathResolverMixin:
+    """
+    Bridge between calling code (bare filenames) and StorePaths (file hashes).
+
+    All artifact mixins inherit this. The registry is the source of truth —
+    a file must be registered before any artifact can be saved for it.
+    """
+
+    def _record_for(self, filename: str):
+        """Return the FileRecord for a bare filename. Raises KeyError if missing."""
+        record = self.registry._find_by_name(filename)
+        if record is None:
+            raise KeyError(
+                f"'{filename}' is not in the registry. "
+                f"Call store.registry.register(full_path) before saving artifacts."
+            )
+        return record
+
+    def _hash_for(self, filename: str) -> str:
+        """Resolve a bare filename to its file hash."""
+        return self._record_for(filename).file_hash
+
+    def _dir_for(self, filename: str):
+        """Return (and create) the index directory for a bare filename."""
+        return self.paths.dir_for_hash(self._hash_for(filename))
+
+    def _source_path_for(self, filename: str):
+        """Return the last-known source Path for a file (may not exist if moved)."""
+        from pathlib import Path
+        record = self._record_for(filename)
+        if record.last_seen_path:
+            return Path(record.last_seen_path)
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Meta / freshness
+# ═══════════════════════════════════════════════════════════════════════════
+
+class MetaMixin(_PathResolverMixin):
     """Handles meta.json read/write and file freshness checks."""
 
     def _update_meta(self, filename: str, component: str, extras: dict | None = None) -> None:
@@ -51,17 +116,17 @@ class MetaMixin:
         Record that `component` was just processed for `filename`.
         All pipeline stages call this so meta.json is an audit trail.
         """
-        meta_path = self.paths.meta_path(filename)
-        meta      = read_json(meta_path) or {
+        meta_path = self._dir_for(filename) / "meta.json"
+        meta = read_json(meta_path) or {
             "filename":   filename,
             "created_at": now(),
             "updates":    {},
         }
 
         meta.setdefault("updates", {})
-        timestamp              = now()
+        timestamp = now()
         meta["updates"][component] = timestamp
-        meta["updated_at"]     = timestamp
+        meta["updated_at"] = timestamp
 
         if extras:
             for key, value in extras.items():
@@ -73,28 +138,35 @@ class MetaMixin:
         write_json(meta_path, meta)
 
     def load_meta(self, filename: str) -> dict:
-        return read_json(self.paths.meta_path(filename)) or {}
+        return read_json(self._dir_for(filename) / "meta.json") or {}
 
     def is_fresh(self, filename: str) -> bool:
         """
         True when the source file's MD5 hash matches the stored hash.
         A stale result means the file changed since last processing.
         """
-        meta_path = self.paths.meta_path(filename)
+        meta_path = self._dir_for(filename) / "meta.json"
         if not meta_path.exists():
             return False
 
-        source = self.project_dir / filename
-        if not source.exists():
+        source = self._source_path_for(filename)
+        if source is None or not source.exists():
             return False
 
         return read_json(meta_path).get("file_hash", "") == file_hash(source)
 
 
-# ── Mixin: Config ──────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Config
+# ═══════════════════════════════════════════════════════════════════════════
 
 class ConfigMixin:
-    """Handles config.json (project-level settings)."""
+    """
+    Handles config.json (global user preferences).
+
+    This stores what the user WANTS — not what actually happened per file.
+    Per-file state lives in meta.json, embeddings.meta.json, and vector.json.
+    """
 
     def load_config(self) -> dict:
         return read_json(self.paths.config_path) or {}
@@ -107,36 +179,44 @@ class ConfigMixin:
         config.update(kwargs)
         self.save_config(config)
 
-    def _embedding_model(self) -> str:
-        return self.load_config().get("embedding_model", "intfloat/e5-small-v2")
+    def get_user_embedding_model(self) -> str:
+        """The model the user selected during onboarding/settings."""
+        return self.load_config().get("embedding_model", "unknown")
+
+    def set_user_embedding_model(self, model_name: str) -> None:
+        """Called when the user changes their embedding model preference."""
+        self.update_config(embedding_model=model_name)
+        TerminalUI.info(
+            label="Embedding model updated",
+            value=f"New files will use {model_name}. Existing files may need re-embedding."
+        )
 
 
-# ── Mixin: Markdown ────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Markdown
+# ═══════════════════════════════════════════════════════════════════════════
 
-class MarkdownMixin:
+class MarkdownMixin(_PathResolverMixin):
 
     def has_markdown(self, filename: str) -> bool:
-        return self.paths.markdown_path(filename).exists()
+        return (self._dir_for(filename) / "markdown.md").exists()
 
-    def save_markdown(self, filename: str, doc: ParsedDocument, rerun: bool = False) -> None:
+    def save_markdown(self, filename: str, doc: ParsedDocument) -> None:
+        
         if doc.error:
             TerminalUI.info("Markdown Error", f"Skipping {filename}: {doc.error}")
             return
+        
 
-        self.paths.ensure_file_dir(filename)
-        md_path = self.paths.markdown_path(filename)
+        d = self._dir_for(filename)
+        md_path = d / "markdown.md"
 
-        if not rerun and self.is_fresh(filename) and md_path.exists():
-            TerminalUI.dim(f"Skipping markdown (fresh): {filename}")
-            return
 
         try:
             md_path.write_text(doc.embedding_text, encoding="utf-8")
 
-
-
             skip_fields = {"text", "error", "filename", "images", "embedding_text", "display_text"}
-            extras      = {k: v for k, v in dataclasses.asdict(doc).items() if k not in skip_fields}
+            extras = {k: v for k, v in dataclasses.asdict(doc).items() if k not in skip_fields}
             self._update_meta(filename, "markdown", extras=extras)
 
             TerminalUI.success(f"Markdown saved: {md_path.name}")
@@ -144,7 +224,7 @@ class MarkdownMixin:
             TerminalUI.error(f"Failed to save markdown for {filename}: {e}")
 
     def load_markdown(self, filename: str) -> str | None:
-        md_path = self.paths.markdown_path(filename)
+        md_path = self._dir_for(filename) / "markdown.md"
         if not md_path.exists():
             TerminalUI.error(f"Markdown not found for {filename}")
             return None
@@ -155,186 +235,216 @@ class MarkdownMixin:
             return None
 
 
-# ── Mixin: Chunks ──────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Chunks
+# ═══════════════════════════════════════════════════════════════════════════
 
-class ChunksMixin:
+class ChunksMixin(_PathResolverMixin):
 
     def has_chunks(self, filename: str) -> bool:
-        return self.paths.chunks_path(filename).exists()
+        return (self._dir_for(filename) / "chunks.json").exists()
 
-    def save_chunks(self, filename: str, chunks: list[Chunk], chunk_meta: dict | None = None, rerun: bool = False) -> None:
-        if not rerun and self.is_fresh(filename) and self.has_chunks(filename):
-            TerminalUI.dim(f"Skipping chunks (fresh): {filename}")
+    def save_chunks(
+        self,
+        filename: str,
+        chunks: list[Chunk],
+        chunk_meta: dict | None = None,
+    ) -> None:
+        if not chunks:
+            TerminalUI.error(f"No chunks to save for {filename}")
             return
-
-        self.paths.ensure_file_dir(filename)
-        write_json(self.paths.chunks_path(filename), [dataclasses.asdict(c) for c in chunks])
+        
+        d = self._dir_for(filename)
+        write_json(d / "chunks.json", [dataclasses.asdict(c) for c in chunks])
 
         extras = {**(chunk_meta or {}), "chunk_count": len(chunks)}
         self._update_meta(filename, "chunks", extras=extras)
 
     def load_chunks(self, filename: str) -> list[Chunk]:
-        path = self.paths.chunks_path(filename)
+        path = self._dir_for(filename) / "chunks.json"
         if not path.exists():
             return []
         return [_chunk_from_dict(c) for c in (read_json(path) or [])]
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Vector (USearch)
+# ═══════════════════════════════════════════════════════════════════════════
 
-# ── Mixin : VECTOR (USearch) ───────────────────────────────────────────────────
-class VectorMixin:
+class VectorMixin(_PathResolverMixin):
 
     def has_vector(self, filename: str) -> bool:
-        return self.paths.vector_index_path(filename).exists()
+        return (self._dir_for(filename) / "vector.usearch").exists()
 
     def save_vector(
-        self, 
-        filename: str, 
-        vectors: np.ndarray, 
-        chunk_ids: list[str],
+        self,
+        filename: str,
         model_name: str,
-        rerun: bool = False
+        vectors: np.ndarray,
+        chunk_ids: list[str],
     ) -> None:
-        """Build and save USearch index."""
-        if not rerun and self.is_fresh(filename) and self.has_vector(filename):
-            TerminalUI.dim(f"Skipping vector index (fresh): {filename}")
-            return
+        """Build and save USearch index with per-file model metadata."""
+        
+        if len(vectors) != len(chunk_ids):
+            raise ValueError(
+                f"vectors ({len(vectors)}) and chunk_ids ({len(chunk_ids)}) must be the same length."
+            )
 
-        self.paths.ensure_vector_dir(filename)
-        
-        # 🔁 CHANGED: FAISS → USearch
+        d = self._dir_for(filename)
+
         from usearch.index import Index
-        
+
         dimension = vectors.shape[1]
-        index = Index(ndim=dimension, metric='cos', dtype='f32')
+        index = Index(ndim=dimension, metric="cos", dtype="f32")
         index.add(
             keys=np.arange(len(vectors), dtype=np.int64),
-            vectors=vectors.astype(np.float32)
+            vectors=vectors.astype(np.float32),
         )
-        
-        # Save index
-        index.save(str(self.paths.vector_index_path(filename)))
-        
-        
-        meta_data = {
-                "dimension": dimension,
-                "chunk_ids": chunk_ids,
-                "total_vectors": len(vectors),
-                "model": model_name if model_name else DEFAULT_EMBEDDING_MODEL
-            }
-        
-        write_json(self.paths.vector_json_path(filename), meta_data)
 
-        self._update_meta(filename, "vector")
+        index.save(str(d / "vector.usearch"))
+
+        meta_data = {
+            "dimension":     dimension,
+            "chunk_ids":     chunk_ids,
+            "total_vectors": len(vectors),
+            "model":         model_name,
+            "created_at":    now(),
+        }
+        write_json(d / "vector.json", meta_data)
+
+        self._update_meta(filename, "vector", extras={
+            "vector_model":     model_name,
+            "vector_dimension": dimension,
+        })
         TerminalUI.success(f"Vector index saved: {len(vectors)} vectors")
 
     def load_vector(self, filename: str):
-        """Load USearch index and return (index, chunk_ids)."""
-        index_path = self.paths.vector_index_path(filename)
-        meta_path = self.paths.vector_json_path(filename)
-        
+        """
+        Load USearch index and return (index, chunk_ids).
+
+        Returns (None, None) if the index was built with a different model.
+        """
+        d = self._dir_for(filename)
+        index_path = d / "vector.usearch"
+        meta_path  = d / "vector.json"
+
         if not index_path.exists() or not meta_path.exists():
             raise FileNotFoundError(f"No vector index found for '{filename}'")
-        
-        meta = read_json(meta_path)
-        
-        # 🔁 CHANGED: FAISS → USearch
+
+        meta         = read_json(meta_path)
+        stored_model = meta.get("model", "unknown")
+        current_model = _get_current_model_name()
+
+        if stored_model != current_model and stored_model != "unknown":
+            TerminalUI.warn(
+                f"⚠️  Vector index for '{filename}' was built with '{stored_model}' "
+                f"but your current embedding model is '{current_model}'.\n"
+                f"    Search results will be wrong. Run 'darwin reindex' to rebuild."
+            )
+            return None, None
+
+        expected_dim = _get_current_model_dimensions()
+        if expected_dim and meta.get("dimension") != expected_dim:
+            TerminalUI.warn(
+                f"⚠️  Vector dimension mismatch: index has {meta['dimension']}d "
+                f"but current model expects {expected_dim}d. Re-embedding required."
+            )
+            return None, None
+
         from usearch.index import Index
         index = Index.restore(str(index_path))
-        
         return index, meta["chunk_ids"]
-    
+
     def search_vector(
-    self, 
-    filename: str, 
-    query_vec: np.ndarray, 
-    k: int = 10
+        self,
+        filename: str,
+        query_vec: np.ndarray,
+        k: int = 10,
     ) -> list[tuple[str, float]]:
         """Search vector index and return (chunk_id, score) pairs."""
         index, chunk_ids = self.load_vector(filename)
-        
+
+        if index is None or chunk_ids is None:
+            return []
+
         if query_vec.ndim == 1:
             query_vec = query_vec.reshape(1, -1)
-        
+
         matches = index.search(query_vec.astype(np.float32), k)
-        
-        results = []
-        
-        
+
+        results: list[tuple[str, float]] = []
         if matches is None:
             return results
-        
-        # USearch v2.x returns object with .keys and .distances
-        if hasattr(matches, 'keys') and hasattr(matches, 'distances'):
+
+        if hasattr(matches, "keys") and hasattr(matches, "distances"):
             for key, dist in zip(matches.keys, matches.distances):
                 idx = int(key)
                 score = 1.0 - float(dist)
                 if 0 <= idx < len(chunk_ids):
                     results.append((chunk_ids[idx], score))
         else:
-            # USearch v1.x returns list of Match objects
             for match in matches:
                 idx = int(match.key)
                 score = 1.0 - float(match.distance)
                 if 0 <= idx < len(chunk_ids):
                     results.append((chunk_ids[idx], score))
-        
+
         return results
-    
-    def load_vector_metadata(self, filename: str):
-        path = self.paths.vector_json_path(filename)
+
+    def load_vector_metadata(self, filename: str) -> Optional[dict]:
+        """Return per-file vector metadata (model, dimension, chunk_ids)."""
+        path = self._dir_for(filename) / "vector.json"
         if not path.exists():
             return None
         return read_json(path)
 
+    def is_vector_compatible(self, filename: str) -> bool:
+        """Quick check: can we search this file's index with the current model?"""
+        try:
+            index, chunk_ids = self.load_vector(filename)
+            return index is not None and chunk_ids is not None
+        except FileNotFoundError:
+            return False
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Embeddings (NPZ bundles)
+# ═══════════════════════════════════════════════════════════════════════════
 
-# ── Mixin: Embeddings ──────────────────────────────────────────────────────────
-
-class EmbeddingsMixin:
+class EmbeddingsMixin(_PathResolverMixin):
 
     def has_embeddings(self, filename: str) -> bool:
-        return self.paths.npz_path(filename, self._embedding_model()).exists()
+        current_model = _get_current_model_name()
+        fh = self._hash_for(filename)
+        return self.paths.npz_path(fh, current_model).exists()
 
     def save_embeddings(
         self,
         filename: str,
-        vectors:  np.ndarray,
-        chunks:   list[Chunk],
-        rerun:    bool = False,
+        vectors: np.ndarray,
+        chunks: list[Chunk],
+        model_name: str = None,
     ) -> None:
         """
         Save vectors + chunk metadata as a single .npz bundle.
-
-        Storing both together guarantees permanent sync — if the file
-        exists, both vectors and metadata exist.
-
-        Bundle arrays (all length n_chunks):
-            vectors   float32  (n_chunks, embedding_dim)
-            text      object   original chunk text
-            clean     object   stripped text for embedder
-            headings  object   nearest heading
-            pages     int32    page numbers
-            source    object   filename repeated
+        Per-file model metadata is saved alongside for mismatch detection.
         """
-       
-        path = self.paths.npz_path(filename, self._embedding_model())
-        
-        if not rerun and self.is_fresh(filename) and path.exists():
-            TerminalUI.dim(f"Skipping embeddings (fresh): {filename}")
+        if chunks is None or len(chunks) == 0:
+            TerminalUI.error(f"No chunks provided for embedding save of {filename}")
             return
+        
+        if model_name is None:
+            model_name = _get_current_model_name()
+
+        fh   = self._hash_for(filename)
+        path = self.paths.npz_path(fh, model_name)
+
 
 
         if len(vectors) != len(chunks):
             raise ValueError(
                 f"vectors ({len(vectors)}) and chunks ({len(chunks)}) must be the same length."
             )
-
-
-       
-
-        self.paths.ensure_file_dir(filename)
 
         try:
             np.savez_compressed(
@@ -345,28 +455,59 @@ class EmbeddingsMixin:
                 headings = np.array([c.heading for c in chunks], dtype=object),
                 pages    = np.array([c.page    for c in chunks], dtype=np.int32),
                 source   = np.array([c.source  for c in chunks], dtype=object),
-        
             )
-            self._update_meta(filename, "embeddings")
+
+            meta_path = path.with_suffix(".meta.json")
+            write_json(meta_path, {
+                "model_name":  model_name,
+                "dimensions":  vectors.shape[1],
+                "chunk_count": len(chunks),
+                "created_at":  now(),
+            })
+
+            self._update_meta(filename, "embeddings", extras={
+                "embedding_model":      model_name,
+                "embedding_dimensions": vectors.shape[1],
+            })
             TerminalUI.success(f"Saved embeddings: {path.name}")
+
         except Exception as e:
             TerminalUI.error(f"Failed to save embeddings for {filename}: {e}")
 
     def load_embeddings(self, filename: str) -> dict:
         """
-        Returns:
-            {
-                "vectors":  np.ndarray  shape (n_chunks, dim)
-                "text":     list[str]
-                "clean":    list[str]
-                "headings": list[str]
-                "pages":    list[int]
-                "source":   list[str]
-            }
+        Load the NPZ bundle. Warns if the stored model differs from the
+        user's current preference.
         """
-        path = self.paths.npz_path(filename, self._embedding_model())
+        current_model = _get_current_model_name()
+        fh   = self._hash_for(filename)
+        path = self.paths.npz_path(fh, current_model)
+
         if not path.exists():
-            raise FileNotFoundError(f"No embeddings found for '{filename}'. Run the embedding pipeline first.")
+            meta_path = self._dir_for(filename) / "meta.json"
+            if meta_path.exists():
+                file_meta    = read_json(meta_path)
+                stored_model = file_meta.get("embedding_model", "unknown")
+                if stored_model != "unknown" and stored_model != current_model:
+                    raise FileNotFoundError(
+                        f"Embeddings for '{filename}' were built with '{stored_model}', "
+                        f"but your current model is '{current_model}'. "
+                        f"Run the embedding pipeline to re-index."
+                    )
+            raise FileNotFoundError(
+                f"No embeddings found for '{filename}'. Run the embedding pipeline first."
+            )
+
+        meta_path = path.with_suffix(".meta.json")
+        if meta_path.exists():
+            stored_meta  = read_json(meta_path)
+            stored_model = stored_meta.get("model_name", "unknown")
+            if stored_model != current_model and stored_model != "unknown":
+                TerminalUI.warn(
+                    f"⚠️  Embeddings were created with '{stored_model}' "
+                    f"but current model is '{current_model}'. "
+                    f"Re-embedding recommended."
+                )
 
         data = np.load(path, allow_pickle=True)
         return {
@@ -378,40 +519,47 @@ class EmbeddingsMixin:
             "source":   data["source"].tolist(),
         }
 
+    def get_embedding_metadata(self, filename: str) -> Optional[dict]:
+        current_model = _get_current_model_name()
+        fh        = self._hash_for(filename)
+        path      = self.paths.npz_path(fh, current_model)
+        meta_path = path.with_suffix(".meta.json")
+        if not meta_path.exists():
+            return None
+        return read_json(meta_path)
 
-# ── Mixin: BM25 ────────────────────────────────────────────────────────────────
+    def is_embedding_compatible(self, filename: str) -> bool:
+        try:
+            self.load_embeddings(filename)
+            return True
+        except FileNotFoundError:
+            return False
 
-class BM25Mixin:
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: BM25
+# ═══════════════════════════════════════════════════════════════════════════
+
+class BM25Mixin(_PathResolverMixin):
 
     def has_bm25(self, filename: str) -> bool:
-        return self.paths.bm25_path(filename).exists()
+        return (self._dir_for(filename) / "bm25.npz").exists()
 
-    
-    def save_bm25(self, filename: str, data: BM25Data, rerun: bool = False) -> None:
+    def save_bm25(self, filename: str, data: BM25Data) -> None:
         """
         Persist BM25Data as two files:
-
             bm25.npz        — tokens (object array) + doc_lengths (int32)
-            bm25_meta.json  — everything else: doc_freqs, IDFs, stopwords,
-                            avgdl, chunk_count, vocab_size, threshold,
-                            idf_smoothing
-
-        Both files are written in the same call so they are always in sync.
-        If the process is interrupted mid-write the next run re-writes both
-        (is_fresh returns False on a partial write).
+            bm25_meta.json  — everything else
         """
-        if not rerun and self.is_fresh(filename) and self.has_bm25(filename):
-            TerminalUI.dim(f"Skipping BM25 (fresh): {filename}")
+  
+        if not data.tokens or not data.doc_lengths:
+            TerminalUI.error(f"No BM25 data to save for {filename}")
             return
-
-        self.paths.ensure_file_dir(filename)
-        npz_path  = self.paths.bm25_path(filename)
-        meta_path = npz_path.with_name("bm25_meta.json")
+        d         = self._dir_for(filename)
+        npz_path  = d / "bm25.npz"
+        meta_path = d / "bm25_meta.json"
 
         try:
-            # ── numpy bundle ──────────────────────────────────────────────────────
-            # Variable-length token lists cannot go in a regular 2-D array,
-            # so we use a 1-D object array — each element is a Python list.
             tokens_arr = np.empty(len(data.tokens), dtype=object)
             for i, tok_list in enumerate(data.tokens):
                 tokens_arr[i] = tok_list
@@ -422,7 +570,6 @@ class BM25Mixin:
                 doc_lengths = np.array(data.doc_lengths, dtype=np.int32),
             )
 
-            # ── JSON sidecar ──────────────────────────────────────────────────────
             write_json(meta_path, {
                 "avgdl":            data.avgdl,
                 "chunk_count":      data.chunk_count,
@@ -440,25 +587,17 @@ class BM25Mixin:
         except Exception as e:
             TerminalUI.error(f"Failed to save BM25 for {filename}: {e}")
 
-
     def load_bm25(self, filename: str) -> BM25Data | None:
-        """
-        Reload BM25Data from the npz + json sidecar pair.
+        d         = self._dir_for(filename)
+        npz_path  = d / "bm25.npz"
+        meta_path = d / "bm25_meta.json"
 
-        
-        """
-        npz_path  = self.paths.bm25_path(filename)
-        meta_path = npz_path.with_name("bm25_meta.json")
-
-        if not npz_path.exists():
-            return None
-        if not meta_path.exists():
+        if not npz_path.exists() or not meta_path.exists():
             return None
 
         raw  = np.load(npz_path, allow_pickle=True)
         meta = read_json(meta_path)
 
-        # Object array → list of lists
         tokens = [list(tok_list) for tok_list in raw["tokens"]]
 
         return BM25Data(
@@ -471,50 +610,55 @@ class BM25Mixin:
             chunk_count      = meta["chunk_count"],
             vocab_size       = meta["vocab_size"],
             idf_smoothing    = meta["idf_smoothing"],
-            # Reload precomputed IDFs so __post_init__ doesn't recompute them
             precomputed_idfs = meta.get("precomputed_idfs") or None,
         )
 
-# ── Mixin: Stopwords ───────────────────────────────────────────────────────────
 
-class StopwordsMixin:
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Stopwords
+# ═══════════════════════════════════════════════════════════════════════════
+
+class StopwordsMixin(_PathResolverMixin):
 
     def has_stopwords(self, filename: str) -> bool:
-        return self.paths.stopwords_path(filename).exists()
+        return (self._dir_for(filename) / "stopwords.json").exists()
 
-    def save_stopwords(self, filename: str, stopwords: set[str], rerun: bool = False) -> None:
-        if not rerun and self.is_fresh(filename) and self.has_stopwords(filename):
-            TerminalUI.dim(f"Skipping stopwords (fresh): {filename}")
+    def save_stopwords(self, filename: str, stopwords: set[str]) -> None:
+
+        if not stopwords:
+            TerminalUI.error(f"No stopwords to save for {filename}")
             return
-
-        self.paths.ensure_file_dir(filename)
-        write_json(self.paths.stopwords_path(filename), {"stopwords": sorted(stopwords)})
+        d = self._dir_for(filename)
+        write_json(d / "stopwords.json", {"stopwords": sorted(stopwords)})
         self._update_meta(filename, "stopwords")
 
     def load_stopwords(self, filename: str) -> set[str]:
-        path = self.paths.stopwords_path(filename)
+        path = self._dir_for(filename) / "stopwords.json"
         if not path.exists():
             return set()
         return set(read_json(path).get("stopwords", []))
 
 
-# ── Mixin: Graph ───────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Graph
+# ═══════════════════════════════════════════════════════════════════════════
 
-class GraphMixin:
+class GraphMixin(_PathResolverMixin):
 
     def has_graph(self, filename: str) -> bool:
-        return self.paths.graph_json_path(filename).exists()
+        return (self._dir_for(filename) / "graph" / "graph.json").exists()
 
     def has_graph_html(self, filename: str) -> bool:
-        return self.paths.graph_html_path(filename).exists()
+        return (self._dir_for(filename) / "graph" / "graph.html").exists()
 
-    def save_graph(self, filename: str, graph_data: Any, rerun: bool = False) -> None:
-        if not rerun and self.is_fresh(filename) and self.has_graph(filename):
-            TerminalUI.dim(f"Skipping graph (fresh): {filename}")
+    def save_graph(self, filename: str, graph_data: Any) -> None:
+        if not graph_data:
+            TerminalUI.error(f"No graph data to save for {filename}")
             return
 
-        self.paths.ensure_graph_dir(filename)
-        write_json(self.paths.graph_json_path(filename), graph_data.to_dict())
+        d = self._dir_for(filename) / "graph"
+        d.mkdir(parents=True, exist_ok=True)
+        write_json(d / "graph.json", graph_data.to_dict())
 
         self._update_meta(filename, "graph", extras={
             "graph": {
@@ -526,40 +670,43 @@ class GraphMixin:
             }
         })
 
-    def save_graph_html(self, filename: str, html: str, rerun: bool = False) -> None:
+    def save_graph_html(self, filename: str, html: str, ) -> None:
         if html is None:
             TerminalUI.error(f"No graph HTML to save for {filename}")
             return
 
-        if not rerun and self.is_fresh(filename) and self.has_graph_html(filename):
-            TerminalUI.dim(f"Skipping graph HTML (fresh): {filename}")
-            return
 
-        self.paths.ensure_graph_dir(filename)
-        self.paths.graph_html_path(filename).write_text(html, encoding="utf-8")
+
+        d = self._dir_for(filename) / "graph"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "graph.html").write_text(html, encoding="utf-8")
         self._update_meta(filename, "graph_vis")
 
     def load_graph(self, filename: str) -> dict:
-        path = self.paths.graph_json_path(filename)
+        path = self._dir_for(filename) / "graph" / "graph.json"
         if not path.exists():
             raise FileNotFoundError(f"No graph found for '{filename}'.")
         return read_json(path) or {}
 
 
-# ── Mixin: Wiki ────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Wiki
+# ═══════════════════════════════════════════════════════════════════════════
 
-class WikiMixin:
+class WikiMixin(_PathResolverMixin):
 
     def has_wiki(self, filename: str) -> bool:
-        return self.paths.wiki_json_path(filename).exists()
+        return (self._dir_for(filename) / "wiki" / "wiki.json").exists()
 
-    def save_wiki(self, filename: str, wiki: Any, rerun: bool = False) -> None:
-        path = self.paths.wiki_json_path(filename)
-        if not rerun and path.exists():
-            TerminalUI.dim(f"Skipping wiki (cached): {filename}")
+    def save_wiki(self, filename: str, wiki: Any,) -> None:
+        if wiki is None:
+            TerminalUI.error(f"No wiki data to save for {filename}")
             return
+        
+        d = self._dir_for(filename) / "wiki"
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / "wiki.json"
 
-        self.paths.ensure_wiki_dir(filename)
 
         wiki_dict = {
             "filename":      wiki.filename,
@@ -584,7 +731,99 @@ class WikiMixin:
         })
 
     def load_wiki(self, filename: str) -> dict:
-        path = self.paths.wiki_json_path(filename)
+        path = self._dir_for(filename) / "wiki" / "wiki.json"
         if not path.exists():
             raise FileNotFoundError(f"No wiki found for '{filename}'.")
         return read_json(path) or {}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Checkpoint
+# ═══════════════════════════════════════════════════════════════════════════
+
+class CheckpointMixin(_PathResolverMixin):
+
+    def save_parse_checkpoint(self, filename: str, stage: str, **data) -> None:
+        """Save parser progress for resume."""
+        fh   = self._hash_for(filename)
+        path = self.paths.parsing_checkpoint_path(fh)
+        checkpoint = {
+            "stage":     stage,
+            "timestamp": now(),
+            "filename":  filename,
+            **data,
+        }
+        write_json(path, checkpoint)
+        TerminalUI.dim(f"   💾 Checkpoint saved ({stage})")
+
+    def save_raw_parsing_extraction(
+        self, filename: str, display_text: str, embedding_text: str, images: list
+    ) -> None:
+        """Save extracted text to disk so we don't lose it on interruption."""
+        fh       = self._hash_for(filename)
+        raw_path = self.paths.raw_parsing_extraction(fh)
+
+        image_dicts = []
+        for img in images:
+            if dataclasses.is_dataclass(img):
+                image_dicts.append(dataclasses.asdict(img))
+            elif isinstance(img, dict):
+                image_dicts.append(img)
+            else:
+                image_dicts.append({
+                    "path":    str(getattr(img, "path", "")),
+                    "caption": getattr(img, "caption", ""),
+                })
+
+        write_json(raw_path, {
+            "display_text":   display_text,
+            "embedding_text": embedding_text,
+            "images":         image_dicts,
+            "timestamp":      now(),
+        })
+
+    def load_raw_extraction(self, filename: str) -> Optional[dict]:
+        """Load previously saved raw extraction."""
+        fh       = self._hash_for(filename)
+        raw_path = self.paths.raw_parsing_extraction(fh)
+        if not raw_path.exists():
+            return None
+        try:
+            data = read_json(raw_path)
+            # Expire checkpoints older than 7 days
+            ts = data.get("timestamp")
+            if ts:
+                from datetime import datetime, timezone
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
+                if age > 7 * 86400:
+                    raw_path.unlink()
+                    return None
+            return data
+        except Exception:
+            return None
+
+    def load_parse_checkpoint(self, filename: str) -> Optional[dict]:
+        """Returns checkpoint dict if one exists, else None."""
+        fh   = self._hash_for(filename)
+        path = self.paths.parsing_checkpoint_path(fh)
+        if not path.exists():
+            return None
+        try:
+            data = read_json(path)
+            ts = data.get("timestamp")
+            if ts:
+                from datetime import datetime, timezone
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
+                if age > 7 * 86400:
+                    path.unlink()
+                    return None
+            return data
+        except Exception:
+            return None
+
+    def clear_parse_checkpoint(self, filename: str) -> None:
+        """Remove checkpoint after successful completion."""
+        fh   = self._hash_for(filename)
+        path = self.paths.parsing_checkpoint_path(fh)
+        if path.exists():
+            path.unlink()

@@ -255,7 +255,7 @@ def _display_search_results(results: List[KeywordSearchResult], args: KeywordSea
 # ============================================================================
 
 def handle_keyword_search(args: KeywordSearchArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
     
     
     TerminalUI.print_darwin()

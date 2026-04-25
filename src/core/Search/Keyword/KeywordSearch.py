@@ -72,30 +72,37 @@ reindexing.
 """
 
 
-from src.core.BM25.BM25Utils import (STANDARD_STOPS,BM25Data)
+from src.core.BM25.BM25Utils import (STANDARD_STOPS)
 from src.core.Search.Keyword.KeywordUtilities import (calculate_bm25)
-from src.core.Chunking.ChunkerUtils import Chunk
 from src.lib.Terminal import TerminalUI
+from src.core.Storage.DarwinStore import DarwinStore
 
 # ── Public search API ──────────────────────────────────────────────────────────
 
 def search_single_document_keyword(
-    filename:       str,
     query:          str,
-    data:           BM25Data,
-    chunks:         List[Chunk],
+    filename:       str,
+    store : DarwinStore,
     top_k:          int   = 10,
-    k1:             float = 1.5,
-    b:              float = 0.75,
-    min_score:      float = 0.0,
 ) -> List[KeywordSearchResult]:
     """
     Search a single document and return results sorted by score.
-    """
+    """ 
+    
+    k1:             float = 1.5
+    b:              float = 0.75
+    min_score:      float = 0.0
 
     if not query.strip():
         return []
 
+
+    chunks = store.load_chunks(filename)
+    data   = store.load_bm25(filename)
+    if not chunks or not data:
+        TerminalUI.dim(f"Skipping {filename} — no Data provided for keyword search for this file")
+        TerminalUI.dim("Try running `darwin index` first")
+        return []
     # Simple tokenization - treat everything as individual terms
     from src.core.BM25.BM25Utils import tokenize_text
     stopwords = set(data.domain_stopwords).union(STANDARD_STOPS)
@@ -131,12 +138,9 @@ def search_single_document_keyword(
 
 def search_across_documents_keyword(
     query:       str,
-    store,                   # DarwinStore — typed loosely to avoid circular import
+    store : DarwinStore,              
     filenames:   List[str],
     top_k:       int   = 10,
-    k1:          float = 1.5,
-    b:           float = 0.75,
-    phrase_bonus: float = 2.0,
 ) -> List[KeywordSearchResult]:
     """
     Search across multiple documents and merge results by score.
@@ -153,6 +157,8 @@ def search_across_documents_keyword(
     List[BM25Result] merged and re-ranked by score, length <= top_k.
     """
     all_results: List[KeywordSearchResult] = []
+    k1:   float = 1.5,
+    b:           float = 0.75,
 
     for filename in filenames:
         if not store.has_bm25(filename):
@@ -165,7 +171,7 @@ def search_across_documents_keyword(
         try:
             data   = store.load_bm25(filename)
             chunks = store.load_chunks(filename)
-            results = search_single_document_keyword(query, data, chunks, top_k=top_k, k1=k1, b=b, phrase_bonus=phrase_bonus)
+            results = search_single_document_keyword(query, data, chunks, top_k=top_k, k1=k1, b=b)
             all_results.extend(results)
         except Exception as e:
             TerminalUI.error(f"Search failed for {filename}: {e}")

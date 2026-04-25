@@ -99,7 +99,7 @@ def _print_inspection(graph: GraphData, filename: str) -> None:
 # ============================================================================
 
 def handle_graph_extraction(args: GraphExtractionArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
 
     # Resolve files
     if args.file:

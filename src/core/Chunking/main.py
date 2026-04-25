@@ -89,7 +89,7 @@ def _print_chunk(chunk: Chunk) -> None:
     TerminalUI.info("heading", chunk.heading or "(none)")
     TerminalUI.info("page",    f"{chunk.page}–{chunk.page_end}")
     TerminalUI.info("tokens",  str(chunk.token_count))
-    TerminalUI.info("overlap", "yes" if chunk.is_overlap else "no")
+    TerminalUI.info("overlap", chunk.overlap_direction.value)
     TerminalUI.info("links",   str(len(chunk.links)))
     TerminalUI.blank()
 
@@ -113,7 +113,7 @@ def _print_chunk(chunk: Chunk) -> None:
 # ── Core handler ───────────────────────────────────────────────────────────────
 
 def handle_chunking(args: ChunkingArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
 
     TerminalUI.print_darwin()
     TerminalUI.blank()
@@ -126,9 +126,10 @@ def handle_chunking(args: ChunkingArgs) -> None:
     else:
         status    = store.status()
         filenames = [
-            fname for fname, info in status.get("files", {}).items()
-            if info["components"]["markdown"]
-        ]
+        fname for fname, info in status.get("files", {}).items()
+        if info["is_parsed"]]
+       
+       
 
     if not filenames:
         TerminalUI.error("No parsed files found. Run parsing first.")
@@ -137,12 +138,13 @@ def handle_chunking(args: ChunkingArgs) -> None:
     succeeded = failed = skipped = 0
 
     for filename in filenames:
-        if not args.rerun and store.is_fresh(filename) and store.has_chunks(filename):
-            TerminalUI.dim(f"skipping {filename} (fresh chunks exist)")
-            skipped += 1
+        record = store.registry._find_by_name(filename)
+        if record is None:
+            TerminalUI.error(f"{filename} — not registered, run parsing first")
+            failed += 1
             continue
 
-        tobe_chunked =  args.embedding_text if args.embedding_text else store.load_markdown(filename)
+        tobe_chunked =  store.load_markdown(filename)
 
         if tobe_chunked is None:
             TerminalUI.error(f"{filename} — no markdown found, skipping")
@@ -170,7 +172,6 @@ def handle_chunking(args: ChunkingArgs) -> None:
                 filename   = filename,
                 chunks     = chunks,
                 chunk_meta = {**chunk_metadata, "total_links": total_links},
-                rerun      = args.rerun,
             )
 
             TerminalUI.success(

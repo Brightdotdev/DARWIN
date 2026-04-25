@@ -102,7 +102,7 @@ def _print_inspection(wiki: WikiIndex) -> None:
 # ============================================================================
 
 def handle_wiki_generation(args: WikiGenerationArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
     
     # Resolve files
     if args.file:

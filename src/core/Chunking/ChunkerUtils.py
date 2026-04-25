@@ -15,35 +15,46 @@ Core responsibilities:
 - Merge small chunks to avoid low-quality embeddings
 - Attach per-chunk link metadata extracted from source document
 
-Key design goals:
-- Keep chunks within embedding model token limits
-- Preserve semantic coherence across boundaries
-- Ensure retrieval-friendly metadata (heading, page, source)
-- Avoid breaking tables, captions, and structured blocks
-- Maintain lightweight token estimation (no external tokenizer dependency)
+Overlap direction
+-----------------
+When a chunk carries sentences borrowed from an adjacent chunk, `overlap_direction`
+records which side the borrowed content comes from:
+
+    NONE    — chunk has no overlap at all (standalone)
+    LEFT    — chunk opens with sentences that also appear at the end of the
+              *previous* chunk  (i.e. this chunk looks left for context)
+    RIGHT   — chunk closes with sentences that also appear at the start of the
+              *next* chunk  (i.e. this chunk donates context to the right)
+    BOTH    — chunk is an interior window that both received sentences from the
+              previous window AND donated sentences to the next window
+
+In practice the sliding-window algorithm in _split_with_overlap() always
+produces LEFT on every window after the first, because the tail of the
+previous window is prepended to the current one.  The first window gets RIGHT
+(it donates its tail forward) and interior windows get BOTH.  The last window
+gets LEFT only (nothing to donate rightward).
 
 Outputs:
     List[Chunk] where each Chunk contains:
-    - text:        original content for LLM context
-    - clean:       normalized text for embeddings
-    - index:       stable ordering
-    - source:      document identifier
-    - token_count: estimated size
-    - heading:     nearest section title
-    - page / page_end: document location tracking
-    - is_overlap:  whether chunk includes context overlap
-    - links:       hyperlinks whose page falls within this chunk's page range
+    - text:             original content for LLM context
+    - clean:            normalized text for embeddings
+    - index:            stable ordering
+    - source:           document identifier
+    - token_count:      estimated size
+    - heading:          nearest section title
+    - page / page_end:  document location tracking
+    - overlap_direction: OverlapDirection enum — NONE / LEFT / RIGHT / BOTH
+    - links:            hyperlinks whose page falls within this chunk's page range
 """
 
 import re
 import functools
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import List, Optional, Tuple
+from src.core.Chunking.ChunkConfig import get_chunk_config
+from src.core.Chunking.ChunkCleaners import prepare_embedding_text
 
-
-from src.core.Chunking.ChunkCleaners import prepare_embedding_text, get_model_config
-
-DEFAULT_MODEL = "intfloat/e5-small-v2"
 
 # ── Block-type sentinels (must match ChunkCleaners + extractor) ───────────────
 # These are present in the *raw* extractor output (before cleaning).
@@ -59,80 +70,31 @@ PAGE_HEADER_RE    = re.compile(r"^\[Page\s+[^\]]+\]\s*$", re.MULTILINE)
 _LEGACY_PAGE_SEP_RE = re.compile(r"^---\s*$", re.MULTILINE)
 
 
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Token counting
+# Overlap direction
 # ─────────────────────────────────────────────────────────────────────────────
 
-@functools.lru_cache(maxsize=1)
-def _get_tiktoken_encoder():
-    """Load the tiktoken encoder once and cache it for the process lifetime."""
-    try:
-        import tiktoken
-        return tiktoken.get_encoding("cl100k_base")
-    except ImportError:
-        return None
-
-
-def tokens(text: str) -> int:
+class OverlapDirection(str, Enum):
     """
-    Estimate token count.
+    Describes which side(s) of a chunk carry overlap sentences.
 
-    Uses tiktoken (cl100k_base) when available. Falls back to word-count / 0.75
-    which handles Latin text well. The fallback under-counts for CJK / code-heavy
-    content; treat it as a lower-bound estimate.
+    NONE   — no overlap; chunk is self-contained
+    LEFT   — chunk *opens* with sentences repeated from the tail of the
+             previous chunk  (this chunk "looks left")
+    RIGHT  — chunk *closes* with sentences repeated at the head of the
+             next chunk  (this chunk "donates right")
+    BOTH   — interior window: received from the left AND donates to the right
+
+    Use str-Enum so the value serialises cleanly to JSON as a plain string
+    ("none", "left", "right", "both") without needing a custom encoder.
     """
-    if not text:
-        return 0
-    enc = _get_tiktoken_encoder()
-    if enc is not None:
-        return len(enc.encode(text))
-    return max(1, int(len(text.split()) / 0.75))
+    NONE  = "none"
+    LEFT  = "left"
+    RIGHT = "right"
+    BOTH  = "both"
 
-
-def dynamic_chunk_params(model_name: str, doc_tokens: int) -> dict:
-    """
-    Scale chunk size to document length.
-    Longer docs need smaller chunks for retrieval precision.
-    """
-    base         = get_model_config(model_name)
-    max_capacity = base["max_tokens"]
-
-    if doc_tokens < 2_000:
-        chunk_ratio, overlap_add = 1.0, 0
-    elif doc_tokens < 10_000:
-        chunk_ratio, overlap_add = 0.9, 0
-    elif doc_tokens < 50_000:
-        chunk_ratio, overlap_add = 0.75, 1
-    elif doc_tokens < 200_000:
-        chunk_ratio, overlap_add = 0.6, 2
-    else:
-        chunk_ratio, overlap_add = 0.5, 3
-
-    min_chunk_size = max(150, int(max_capacity * 0.4))
-    optimal_max    = max(min_chunk_size, int(max_capacity * chunk_ratio))
-
-    return {
-        "max_tokens": optimal_max,
-        "min_tokens": base["min_tokens"],
-        "overlap":    base["overlap"] + overlap_add,
-        "base_max":   max_capacity,
-        "strategy":   f"{optimal_max}/{max_capacity} tokens per chunk",
-    }
-
-
-def get_dynamic_chunk_params_for_text(
-    text: str,
-    model_name: str = DEFAULT_MODEL,
-) -> dict:
-    """Analyse text and return optimal chunking parameters + metadata."""
-    total_tokens = tokens(text)
-    params       = dynamic_chunk_params(model_name, total_tokens)
-    params.update({
-        "doc_tokens":       total_tokens,
-        "estimated_chunks": max(1, total_tokens // params["max_tokens"]),
-        "model":            model_name,
-    })
-    return params
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -148,16 +110,24 @@ class ChunkLink:
 
 @dataclass
 class Chunk:
-    text:        str             # original text → shown to user / sent to LLM
-    clean:       str             # stripped text → fed to embedding model
-    index:       int             # position in document (0-based)
-    source:      str             # filename for citations
-    token_count: int             # estimated tokens of clean text
-    heading:     str             # nearest section heading above this chunk
-    page:        int             # first page this chunk touches
-    page_end:    int             # last page this chunk touches
-    is_overlap:  bool            # True if chunk carries overlap from previous
-    links:       List[ChunkLink] = field(default_factory=list)
+    text:             str              # original text → shown to user / sent to LLM
+    clean:            str              # stripped text → fed to embedding model
+    index:            int              # position in document (0-based)
+    source:           str              # filename for citations
+    token_count:      int              # estimated tokens of clean text
+    heading:          str              # nearest section heading above this chunk
+    page:             int              # first page this chunk touches
+    page_end:         int              # last page this chunk touches
+    overlap_direction: OverlapDirection = OverlapDirection.NONE
+    links:            List[ChunkLink]  = field(default_factory=list)
+
+    # ------------------------------------------------------------------
+    # Back-compat shim: existing code that reads .is_overlap still works.
+    # A chunk "has overlap" if its direction is anything other than NONE.
+    # ------------------------------------------------------------------
+    @property
+    def is_overlap(self) -> bool:
+        return self.overlap_direction != OverlapDirection.NONE
 
 
 @dataclass
@@ -286,8 +256,13 @@ def split_into_sections(text: str) -> List[Tuple[str, str, int]]:
 # Block-type detection (operates on raw extractor text, before cleaning)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _is_table_block(text: str) -> bool:
-    """True if this paragraph is a table block from the extractor."""
+def _is_table_token_block(text: str) -> bool:
+    """
+    True if this paragraph is a table block from the extractor.
+    Checks for token-prefix markers — NOT geometry (that lives in Extractors.py).
+    Renamed from _is_table_block to avoid collision with Extractors.py's
+    geometry-based function of the same name.
+    """
     t = text.strip()
     return (
         t.startswith(TABLE_OPEN_TOKEN)
@@ -303,46 +278,120 @@ def _is_caption_block(text: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Chunk builder
+# Token counting
 # ─────────────────────────────────────────────────────────────────────────────
 
+@functools.lru_cache(maxsize=1)
+def _get_tiktoken_encoder():
+    """Load the tiktoken encoder once and cache it for the process lifetime."""
+    try:
+        import tiktoken
+        return tiktoken.get_encoding("cl100k_base")
+    except ImportError:
+        return None
+
+
+def tokens(text: str) -> int:
+    """
+    Estimate token count.
+
+    Uses tiktoken (cl100k_base) when available.  Falls back to
+    character-count / 4, which handles Latin, CJK, and code-heavy content
+    more reliably than the old word-count / 0.75 approximation.
+    The fallback is still a lower-bound estimate for very dense code.
+    """
+    if not text:
+        return 0
+    enc = _get_tiktoken_encoder()
+    if enc is not None:
+        return len(enc.encode(text))
+    # Character-based fallback — more reliable than word-split for CJK / code
+    return max(1, len(text) // 4)
+
+
+
+
+def dynamic_chunk_params(doc_tokens: int) -> dict:
+    """
+    Scale chunk size to document length using the active model's config.
+    Auto-detects model from loader — no model_name parameter.
+    """
+    config = get_chunk_config()
+    max_capacity = config.max_tokens
+
+    if doc_tokens < 2_000:
+        chunk_ratio, overlap_add = 1.0, 0
+    elif doc_tokens < 10_000:
+        chunk_ratio, overlap_add = 0.9, 0
+    elif doc_tokens < 50_000:
+        chunk_ratio, overlap_add = 0.75, 1
+    elif doc_tokens < 200_000:
+        chunk_ratio, overlap_add = 0.6, 2
+    else:
+        chunk_ratio, overlap_add = 0.5, 3
+
+    min_chunk_size = max(150, int(max_capacity * 0.4))
+    optimal_max    = max(min_chunk_size, int(max_capacity * chunk_ratio))
+
+    return {
+        "max_tokens": optimal_max,
+        "min_tokens": config.min_tokens,
+        "overlap":    config.overlap + overlap_add,
+        "base_max":   max_capacity,
+        "strategy":   f"{optimal_max}/{max_capacity} tokens per chunk",
+    }
+
+
+def get_dynamic_chunk_params_for_text(text: str) -> dict:
+    """Analyse text and return optimal chunking parameters + metadata."""
+    total_tokens = tokens(text)
+    config = get_chunk_config()
+    params = dynamic_chunk_params(total_tokens)
+    params.update({
+        "doc_tokens":       total_tokens,
+        "estimated_chunks": max(1, total_tokens // params["max_tokens"]),
+        "model":            config.model_name,
+    })
+    return params
+
+
+# ── Update _make_chunk — no model_name parameter ──
+
 def _make_chunk(
-    text:        str,
-    source:      str,
-    index:       int,
-    heading:     str,
-    page:        int,
-    page_end:    int,
-    model_name:  str = DEFAULT_MODEL,
-    is_overlap:  bool = False,
-    links:       Optional[List[ChunkLink]] = None,
-) -> Optional[Chunk]:
+    text:             str,
+    source:           str,
+    index:            int,
+    heading:          str,
+    page:             int,
+    page_end:         int,
+    overlap_direction: "OverlapDirection" = None,
+    links:            Optional[List["ChunkLink"]] = None,
+) -> Optional["Chunk"]:
     """Build one Chunk. Returns None if text has no real content."""
+    if overlap_direction is None:
+        from src.core.Chunking.ChunkerUtils import OverlapDirection
+        overlap_direction = OverlapDirection.NONE
+
     text = text.strip()
     if not text:
         return None
 
-    clean = prepare_embedding_text(text, model_name)
+    # Auto-detect cleaning mode from active model
+    clean = prepare_embedding_text(text)
     if len(clean.split()) < 4:
         return None
-    
-    
+
     caption_patterns = [
-        r'^\s*\[Caption:',           # Our internal format
-        r'^\s*Figure\s+\d+[:.]',     # Figure 1: 
-        r'^\s*Table\s+\d+[:.]',      # Table 1:
-        r'^\s*Fig\.\s*\d+[:.]',      # Fig. 1:
+        r'^\s*\[Caption:',
+        r'^\s*Figure\s+\d+[:.]',
+        r'^\s*Table\s+\d+[:.]',
+        r'^\s*Fig\.\s*\d+[:.]',
     ]
-    
     for pattern in caption_patterns:
         if re.match(pattern, clean, re.IGNORECASE):
-            # It's a caption - check if it has enough meaningful content
-            # Remove the caption prefix and see what's left
             remaining = re.sub(pattern, '', clean, flags=re.IGNORECASE).strip()
             if len(remaining.split()) < 3:
-                # Caption with almost no description - skip it
                 return None
-    
 
     return Chunk(
         text        = text,
@@ -353,14 +402,12 @@ def _make_chunk(
         heading     = heading,
         page        = page,
         page_end    = page_end,
-        is_overlap  = is_overlap,
+        overlap_direction = overlap_direction,
         links       = links if links is not None else [],
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Sentence-level splitting with overlap
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 def _split_with_overlap(
     text:        str,
@@ -370,70 +417,60 @@ def _split_with_overlap(
     page:        int,
     max_tokens:  int,
     overlap:     int,
-    model_name:  str = DEFAULT_MODEL,
-) -> List[Chunk]:
-    """
-    Split text into sentence-windowed chunks with overlap.
-
-    Strategy: walk sentences in parallel — original text sentences for the
-    chunk `text` field, cleaned sentences for token counting and `clean`.
-    If blingfire gives different sentence counts for raw vs. cleaned text,
-    we fall back to splitting only on the cleaned version and use its
-    sentence boundaries to slice the original text.
-    """
+) -> List["Chunk"]:
+    """Split text into sentence-windowed chunks with overlap."""
     links = extract_links(text)
 
     orig_sents  = _split_sentences(text)
-    clean_text  = prepare_embedding_text(text, model_name)
+    clean_text  = prepare_embedding_text(text)
     clean_sents = _split_sentences(clean_text)
 
-    # If counts differ, align by using orig_sents as both (rare but safe fallback)
     if len(orig_sents) != len(clean_sents):
-        clean_sents = [prepare_embedding_text(s, model_name) for s in orig_sents]
+        clean_sents = [prepare_embedding_text(s) for s in orig_sents]
 
-    chunks:       List[Chunk] = []
-    window_orig:  List[str]   = []
-    window_clean: List[str]   = []
+    chunks:       List["Chunk"] = []
+    window_orig:  List[str]     = []
+    window_clean: List[str]     = []
+    window_has_left_overlap: bool = False
 
-    def _flush(is_overlap_flag: bool = False) -> None:
-        nonlocal window_orig, window_clean
+    def _flush(will_continue: bool) -> None:
+        nonlocal window_orig, window_clean, window_has_left_overlap
         if not window_orig:
             return
         raw_text   = " ".join(window_orig)
         clean_join = " ".join(window_clean)
+        has_left  = window_has_left_overlap
+        has_right = will_continue and overlap > 0 and len(window_orig) > overlap
+        if has_left and has_right:
+            direction = OverlapDirection.BOTH
+        elif has_left:
+            direction = OverlapDirection.LEFT
+        elif has_right:
+            direction = OverlapDirection.RIGHT
+        else:
+            direction = OverlapDirection.NONE
         c = Chunk(
-            text        = raw_text,
-            clean       = clean_join,
-            index       = index + len(chunks),
-            source      = source,
-            token_count = tokens(clean_join),
-            heading     = heading,
-            page        = page,
-            page_end    = page,
-            is_overlap  = is_overlap_flag,
-            links       = links,
+            text=raw_text, clean=clean_join, index=index + len(chunks),
+            source=source, token_count=tokens(clean_join), heading=heading,
+            page=page, page_end=page, overlap_direction=direction, links=links,
         )
-        # Discard near-empty chunks
         if len(clean_join.split()) >= 4:
             chunks.append(c)
 
     for i, (sent_orig, sent_clean) in enumerate(zip(orig_sents, clean_sents)):
         trial_clean = window_clean + [sent_clean]
         if tokens(" ".join(trial_clean)) > max_tokens and window_clean:
-            _flush(is_overlap_flag=(i > 0))
+            _flush(will_continue=True)
             window_orig  = window_orig[-overlap:]  if overlap else []
             window_clean = window_clean[-overlap:] if overlap else []
-
+            window_has_left_overlap = bool(overlap and window_orig)
         window_orig.append(sent_orig)
         window_clean.append(sent_clean)
-
-    _flush(is_overlap_flag=bool(chunks))   # last window is overlap if others exist
+    _flush(will_continue=False)
     return chunks
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Section → chunks
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Update section_to_chunks — no model_name ──
 
 def section_to_chunks(
     heading:     str,
@@ -444,53 +481,38 @@ def section_to_chunks(
     max_tokens:  int,
     min_tokens:  int,
     overlap:     int,
-    model_name:  str = DEFAULT_MODEL,
-) -> List[Chunk]:
-    """
-    Convert one (heading, body) section into one or more chunks.
-
-    Page tracking inside a section:
-    We walk paragraphs in order and count any [Page N] / --- markers we pass
-    so page_end advances correctly even within a multi-page section.
-    """
+) -> List["Chunk"]:
+    """Convert one (heading, body) section into one or more chunks."""
     if not body.strip():
         return []
 
-    body_links  = extract_links(body)
-    body_clean  = prepare_embedding_text(body, model_name)
+    body_links = extract_links(body)
+    body_clean = prepare_embedding_text(body)
 
     if tokens(body_clean) <= max_tokens:
         c = _make_chunk(
             body, source, index, heading,
             page, page + count_page_seps(body),
-            model_name=model_name,
             links=body_links,
         )
         return [c] if c else []
 
-    paragraphs:   List[str]   = [p.strip() for p in body.split("\n\n") if p.strip()]
-    chunks:       List[Chunk] = []
-    pending_orig: List[str]   = []
-    pending_clean: List[str]  = []
-    current_page: int         = page
+    paragraphs   = [p.strip() for p in body.split("\n\n") if p.strip()]
+    chunks       = []
+    pending_orig = []
+    pending_clean = []
+    current_page = page
 
-    def _flush_pending() -> None:
-        """Flush accumulated pending paragraphs as one chunk."""
+    def _flush_pending():
         if not pending_orig:
             return
         merged_orig  = "\n\n".join(pending_orig)
         merged_clean = " ".join(pending_clean)
         c = Chunk(
-            text        = merged_orig,
-            clean       = merged_clean,
-            index       = index + len(chunks),
-            source      = source,
-            token_count = tokens(merged_clean),
-            heading     = heading,
-            page        = page,
-            page_end    = current_page,
-            is_overlap  = False,
-            links       = body_links,
+            text=merged_orig, clean=merged_clean, index=index + len(chunks),
+            source=source, token_count=tokens(merged_clean), heading=heading,
+            page=page, page_end=current_page,
+            overlap_direction=OverlapDirection.NONE, links=body_links,
         )
         if len(merged_clean.split()) >= 4:
             chunks.append(c)
@@ -500,80 +522,68 @@ def section_to_chunks(
     for para in paragraphs:
         current_page += count_page_seps(para)
 
-        # ── Table block: always its own chunk ────────────────────────────────
-        if _is_table_block(para):
+        if _is_table_token_block(para):
             _flush_pending()
             c = _make_chunk(
                 para, source, index + len(chunks),
                 heading, current_page, current_page,
-                model_name=model_name,
                 links=extract_links(para),
             )
             if c:
                 chunks.append(c)
             continue
 
-        # ── Caption block: try to attach to the preceding chunk ───────────────
         if _is_caption_block(para):
             if chunks:
-                last     = chunks[-1]
+                last = chunks[-1]
                 combined = last.text + "\n" + para
-                combined_clean = prepare_embedding_text(combined, model_name)
+                combined_clean = prepare_embedding_text(combined)
                 if tokens(combined_clean) <= max_tokens:
                     chunks[-1] = Chunk(
-                        text        = combined,
-                        clean       = combined_clean,
-                        index       = last.index,
-                        source      = last.source,
-                        token_count = tokens(combined_clean),
-                        heading     = last.heading,
-                        page        = last.page,
-                        page_end    = current_page,
-                        is_overlap  = last.is_overlap,
-                        links       = last.links + extract_links(para),
+                        text=combined, clean=combined_clean, index=last.index,
+                        source=last.source, token_count=tokens(combined_clean),
+                        heading=last.heading, page=last.page, page_end=current_page,
+                        overlap_direction=last.overlap_direction,
+                        links=last.links + extract_links(para),
                     )
                     continue
-            # No preceding chunk — treat as standalone
             c = _make_chunk(
                 para, source, index + len(chunks),
                 heading, current_page, current_page,
-                model_name=model_name,
                 links=extract_links(para),
             )
             if c:
                 chunks.append(c)
             continue
 
-        # ── Normal paragraph ─────────────────────────────────────────────────
-        para_clean  = prepare_embedding_text(para, model_name)
+        para_clean  = prepare_embedding_text(para)
         para_tokens = tokens(para_clean)
 
         if para_tokens > max_tokens:
-            # Paragraph itself is too large — flush pending and sub-split
             _flush_pending()
             sub = _split_with_overlap(
                 para, source, index + len(chunks),
                 heading, current_page, max_tokens, overlap,
-                model_name=model_name,
             )
             chunks.extend(sub)
             continue
 
         pending_tokens = tokens(" ".join(pending_clean)) if pending_clean else 0
-
         if pending_tokens + para_tokens > max_tokens:
-            # Adding this para would overflow — flush first
             _flush_pending()
 
         pending_orig.append(para)
         pending_clean.append(para_clean)
 
-        # Eagerly flush once we've reached min_tokens to avoid overfilling
         if tokens(" ".join(pending_clean)) >= min_tokens:
             _flush_pending()
 
     _flush_pending()
     return chunks
+
+
+
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -589,17 +599,38 @@ def merge_small(
     Merge consecutive undersized chunks.
 
     Normal case  (both small, same heading): merge if combined fits.
-    Cross-heading (both tiny, < min_tokens/2): merge if fits; first heading kept.
+    Cross-heading (both tiny, < min_tokens/2): merge ONLY if fits AND the
+    heading difference is minor (one of them has no heading) to avoid silently
+    destroying citation metadata across unrelated sections.
 
-    Token counts are re-estimated after merge to account for the joining
-    whitespace (naive addition would undercount slightly).
+    When chunks are merged:
+    - The combined overlap_direction is the union of both directions, so no
+      overlap information is silently lost.
+    - Token counts are re-estimated after merge to account for the joining
+      whitespace (naive addition would undercount slightly).
     """
     if not chunks:
         return []
 
     tiny_threshold = min_tokens // 2
-    merged:  List[Chunk]      = []
-    buf:     Optional[Chunk]  = None
+    merged: List[Chunk]     = []
+    buf:    Optional[Chunk] = None
+
+    def _merge_directions(a: OverlapDirection, b: OverlapDirection) -> OverlapDirection:
+        """
+        Union the overlap directions of two chunks being merged.
+        We keep LEFT from `a` (it opened with borrowed sentences) and
+        RIGHT from `b` (it donated its tail forward).
+        """
+        has_left  = a in (OverlapDirection.LEFT,  OverlapDirection.BOTH)
+        has_right = b in (OverlapDirection.RIGHT, OverlapDirection.BOTH)
+        if has_left and has_right:
+            return OverlapDirection.BOTH
+        if has_left:
+            return OverlapDirection.LEFT
+        if has_right:
+            return OverlapDirection.RIGHT
+        return OverlapDirection.NONE
 
     for chunk in chunks:
         if buf is None:
@@ -608,27 +639,32 @@ def merge_small(
 
         combined_text  = buf.text  + "\n\n" + chunk.text
         combined_clean = buf.clean + " "    + chunk.clean
-        combined_toks  = tokens(combined_clean)   # re-estimate, don't just sum
+        combined_toks  = tokens(combined_clean)
 
         fits       = combined_toks <= max_tokens
         both_small = buf.token_count < min_tokens  and chunk.token_count < min_tokens
         both_tiny  = buf.token_count < tiny_threshold and chunk.token_count < tiny_threshold
         same_sec   = buf.heading == chunk.heading
 
-        should_merge = fits and ((both_small and same_sec) or both_tiny)
+        # Cross-heading tiny merge: only allow when at least one side has no
+        # heading (e.g. a preamble paragraph), not between two named sections.
+        cross_heading_ok = both_tiny and (not buf.heading or not chunk.heading)
+
+        should_merge = fits and ((both_small and same_sec) or cross_heading_ok)
 
         if should_merge:
             buf = Chunk(
-                text        = combined_text,
-                clean       = combined_clean,
-                index       = buf.index,
-                source      = buf.source,
-                token_count = combined_toks,
-                heading     = buf.heading,
-                page        = buf.page,
-                page_end    = chunk.page_end,
-                is_overlap  = buf.is_overlap,
-                links       = buf.links + chunk.links,
+                text             = combined_text,
+                clean            = combined_clean,
+                index            = buf.index,
+                source           = buf.source,
+                token_count      = combined_toks,
+                heading          = buf.heading,
+                page             = buf.page,
+                page_end         = chunk.page_end,
+                overlap_direction = _merge_directions(buf.overlap_direction,
+                                                      chunk.overlap_direction),
+                links            = buf.links + chunk.links,
             )
         else:
             merged.append(buf)

@@ -107,35 +107,36 @@ def extract_concepts_spacy(chunks: List[Chunk]) -> Dict[str, List[int]]:
     Extract noun phrases using spaCy.
     Requires: uv run python -m spacy download en_core_web_sm
     Slow on large documents — prefer yake.
-    """
-    try:
-        import spacy
-        nlp = spacy.load("en_core_web_sm")
-    except (ImportError, OSError) as e:
-        TerminalUI.warn(f"spaCy unavailable ({e}) — falling back to yake/regex")
-        return extract_concepts_yake(chunks)
+    # """
+    # try:
+    #     import spacy
+    #     nlp = spacy.load("en_core_web_sm")
+    # except (ImportError, OSError) as e:
+    #     TerminalUI.warn(f"spaCy unavailable ({e}) — falling back to yake/regex")
+    #     return extract_concepts_yake(chunks)
 
-    concepts: Dict[str, List[int]] = defaultdict(list)
+    # concepts: Dict[str, List[int]] = defaultdict(list)
 
-    for chunk in chunks:
-        doc = nlp(chunk.clean[:5000])
+    # for chunk in chunks:
+    #     doc = nlp(chunk.clean[:5000])
 
-        for np_chunk in doc.noun_chunks:
-            concept = np_chunk.text.strip().lower()
-            if (
-                len(concept) > 3
-                and concept not in CONCEPT_STOPWORDS
-                and not concept.isdigit()
-            ):
-                concepts[concept].append(chunk.index)
+    #     for np_chunk in doc.noun_chunks:
+    #         concept = np_chunk.text.strip().lower()
+    #         if (
+    #             len(concept) > 3
+    #             and concept not in CONCEPT_STOPWORDS
+    #             and not concept.isdigit()
+    #         ):
+    #             concepts[concept].append(chunk.index)
 
-        for ent in doc.ents:
-            if ent.label_ in ("PERSON", "ORG", "GPE", "PRODUCT", "EVENT", "WORK_OF_ART"):
-                concept = ent.text.strip().lower()
-                if len(concept) > 3:
-                    concepts[concept].append(chunk.index)
+    #     for ent in doc.ents:
+    #         if ent.label_ in ("PERSON", "ORG", "GPE", "PRODUCT", "EVENT", "WORK_OF_ART"):
+    #             concept = ent.text.strip().lower()
+    #             if len(concept) > 3:
+    #                 concepts[concept].append(chunk.index)
 
-    return dict(concepts)
+    # return dict(concepts)
+    pass
 
 
 # ============================================================================
@@ -562,7 +563,7 @@ def run_graph_extraction_pipeline(
     )
 
     # Save graph JSON
-    store.save_graph(filename, graph, rerun=rerun)
+    store.save_graph(filename, graph)
 
     # Generate HTML visualization
     if visualize:
@@ -570,7 +571,7 @@ def run_graph_extraction_pipeline(
             from src.core.Knowledge.Graph.GraphUtils import export_graph_html
             html_graph = export_graph_html(graph)
             if html_graph:
-                store.save_graph_html(filename, html_graph, rerun=rerun)
+                store.save_graph_html(filename, html_graph)
                 TerminalUI.success(f"Graph visualization saved for {filename}")
             else:
                 TerminalUI.error(f"Failed to generate visualization for {filename}")

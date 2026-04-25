@@ -236,11 +236,11 @@ def _select(
 
 def _splash() -> None:
     console.print()
-    console.print("[cyan]      ·  ○──○  ·[/cyan]")
-    console.print("[cyan]     ○   ╲│╱   ○[/cyan]  [bold white]darwin[/bold white]")
-    console.print("[cyan]      ╲   ─○─  ╱[/cyan]  [dim]your knowledge. mapped.[/dim]")
-    console.print("[cyan]       ○  │╱  ○[/cyan]")
-    console.print("[cyan]      ·  ○──○  ·[/cyan]")
+    console.print("[cyan]    ------    [/cyan]")
+    console.print("[cyan]   |      |   [/cyan]  [bold white]darwin[/bold white]")
+    console.print("[cyan]   |      |   [/cyan]  [dim]your knowledge. mapped.[/dim]")
+    console.print("[cyan]   |      │   [/cyan]")
+    console.print("[cyan]    ------    [/cyan]")
     console.print()
     console.print(Panel(
         "[bold]welcome to darwin[/bold]\n\n"

@@ -2,8 +2,7 @@
 WANNABE RAG
 
 documentparser:
-light : pymupdf4llm
-docling : high
+light : pymupdf4llm and fitz
 
 llm:
 local
@@ -37,7 +36,7 @@ honelstly parralelism...we spliit stuffs in cores on the users pc
 reranking:
 not needed..we have a graph
 ms-marco-TinyBERT-L-2-v2 : light
- ms-marco-MiniLM-L-12-v2 : medium
+ ms-marco-MiniLM-L-12-v2 : default
  BAAI/bge-reranker-base or mixedbread-ai/mxbai-rerank-large-v1 :: insane
  
 

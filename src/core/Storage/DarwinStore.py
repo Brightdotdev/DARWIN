@@ -1,52 +1,26 @@
 """
 src/core/Storage/DarwinStore.py
 --------------------------------
-Persistence layer for Darwin.
+Global persistence layer for Darwin. Content-addressed, model-aware.
 
-DarwinStore is the single public interface for all on-disk state inside a
-project's `.darwin/` directory.  It is composed from focused mixin classes
-(each in StoreArtifacts.py) so every artifact family is easy to find,
-read, and test in isolation.
+Usage:
+    store = DarwinStore()
 
-Directory layout
-----------------
-    your-notes/
-    ├── biology.pdf
-    └── .darwin/
-        ├── config.json                      ← project-level settings
-        └── biology_pdf/                     ← one dir per source file
-            ├── meta.json                    ← audit trail + freshness hash
-            ├── biology_pdf.md               ← embedding_text from parser
-            ├── links.json                   ← hyperlinks extracted by parser
-            ├── chunks.json                  ← chunker output
-            ├── e5_small_biology_pdf.npz     ← vectors + chunk metadata
-            ├── bm25.pkl                     ← BM25 search index
-            ├── stopwords.json
-            ├── graph/
-            │   ├── biology_pdf_graph.json
-            │   └── biology_pdf_graph.html
-            └── wiki/
-                └── biology_pdf_wiki.json
+    # Always register the file first — this is what lets the store
+    # resolve bare filenames to content hashes everywhere else.
+    record = store.registry.register(Path("myfile.pdf"))
 
-Embedding storage (.npz)
-------------------------
-Vectors and chunk metadata live in one compressed numpy archive per
-(file, model) pair.  They are always in sync — the file either contains
-both or it doesn't exist.
-
-    data     = np.load("e5_small_biology_pdf.npz", allow_pickle=True)
-    vectors  = data["vectors"]    # (n_chunks, dim)  float32
-    text     = data["text"]       # original text per chunk
-    clean    = data["clean"]      # stripped text per chunk
-    headings = data["headings"]   # nearest heading per chunk
-    pages    = data["pages"]      # int page numbers
-    source   = data["source"]     # filename repeated n times
+    # Then save artifacts using just the filename
+    store.save_markdown("myfile.pdf", doc)
+    store.save_chunks("myfile.pdf", chunks)
 """
 
 import shutil
 from pathlib import Path
+from typing import Optional
 
-from src.core.Storage.StorePaths import StorePaths
+from src.core.Storage.StorePaths import StorePaths, default_darwin_dir
+from src.core.Storage.FileRegistry import FileRegistry, FileRecord
 from src.core.Storage.StoreArtifacts import (
     MetaMixin,
     ConfigMixin,
@@ -58,10 +32,9 @@ from src.core.Storage.StoreArtifacts import (
     StopwordsMixin,
     GraphMixin,
     WikiMixin,
+    CheckpointMixin,
 )
-from src.core.Storage.StoreUtils import (
-    DEFAULT_CONFIG, DARWIN_DIR, now, write_json,
-)
+from src.core.Storage.StoreUtils import DEFAULT_CONFIG, now, write_json, read_json
 from src.lib.Terminal import TerminalUI
 
 
@@ -75,145 +48,169 @@ class DarwinStore(
     BM25Mixin,
     StopwordsMixin,
     GraphMixin,
-    WikiMixin
+    WikiMixin,
+    CheckpointMixin,
 ):
     """
-    One instance per project directory.
+    Global content-addressed store. One instance per app session.
 
-    All filesystem access for Darwin goes through here — nothing else
-    touches the .darwin/ folder directly.
+    No per-project directories. Everything lives in ~/.darwin/
+    keyed by content hash so files can move freely.
 
-    Args:
-        project_dir: folder containing the user's source documents,
-                     e.g. "/home/user/biology-notes"
+    Calling convention
+    ------------------
+    Before saving any artifact for a file, call:
+
+        store.registry.register(full_path)   # or get_or_register
+
+    After that, all artifact methods accept just the bare filename:
+
+        store.save_markdown("myfile.pdf", doc)
+        store.load_chunks("myfile.pdf")
+
+    The registry is the bridge — it maps filename → file hash → index dir.
     """
 
-    def __init__(self, project_dir: str | Path):
-        self.project_dir = Path(project_dir).resolve()
-        self.darwin_dir  = self.project_dir / DARWIN_DIR
-        self.paths       = StorePaths(self.project_dir, self.darwin_dir)
+    def __init__(self, darwin_dir: Path = None):
+        self._darwin_dir = darwin_dir or default_darwin_dir()
+        self.paths       = StorePaths(self._darwin_dir)
+        self.registry    = FileRegistry(self.paths)
+        self._init_config()
 
-    # ── Initialisation ─────────────────────────────────────────────────────────
-
-    def init(self) -> bool:
-        """
-        Create the .darwin folder and write default config.json.
-        Safe to call repeatedly — does nothing if already initialised.
-
-        Returns True on first initialisation, False if already existed.
-        """
-        self.darwin_dir.mkdir(parents=True, exist_ok=True)
-
+    def _init_config(self) -> None:
+        """Ensure config.json exists with defaults."""
         if not self.paths.config_path.exists():
             config = {**DEFAULT_CONFIG, "created_at": now()}
             write_json(self.paths.config_path, config)
-            return True
 
-        return False
+    # ── Registration helpers ──────────────────────────────────────────────
+    # Convenience wrappers so callers don't need to import FileRegistry.
 
-    def is_initialized(self) -> bool:
-        return self.darwin_dir.exists()
+    def register(
+        self,
+        file_path: str | Path,
+        page_count: int = 0,
+        file_size: int = 0,
+    ) -> FileRecord:
+        """
+        Register a file (or refresh its last-seen path).
+        Must be called before any artifact save for this file.
+        Returns the FileRecord.
+        """
+        return self.registry.register(file_path, page_count=page_count, file_size=file_size)
 
-    def _require_init(self) -> None:
-        """Lazily initialise the store on first access."""
-        if not self.darwin_dir.exists():
-            self.init()
-        elif not self.paths.config_path.exists():
-            write_json(self.paths.config_path, {**DEFAULT_CONFIG, "created_at": now()})
+    def get_or_register(self, file_path: str | Path) -> FileRecord:
+        """Get existing record or create a new one."""
+        return self.registry.get_or_register(file_path)
 
-    # ── Convenience path proxies (keep callers unchanged) ──────────────────────
-    # These forward to StorePaths so existing call-sites don't break.
+    def update_pipeline(self, file_path: str | Path, stage: str, **extras) -> FileRecord:
+        """Mark a pipeline stage as completed for a file."""
+        return self.registry.update_pipeline(file_path, stage, **extras)
+
+    # ── File removal ──────────────────────────────────────────────────────
+
+    def remove_file(self, file_path: str | Path) -> bool:
+        """Delete all indexes for a file. Returns True if anything removed."""
+        file_path = Path(file_path).resolve()
+        removed   = self.registry.remove(file_path)
+
+        if file_path.exists():
+            fh        = self.paths.file_hash(file_path)
+            index_dir = self.paths.dir_for_hash(fh)
+            if index_dir.exists():
+                shutil.rmtree(index_dir)
+                return True
+
+        return removed
+
+    # ── Image directories ─────────────────────────────────────────────────
 
     def image_dir(self, filename: str) -> Path:
-        return self.paths.image_dir(filename)
+        """Directory for extracted images, keyed by file hash."""
+        fh = self._hash_for(filename)
+        return self.paths.dir_for_hash(fh) / "images"
 
     def ensure_image_dir(self, filename: str) -> Path:
-        return self.paths.ensure_image_dir(filename)
+        """Create and return the image directory for a file."""
+        d = self.image_dir(filename)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
-    def ensure_image_dir_and_check(self, filename: str) -> tuple[Path, bool]:
-        return self.paths.ensure_image_dir_checked(filename)
+    def image_dir_for_path(self, file_path: str | Path) -> Path:
+        """
+        Get image dir when you have the full file path rather than
+        a registered filename. Useful during initial parsing before
+        the filename is fully registered.
+        """
+        fh = self.paths.file_hash(file_path)
+        d  = self.paths.dir_for_hash(fh) / "images"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
-    # ── File removal ───────────────────────────────────────────────────────────
+    # ── Status ────────────────────────────────────────────────────────────
 
-    def remove_file(self, filename: str) -> bool:
-        """Delete all .darwin artifacts for a source file. Returns True if anything was removed."""
-        d = self.paths.file_dir(filename)
-        if not d.exists():
-            return False
-        shutil.rmtree(d)
-        return True
+    def file_status(self, file_path: str | Path) -> dict:
+        """Full status for one file, suitable for the frontend."""
+        file_path = Path(file_path).resolve()
+        record    = self.registry.get_or_register(file_path)
 
-    # ── Pipeline status ────────────────────────────────────────────────────────
+        if file_path.exists():
+            record = self.registry.register(file_path)
 
-    def _component_flags(self, filename: str) -> dict[str, bool]:
         return {
-            "markdown":   self.has_markdown(filename),
-            "chunks":     self.has_chunks(filename),
-            "embeddings": self.has_embeddings(filename),
-            "bm25":       self.has_bm25(filename),
-            "stopwords":  self.has_stopwords(filename),
-            "graph":      self.has_graph(filename),
-            "wiki":       self.has_wiki(filename),
-            "vectors":     self.has_vector(filename),
-        }
-
-    def _pipeline_flags(self, filename: str) -> dict:
-        meta    = self.load_meta(filename)
-        updates = meta.get("updates", {})
-        return {
-            "is_parsed":        "markdown"   in updates,
-            "is_vectorized":    "embeddings" in updates,
-            "has_search_index": "bm25"       in updates,
-            "has_graph":        self.has_graph(filename),
-            "last_activity":    meta.get("updated_at", "never"),
-            "has_markdown":     self.has_markdown(filename),
-            "has_chunks":       self.has_chunks(filename),
-            "has_embeddings":   self.has_embeddings(filename),
-            "has_vector":       self.has_vector(filename),
-            "has_wiki":         self.has_wiki(filename),
-        }
-
-    def _meta_summary(self, filename: str) -> dict:
-        meta = self.load_meta(filename)
-        return {
-            "chunk_count":      meta.get("chunk_count"),
-            "page_count":       meta.get("page_count"),
-            "parser":           meta.get("parser"),
-            "chunk_max_tokens": meta.get("chunk_max_tokens"),
-            "chunk_model":      meta.get("chunk_model"),
-            "updated_at":       meta.get("updated_at"),
-            "created_at":       meta.get("created_at"),
-        }
-
-    def file_status(self, filename: str) -> dict:
-        """Full status report for a single source file."""
-        self._require_init()
-        components = self._component_flags(filename)
-        return {
-            "filename":         filename,
-            "exists":           (self.project_dir / filename).exists(),
-            "fresh":            self.is_fresh(filename),
-            "components":       components,
-            "pipeline":         self._pipeline_flags(filename),
-            "meta":             self._meta_summary(filename),
-            "ready_for_search": components["chunks"] and components["embeddings"] and components["bm25"] and components["vectors"],
-            "fully_processed":  all(components.values()),
+            "file_hash":       record.file_hash,
+            "original_name":   record.original_name,
+            "last_seen_path":  record.last_seen_path,
+            "file_size_mb":    round(record.file_size_mb, 1),
+            "page_count":      record.page_count,
+            "is_parsed":       record.is_parsed,
+            "is_chunked":      record.is_chunked,
+            "is_embedded":     record.is_embedded,
+            "is_searchable":   record.is_searchable,
+            "progress_percent": record.progress_percent(),
+            "status_summary":  record.status_summary(),
+            "missing_stages":  record.missing_stages(),
+            "embedding_model": record.embedding_model,
+            "chunk_count":     record.chunk_count,
+            "created_at":      record.created_at,
+            "updated_at":      record.updated_at,
         }
 
     def status(self) -> dict:
-        """Full status report for every source file in the project directory."""
-        self._require_init()
+        """Full status for all registered files."""
+        stats = self.registry.stats()
+        files = {}
+        for record in self.registry.list_all():
+            ref = Path(record.last_seen_path) if record.last_seen_path else record.original_name
+            files[record.original_name] = self.file_status(ref)
+        return {
+            "darwin_dir": str(self._darwin_dir),
+            "stats":      stats,
+            "files":      files,
+        }
 
-        source_files = [
-            f for f in self.project_dir.iterdir()
-            if f.is_file() and f.name != DARWIN_DIR
+    def dashboard(self) -> str:
+        """Pretty dashboard for the terminal."""
+        stats    = self.registry.stats()
+        needing  = self.registry.list_needing_work()
+
+        lines = [
+            "╔══════════════════════════════════════════╗",
+            "║           📚 DARWIN DASHBOARD             ║",
+            "╠══════════════════════════════════════════╣",
+            f"║  Files indexed:    {stats['total_files']:<3}                       ║",
+            f"║  Searchable:       {stats['searchable_files']:<3}                       ║",
+            f"║  Needs work:       {stats['files_needing_work']:<3}                       ║",
+            f"║  Total chunks:     {stats['total_chunks']:<5}                    ║",
+            f"║  Total pages:      {stats['total_pages']:<5}                    ║",
+            "╚══════════════════════════════════════════╝",
         ]
 
-        return {
-            "project_dir": str(self.project_dir),
-            "initialized": self.is_initialized(),
-            "files": {
-                f.name: self.file_status(f.name)
-                for f in source_files
-            },
-        }
+        if needing:
+            lines.append("\n📋 Files needing attention:")
+            for r in needing[:5]:
+                lines.append(f"   • {r.original_name} — {r.status_summary()}")
+            if len(needing) > 5:
+                lines.append(f"   ... and {len(needing) - 5} more")
+
+        return "\n".join(lines)

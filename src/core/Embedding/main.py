@@ -1,8 +1,8 @@
 """
 src/core/Embedding/main.py - Embedding pipeline entry point
 
-Reads chunks from .darwin, embeds them with e5-small, saves .npz bundle.
-Can be run standalone after chunking.
+Reads chunks from .darwin, embeds them with the active model, saves .npz bundle.
+Model is loaded once for the entire batch, unloaded when complete.
 
 Usage examples
 --------------
@@ -11,9 +11,6 @@ uv run src/core/Embedding/main.py
 
 # embed a specific file
 uv run src/core/Embedding/main.py --file biology.pdf
-
-# use a different batch size (lower = less RAM, slower)
-uv run src/core/Embedding/main.py --batch-size 16
 
 # inspect output — print vector stats and sample chunk text
 uv run src/core/Embedding/main.py --inspect
@@ -24,27 +21,28 @@ uv run src/core/Embedding/main.py --rerun
 
 import sys
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
+from src.lib.AppPaths import default_models_dir
+
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.core.Embedding.Embedder import run_embedding_pipeline, DEFAULT_BATCH_SIZE
+from src.core.Embedding.Embedder import run_embedding_pipeline
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
 from src.core.Embedding.EmbedderUtils import EmbeddingArgs
+from src.core.Models import get_loader, ModelCategory, setup
 
 
-
-# ============================================================================
-# Inspect — show what's actually in the .npz after saving
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
+# Inspect
+# ═══════════════════════════════════════════════════════════════════════════
 
 def _print_inspection(filename: str, store: DarwinStore) -> None:
-    """Load the saved .npz and print stats so you can verify what was stored."""
+    """Load the saved .npz and print stats."""
     try:
         data = store.load_embeddings(filename)
     except FileNotFoundError:
@@ -60,7 +58,6 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
     TerminalUI.rule(f"embedding inspection — {filename}")
     TerminalUI.blank()
 
-    # vector stats
     norms    = np.linalg.norm(vectors, axis=1)
     dot_self = float(np.dot(vectors[0], vectors[0])) if len(vectors) else 0
 
@@ -81,7 +78,6 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
     TerminalUI.dim("── sample chunks from .npz ──")
     TerminalUI.blank()
 
-    # show first, middle, last
     indices = [0, len(texts) // 2, len(texts) - 1] if len(texts) >= 3 else list(range(len(texts)))
     for idx in indices:
         TerminalUI.info("index",   str(idx))
@@ -102,23 +98,30 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
     TerminalUI.blank()
 
 
-# ============================================================================
-# Core handler
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
+# Handler
+# ═══════════════════════════════════════════════════════════════════════════
 
 def handle_embedding(args: EmbeddingArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
+    
+    try:
+        loader = get_loader()
+    except RuntimeError:
+        TerminalUI.dim("Initializing models...")
+        loader, system = setup(default_models_dir())
 
     TerminalUI.print_darwin()
     TerminalUI.blank()
     TerminalUI.bold("Embedding")
     TerminalUI.dim(f" Rerun: {args.rerun} | Inspect: {args.inspect}")
-    TerminalUI.blank()  
-    # resolve which files to embed  
+    TerminalUI.blank()
+
+    # Resolve which files to embed
     if args.file:
         filenames = [args.file]
     else:
-        status    = store.status()
+        status = store.status()
         filenames = [
             fname for fname, info in status.get("files", {}).items()
             if info["components"]["chunks"]
@@ -131,9 +134,10 @@ def handle_embedding(args: EmbeddingArgs) -> None:
     TerminalUI.bold(f"Embedding {len(filenames)} file(s)")
 
     succeeded = failed = skipped = 0
+    total = len(filenames)
 
-    for filename in filenames:
-        if not args.rerun and store.is_fresh(filename) and store.has_embeddings(filename):
+    for i, filename in enumerate(filenames):
+        if not args.rerun  and store.has_embeddings(filename):
             TerminalUI.dim(f"skipping {filename} (fresh embeddings exist)")
             skipped += 1
             continue
@@ -144,12 +148,16 @@ def handle_embedding(args: EmbeddingArgs) -> None:
             failed += 1
             continue
 
+        # Only unload after the LAST file
+        is_last = (i == total - 1)
+
         try:
             vectors = run_embedding_pipeline(
-                filename   = filename,
-                chunks     = chunks,
-                store      = store,
-                rerun      = args.rerun,
+                filename     = filename,
+                chunks       = chunks,
+                store        = store,
+                rerun        = args.rerun,
+                unload_after = is_last,  # ← free RAM after final file
             )
 
             if vectors is not None:
@@ -163,13 +171,23 @@ def handle_embedding(args: EmbeddingArgs) -> None:
             TerminalUI.error(f"{filename} — {type(e).__name__}: {e}")
             failed += 1
 
+    # ── Safety: ensure model is unloaded even if something went wrong ──
+    try:
+        loader.unload(ModelCategory.EMBEDDING)
+        TerminalUI.dim("Embedding model unloaded from memory")
+    except Exception:
+        import traceback
+        tb_str = ''.join(traceback.format_exception(e))
+        TerminalUI.warn(tb_str)
+        pass
+
     TerminalUI.blank()
     TerminalUI.success(f"done — {succeeded} embedded · {skipped} skipped · {failed} failed")
 
 
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
 # CLI
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -184,11 +202,11 @@ def main() -> int:
     args = parser.parse_args()
 
     handle_embedding(EmbeddingArgs(
-        target     = args.path,
-        file       = args.file,
-        project    = args.project or args.path,
-        inspect    = args.inspect,
-        rerun      = args.rerun,
+        target  = args.path,
+        file    = args.file,
+        project = args.project or args.path,
+        inspect = args.inspect,
+        rerun   = args.rerun,
     ))
 
     return 0

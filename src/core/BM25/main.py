@@ -58,7 +58,7 @@ def _print_inspection(filename: str, store) -> None:
 # ── Core handler ───────────────────────────────────────────────────────────────
 
 def handle_bm25_indexing(args: BM25IndexingArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
 
     TerminalUI.print_darwin()
     TerminalUI.blank()

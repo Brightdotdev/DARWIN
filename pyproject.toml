@@ -1,8 +1,6 @@
-
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
-
 
 [project]
 name = "DARWIN"
@@ -10,14 +8,13 @@ version = "0.1.0"
 description = "DARWIN-CLI a SOTA RAG ai agent for your personal and local use, it has both llm api support and bring your own model support too"
 authors = [
     {name = "Brightdotdev", email = "mail.bright.dev@gmail.com"},
-    {name = "Akinola Bright", email ="iamtherealbright@gmail.com"}
+    {name = "Akinola Bright", email = "iamtherealbright@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "accelerate>=1.13.0",
-    "blingfire>=0.1.8",
-    "en-core-web-md",
+    "blingfire==0.1.8",
     "keyring>=25.7.0",
     "litellm>=1.83.0",
     "markitdown>=0.1.5",
@@ -34,17 +31,13 @@ dependencies = [
     "rich>=14.3.3",
     "scikit-learn>=1.8.0",
     "sentence-transformers>=5.3.0",
-    "spacy>=3.8.13",
     "textual>=8.2.3",
     "toml>=0.10.2",
-    "transformers>=4.49.0",
+    "transformers>=4.49.0,<5.0.0",
     "typer>=0.24.1",
     "usearch>=2.25.1",
     "yake>=0.7.3",
 ]
-
-[tool.uv.sources]
-en-core-web-md = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl" }
 
 [tool.setuptools.packages.find]
 where = ["."]

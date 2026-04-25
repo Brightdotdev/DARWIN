@@ -112,13 +112,13 @@ def _print_inspection(results: List[HybridSearchResult], query: str) -> None:
 # ============================================================================
 
 def handle_hybrid_search(args: HybridSearchArgs) -> None:
-    store = DarwinStore(Path(args.project) if args.project else Path.cwd())
+    store = DarwinStore()
     
     TerminalUI.print_darwin()
     TerminalUI.blank()
     TerminalUI.bold(f"Hybrid search: '{args.query}'")
     TerminalUI.dim(f"RRF k={args.rrf_k} | Semantic weight={args.semantic_weight} | Keyword weight={args.keyword_weight}")
-    TerminalUI.dim(f"Pool size={args.pool_size} | Top-K={args.top_k} | Parallel={args.parallel}")
+    TerminalUI.dim(f"Pool size={args.pool_size} | Top-K={args.top_k}")
     TerminalUI.blank()
 
     if args.top_k == 0:
@@ -137,7 +137,7 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
                 semantic_weight=args.semantic_weight,
                 keyword_weight=args.keyword_weight,
                 pool_size=args.pool_size,
-                parallel=args.parallel,
+               
             )
         else:
             results = search_across_documents_hybrid(
@@ -148,7 +148,7 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
                 semantic_weight=args.semantic_weight,
                 keyword_weight=args.keyword_weight,
                 pool_size=args.pool_size,
-                parallel=args.parallel,
+               
             )
         
         progress.update(task_id, description=f"[green]✓ Found {len(results)} results[/green]")
@@ -225,10 +225,7 @@ def main() -> int:
     parser.add_argument("--pool-size", type=int, default=DEFAULT_POOL_SIZE, help="Candidates per retriever")
     parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
     parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
-    parser.add_argument("--parallel", action="store_true", default=True, 
-                   help="Enable parallel retrieval (default: True)")
-    parser.add_argument("--no-parallel", action="store_false", dest="parallel",
-                   help="Disable parallel retrieval")
+   
     
     args = parser.parse_args()
     
@@ -252,7 +249,6 @@ def main() -> int:
         pool_size=args.pool_size,
         inspect=args.inspect,
         json_output=args.json,
-        parallel=args.parallel
     ))
     
     return 0

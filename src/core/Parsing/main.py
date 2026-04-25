@@ -25,8 +25,8 @@ from src.core.Parsing.ParserUtils import (
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
-
-logger = logging.getLogger(__name__)
+from src.core.Models import setup
+from src.lib.AppPaths import default_models_dir
 
 
 # ── subprocess worker ──────────────────────────────────────────────────────────
@@ -34,19 +34,37 @@ logger = logging.getLogger(__name__)
 def parse_document(
     path_with_images: FileWithImages,
     caption_images: bool,
-    project_dir: Optional[Path],
     precise: bool,
 ) -> ParsedDocument:
     """
-    Parse one document. Runs inside a subprocess.
+    Parse one document. Runs inside a subprocess on Windows (spawn).
+
+    FIX: On Windows, ProcessPoolExecutor uses 'spawn' — each worker is a
+    fresh Python interpreter with no inherited state. setup() must be called
+    here so the global _loader is initialized before any code path that calls
+    get_loader() (i.e. _run_captioning inside _parse_pdf_chunked / _parse_pdf_single).
+
+    setup() is intentionally cheap when models are already downloaded:
+    it only builds the ModelLoader datastructure and prints the ✅ check lines.
+    The heavy model weights are loaded lazily on first loader.get() call.
     """
+    # Re-initialize models inside this subprocess.
+    # skip_download=True avoids redundant network checks — models were already
+    # verified in the main process before workers were spawned.
+    
+    try:
+        setup(default_models_dir(), skip_download=True)
+    except Exception as e:
+        # Non-fatal: captioning will be skipped inside _run_captioning if the
+        # loader is still None, but text extraction will succeed regardless.
+        TerminalUI.warn(f"parse_document: models.setup() failed in worker — {e}")
+
     file_path = Path(path_with_images.file)
     try:
         return _parse(
             file_path,
             images_dir=path_with_images.image_dir,
             caption=caption_images,
-            project_dir=project_dir,
             precise=precise,
         )
     except Exception as e:
@@ -65,7 +83,6 @@ def parse_document(
 def parse_documents(
     files: list[FileWithImages],
     caption_images: bool = False,
-    project_dir: Optional[Path] = None,
     precise: bool = False,
 ) -> list[ParsedDocument]:
 
@@ -103,7 +120,7 @@ def parse_documents(
                     filename = Path(fw.file).name
                     future   = executor.submit(
                         parse_document,
-                        fw, caption_images, project_dir, precise,
+                        fw, caption_images, precise,
                     )
                     future_to_info[future] = (orig_idx, filename)
 
@@ -190,8 +207,14 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         TerminalUI.error(f"No supported files found in {args.target}")
         TerminalUI.dim("Exiting...")
         return []
+    
 
-    store = DarwinStore(Path(args.project_dir) if args.project_dir else Path.cwd())
+    setup(default_models_dir())
+
+    store = DarwinStore()
+    for path in target_paths:
+        store.registry.register(path)
+
 
     to_process    = []
     skipped_count = 0
@@ -222,11 +245,11 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
     docs = parse_documents(
         files,
         caption_images=args.caption,
-        project_dir=store.project_dir,
         precise=args.precise,
     )
 
     succeeded = failed = 0
+   
     for doc in docs:
         if not doc:
             continue
@@ -235,16 +258,14 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
             TerminalUI.error(f" {doc.filename} - {doc.error}")
         else:
             if args.save:
-                store.save_markdown(doc.filename, doc, rerun=args.rerun)
+                # Re-register with page count now that we know it
+                matching_path = next(
+                    (p for p in to_process if p.name == doc.filename), None
+                )
+                if matching_path:
+                    store.registry.register(matching_path, page_count=doc.page_count)
+                store.save_markdown(doc.filename, doc)
             succeeded += 1
-
-    TerminalUI.blank()
-    if succeeded > 0:
-        TerminalUI.success(f" Success: {succeeded} files parsed and saved")
-    if failed > 0:
-        TerminalUI.error(f" Failed: {failed} files")
-
-    return docs
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
@@ -260,7 +281,6 @@ def main() -> int:
     parser.add_argument("--recursive", "-r",  action="store_true", help="Scan directories recursively")
     parser.add_argument("--images",    "-img", action="store_true", help="Extract images")
     parser.add_argument("--caption",   "-c",  action="store_true", help="Generate captions (requires --images)")
-    parser.add_argument("--project",   "-p",  default=None,        help="Project directory (default: cwd)")
     parser.add_argument("--file",      "-f",  default=None,        help="Parse a single file instead of a directory")
     parser.add_argument("--precise",          action="store_true", help="Use pymupdf4llm for layout-accurate extraction")
     parser.add_argument("--no-save",          action="store_true", help="Don't save markdown files (preview only)")
@@ -269,7 +289,6 @@ def main() -> int:
     try:
         handle_parsing(ParsingArgs(
             target=args.path,
-            project_dir=args.project,
             images=args.images,
             caption=args.caption,
             recursive=args.recursive,
@@ -284,7 +303,10 @@ def main() -> int:
         TerminalUI.dim("\nGoodbye!")
         return 130
     except Exception as e:
+        import traceback
         TerminalUI.error(f"\nFatal error: {e}")
+        tb_str = ''.join(traceback.format_exception(e))
+        TerminalUI.text(tb_str)
         return 1
 
 

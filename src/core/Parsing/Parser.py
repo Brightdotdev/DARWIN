@@ -26,7 +26,6 @@ def parse(
     images_dir: Path | None = None,
     caption: bool = False,
     timeout: int = PARSE_TIMEOUT_SECONDS,
-    project_dir: Path | None = None,
     precise: bool = False,
 ) -> ParsedDocument:
     """
@@ -68,7 +67,6 @@ def parse(
                 path,
                 images_dir=images_dir,
                 caption=caption,
-                project_dir=project_dir,
                 precise=precise,
             )
         else:

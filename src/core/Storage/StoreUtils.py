@@ -1,80 +1,90 @@
+"""
+src/core/Storage/StoreUtils.py
+------------------------------
+Constants, helpers, and JSON utilities for DarwinStore.
+"""
+
 from pathlib import Path
 import hashlib
 import re
-from datetime import datetime
-from dataclasses import dataclass, asdict, field
+from datetime import datetime, timezone
 import json
 
 
-# ── Constants ──────────────────────────────────────────────────────────────────
-
-DARWIN_DIR  = ".darwin"
-CONFIG_FILE = "config.json"
-FILE_META   = "meta.json"
-
-DEFAULT_EMBEDDING_MODEL = "intfloat/e5-small-v2"
-DEFAULT_RERANKER = "ms-marco-TinyBERT-L-2-v2"
-# ── Default config ─────────────────────────────────────────────────────────────
+# ── Default global config ──────────────────────────────────────────────────
 
 DEFAULT_CONFIG = {
-    "version":        "0.1.0",
-    "embedding_model": DEFAULT_EMBEDDING_MODEL,
-    "llm_mode":       "none",        # local | api | none
-    "llm_model":      "none",            # e.g. "ollama/llama3.2" or "gpt-4o" or none
-    "reranker":       DEFAULT_RERANKER,
-    "graph_threshold": 0.40,          # default zoom level
-    "created_at":     None,           # set on init
-    "updated_at":     None,           # set on each update
-    "updates" : {},              # tracks when each component was last updated
+    "version": "0.2.0",
+
+    # ── Model preferences (user choices from onboarding) ──
+    "embedding_model": None,       # "bge-m3" | "e5-small-v2" | "gritlm-7b"
+    "reranker_model": "reranker-medium",
+    "vision_model": None,          # "smolvlm" | "moondream2" | None
+    "tokenizer_model": None,       # "spacy-en-core-md" | "spacy-en-core-lg" | None
+
+    # ── Chunking preferences ──
+    "chunk_max_tokens": None,      # override auto-detected; None = use model default
+    "chunk_min_tokens": None,
+    "chunk_overlap": None,
+
+    # ── Search preferences ──
+    "search_top_k": 10,
+    "search_rerank": True,
+    "search_hybrid": True,         # BM25 + vector hybrid search
+
+    # ── LLM settings ──
+    "llm_mode": "none",            # "local" | "api" | "none"
+    "llm_model": None,
+    "llm_api_key": None,
+
+    # ── Graph ──
+    "graph_threshold": 0.40,
+
+    # ── Metadata ──
+    "created_at": None,
+    "updated_at": None,
 }
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────
 
-def sanitize(filename: str) -> str:
-    """
-    Turn "biology.pdf" into "biology_pdf".
-    Replaces dots, spaces, and special chars with underscores.
-    Folder names with dots cause occasional headaches on some systems.
-    """
-    name = Path(filename).name          # strip any directory prefix
-    name = re.sub(r"[^\w]", "_", name) # replace non-alphanumeric with _
-    name = re.sub(r"_+", "_", name)    # collapse multiple underscores
+def sanitize(name: str) -> str:
+    """Turn 'biology.pdf' into 'biology_pdf'."""
+    name = Path(name).name
+    name = re.sub(r"[^\w]", "_", name)
+    name = re.sub(r"_+", "_", name)
     return name.strip("_").lower()
 
 
-def file_hash(path: Path) -> str:
-    """
-    MD5 hash of file contents.
-    Used to detect if a file has changed since last processing.
-    If hash matches stored hash → skip reprocessing.
-    If hash differs            → file changed, reprocess.
-    """
+def file_hash(path: str | Path) -> str:
+    """MD5 hash for quick change detection."""
     h = hashlib.md5()
     with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(8192), b""):
+        for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
 
 
-
 def now() -> str:
-    return datetime.now().isoformat()
+    """ISO-8601 UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat()
 
-
-
-
-# ── JSON helpers ───────────────────────────────────────────────────────────
 
 def write_json(path: Path, data: dict) -> None:
-    with open(path, "w", encoding="utf-8") as f:
+    """Atomic-ish JSON write (write to temp, then rename)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp.replace(path)  # atomic on most OSes
 
-def read_json(path: Path) -> dict:
+
+def read_json(path: Path) -> dict | None:
+    """Read JSON, return None if missing or corrupted."""
     if not path.exists():
-        return {}
+        return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
-        return {}
+    except (json.JSONDecodeError, OSError):
+        return None
