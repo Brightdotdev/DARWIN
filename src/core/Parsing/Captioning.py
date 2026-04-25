@@ -34,7 +34,6 @@ def save_caption_cache(images_dir: Path, cache: Dict[str, str]) -> None:
         with open(get_caption_cache_path(images_dir), "w", encoding="utf-8") as f:
             json.dump(cache, f, indent=2)
     except Exception as e:
-        # FIX: was TerminalUI.warning() which doesn't exist — correct method is .warn()
         TerminalUI.warn(f"Failed to save caption cache: {e}")
 
 
@@ -48,23 +47,23 @@ def caption_image(
     model,
     device,
     cache: Dict[str, str] = None,
-    preloaded_image=None,        # ← NEW: pass already-resized PIL image
-    max_new_tokens: int = 40,    # ← NEW: tunable
+    preloaded_image=None,
+    max_new_tokens: int = 40,
 ) -> str:
     import torch
     from PIL import Image as PILImage
 
     image_path = Path(image_path)
     cache_key  = image_path.name
-    cache      = cache or {}
+    cache      = cache if cache is not None else {}
 
     if CACHE_CAPTIONS and cache_key in cache:
         return cache[cache_key]
 
+    result = ""
     try:
         TerminalUI.dim(f"Captioning {image_path.name}")
 
-        # use preloaded (already resized) image if provided
         image = preloaded_image or PILImage.open(image_path).convert("RGB")
 
         model_type = model.config.model_type.lower() if hasattr(model.config, "model_type") else ""
@@ -122,11 +121,13 @@ def caption_image(
         if len(result) > 300 or "\n\nDescribe" in result:
             result = result.rsplit("\n", 1)[-1].strip()
 
-        if CACHE_CAPTIONS:
-            cache[cache_key] = result
-
-        return result
-
     except Exception as e:
         TerminalUI.error(f"Caption failed for {image_path.name}: {e}")
-        return f"image (caption failed: {e})"
+        result = ""
+
+    # FIX: Always write to cache — even on failure (empty string) — so we don't
+    # attempt to re-caption the same broken image on every subsequent run.
+    if CACHE_CAPTIONS:
+        cache[cache_key] = result
+
+    return result

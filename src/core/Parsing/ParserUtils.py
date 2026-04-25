@@ -79,7 +79,7 @@ def _should_caption_image(img_dict: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def _prepare_image(image_path: Path) :
+def _prepare_image(image_path: Path):
     """Open, convert to RGB, and resize to model's expected input size."""
     from PIL import Image as PILImage
 
@@ -272,13 +272,28 @@ def _run_captioning(
     """
     Caption all extracted images and resolve [Image:N] slots to final tokens.
     Does NOT unload the vision model — caller handles that.
+
+    FIX NOTES
+    ─────────
+    1. cache is now initialised as a plain dict and passed into caption_image
+       by reference. caption_image always writes the result (even "" on failure)
+       so the cache is always populated after a captioning attempt.
+
+    2. save_caption_cache is now called whenever captioning was attempted
+       (should_caption=True), regardless of whether the cache dict is truthy.
+       The old guard `if should_caption and CACHE_CAPTIONS and cache` silently
+       skipped the save when all captions failed (empty dict is falsy).
+
+    3. slot_map is populated for every image — including ones skipped for size
+       or when captioning is disabled — so _replace_image_slots always has an
+       entry and no [Image:N] placeholder is left dangling in the output.
     """
 
     processor = model = device = None
+    # FIX: always start with a plain dict so caption_image can mutate it;
+    # load any existing cached entries on top.
     cache: Dict[str, str] = {}
 
-    # FIX: add diagnostic log so it's immediately visible whether captioning
-    # is attempted or skipped, and why.
     TerminalUI.dim(
         f"_run_captioning: do_caption={do_caption}, "
         f"img_count={len(extracted_imgs)}, "
@@ -293,8 +308,6 @@ def _run_captioning(
 
             loader = get_loader()
 
-            # FIX: guard against missing vision preference before attempting load,
-            # so the error message is actionable rather than a generic exception.
             vision_key = loader.get_model_key(ModelCategory.VISION)
             if vision_key == "not set":
                 TerminalUI.error(
@@ -306,6 +319,8 @@ def _run_captioning(
                 TerminalUI.dim(f"Loading vision model '{vision_key}'...")
                 processor, model, device = loader.get(ModelCategory.VISION)
                 TerminalUI.dim(f"Vision model loaded on {device}")
+                # FIX: load existing cache entries AFTER confirming we will
+                # actually caption, so the file read is never wasted.
                 cache = load_caption_cache(images_dir)
 
         except Exception as e:
@@ -318,13 +333,11 @@ def _run_captioning(
     all_images: List[ExtractedImage] = []
     slot_map:   Dict[int, Dict]      = {}
 
-
     for img_dict in extracted_imgs:
         img_path  = Path(img_dict["path"])
         rel_path  = normalize_image_path(img_path, images_dir)
         img_caption = ""
 
-        # ── resolve slot index early so we can still register skipped images ──
         slot_index = img_dict.get("slot") if img_dict.get("slot") is not None else img_dict.get("index")
         if slot_index is None:
             TerminalUI.error(
@@ -333,32 +346,39 @@ def _run_captioning(
             )
             continue
 
-        # ── caption if enabled ───────────────────────────────────────────────
         if should_caption:
+            # FIX: caption_image now ALWAYS writes to cache (even "" on failure),
+            # so a single call is sufficient — no separate cache-hit check needed
+            # here. We keep the explicit check only as a fast-path log shortcut.
             cache_hit = cache.get(img_path.name)
-
-            if cache_hit:
+            if cache_hit is not None:
                 img_caption = cache_hit
                 TerminalUI.dim(f"  [cache] {img_path.name}")
-
             else:
                 ok, reason = _should_caption_image(img_dict)
-
                 if not ok:
                     TerminalUI.dim(f"  [skip] {img_path.name} — {reason}")
+                    # FIX: write a sentinel so this image is not re-evaluated on
+                    # subsequent runs either (avoids redundant dimension checks
+                    # when the cache is warm).
+                    cache[img_path.name] = ""
                 else:
                     try:
-                        from PIL import Image as PILImage
                         image = _prepare_image(img_path)
+                        # caption_image mutates `cache` directly and always
+                        # writes the result key, even on exception.
                         img_caption = caption_image(
                             img_path, processor, model, device,
                             cache,
-                            preloaded_image=image,       # ← pass resized image in
+                            preloaded_image=image,
                             max_new_tokens=_MAX_NEW_TOKENS,
                         )
                     except Exception as e:
                         TerminalUI.warn(f"Captioning failed for {img_path.name}: {e}")
+                        cache[img_path.name] = ""
 
+        # FIX: slot_map always gets an entry — even for skipped / uncaptioned
+        # images — so _replace_image_slots never leaves a dangling [Image:N].
         slot_map[slot_index] = {
             "caption":  img_caption,
             "rel_path": rel_path,
@@ -378,7 +398,10 @@ def _run_captioning(
         display_text, embedding_text, slot_map
     )
 
-    if should_caption and CACHE_CAPTIONS and cache:
+    # FIX: save whenever captioning was attempted — do NOT gate on `cache`
+    # being truthy. An empty dict (all captions failed / all skipped) is still
+    # a valid cache state that should be persisted so future runs skip cleanly.
+    if should_caption and CACHE_CAPTIONS:
         save_caption_cache(images_dir, cache)
 
     TerminalUI.dim(
@@ -463,6 +486,9 @@ def _parse_pdf_single(
 
     all_images: List[ExtractedImage] = []
 
+    # FIX: when no images_dir was given, there are no image slots to resolve —
+    # return early. This is correct; the extractor never emits [Image:N] slots
+    # when images_dir is None so no replacement is needed either.
     if not images_dir:
         return display_text, embedding_text, page_count, metadata, all_images
 
@@ -476,17 +502,21 @@ def _parse_pdf_single(
             caption,
         )
 
-        # Unload vision model after captioning this file
         if caption:
             try:
                 from src.core.Models import get_loader, ModelCategory
-                # FIX: pass the enum — unload() now handles both enum and str
                 get_loader().unload(ModelCategory.VISION)
                 TerminalUI.dim("Vision model unloaded from memory")
             except Exception:
                 pass
     else:
         TerminalUI.dim("No images found, skipping captioning")
+        # FIX: even with no images, call _replace_image_slots with an empty
+        # slot_map to clean up any stray [Image:N] tokens the extractor may
+        # have emitted (e.g. from a previous partial run's residue).
+        display_text, embedding_text = _replace_image_slots(
+            display_text, embedding_text, {}
+        )
 
     t.split("captioning")
     return display_text, embedding_text, page_count, metadata, all_images
@@ -601,7 +631,16 @@ def _parse_pdf_chunked(
     t.split("chunk_merge")
 
     # ── Captioning pass ──
-    if not images_dir or not all_raw_imgs:
+    if not images_dir:
+        # FIX: no images_dir means no slots were emitted; clean up with empty
+        # slot_map in case of any stray markers.
+        display_text, embedding_text = _replace_image_slots(
+            display_text, embedding_text, {}
+        )
+        return display_text, embedding_text, page_count, metadata, []
+
+    if not all_raw_imgs:
+        TerminalUI.dim("No images extracted from any chunk — skipping captioning")
         return display_text, embedding_text, page_count, metadata, []
 
     display_text, embedding_text, all_images = _run_captioning(
@@ -609,11 +648,9 @@ def _parse_pdf_chunked(
         images_dir, caption,
     )
 
-    # ── Unload vision model ──
     if caption:
         try:
             from src.core.Models import get_loader, ModelCategory
-            # FIX: pass the enum — unload() now handles both enum and str
             get_loader().unload(ModelCategory.VISION)
             TerminalUI.dim("Vision model unloaded from memory")
         except Exception:
