@@ -1,54 +1,42 @@
 """
-src/core/Wiki/WikiGenerator.py
-------------------------------
-Generate Wikipedia-style documentation from document knowledge graphs.
+src/core/Knowledge/Wiki/WikiGenerator.py
+-----------------------------------------
+Wikipedia-style documentation from document knowledge graphs.
 
-This module uses the extracted concept graph and chunks to produce
-human-readable documentation in two modes:
+Two modes:
+  - index (offline):   Phonebook-style concept listing with citations
+  - summary (LLM):     Wikipedia prose generated from chunk context
 
-- Index mode (no LLM): Phonebook-style listing of concepts with page numbers
-- Summary mode (LLM): Wikipedia-style prose with citations
+Uses the same spaCy/yake/regex extraction pipeline as the graph module.
+LLM calls are opt-in via --mode summary. Everything else runs offline.
 
 Pipeline
 --------
 Graph + Chunks
     → Select top concepts (by frequency)
     → For each concept: gather relevant chunks
-    → Index mode: format as markdown with snippets
-    → Summary mode: LLM generates prose from chunks
-    → Save as interlinked .md files
+    → Index mode: format as markdown with snippets + page numbers
+    → Summary mode: LLM writes prose from chunk context
+    → Save via store.save_wiki()
 """
 
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional
-from collections import defaultdict
 
 from src.core.Chunking.Chunker import Chunk
-from src.core.Knowledge.Graph.GraphExtractor import GraphData
-from src.core.Knowledge.Wiki.WikiUtils import (
-    INDEX_TEMPLATE,
-    CONCEPT_SECTION_TEMPLATE,
-    CHUNK_REFERENCE_TEMPLATE,
-    SUMMARY_PROMPT_TEMPLATE,
-    INDEX_PROMPT_TEMPLATE,
-    extract_snippet,
-    save_wiki_files,
-    DEFAULT_MODE,
-    DEFAULT_MAX_CONCEPTS,
-    DEFAULT_CHUNKS_PER_CONCEPT,
-)
+from src.core.Knowledge.Graph.GraphUtils import GraphData, ConceptNode, Relationship
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
 
 
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
 # Data models
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class WikiPage:
-    """A single wiki page (concept or index)."""
     title: str
     content: str
     concept: Optional[str] = None
@@ -59,16 +47,100 @@ class WikiPage:
 
 @dataclass
 class WikiIndex:
-    """Complete wiki output for a document."""
     filename: str
-    pages: List[WikiPage]
     mode: str
+    pages: List[WikiPage]
     concept_count: int
 
 
-# ============================================================================
-# Index mode (no LLM)
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
+# Constants
+# ═══════════════════════════════════════════════════════════════════════════
+
+DEFAULT_MAX_CONCEPTS = 30
+DEFAULT_CHUNKS_PER_CONCEPT = 8
+
+SUMMARY_PROMPT = """Write a Wikipedia-style encyclopedia entry for "{concept}" 
+based on the document "{filename}".
+
+Rules:
+- Write in neutral, factual tone
+- Start with a clear definition
+- Include 2-4 paragraphs with key details
+- Every claim must have a citation like [Page X]
+- Keep it under 300 words
+
+Context from the document:
+{context}
+
+Wikipedia entry for "{concept}":
+"""
+
+INDEX_PROMPT = """Create a master index for the document "{filename}".
+
+Below are the top concepts with their frequencies and relationships.
+Group related concepts into 3-6 thematic sections. For each section,
+write a 1-sentence description of what ties these concepts together.
+
+Concepts:
+{concepts_list}
+
+Master Index (markdown format):
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _extract_snippet(text: str, concept: str, max_length: int = 200) -> str:
+    """Extract a text snippet centered on the concept mention."""
+    import re
+    pattern = re.compile(re.escape(concept), re.IGNORECASE)
+    match = pattern.search(text)
+    if not match:
+        return text[:max_length] + "..." if len(text) > max_length else text
+    start = max(0, match.start() - 100)
+    end = min(len(text), match.end() + 100)
+    snippet = text[start:end].strip()
+    if start > 0:
+        snippet = "..." + snippet
+    if end < len(text):
+        snippet += "..."
+    return snippet
+
+
+def _build_neighbor_map(graph: GraphData) -> Dict[str, List[str]]:
+    """Build {node_id: [neighbor_node_ids]} from graph edges."""
+    node_labels = {n.id: n.label for n in graph.nodes}
+    neighbors = defaultdict(set)
+    for edge in graph.edges:
+        neighbors[edge.source].add(edge.target)
+        neighbors[edge.target].add(edge.source)
+    return {
+        nid: [node_labels[t] for t in targets if t in node_labels]
+        for nid, targets in neighbors.items()
+    }
+
+
+def _call_llm(prompt: str, model: str = "ollama/llama3.2") -> Optional[str]:
+    """Call an LLM and return the response text. Returns None on failure."""
+    try:
+        from litellm import completion
+        response = completion(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        TerminalUI.warn(f"LLM call failed: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Index mode (offline — no LLM)
+# ═══════════════════════════════════════════════════════════════════════════
 
 def generate_concept_index(
     graph: GraphData,
@@ -78,102 +150,75 @@ def generate_concept_index(
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
 ) -> WikiIndex:
     """
-    Generate phonebook-style concept index (no LLM required).
-    
-    Args:
-        graph: Extracted knowledge graph
-        chunks: Original document chunks
-        filename: Source document name
-        max_concepts: Number of top concepts to include
-        chunks_per_concept: Max chunk references per concept
-    
-    Returns:
-        WikiIndex with index page + concept pages
+    Phonebook-style concept index. Fully offline.
+    Each concept gets a page with chunk references + snippets.
     """
-    TerminalUI.bold(f"Generating concept index for {filename}")
-    
-    # Sort concepts by frequency
+    TerminalUI.bold(f"Generating concept index: {filename}")
+
     sorted_nodes = sorted(graph.nodes, key=lambda n: n.frequency, reverse=True)
     top_concepts = sorted_nodes[:max_concepts]
-    
-    # Build node lookup for relationships
-    node_labels = {n.id: n.label for n in graph.nodes}
-    edges_by_source = defaultdict(set)
-    for edge in graph.edges:
-        edges_by_source[edge.source].add(edge.target)
-        edges_by_source[edge.target].add(edge.source)
-    
-    pages = []
-    
-    # Build index page
-    index_content = []
-    index_content.append(f"# {filename} — Concept Index\n")
-    index_content.append(f"*{len(top_concepts)} concepts extracted*\n")
-    index_content.append("\n## All Concepts\n")
-    
+    neighbors = _build_neighbor_map(graph)
+
+    pages: List[WikiPage] = []
+
+    # ── Master index page ──
+    lines = [
+        f"# {filename} — Concept Index\n",
+        f"*{len(top_concepts)} concepts extracted from {graph.chunk_count} chunks*\n",
+        "\n## Concepts by frequency\n",
+    ]
     for node in top_concepts:
-        related = [node_labels[t] for t in edges_by_source.get(node.id, set())]
-        related_str = ", ".join(related[:5]) if related else "none"
-        index_content.append(f"- **[{node.label}](#{node.label.replace(' ', '-').lower()})** — {node.frequency} mentions | Related: {related_str}\n")
-    
+        related = neighbors.get(node.id, [])[:5]
+        related_str = ", ".join(related) if related else "—"
+        lines.append(
+            f"- **[{node.label}](#{node.label.replace(' ', '-').lower()})**  "
+            f"→ {node.frequency} mentions  |  Related: {related_str}\n"
+        )
     pages.append(WikiPage(
         title=f"{filename} — Index",
-        content="".join(index_content),
-        concept_count=len(top_concepts)
+        content="".join(lines),
+        concept_count=len(top_concepts),
     ))
-    
-    # Build individual concept pages
+
+    # ── Individual concept pages ──
     for node in top_concepts:
-        TerminalUI.dim(f"  Building page: {node.label}")
-        
-        # Get chunks that mention this concept
-        concept_chunks = [chunks[i] for i in node.chunk_indices[:chunks_per_concept]]
-        
-        # Get related concepts
-        related_ids = edges_by_source.get(node.id, set())
-        related = [node_labels[rid] for rid in related_ids if rid in node_labels]
-        
-        # Build page content
-        content = []
-        content.append(f"# {node.label}\n")
-        content.append(f"*Frequency: {node.frequency} mentions across {len(node.chunk_indices)} chunks*\n")
-        
+        TerminalUI.dim(f"  {node.label}")
+
+        concept_chunks = [chunks[i] for i in node.chunk_indices[:chunks_per_concept] if i < len(chunks)]
+        related = neighbors.get(node.id, [])[:10]
+
+        lines = [
+            f"# {node.label}\n",
+            f"*Mentioned in {node.frequency} chunks across the document*\n",
+        ]
         if related:
-            content.append(f"\n**Related concepts:** {', '.join(related[:10])}\n")
-        
-        content.append("\n## Document References\n")
-        
+            lines.append(f"\n**See also:** {', '.join(related)}\n")
+        lines.append("\n## References\n")
+
         for chunk in concept_chunks:
-            snippet = extract_snippet(chunk.clean, node.label, 200)
-            heading = chunk.heading or "Untitled section"
-            
-            content.append(f"### Page {chunk.page} — {heading}\n")
-            content.append(f"> {snippet}\n")
-            content.append(f"*Chunk {chunk.index}*\n")
-        
+            snippet = _extract_snippet(chunk.clean, node.label)
+            heading = chunk.heading or "Untitled"
+            lines.append(f"### Page {chunk.page} — {heading}\n")
+            lines.append(f"> {snippet}\n")
+            lines.append(f"*Chunk {chunk.index}*\n\n")
+
         pages.append(WikiPage(
             title=node.label,
-            content="".join(content),
+            content="".join(lines),
             concept=node.label,
             chunk_count=len(node.chunk_indices),
-            related=related
+            related=related,
         ))
-    
-    TerminalUI.success(f"Generated {len(pages)} wiki pages")
-    
-    return WikiIndex(
-        filename=filename,
-        pages=pages,
-        mode="index",
-        concept_count=len(top_concepts)
-    )
+
+    TerminalUI.success(f"Generated {len(pages)} pages (index mode)")
+    return WikiIndex(filename=filename, mode="index", pages=pages, concept_count=len(top_concepts))
 
 
-# ============================================================================
-# Summary mode (LLM required)
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
+# Summary mode (LLM — opt-in)
+# ═══════════════════════════════════════════════════════════════════════════
 
-def generate_concept_summary(
+def generate_concept_summaries(
     graph: GraphData,
     chunks: List[Chunk],
     filename: str,
@@ -182,269 +227,203 @@ def generate_concept_summary(
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
 ) -> WikiIndex:
     """
-    Generate Wikipedia-style summaries using LLM.
-    
-    Args:
-        graph: Extracted knowledge graph
-        chunks: Original document chunks
-        filename: Source document name
-        llm_model: LLM model for generation
-        max_concepts: Number of top concepts to include
-        chunks_per_concept: Max chunks for context
-    
-    Returns:
-        WikiIndex with LLM-generated summary pages
+    Wikipedia-style summaries using an LLM.
+    Falls back to index mode if LLM is unavailable.
     """
-    try:
-        from litellm import completion
-    except ImportError:
-        TerminalUI.error("litellm not installed. Run: pip install litellm")
-        TerminalUI.warn("Falling back to index mode")
-        return generate_concept_index(graph, chunks, filename, max_concepts, chunks_per_concept)
-    
-    TerminalUI.bold(f"Generating Wikipedia-style summaries for {filename}")
-    TerminalUI.dim(f"Using LLM: {llm_model}")
-    
-    # Sort concepts by frequency
+    TerminalUI.bold(f"Generating Wikipedia summaries: {filename}")
+    TerminalUI.dim(f"LLM: {llm_model}")
+
     sorted_nodes = sorted(graph.nodes, key=lambda n: n.frequency, reverse=True)
     top_concepts = sorted_nodes[:max_concepts]
-    
-    # Build node lookup for relationships
-    node_labels = {n.id: n.label for n in graph.nodes}
-    edges_by_source = defaultdict(set)
-    for edge in graph.edges:
-        edges_by_source[edge.source].add(edge.target)
-        edges_by_source[edge.target].add(edge.source)
-    
-    pages = []
-    
-    # Generate master index with LLM
-    TerminalUI.dim("Generating master index...")
-    concepts_list = "\n".join([f"- {n.label} ({n.frequency} mentions)" for n in top_concepts[:30]])
-    
-    index_prompt = INDEX_PROMPT_TEMPLATE.format(
-        filename=filename,
-        concepts_list=concepts_list
-    )
-    
-    try:
-        response = completion(
-            model=llm_model,
-            messages=[{"role": "user", "content": index_prompt}],
-            temperature=0.3,
+    neighbors = _build_neighbor_map(graph)
+
+    pages: List[WikiPage] = []
+
+    # ── LLM-generated master index ──
+    concept_lines = []
+    for node in top_concepts[:30]:
+        related = neighbors.get(node.id, [])[:3]
+        concept_lines.append(
+            f"- {node.label} ({node.frequency} mentions)"
+            + (f" — related: {', '.join(related)}" if related else "")
         )
-        index_content = response.choices[0].message.content
-    except Exception as e:
-        TerminalUI.warn(f"LLM failed for index: {e}. Using fallback.")
-        index_content = f"# {filename} — Concept Index\n\n" + concepts_list
-    
+
+    index_text = _call_llm(
+        INDEX_PROMPT.format(filename=filename, concepts_list="\n".join(concept_lines)),
+        model=llm_model,
+    )
+    if not index_text:
+        index_text = f"# {filename} — Concept Index\n\n" + "\n".join(concept_lines)
+
     pages.append(WikiPage(
         title=f"{filename} — Index",
-        content=index_content,
-        concept_count=len(top_concepts)
+        content=index_text,
+        concept_count=len(top_concepts),
     ))
-    
-    # Generate summary for each concept
+
+    # ── LLM-generated concept summaries ──
     for i, node in enumerate(top_concepts):
-        TerminalUI.dim(f"  [{i+1}/{len(top_concepts)}] Summarizing: {node.label}")
-        
-        # Gather context chunks
-        concept_chunks = [chunks[i] for i in node.chunk_indices[:chunks_per_concept]]
-        
-        # Build context
-        context = "\n\n---\n\n".join([
-            f"[Page {c.page}] {c.heading}\n{c.clean[:500]}"
+        TerminalUI.dim(f"  [{i+1}/{len(top_concepts)}] {node.label}")
+
+        concept_chunks = [chunks[j] for j in node.chunk_indices[:chunks_per_concept] if j < len(chunks)]
+        context = "\n\n---\n\n".join(
+            f"[Page {c.page}] {c.heading or ''}\n{c.clean[:600]}"
             for c in concept_chunks
-        ])
-        
-        # Get related concepts
-        related_ids = edges_by_source.get(node.id, set())
-        related = [node_labels[rid] for rid in related_ids if rid in node_labels]
-        
-        prompt = SUMMARY_PROMPT_TEMPLATE.format(
-            concept=node.label,
-            filename=filename,
-            context=context
         )
-        
-        try:
-            response = completion(
-                model=llm_model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-            )
-            summary = response.choices[0].message.content
-            
-            # Add related concepts footer
-            if related:
-                summary += f"\n\n**See also:** {', '.join(related[:10])}"
-            
-            pages.append(WikiPage(
-                title=node.label,
-                content=summary,
-                concept=node.label,
-                chunk_count=len(node.chunk_indices),
-                related=related
-            ))
-            
-        except Exception as e:
-            TerminalUI.error(f"Failed to summarize {node.label}: {e}")
-            continue
-    
-    TerminalUI.success(f"Generated {len(pages)} wiki pages")
-    
-    return WikiIndex(
-        filename=filename,
-        pages=pages,
-        mode="summary",
-        concept_count=len(pages) - 1
-    )
+
+        summary = _call_llm(
+            SUMMARY_PROMPT.format(concept=node.label, filename=filename, context=context),
+            model=llm_model,
+        )
+
+        if not summary:
+            # Fallback: plain snippet collection
+            summary = f"# {node.label}\n\n*Mentioned in {node.frequency} chunks.*\n\n"
+            for c in concept_chunks[:3]:
+                summary += f"- Page {c.page}: {_extract_snippet(c.clean, node.label, 150)}\n"
+
+        related = neighbors.get(node.id, [])[:8]
+        if related:
+            summary += f"\n\n**See also:** {', '.join(related)}"
+
+        pages.append(WikiPage(
+            title=node.label,
+            content=summary,
+            concept=node.label,
+            chunk_count=len(node.chunk_indices),
+            related=related,
+        ))
+
+    TerminalUI.success(f"Generated {len(pages)} pages (summary mode)")
+    return WikiIndex(filename=filename, mode="summary", pages=pages, concept_count=len(top_concepts))
 
 
-# ============================================================================
-# Main generator
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
+# Main entry point
+# ═══════════════════════════════════════════════════════════════════════════
 
 def generate_wiki(
     graph: GraphData,
     chunks: List[Chunk],
     filename: str,
-    mode: str = DEFAULT_MODE,
+    mode: str = "index",
     llm_model: Optional[str] = None,
     max_concepts: int = DEFAULT_MAX_CONCEPTS,
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
-    output_dir: Optional[Path] = None,
 ) -> WikiIndex:
     """
-    Generate wiki documentation from graph and chunks.
-    
+    Generate wiki documentation from a concept graph.
+
     Args:
-        graph: Extracted knowledge graph
-        chunks: Original document chunks
-        filename: Source document name
-        mode: "index" (no LLM) or "summary" (LLM)
-        llm_model: LLM model for summary mode
-        max_concepts: Number of top concepts to include
+        graph:             Extracted concept graph
+        chunks:            Original document chunks
+        filename:          Source document name
+        mode:              "index" (offline) or "summary" (LLM)
+        llm_model:         LLM model for summary mode
+        max_concepts:      Number of top concepts to include
         chunks_per_concept: Max chunks per concept for context
-        output_dir: Optional directory to save .md files
-    
+
     Returns:
         WikiIndex with all generated pages
     """
     if mode == "summary":
-        wiki = generate_concept_summary(
-            graph, chunks, filename, llm_model, max_concepts, chunks_per_concept
+        return generate_concept_summaries(
+            graph, chunks, filename,
+            llm_model=llm_model or "ollama/llama3.2",
+            max_concepts=max_concepts,
+            chunks_per_concept=chunks_per_concept,
         )
     else:
-        wiki = generate_concept_index(
-            graph, chunks, filename, max_concepts, chunks_per_concept
+        return generate_concept_index(
+            graph, chunks, filename,
+            max_concepts=max_concepts,
+            chunks_per_concept=chunks_per_concept,
         )
-    
-    # Save to files if output directory provided
-    if output_dir:
-        saved = save_wiki_files(wiki.pages, output_dir, filename.replace('.', '_'))
-        TerminalUI.success(f"Saved {len(saved)} files to {output_dir}")
-    
-    return wiki
 
 
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
 # Pipeline entry point
-# ============================================================================
+# ═══════════════════════════════════════════════════════════════════════════
 
 def run_wiki_pipeline(
     filename: str,
     store: DarwinStore,
-    mode: str = DEFAULT_MODE,
+    mode: str = "index",
     llm_model: Optional[str] = None,
     max_concepts: int = DEFAULT_MAX_CONCEPTS,
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
-    output_dir: Optional[Path] = None,
     rerun: bool = False,
 ) -> Optional[WikiIndex]:
     """
-    Full wiki generation pipeline for one document.
-    
-    Args:
-        filename: Source document filename
-        store: DarwinStore instance
-        mode: "index" or "summary"
-        llm_model: LLM model for summary mode
-        max_concepts: Max concepts to include
-        chunks_per_concept: Max chunks per concept
-        output_dir: Directory to save .md files
-        rerun: Force regeneration
-    
-    Returns:
-        WikiIndex or None if skipped
+    Full wiki pipeline for one document.
+    Loads graph + chunks, generates wiki, saves to store.
     """
-    # Check prerequisites
     if not store.has_graph(filename):
-        TerminalUI.error(f"No graph found for {filename}. Run graph extraction first.")
+        TerminalUI.error(f"No graph found for '{filename}'. Run graph extraction first.")
         return None
-    
+
     if not store.has_chunks(filename):
-        TerminalUI.error(f"No chunks found for {filename}")
+        TerminalUI.error(f"No chunks found for '{filename}'")
         return None
-    
-    # Load data
+
+    if not rerun and store.has_wiki(filename):
+        TerminalUI.dim(f"Skipping wiki: fresh exists for {filename}")
+        try:
+            wiki_dict = store.load_wiki(filename)
+            # Reconstruct WikiIndex from dict
+            pages = [
+                WikiPage(
+                    title=p.get("title", ""),
+                    content=p.get("content", ""),
+                    concept=p.get("concept"),
+                    chunk_count=p.get("chunk_count", 0),
+                    related=p.get("related", []),
+                )
+                for p in wiki_dict.get("pages", [])
+            ]
+            return WikiIndex(
+                filename=wiki_dict.get("filename", filename),
+                mode=wiki_dict.get("mode", "index"),
+                pages=pages,
+                concept_count=wiki_dict.get("concept_count", 0),
+            )
+        except Exception:
+            TerminalUI.warn("Cached wiki corrupted — regenerating...")
+
+    # ── Load graph ──
     graph_dict = store.load_graph(filename)
-    chunks = store.load_chunks(filename)
-    
-    if not chunks:
-        TerminalUI.error(f"Failed to load chunks for {filename}")
-        return None
-    
-    # Reconstruct GraphData from dict
-    from src.core.Knowledge.Graph.GraphExtractor import GraphData, ConceptNode, Relationship
-    
     nodes = [
         ConceptNode(
-            id=n["id"],
-            label=n["label"],
-            frequency=n["frequency"],
-            chunk_indices=n["chunk_indices"]
+            id=n["id"], label=n["label"], frequency=n["freq"],
+            chunk_indices=n["chunks"],
         )
         for n in graph_dict.get("nodes", [])
     ]
-    
     edges = [
         Relationship(
-            source=e["source"],
-            target=e["target"],
-            weight=e["weight"],
-            relation_type=e.get("relation_type", "co_occurrence")
+            source=e["source"], target=e["target"], weight=e["weight"],
+            relation_type=e.get("type", "context_similarity"),
         )
         for e in graph_dict.get("edges", [])
     ]
-    
     graph = GraphData(
-        filename=filename,
-        nodes=nodes,
-        edges=edges,
+        filename=filename, nodes=nodes, edges=edges,
         chunk_count=graph_dict.get("chunk_count", 0),
-        total_concepts_extracted=graph_dict.get("total_concepts_extracted", 0)
+        total_concepts_extracted=graph_dict.get("total_concepts_extracted", 0),
     )
-    output_dir = store._ensure_wiki_dir(filename)
-    # Generate wiki
+
+    chunks = store.load_chunks(filename)
+    if not chunks:
+        TerminalUI.error(f"No chunks for '{filename}'")
+        return None
+
+    # ── Generate ──
     wiki = generate_wiki(
-        graph=graph,
-        chunks=chunks,
-        filename=filename,
-        mode=mode,
-        llm_model=llm_model,
-        max_concepts=max_concepts,
-        chunks_per_concept=chunks_per_concept,
-        output_dir=output_dir,
+        graph=graph, chunks=chunks, filename=filename,
+        mode=mode, llm_model=llm_model,
+        max_concepts=max_concepts, chunks_per_concept=chunks_per_concept,
     )
-    
-    # Save wiki to store
-    store.save_wiki(filename, wiki, rerun=rerun)
-    
+
+    # ── Save ──
+    store.save_wiki(filename, wiki)
     return wiki
-
-
-
-
-
- 

@@ -70,36 +70,38 @@ def detect_system() -> SystemInfo:
         disk_free_gb=disk_free_gb,
     )
 
-
-def recommend_defaults(system: SystemInfo) -> dict[str, str | None]:
+def recommend_defaults(system: SystemInfo) -> dict[str, str]:
     """
-    Given hardware, pick the best model for each category.
-
-    Returns:
-        {
-            "embedding":  "bge-m3" | "e5-small-v2" | None,
-            "reranker":   "reranker-medium",           # always installed
-            "vision":     None,                        # optional — opt-in
-            "tokenizer":  None,                        # optional — opt-in
-        }
+    Recommend best models based on system capabilities.
+    Returns a dict of category -> recommended_key.
     """
-    recommendations: dict[str, str | None] = {
-        "embedding":  None,
-        "reranker":   "reranker-medium",   # always
-        "vision":     "smolvlm",                # optional
-        "tokenizer":  None,                # optional
-    }
-
-    # ── Embedding: pick best that fits in RAM ──
-    for key in ["bge-m3", "e5-small-v2"]:
-        spec = REGISTRY.get(key)
-        if spec and spec.required and system.can_run(spec):
-            recommendations["embedding"] = key
-            break
-
-    # Vision and tokenizer are optional — not auto-selected
-    # User opts in during onboarding
-
+    recommendations = {}
+    
+    # Reranker (always the same tiny model)
+    recommendations["reranker"] = "reranker-medium"
+    
+    # Embedding based on RAM
+    if system.ram_gb >= 32 and system.has_gpu:
+        recommendations["embedding"] = "gritlm-7b"
+    elif system.ram_gb >= 16:
+        recommendations["embedding"] = "bge-m3"
+    else:
+        recommendations["embedding"] = "e5-small-v2"
+    
+    # Vision based on RAM
+    if system.ram_gb >= 16:
+        recommendations["vision"] = "moondream2"
+    elif system.ram_gb >= 4:
+        recommendations["vision"] = "smolvlm"
+    else:
+        recommendations["vision"] = None  # Skip vision for very low RAM
+    
+    # Tokenizer (spaCy) - always recommend medium as best balance
+    if system.ram_gb >= 16 and system.disk_free_gb > 2:
+        recommendations["tokenizer"] = "spacy-en-core-lg"
+    else:
+        recommendations["tokenizer"] = "spacy-en-core-md"
+    
     return recommendations
 
 

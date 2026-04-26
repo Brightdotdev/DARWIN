@@ -109,7 +109,7 @@ def handle_embedding(args: EmbeddingArgs) -> None:
         loader = get_loader()
     except RuntimeError:
         TerminalUI.dim("Initializing models...")
-        loader, system = setup(default_models_dir())
+        loader, system = setup()
 
     TerminalUI.print_darwin()
     TerminalUI.blank()

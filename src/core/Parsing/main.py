@@ -26,7 +26,6 @@ from src.core.Parsing.ParserUtils import (
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
 from src.core.Models import setup
-from src.lib.AppPaths import default_models_dir
 
 
 # ── subprocess worker ──────────────────────────────────────────────────────────
@@ -53,7 +52,7 @@ def parse_document(
     # verified in the main process before workers were spawned.
     
     try:
-        setup(default_models_dir(), skip_download=True)
+        setup()
     except Exception as e:
         # Non-fatal: captioning will be skipped inside _run_captioning if the
         # loader is still None, but text extraction will succeed regardless.
@@ -209,7 +208,7 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         return []
     
 
-    setup(default_models_dir())
+    setup()
 
     store = DarwinStore()
     for path in target_paths:

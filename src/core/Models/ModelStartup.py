@@ -6,13 +6,11 @@ from src.core.Models.ModelStore import ModelStore
 from src.core.Models.ModelLoader import ModelLoader
 from src.core.Models.SystemDetector import detect_system, recommend_defaults, SystemInfo
 from src.core.Models.ModelRegistry import (
-    REGISTRY, TIER_LABELS, ModelCategory,
-    required_models, optional_models, get_spec,
+    REGISTRY, TIER_LABELS,get_spec,
 )
 
 
 def create_loader(
-    models_dir: Path,
     preferences: Optional[dict] = None,
     skip_download: bool = False,
 ) -> tuple[ModelLoader, SystemInfo]:
@@ -22,7 +20,7 @@ def create_loader(
     Only downloads REQUIRED models by default. Optional models (vision, tokenizer)
     are downloaded on-demand when the user passes --caption or uses NLP features.
     """
-    store = ModelStore(models_dir)
+    store = ModelStore()
     system = detect_system()
 
     if preferences is None:
@@ -73,8 +71,7 @@ def _download_required(store: ModelStore, preferences: dict, system: SystemInfo)
                 store.download(key)
 
     print()
-    required_sizes = sum(get_spec(k).disk_mb for k in required_keys)
-    optional_sizes = sum(get_spec(k).disk_mb for k in optional_keys if not store.is_downloaded(k))
+    
     total_new = sum(
         get_spec(k).disk_mb for k in required_keys + optional_keys
         if not store.is_downloaded(k)

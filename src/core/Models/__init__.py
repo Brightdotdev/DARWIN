@@ -7,7 +7,7 @@ _loader: "ModelLoader | None" = None
 _system: "SystemInfo | None" = None
 
 
-def setup(models_dir: Path, preferences: dict = None, skip_download: bool = False, force: bool = False):
+def setup(preferences: dict = None, skip_download: bool = False, force: bool = False):
     global _loader, _system
 
     # Skip if already initialized (e.g. forked subprocess on Linux/macOS)
@@ -16,7 +16,7 @@ def setup(models_dir: Path, preferences: dict = None, skip_download: bool = Fals
 
     from src.core.Models.ModelStartup import create_loader, run_onboarding
 
-    _loader, _system = create_loader(models_dir, preferences, skip_download=skip_download)
+    _loader, _system = create_loader(preferences, skip_download=skip_download)
 
     return _loader, _system
 

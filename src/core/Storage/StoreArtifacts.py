@@ -43,7 +43,7 @@ def _chunk_from_dict(raw: dict) -> Chunk:
 def _get_current_model_name() -> str:
     """Resolve the currently active embedding model name. Safe fallback."""
     try:
-        from src.core.Chunking.ChunkConfig import get_preset
+        from src.core.Models.EmbeddingConfig import get_preset
         return get_preset().model_name
     except Exception:
         return "unknown"
@@ -334,6 +334,8 @@ class VectorMixin(_PathResolverMixin):
         meta         = read_json(meta_path)
         stored_model = meta.get("model", "unknown")
         current_model = _get_current_model_name()
+        TerminalUI.text(f"stored vector model: {stored_model}")
+        TerminalUI.text(f"current vector model: {current_model}")
 
         if stored_model != current_model and stored_model != "unknown":
             TerminalUI.warn(
@@ -415,7 +417,9 @@ class EmbeddingsMixin(_PathResolverMixin):
 
     def has_embeddings(self, filename: str) -> bool:
         current_model = _get_current_model_name()
+        TerminalUI.text(f"Checking for embeddings with model '{current_model}'")
         fh = self._hash_for(filename)
+        TerminalUI.text(f"Resolved file hash: {fh}")
         return self.paths.npz_path(fh, current_model).exists()
 
     def save_embeddings(
@@ -501,7 +505,10 @@ class EmbeddingsMixin(_PathResolverMixin):
         meta_path = path.with_suffix(".meta.json")
         if meta_path.exists():
             stored_meta  = read_json(meta_path)
-            stored_model = stored_meta.get("model_name", "unknown")
+            stored_model = stored_meta.get("embedding_model", "unknown")
+            TerminalUI.text(f"stored vector model: {stored_model}")
+            TerminalUI.text(f"current vector model: {current_model}")
+
             if stored_model != current_model and stored_model != "unknown":
                 TerminalUI.warn(
                     f"⚠️  Embeddings were created with '{stored_model}' "

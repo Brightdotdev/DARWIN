@@ -103,15 +103,15 @@ REGISTRY: dict[str, ModelSpec] = {
     # Tokenizer / NLP (optional — nice-to-have for better sentence splitting)
     # ═══════════════════════════════════════════════════════════════════════
     "spacy-en-core-md": ModelSpec(
-        model_id  = "en_core_web_md",
-        category  = "tokenizer",
-        tier      = "light",
-        ram_gb    = 1,
-        disk_mb   = 45,
-        loader    = "spacy",
-        required  = False,
-        notes     = "Medium English model. Good sentence splitting + NER. 45MB.",
-    ),
+    model_id="en_core_web_md",
+    category="tokenizer",
+    tier="light",
+    ram_gb=1,
+    disk_mb=45,
+    loader="spacy",
+    required=True,  # Important for concept extraction
+    notes="Medium English model. Optimized for concept extraction (NER, parsing, lemmatization). 45MB.",),
+   
     "spacy-en-core-lg": ModelSpec(
         model_id  = "en_core_web_lg",
         category  = "tokenizer",
