@@ -5,9 +5,8 @@ from typing import Optional
 import json
 
 from src.core.Models.ModelStore import ModelStore
-from src.core.Models.ModelRegistry import get_spec, ModelCategory
+from src.core.Models.ModelRegistry import get_spec, ModelCategory, REGISTRY
 from src.core.Models.SpacyConceptExtractor import SpacyConceptExtractor
-
 
 
 class ModelLoader:
@@ -16,12 +15,37 @@ class ModelLoader:
         self._preferences = preferences or {}
         self._cache: dict[str, object] = {}
 
+    def _resolve_key(self, key: str) -> str:
+        """
+        Resolve any model identifier to its canonical registry key.
+        
+        Accepts:
+        - Registry key (e.g., 'BAAI/bge-m3') → returns as-is
+        - Model ID (e.g., 'BAAI/bge-m3') → returns matching registry key
+        - Shorthand (e.g., 'bge-m3') → returns full registry key if found
+        
+        Returns the registry key if found, otherwise returns the input unchanged.
+        """
+        # Direct registry key match
+        if key in REGISTRY:
+            return key
+        
+        # Model ID to registry key lookup
+        id_to_key = {spec.model_id: k for k, spec in REGISTRY.items()}
+        if key in id_to_key:
+            return id_to_key[key]
+        
+        # Not found — return as-is for error handling upstream
+        return key
+
     def set_preference(self, category: str, key: str, cleanup_old: bool = False) -> None:
         old_key = self._preferences.get(category)
         if old_key and old_key != key:
-            self._cache.pop(old_key, None)
+            # Clear old model from cache using RESOLVED registry key
+            resolved_old = self._resolve_key(old_key)
+            self._cache.pop(resolved_old, None)
             if cleanup_old:
-                self.store.delete(old_key)
+                self.store.delete(resolved_old)
         self._preferences[category] = key
 
     def get(self, category: ModelCategory):
@@ -31,11 +55,18 @@ class ModelLoader:
         if not key:
             raise ValueError(f"No model set for '{cat_str}'.")
         
-        if key in self._cache:
-            return self._cache[key]
+        # Resolve to canonical registry key
+        registry_key = self._resolve_key(key)
         
-        spec = get_spec(key)
-        path = str(self.store.ensure(key))
+        if registry_key not in REGISTRY:
+            raise ValueError(f"Unknown model '{key}' for '{cat_str}'. Available: {list(REGISTRY.keys())}")
+        
+        # Return cached instance if available
+        if registry_key in self._cache:
+            return self._cache[registry_key]
+        
+        spec = get_spec(registry_key)
+        path = str(self.store.ensure(registry_key))
         
         # ═══════════════════════════════════════════════════════════════
         # 1. SentenceTransformers Embeddings
@@ -43,7 +74,7 @@ class ModelLoader:
         if spec.loader == "embedding_st":
             from sentence_transformers import SentenceTransformer
             model = SentenceTransformer(path)
-            self._cache[key] = model
+            self._cache[registry_key] = model  # ✅ Cache with registry_key
             return model
         
         # ═══════════════════════════════════════════════════════════════
@@ -66,7 +97,7 @@ class ModelLoader:
             model.eval()
             
             wrapper = self._HFEmbeddingWrapper(model, tokenizer, device)
-            self._cache[key] = wrapper
+            self._cache[registry_key] = wrapper  # ✅ Cache with registry_key
             return wrapper
         
         # ═══════════════════════════════════════════════════════════════
@@ -75,7 +106,7 @@ class ModelLoader:
         elif spec.loader == "cross_encoder":
             from sentence_transformers import CrossEncoder
             model = CrossEncoder(path)
-            self._cache[key] = model
+            self._cache[registry_key] = model  # ✅ Cache with registry_key
             return model
         
         # ═══════════════════════════════════════════════════════════════
@@ -83,14 +114,16 @@ class ModelLoader:
         # ═══════════════════════════════════════════════════════════════
         elif spec.loader == "spacy":
             model = SpacyConceptExtractor(path, spec.model_id)
-            self._cache[key] = model
+            self._cache[registry_key] = model  # ✅ Cache with registry_key
             return model
         
         # ═══════════════════════════════════════════════════════════════
         # 5. Vision Models
         # ═══════════════════════════════════════════════════════════════
         elif spec.loader == "transformers":
-            return self._load_vision_model(path, key)
+            result = self._load_vision_model(path, registry_key)
+            self._cache[registry_key] = result  # ✅ Cache with registry_key
+            return result
         
         raise ValueError(f"Unknown loader type: {spec.loader}")
 
@@ -114,34 +147,33 @@ class ModelLoader:
                 from transformers import Idefics3ForConditionalGeneration, AutoProcessor
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = Idefics3ForConditionalGeneration.from_pretrained(
-                    path, torch_dtype=dtype, low_cpu_mem_usage=True,
+                    path, dtype=dtype, low_cpu_mem_usage=True,
                     device_map="auto", trust_remote_code=True
                 )
             elif "llava" in model_type:
                 from transformers import LlavaForConditionalGeneration, AutoProcessor
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = LlavaForConditionalGeneration.from_pretrained(
-                    path, torch_dtype=dtype, low_cpu_mem_usage=True,
+                    path, dtype=dtype, low_cpu_mem_usage=True,
                     device_map="auto", trust_remote_code=True
                 )
             elif "moondream" in model_type:
                 from transformers import AutoModelForCausalLM, AutoProcessor
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = AutoModelForCausalLM.from_pretrained(
-                    path, torch_dtype=dtype, low_cpu_mem_usage=True,
+                    path, dtype=dtype, low_cpu_mem_usage=True,
                     device_map="auto", trust_remote_code=True
                 )
             else:
                 from transformers import AutoModelForImageTextToText, AutoProcessor
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = AutoModelForImageTextToText.from_pretrained(
-                    path, torch_dtype=dtype, low_cpu_mem_usage=True,
+                    path, dtype=dtype, low_cpu_mem_usage=True,
                     device_map="auto", trust_remote_code=True
                 )
             
-            self._cache[key] = (processor, model, device)
             print(f"   ✅ Vision model loaded on {device}")
-            return self._cache[key]
+            return (processor, model, device)
             
         except ImportError as e:
             raise ImportError(
@@ -155,8 +187,10 @@ class ModelLoader:
             self.tokenizer = tokenizer
             self.device = device
         
-        def encode(self, texts, batch_size=32, **kwargs):
+        def encode(self, texts, batch_size=32, convert_to_numpy=True, **kwargs):
             import torch
+            import numpy as np
+            
             if isinstance(texts, str):
                 texts = [texts]
             
@@ -175,14 +209,20 @@ class ModelLoader:
                 
                 embeddings.append(emb.cpu())
             
-            return torch.cat(embeddings, dim=0)
+            result = torch.cat(embeddings, dim=0)
+            
+            if convert_to_numpy:
+                return result.numpy()
+            return result
 
     def unload(self, category: ModelCategory) -> None:
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str)
         
         if key:
-            cached = self._cache.pop(key, None)
+            # Clear using resolved registry key
+            resolved_key = self._resolve_key(key)
+            cached = self._cache.pop(resolved_key, None)
             if cached is not None:
                 try:
                     import torch
@@ -203,13 +243,23 @@ class ModelLoader:
         return dict(self._preferences)
 
     def get_model_name(self, category: ModelCategory) -> str:
+        """Return the model_id (e.g., 'BAAI/bge-m3')."""
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str)
         if not key:
             return "not set"
-        spec = get_spec(key)
-        return spec.model_id
+        registry_key = self._resolve_key(key)
+        if registry_key in REGISTRY:
+            return get_spec(registry_key).model_id
+        return key
 
     def get_model_key(self, category: ModelCategory) -> str:
+        """Return the model_id (e.g., 'BAAI/bge-m3'), not shorthand."""
         cat_str = category.value if isinstance(category, ModelCategory) else category
-        return self._preferences.get(cat_str, "not set")
+        key = self._preferences.get(cat_str, "not set")
+        
+        # Resolve to registry key first, then get model_id
+        registry_key = self._resolve_key(key)
+        if registry_key in REGISTRY:
+            return get_spec(registry_key).model_id
+        return key

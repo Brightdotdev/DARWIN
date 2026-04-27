@@ -271,22 +271,7 @@ def _run_captioning(
 ) -> Tuple[str, str, List[ExtractedImage]]:
     """
     Caption all extracted images and resolve [Image:N] slots to final tokens.
-    Does NOT unload the vision model — caller handles that.
 
-    FIX NOTES
-    ─────────
-    1. cache is now initialised as a plain dict and passed into caption_image
-       by reference. caption_image always writes the result (even "" on failure)
-       so the cache is always populated after a captioning attempt.
-
-    2. save_caption_cache is now called whenever captioning was attempted
-       (should_caption=True), regardless of whether the cache dict is truthy.
-       The old guard `if should_caption and CACHE_CAPTIONS and cache` silently
-       skipped the save when all captions failed (empty dict is falsy).
-
-    3. slot_map is populated for every image — including ones skipped for size
-       or when captioning is disabled — so _replace_image_slots always has an
-       entry and no [Image:N] placeholder is left dangling in the output.
     """
 
     processor = model = device = None

@@ -1,9 +1,13 @@
+"""
+src/core/Search/Sematic/SematicSearchUtils.py
+----------------------------------------------
+Utilities and argument handling for semantic search.
+"""
 
-
+from dataclasses import dataclass, field
+from typing import List, Optional
+from src.core.Chunking.ChunkerUtils import ChunkLink, OverlapDirection
 from src.core.Chunking.Chunker import Chunk
-from typing import List
-
-from dataclasses import dataclass,field
 
 
 # ============================================================================
@@ -20,49 +24,11 @@ class SematicSearchResult:
     page: int           # Page number
     heading: str        # Section heading
     chunk_index: int    # Original chunk position
-    is_overlap: bool 
+    is_overlap: bool    # Whether this chunk overlaps with adjacent chunks
     links: List[tuple[str, str]] = field(default_factory=list)
-    
     
     def __repr__(self) -> str:
         return f"SematicSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
-
-
-
-def reconstruct_chunks(data: dict, source: str) -> List[Chunk]:
-    """Reconstruct Chunk objects from stored .npz data."""
-    chunks = []
-    texts = data.get("text", [])
-    headings = data.get("headings", [])
-    pages = data.get("pages", [])
-    
-    for i, text in enumerate(texts):
-        # Note: clean text is what was embedded, so text == clean here
-        chunks.append(Chunk(
-            text=text,
-            clean=text,
-            index=i,
-            source=source,
-            token_count=0,  # Not stored in .npz, optional
-            heading=headings[i] if i < len(headings) else "",
-            page=int(pages[i]) if i < len(pages) else 0,
-            page_end=int(pages[i]) if i < len(pages) else 0,
-            is_overlap=False,
-        ))
-    
-    return chunks
-
-
-
-"""
-src/core/Search/SearchUtils.py
-------------------------------
-Utilities and argument handling for semantic search.
-"""
-
-from dataclasses import dataclass
-from typing import Optional
-
 
 
 # ============================================================================
@@ -89,10 +55,63 @@ class SearchArgs:
 
 
 # ============================================================================
+# Chunk reconstruction
+# ============================================================================
+
+def reconstruct_chunks(data: dict, source: str) -> List[Chunk]:
+    """Reconstruct Chunk objects from stored .npz data."""
+    chunks = []
+
+    texts = data.get("text", [])
+    headings = data.get("headings", [])
+    pages = data.get("pages", [])
+    page_ends = data.get("page_ends", pages)
+    overlap_directions = data.get("overlap_direction", [])
+    links_data = data.get("links", [[] for _ in texts])
+
+    for i, text in enumerate(texts):
+        # Restore overlap direction enum safely
+        direction_raw = (
+            overlap_directions[i]
+            if i < len(overlap_directions)
+            else "none"
+        )
+
+        try:
+            direction = OverlapDirection(direction_raw)
+        except ValueError:
+            direction = OverlapDirection.NONE
+
+        # Restore links
+        links = []
+        if i < len(links_data):
+            for l in links_data[i]:
+                links.append(ChunkLink(**l))
+
+        # Build chunk
+        chunks.append(
+            Chunk(
+                text=text,
+                clean=text,  # same unless you stored separately
+                index=i,
+                source=source,
+                token_count=0,
+                heading=headings[i] if i < len(headings) else "",
+                page=int(pages[i]) if i < len(pages) else 0,
+                page_end=int(page_ends[i]) if i < len(page_ends) else 0,
+                overlap_direction=direction,
+                links=links,
+            )
+        )
+
+    return chunks
+
+
+# ============================================================================
 # Result formatting
 # ============================================================================
 
-def format_results(results: list, json_output: bool = False) -> str:
+def format_results(results: list[SematicSearchResult], json_output: bool = False) -> str:
     """Format search results for display or JSON export."""
     import json
     
@@ -125,7 +144,7 @@ def format_results(results: list, json_output: bool = False) -> str:
 # Export for LLM context
 # ============================================================================
 
-def to_llm_context(results: List, max_chunks: int = 5) -> str:
+def to_llm_context(results: List[SematicSearchResult], max_chunks: int = 5) -> str:
     """
     Convert search results to LLM-ready context string.
     

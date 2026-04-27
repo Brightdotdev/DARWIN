@@ -18,19 +18,9 @@ DEFAULT_CONFIG = {
 
     # ── Model preferences (user choices from onboarding) ──
     "embedding_model": None,       # "bge-m3" | "e5-small-v2" | "gritlm-7b"
-    "reranker_model": "reranker-medium",
+    "reranker_model": None,
     "vision_model": None,          # "smolvlm" | "moondream2" | None
     "tokenizer_model": None,       # "spacy-en-core-md" | "spacy-en-core-lg" | None
-
-    # ── Chunking preferences ──
-    "chunk_max_tokens": None,      # override auto-detected; None = use model default
-    "chunk_min_tokens": None,
-    "chunk_overlap": None,
-
-    # ── Search preferences ──
-    "search_top_k": 10,
-    "search_rerank": True,
-    "search_hybrid": True,         # BM25 + vector hybrid search
 
     # ── LLM settings ──
     "llm_mode": "none",            # "local" | "api" | "none"

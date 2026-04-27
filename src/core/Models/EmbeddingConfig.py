@@ -1,5 +1,3 @@
-
-
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -27,16 +25,15 @@ class ModelPreset:
     instruction_template: Optional[str] = None
     
     # ── Metadata ──
-    model_name: str = ""  # HF ID
+    model_name: str = ""  # HF ID (e.g., 'intfloat/e5-small-v2')
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Registry — keyed by short name (what loader.preferences returns)
+# Registry — keyed by canonical model_id (from ModelRegistry REGISTRY keys)
 # ═══════════════════════════════════════════════════════════════════════════
 
 PRESETS: dict[str, ModelPreset] = {
-    # ── Plain-text models ──
-    "e5-small-v2": ModelPreset(
+    "intfloat/e5-small-v2": ModelPreset(
         max_tokens=480,
         min_tokens=120,
         overlap=3,
@@ -46,9 +43,7 @@ PRESETS: dict[str, ModelPreset] = {
         query_prefix="query: ",
         model_name="intfloat/e5-small-v2",
     ),
-
-    # ── Semantic-markdown models ──
-    "bge-m3": ModelPreset(
+    "BAAI/bge-m3": ModelPreset(
         max_tokens=8000,
         min_tokens=400,
         overlap=5,
@@ -56,7 +51,7 @@ PRESETS: dict[str, ModelPreset] = {
         needs_prefix=False,
         model_name="BAAI/bge-m3",
     ),
-    "gritlm-7b": ModelPreset(
+    "GritLM/GritLM-7B": ModelPreset(
         max_tokens=3800,
         min_tokens=300,
         overlap=4,
@@ -75,25 +70,29 @@ DEFAULT_PRESET = ModelPreset(
 )
 
 
-
-
-def get_preset() -> ModelPreset:
+def get_preset(model_key: Optional[str] = None) -> ModelPreset:
     """
-    Returns the full ModelPreset for the CURRENTLY ACTIVE embedding model.
-    Auto-detects from the global ModelLoader. No parameters needed.
-
-    Usage:
-        preset = get_preset()
-        # preset.max_tokens, preset.category, preset.query_prefix, ...
+    Returns the full ModelPreset for a given model_key, or the
+    CURRENTLY ACTIVE embedding model if none is provided.
+    
+    Args:
+        model_key: Canonical model_id (e.g., 'BAAI/bge-m3') or None
+                   to auto-detect from the active loader.
+    
+    Returns:
+        ModelPreset matching the model, or DEFAULT_PRESET if unknown.
     """
+    if model_key is not None:
+        return PRESETS.get(model_key, DEFAULT_PRESET)
+    
     try:
         from src.core.Models import get_loader, ModelCategory
         loader = get_loader()
+        # get_model_key() now returns canonical model_id via _resolve_key()
         model_key = loader.get_model_key(ModelCategory.EMBEDDING)
         return PRESETS.get(model_key, DEFAULT_PRESET)
-    except RuntimeError:
+    except (RuntimeError, ValueError, ImportError):
         return DEFAULT_PRESET
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -103,15 +102,22 @@ def get_preset() -> ModelPreset:
 def get_optimal_batch_size(requested_size: int = 32) -> int:
     """
     Detects LIVE hardware availability to set a safe batch size.
+    
+    Checks CUDA VRAM first, then falls back to system RAM and CPU usage.
+    Returns a batch size that won't OOM on the current hardware.
     """
     import psutil
     import torch
 
     if torch.cuda.is_available():
-        vram_free = torch.cuda.mem_get_info()[0] / (1024 ** 3)
-        if vram_free > 4:
-            return 128
-        return 64
+        try:
+            vram_free = torch.cuda.mem_get_info()[0] / (1024 ** 3)
+            if vram_free > 4:
+                return 128
+            return 64
+        except Exception:
+            # GPU detection succeeded but memory query failed — conservative
+            return 32
 
     mem = psutil.virtual_memory()
     available_gb = mem.available / (1024 ** 3)
@@ -126,15 +132,30 @@ def get_optimal_batch_size(requested_size: int = 32) -> int:
     return requested_size
 
 
-def get_model_batch_size(preset : ModelPreset, requested_size: int = 32) -> int:
-    """Batch size adjusted for the currently active model's footprint."""
+def get_model_batch_size(preset: Optional[ModelPreset] = None, requested_size: int = 32) -> int:
+    """
+    Batch size adjusted for the currently active model's memory footprint.
+    
+    Args:
+        preset: ModelPreset for the active model (auto-detected if None).
+        requested_size: Base batch size requested by the caller.
+    
+    Returns:
+        Safe batch size considering both hardware and model requirements.
+    """
+    if preset is None:
+        preset = get_preset()
+    
     base_size = get_optimal_batch_size(requested_size)
 
-    if "GritLM-7B" in preset.model_name:
+    # Adjust for specific model families based on model_id
+    model_name = preset.model_name.lower()
+    
+    if "gritlm-7b" in model_name or "gritlm" in model_name:
         return max(8, base_size // 4)
-    elif "bge-m3" in preset.model_name:
+    elif "bge-m3" in model_name or "bge" in model_name:
         return base_size
-    elif "e5-small" in preset.model_name:
+    elif "e5-small" in model_name or "e5" in model_name:
         return base_size * 2
 
     return base_size

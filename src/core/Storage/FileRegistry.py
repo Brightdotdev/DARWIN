@@ -61,11 +61,24 @@ class FileRecord:
         return "embeddings" in self._data.get("updates", {})
 
     @property
-    def is_searchable(self) -> bool:
+    def is_hybrid_searchable(self) -> bool:
         """Fully ready for search: parsed + chunked + embedded + BM25 + vector."""
+        return self.is_kw_searchable and self.is_embedding_searchable
+
+    @property
+    def is_kw_searchable(self) -> bool:
+        """Ready for keyword search: parsed + chunked + BM25."""
         return all(
             self._data.get("updates", {}).get(stage)
-            for stage in ["markdown", "chunks", "embeddings", "bm25", "vector"]
+            for stage in ["markdown", "chunks", "bm25","stopwords"]
+        )
+
+    @property
+    def is_embedding_searchable(self) -> bool:
+        """Ready for embedding search: parsed + chunked + embedded."""
+        return all(
+            self._data.get("updates", {}).get(stage)
+            for stage in ["markdown", "chunks", "embeddings", "vector"]
         )
 
     @property
@@ -110,7 +123,7 @@ class FileRecord:
 
     def status_summary(self) -> str:
         """Human-readable one-liner."""
-        if self.is_searchable:
+        if self.is_hybrid_searchable:
             return f"✅ Ready — {self.chunk_count} chunks, {self.embedding_model}"
         missing = self.missing_stages()
         if not self.is_parsed:
@@ -169,7 +182,7 @@ class FileRegistry:
         file_path: str | Path,
         page_count: int = 0,
         file_size: int = 0,
-    ) -> FileRecord:
+    ) -> "FileRecord":
         """
         Register a file (or update its last-seen path).
         Does NOT overwrite pipeline progress — only updates metadata.
@@ -211,7 +224,7 @@ class FileRegistry:
         file_path: str | Path,
         stage: str,
         **extras,
-    ) -> FileRecord:
+    ) -> "FileRecord":
         """
         Mark a pipeline stage as completed for a file.
         e.g. registry.update_pipeline("bio.pdf", "embeddings", embedding_model="bge-m3")
@@ -233,7 +246,7 @@ class FileRegistry:
         self._save(data)
         return FileRecord(data["files"][fh])
 
-    def get(self, file_path: str | Path) -> FileRecord | None:
+    def get(self, file_path: str | Path) -> "FileRecord | None":
         """Get a file's record. Returns None if never registered."""
         file_path = Path(file_path).resolve()
         if not file_path.exists():
@@ -245,13 +258,13 @@ class FileRegistry:
         raw = data.get("files", {}).get(fh)
         return FileRecord(raw) if raw else None
 
-    def get_by_hash(self, file_hash: str) -> FileRecord | None:
+    def get_by_hash(self, file_hash: str) -> "FileRecord | None":
         """Get a file's record by its SHA-256 hash."""
         data = self._load()
         raw = data.get("files", {}).get(file_hash)
         return FileRecord(raw) if raw else None
 
-    def _find_by_name(self, filename: str) -> FileRecord | None:
+    def _find_by_name(self, filename: str) -> "FileRecord | None":
         """Fallback: find a file by original name when source is missing."""
         data = self._load()
         for fh, rec in data.get("files", {}).items():
@@ -259,7 +272,7 @@ class FileRegistry:
                 return FileRecord(rec)
         return None
 
-    def get_or_register(self, file_path: str | Path) -> FileRecord:
+    def get_or_register(self, file_path: str | Path) -> "FileRecord":
         """Get existing record or create a new one."""
         existing = self.get(file_path)
         if existing:
@@ -297,25 +310,25 @@ class FileRegistry:
 
         return False
 
-    def list_all(self) -> list[FileRecord]:
+    def list_all(self) -> list["FileRecord"]:
         """All registered files."""
         data = self._load()
         return [FileRecord(rec) for rec in data.get("files", {}).values()]
 
-    def list_searchable(self) -> list[FileRecord]:
-        """Files that are fully indexed and searchable."""
-        return [r for r in self.list_all() if r.is_searchable]
+    def list_kw_searchable(self) -> list["FileRecord"]:
+        """Files that are keyword-searchable (parsed + chunked + BM25)."""
+        return [r for r in self.list_all() if r.is_kw_searchable]
 
-    def list_needing_work(self) -> list[FileRecord]:
-        """Files that need parsing/embedding."""
-        return [r for r in self.list_all() if not r.is_searchable]
+    def list_needing_work(self) -> list["FileRecord"]:
+        """Files that are not yet fully keyword-searchable."""
+        return [r for r in self.list_all() if not r.is_kw_searchable]
 
-    def list_by_model(self, model_name: str) -> list[FileRecord]:
+    def list_by_model(self, model_name: str) -> list["FileRecord"]:
         """Files embedded with a specific model."""
         return [r for r in self.list_all() if r.embedding_model == model_name]
 
-    def count_searchable(self) -> int:
-        return len(self.list_searchable())
+    def count_kw_searchable(self) -> int:
+        return len(self.list_kw_searchable())
 
     def total_chunks(self) -> int:
         return sum(r.chunk_count for r in self.list_all())
@@ -323,17 +336,17 @@ class FileRegistry:
     def stats(self) -> dict:
         """Aggregate statistics for the dashboard."""
         all_files = self.list_all()
-        searchable = self.list_searchable()
+        kw_searchable = self.list_kw_searchable()
         return {
             "total_files": len(all_files),
-            "searchable_files": len(searchable),
-            "files_needing_work": len(all_files) - len(searchable),
+            "keyword_searchable_files": len(kw_searchable),
+            "files_needing_work": len(all_files) - len(kw_searchable),
             "total_chunks": sum(r.chunk_count for r in all_files),
             "total_pages": sum(r.page_count for r in all_files),
-            "models_used": list(set(r.embedding_model for r in searchable if r.embedding_model)),
+            "models_used": list({r.embedding_model for r in all_files if r.embedding_model}),
         }
 
-    def find_stale(self) -> list[FileRecord]:
+    def find_stale(self) -> list["FileRecord"]:
         """Files whose source has been deleted or moved."""
         stale = []
         for record in self.list_all():

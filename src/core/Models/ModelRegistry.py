@@ -19,7 +19,7 @@ class ModelSpec:
     tier:         Literal["light", "medium", "large", "overkill"]
     ram_gb:       int              # minimum system RAM to run comfortably
     disk_mb:      int              # actual download size in MB
-    loader:       Literal["sentence_transformers", "cross_encoder", "transformers", "spacy", "none"]
+    loader:       Literal["sentence_transformers", "cross_encoder", "transformers", "spacy", "none", "embedding_hf", "embedding_st"]
     required:     bool = True      # core pipeline needs this? False = nice-to-have
     experimental: bool = False
     notes:        str  = ""
@@ -29,7 +29,7 @@ REGISTRY: dict[str, ModelSpec] = {
     # ═══════════════════════════════════════════════════════════════════════
     # Embedding (required — search doesn't work without one)
     # ═══════════════════════════════════════════════════════════════════════
-    "e5-small-v2": ModelSpec(
+    "intfloat/e5-small-v2": ModelSpec(
         model_id  = "intfloat/e5-small-v2",
         category  = "embedding",
         tier      = "light",
@@ -39,7 +39,7 @@ REGISTRY: dict[str, ModelSpec] = {
         required  = True,
         notes     = "384-dim, English-only. Fast, low memory.",
     ),
-    "bge-m3": ModelSpec(
+    "BAAI/bge-m3": ModelSpec(
         model_id  = "BAAI/bge-m3",
         category  = "embedding",
         tier      = "medium",
@@ -49,7 +49,7 @@ REGISTRY: dict[str, ModelSpec] = {
         required  = True,
         notes     = "1024-dim, multilingual, understands markdown structure. Recommended.",
     ),
-    "gritlm-7b": ModelSpec(
+    "GritLM/GritLM-7B": ModelSpec(
         model_id  = "GritLM/GritLM-7B",
         category  = "embedding",
         tier      = "overkill",
@@ -64,7 +64,7 @@ REGISTRY: dict[str, ModelSpec] = {
     # ═══════════════════════════════════════════════════════════════════════
     # Reranker (required — one is always installed, tiny)
     # ═══════════════════════════════════════════════════════════════════════
-    "reranker-medium": ModelSpec(
+    "cross-encoder/ms-marco-MiniLM-L-12-v2": ModelSpec(
         model_id  = "cross-encoder/ms-marco-MiniLM-L-12-v2",
         category  = "reranker",
         tier      = "medium",
@@ -78,7 +78,7 @@ REGISTRY: dict[str, ModelSpec] = {
     # ═══════════════════════════════════════════════════════════════════════
     # Vision (optional — only needed with --images --caption)
     # ═══════════════════════════════════════════════════════════════════════
-    "smolvlm": ModelSpec(
+    "HuggingFaceTB/SmolVLM-256M-Instruct": ModelSpec(
         model_id  = "HuggingFaceTB/SmolVLM-256M-Instruct",
         category  = "vision",
         tier      = "light",
@@ -88,7 +88,7 @@ REGISTRY: dict[str, ModelSpec] = {
         required  = True,
         notes     = "256M params. Fast captions, low memory. Good enough for most docs.",
     ),
-    "moondream2": ModelSpec(
+    "vikhyatk/moondream2": ModelSpec(
         model_id  = "vikhyatk/moondream2",
         category  = "vision",
         tier      = "medium",
@@ -102,17 +102,17 @@ REGISTRY: dict[str, ModelSpec] = {
     # ═══════════════════════════════════════════════════════════════════════
     # Tokenizer / NLP (optional — nice-to-have for better sentence splitting)
     # ═══════════════════════════════════════════════════════════════════════
-    "spacy-en-core-md": ModelSpec(
-    model_id="en_core_web_md",
-    category="tokenizer",
-    tier="light",
-    ram_gb=1,
-    disk_mb=45,
-    loader="spacy",
-    required=True,  # Important for concept extraction
-    notes="Medium English model. Optimized for concept extraction (NER, parsing, lemmatization). 45MB.",),
-   
-    "spacy-en-core-lg": ModelSpec(
+    "en_core_web_md": ModelSpec(
+        model_id  = "en_core_web_md",
+        category  = "tokenizer",
+        tier      = "light",
+        ram_gb    = 1,
+        disk_mb   = 45,
+        loader    = "spacy",
+        required  = True,
+        notes     = "Medium English model. Optimized for concept extraction (NER, parsing, lemmatization). 45MB.",
+    ),
+    "en_core_web_lg": ModelSpec(
         model_id  = "en_core_web_lg",
         category  = "tokenizer",
         tier      = "medium",
@@ -159,3 +159,23 @@ def optional_models() -> dict[str, ModelSpec]:
 
 def by_category(category: str) -> dict[str, ModelSpec]:
     return {k: v for k, v in REGISTRY.items() if v.category == category}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Validation — catch registry/loader mismatches at import time
+# ═══════════════════════════════════════════════════════════════════════════
+
+_VALID_LOADERS = {
+    "sentence_transformers", "cross_encoder", "transformers",
+    "spacy", "none", "embedding_hf", "embedding_st",
+}
+
+def _validate_registry() -> None:
+    for key, spec in REGISTRY.items():
+        if spec.loader not in _VALID_LOADERS:
+            raise ValueError(
+                f"Registry entry '{key}' has unknown loader '{spec.loader}'. "
+                f"Valid loaders: {sorted(_VALID_LOADERS)}"
+            )
+
+_validate_registry()

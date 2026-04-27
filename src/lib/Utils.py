@@ -3,6 +3,8 @@ import platform
 from pathlib import Path
 import subprocess
 
+
+
 def open_in_explorer(path: str | Path):
     """
     Open a file or directory in the default file explorer.
@@ -21,3 +23,14 @@ def open_in_explorer(path: str | Path):
         subprocess.run(["open", str(path)])
     else:  # assume Linux/Unix
         subprocess.run(["xdg-open", str(path)])
+
+
+
+SUPPORTED = {".pdf", ".docx", ".pptx", ".txt", ".md"}
+
+def scan_folder():
+    files = []
+    for f in Path.cwd().iterdir():
+        if f.is_file() and f.suffix.lower() in SUPPORTED:
+            files.append(f)
+    return files

@@ -46,6 +46,7 @@ from src.core.Search.Sematic.SematicSearchUtils import (
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
+from src.lib.Utils import scan_folder
 
 
 # ============================================================================
@@ -91,34 +92,65 @@ def _print_inspection(results: list[SematicSearchResult], query: str) -> None:
     TerminalUI.rule()
 
 
+
+def _is_embedding_searchable(filename: str | None, status: dict) -> bool:
+    """Determine which files to search based on args and registry status."""
+    if filename is None:
+        return False
+        
+    key = Path(filename).name
+    file_data = status.get("files", {}).get(key)
+    if file_data is None:
+        return False
+    return file_data.get("is_embedding_searchable", False)
+    
+
 # ============================================================================
 # Core handler
 # ============================================================================
 
 def handle_search(args: SearchArgs) -> None:
     store = DarwinStore()
+    config = store.load_config()
+    model_name = config.get("embedding_model", "unknown")
     
-    model_name = store.load_config().get("embedding_model")    
     TerminalUI.print_darwin()
     TerminalUI.blank()
+    TerminalUI.bold("Semantic Search")
     TerminalUI.bold(f"Searching: '{args.query}'")
     TerminalUI.dim(f"File: {args.file if args.file else 'all files'} | Top-K: {args.top_k}")
-    TerminalUI.dim(f"Model: {model_name if model_name else 'default'} ")
+    TerminalUI.dim(f"Model: {model_name}")
     TerminalUI.blank()
-    
 
-       # Show USearch status
-    if args.file and store.has_vector(args.file):
-        TerminalUI.dim("⚡ Using USearch index (fast)")
-    elif not args.file:
-        TerminalUI.dim("⚡ Using USearch where available")
-    TerminalUI.blank()
+    status = store.status()
+    tobe_searched = []
     
-    # Execute search
     if args.file:
+        if not _is_embedding_searchable(args.file, status):
+            TerminalUI.dim(f"Cannot search {args.file} — the file is not embedding-searchable")
+            return
+        tobe_searched = [args.file]
+        TerminalUI.dim(f"Searching {args.file} for '{args.query}'")
+    else:
+        # Use embedding-searchable files, not keyword-searchable
+        raw_files = [str(f) for f in scan_folder()]
+        TerminalUI.dim(f"Found {len(raw_files)} supported files in {Path.cwd()}")
+        tobe_searched = [
+            r.original_name
+            for r in store.registry.list_all()
+            if _is_embedding_searchable(r.original_name, status)
+        ]
+        TerminalUI.dim(f"Searching {len(tobe_searched)} embedding-searchable files for '{args.query}'")
+    
+    if not tobe_searched:
+        TerminalUI.warn("No embedding-searchable files found. Run the embedding pipeline first.")
+        return
+    
+    results = []
+    if len(tobe_searched) == 1:
         results = search_single_document(
             query=args.query,
-            filename=args.file,
+            filename=tobe_searched[0],
             store=store,
             top_k=args.top_k,
             min_score=args.min_score,
@@ -126,11 +158,12 @@ def handle_search(args: SearchArgs) -> None:
     else:
         results = search_across_documents(
             query=args.query,
+            filenames=tobe_searched,
             store=store,
             top_k=args.top_k,
             min_score=args.min_score,
         )
-    
+
     # Display results
     if not results:
         TerminalUI.warn("No results found")

@@ -34,7 +34,6 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from src.core.Search.Keyword.KeywordSearch import (
-    search_single_document_keyword,
     search_across_documents_keyword,
     KeywordSearchResult,
 )
@@ -46,8 +45,10 @@ from src.core.Search.Keyword.KeywordUtilities import (
     format_keyword_results,
     to_llm_context,
 )
+from src.lib.Utils import scan_folder
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
+from src.core.Models import setup
 
 
 # ============================================================================
@@ -93,6 +94,21 @@ def _print_inspection(results: List[KeywordSearchResult], query: str) -> None:
     
     TerminalUI.rule()
 
+def _is_kw_searchable(filename :  str | None, status) -> bool:
+    """Determine which files to search based on args and registry status."""
+    if filename is None:
+        return False
+        
+    key = Path(filename).name
+    file_data = status.get("files", {}).get(key)
+    print(file_data)
+    if file_data is None:
+        return False
+    return file_data.get("is_kw_searchable")
+    
+
+
+
 
 # ============================================================================
 # Fancy Search with Spinner
@@ -106,57 +122,43 @@ def _search_wrapper(
     Execute search with fancy spinner animation.
     """
     # Determine search scope for spinner message
+    status = store.status()
+    tobe_searched = []
+    
     if args.file:
-        search_scope = f"in {args.file}"
+        if not _is_kw_searchable(args.file,status):
+            TerminalUI.dim(f"Cannot search {args.file} the file is not searchable")
+            return []
+        
+        tobe_searched = [args.file]
+        TerminalUI.dim(f"Searching {args.file} for {args.query}")
     else:
         # Count available files with BM25 indexes
-        status = store.status()
-        files_with_bm25 = sum(
-            1 for fname, info in status.get("files", {}).items()
-            if info.get("components", {}).get("bm25")
-        )
-        search_scope = f"across {files_with_bm25} document(s)"
+        raw_files =[str(f) for f in scan_folder()]
+        TerminalUI.dim(f"Found {len(raw_files)} supported files in {Path.cwd()}")
+        tobe_searched = [
+        r.original_name
+        for r in store.registry.list_kw_searchable()
+    ]
+        TerminalUI.dim(f"Searching {len(tobe_searched)} files for {args.query}")
+    
     
     results = []
     
     
     with TerminalUI.spinner_progress(
-        description=f"[cyan]Searching[/cyan] '{args.query}' {search_scope}"
     ) as (progress, task_id):
         
         # Simulate search time (optional - makes spinner visible for fast searches)
         start_time = time.perf_counter()
         
-        # Execute search
-        if args.file:
-            bm25Data = store.load_bm25(args.file)
-            if not bm25Data:
-                TerminalUI.error(f"Could not find BM25 data for '{args.file}' exiting...")
-                return
-            chunks = store.load_chunks(args.file)
-            if not chunks:
-                TerminalUI.error(f"Could not find chunks for '{args.file}' exiting...")
-                return
-            
-            results = search_single_document_keyword(
-                filename=args.file,
-                query=args.query,
-                data=bm25Data,
-                chunks=chunks,
-                top_k=args.top_k,
-                k1=args.k1,
-                b=args.b,
-            )
-        else:
-            results = search_across_documents_keyword(
+        results = search_across_documents_keyword(
+                filenames=tobe_searched,
                 query=args.query,
                 store=store,
                 top_k=args.top_k,
-                k1=args.k1,
-                b=args.b,
             )
-        
-        # Ensure spinner shows for at least 0.5s (feels more satisfying)
+    
         elapsed = time.perf_counter() - start_time
         if elapsed < 0.5:
             time.sleep(0.5 - elapsed)
@@ -263,6 +265,7 @@ def handle_keyword_search(args: KeywordSearchArgs) -> None:
     
     # Show search configuration
     config_panel = (
+        f"[cyan]Keyword Search[/cyan]\n"
         f"[cyan]Query:[/cyan] {args.query}\n"
         f"[cyan]BM25:[/cyan] k1={args.k1}, b={args.b}\n"
         f"[cyan]Top-K:[/cyan] {args.top_k}\n"
@@ -270,7 +273,8 @@ def handle_keyword_search(args: KeywordSearchArgs) -> None:
     )
     TerminalUI.panel(config_panel, title="Keyword Search", border_style="cyan")
     TerminalUI.blank()
-    
+    setup()
+
     
     results = _search_wrapper(store, args)
     

@@ -43,6 +43,8 @@ from src.core.BM25.BM25Utils import (
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
+from src.core.Models import setup
+
 
 
 # ── Inspection helper ──────────────────────────────────────────────────────────
@@ -77,7 +79,7 @@ def handle_bm25_indexing(args: BM25IndexingArgs) -> None:
         status    = store.status()
         filenames = [
             fname for fname, info in status.get("files", {}).items()
-            if info["components"]["chunks"]
+            if info["is_chunked"]
         ]
 
     if not filenames:
@@ -87,9 +89,9 @@ def handle_bm25_indexing(args: BM25IndexingArgs) -> None:
     TerminalUI.bold(f"Indexing {len(filenames)} file(s)")
 
     succeeded = failed = skipped = 0
-
+    setup()
     for filename in filenames:
-        if not args.rerun and store.is_fresh(filename) and store.has_bm25(filename):
+        if not args.rerun  and store.has_bm25(filename):
             TerminalUI.dim(f"Skipping {filename} (fresh index exists)")
             skipped += 1
             continue
@@ -108,7 +110,6 @@ def handle_bm25_indexing(args: BM25IndexingArgs) -> None:
                 store         = store,
                 threshold     = args.threshold,
                 idf_smoothing = args.idf_smoothing,
-                rerun         = args.rerun,
             )
 
             if data is not None:

@@ -136,7 +136,7 @@ def handle_chunking(args: ChunkingArgs) -> None:
         return
 
     succeeded = failed = skipped = 0
-
+    
     for filename in filenames:
         record = store.registry._find_by_name(filename)
         if record is None:

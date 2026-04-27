@@ -1,3 +1,4 @@
+
 # src/core/Models/startup.py
 
 from pathlib import Path
@@ -6,7 +7,7 @@ from src.core.Models.ModelStore import ModelStore
 from src.core.Models.ModelLoader import ModelLoader
 from src.core.Models.SystemDetector import detect_system, recommend_defaults, SystemInfo
 from src.core.Models.ModelRegistry import (
-    REGISTRY, TIER_LABELS,get_spec,
+    REGISTRY, TIER_LABELS, get_spec,
 )
 
 
@@ -34,17 +35,53 @@ def create_loader(
     return loader, system
 
 
-def _download_required(store: ModelStore, preferences: dict, system: SystemInfo) -> None:
-    """Download required models. Show clear progress."""
-    required_keys = [k for k in preferences.values() if k and REGISTRY.get(k, get_spec(k)).required]
-    optional_keys = [k for k in preferences.values() if k and not REGISTRY.get(k, get_spec(k)).required]
 
+def _download_required(store: ModelStore, preferences: dict, system: SystemInfo) -> None:
+    from src.core.Models.ModelRegistry import REGISTRY
+    
+    # Build lookups
+    id_to_key = {spec.model_id: key for key, spec in REGISTRY.items()}
+    
+    # Normalize: may contain model_ids or shorthand keys
+    normalized = {}
+    for category, value in preferences.items():
+        if not value:
+            continue
+            
+        if value in REGISTRY:
+            # It's a shorthand key — keep as key for internal use
+            normalized[category] = value
+        elif value in id_to_key:
+            # It's a model_id — convert to key
+            normalized[category] = id_to_key[value]
+            print(f"   ℹ️  Resolved '{value}' → '{id_to_key[value]}'")
+        else:
+            print(f"⚠️  Unknown model '{value}' in category '{category}' — skipping")
+    
+    required_keys = [
+        k for k in normalized.values()
+        if k in REGISTRY and REGISTRY[k].required
+    ]
+    
+    optional_keys = [
+        k for k in normalized.values()
+        if k in REGISTRY and not REGISTRY[k].required
+    ]
     if not required_keys:
         return
-
+    
+    
     print(f"\n📦 Models directory: {store.root}")
     print(f"💻 System: {system.ram_gb}GB RAM, {system.disk_free_gb:.1f}GB free")
     print()
+
+    # ── Calculate total download size BEFORE downloading ──────────────────
+    all_keys = required_keys + optional_keys
+    total_new_mb = sum(
+        get_spec(k).disk_mb
+        for k in all_keys
+        if not store.is_downloaded(k)
+    )
 
     # ── Required models ──
     print("── Required models ───────────────────────────────────────────")
@@ -71,17 +108,12 @@ def _download_required(store: ModelStore, preferences: dict, system: SystemInfo)
                 store.download(key)
 
     print()
-    
-    total_new = sum(
-        get_spec(k).disk_mb for k in required_keys + optional_keys
-        if not store.is_downloaded(k)
-    )
-    if total_new > 0:
-        print(f"   Total download: ~{total_new / 1024:.1f}GB")
+    if total_new_mb > 0:
+        print(f"   Total download: ~{total_new_mb / 1024:.1f}GB")
     print()
 
 
-def run_onboarding(models_dir: Path) -> ModelLoader:
+def run_onboarding(models_dir: Optional[Path] = None) -> ModelLoader:
     """
     Interactive first-run setup.
 
@@ -91,7 +123,7 @@ def run_onboarding(models_dir: Path) -> ModelLoader:
     3. Optional models: ask if they want vision/spaCy now or later
     4. Download selected models
     """
-    store = ModelStore(models_dir)
+    store = ModelStore()
     system = detect_system()
     recommended = recommend_defaults(system)
 
@@ -107,7 +139,7 @@ def run_onboarding(models_dir: Path) -> ModelLoader:
 
     choices: dict[str, str | None] = {
         "embedding": None,
-        "reranker":  "reranker-medium",
+        "reranker":  "cross-encoder/ms-marco-MiniLM-L-12-v2",
         "vision":    None,
         "tokenizer": None,
     }
@@ -145,7 +177,7 @@ def run_onboarding(models_dir: Path) -> ModelLoader:
     for i, key in enumerate(opts):
         spec = REGISTRY[key]
         can = "✅" if system.can_run(spec) else "⚠️  needs more RAM"
-        print(f"   [{i+1}] {key:<20} — {spec.disk_mb:>4}MB | {spec.notes:<50} {can}")
+        print(f"   [{i+1}] {key:<40} — {spec.disk_mb:>4}MB | {spec.notes:<50} {can}")
     print(f"   [s] Skip — no vision model for now (can add later)")
 
     choice = input(f"\n   Pick (1-{len(opts)}) or [s]kip: ").strip().lower()
@@ -167,7 +199,7 @@ def run_onboarding(models_dir: Path) -> ModelLoader:
     opts = [k for k in REGISTRY if REGISTRY[k].category == "tokenizer"]
     for i, key in enumerate(opts):
         spec = REGISTRY[key]
-        print(f"   [{i+1}] {key:<20} — {spec.disk_mb:>4}MB | {spec.notes}")
+        print(f"   [{i+1}] {key:<40} — {spec.disk_mb:>4}MB | {spec.notes}")
     print(f"   [s] Skip — no tokenizer for now (can add later)")
 
     choice = input(f"\n   Pick (1-{len(opts)}) or [s]kip: ").strip().lower()
@@ -191,7 +223,7 @@ def run_onboarding(models_dir: Path) -> ModelLoader:
             total_download += spec.disk_mb if not store.is_downloaded(key) else 0
             status = "✅ cached" if store.is_downloaded(key) else f"⬇️  {spec.disk_mb}MB"
             req = "REQUIRED" if spec.required else "optional"
-            print(f"   {cat:<12} {key:<25} {TIER_LABELS[spec.tier]:<20} {status:<15} {req}")
+            print(f"   {cat:<12} {key:<45} {TIER_LABELS[spec.tier]:<20} {status:<15} {req}")
         else:
             print(f"   {cat:<12} (none)")
 

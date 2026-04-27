@@ -84,14 +84,14 @@ def search_single_document_keyword(
     filename:       str,
     store : DarwinStore,
     top_k:          int   = 10,
+    k1:             float = 1.5,
+    b:              float = 0.75,
+    min_score:      float = 0.0
 ) -> List[KeywordSearchResult]:
     """
     Search a single document and return results sorted by score.
     """ 
     
-    k1:             float = 1.5
-    b:              float = 0.75
-    min_score:      float = 0.0
 
     if not query.strip():
         return []
@@ -137,28 +137,14 @@ def search_single_document_keyword(
 # ── Multi-file search ──────────────────────────────────────────────────────────
 
 def search_across_documents_keyword(
-    query:       str,
-    store : DarwinStore,              
-    filenames:   List[str],
-    top_k:       int   = 10,
+    filenames: List[str],
+    query:     str,
+    store:     DarwinStore,
+    top_k:     int   = 10,
+    k1:        float = 1.5,
+    b:         float = 0.75,
 ) -> List[KeywordSearchResult]:
-    """
-    Search across multiple documents and merge results by score.
-
-    Args
-    ----
-    query      Search query (phrases in "double quotes")
-    store      DarwinStore instance
-    filenames  List of filenames to search — must have BM25 indexes built
-    top_k      Total results to return across all files
-
-    Returns
-    -------
-    List[BM25Result] merged and re-ranked by score, length <= top_k.
-    """
     all_results: List[KeywordSearchResult] = []
-    k1:   float = 1.5,
-    b:           float = 0.75,
 
     for filename in filenames:
         if not store.has_bm25(filename):
@@ -167,11 +153,12 @@ def search_across_documents_keyword(
         if not store.has_chunks(filename):
             TerminalUI.dim(f"Skipping {filename} — no chunks")
             continue
-
         try:
-            data   = store.load_bm25(filename)
-            chunks = store.load_chunks(filename)
-            results = search_single_document_keyword(query, data, chunks, top_k=top_k, k1=k1, b=b)
+            results = search_single_document_keyword(
+                query=query,
+                filename=filename,
+                 store=store, top_k=top_k, k1=k1, b=b
+            )
             all_results.extend(results)
         except Exception as e:
             TerminalUI.error(f"Search failed for {filename}: {e}")

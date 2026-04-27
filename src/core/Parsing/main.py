@@ -187,14 +187,6 @@ def parse_documents(
 def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
     """Main parsing handler."""
 
-    TerminalUI.print_darwin()
-    TerminalUI.blank()
-    TerminalUI.bold(f" Parsing {args.target}")
-    TerminalUI.dim(
-        f"Settings: Images={args.images} | Caption={args.caption} "
-        f"| Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}"
-    )
-    TerminalUI.blank()
     target_paths: list[Path] = []
 
     if args.file:
@@ -208,12 +200,19 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         return []
     
 
-    setup()
+    
+    TerminalUI.print_darwin()
+    TerminalUI.blank()
+    TerminalUI.bold(f" Parsing {args.target}")
+    TerminalUI.dim(
+        f"Settings: Images={args.images} | Caption={args.caption} "
+        f"| Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}"
+    )
+    TerminalUI.blank()
 
     store = DarwinStore()
     for path in target_paths:
         store.registry.register(path)
-
 
     to_process    = []
     skipped_count = 0

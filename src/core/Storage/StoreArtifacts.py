@@ -1,3 +1,4 @@
+
 """
 src/core/Storage/StoreArtifacts.py
 -----------------------------------
@@ -40,14 +41,35 @@ def _chunk_from_dict(raw: dict) -> Chunk:
     return Chunk(**{k: v for k, v in raw.items() if k in valid_fields})
 
 
-def _get_current_model_name() -> str:
-    """Resolve the currently active embedding model name. Safe fallback."""
-    try:
-        from src.core.Models.EmbeddingConfig import get_preset
-        return get_preset().model_name
-    except Exception:
-        return "unknown"
+def _normalize_model_name(name: str) -> str:
+    """
+    Convert any model identifier to the canonical model_id.
+    Handles both registry keys and model_ids.
+    """
+    from src.core.Models.ModelRegistry import REGISTRY
+    
+    # If it's a registry key, convert to model_id
+    if name in REGISTRY:
+        return REGISTRY[name].model_id
+    
+    # If it's already a model_id, check if any spec uses it
+    id_to_key = {spec.model_id: key for key, spec in REGISTRY.items()}
+    if name in id_to_key:
+        return name
+    
+    # Unknown - return as-is
+    return name
 
+def _get_current_model_name() -> str:
+    """Resolve the currently active embedding model name (full model_id)."""
+    try:
+        from src.core.Models import get_loader, ModelCategory
+        loader = get_loader()
+        return loader.get_model_key(ModelCategory.EMBEDDING)
+    except Exception as e:
+        TerminalUI.error(f"Failed to detect current model: {e}")
+        return "unknown"
+    
 
 def _get_current_model_dimensions() -> int:
     """Expected embedding dimensions for the active model. Safe fallback."""
@@ -56,9 +78,9 @@ def _get_current_model_dimensions() -> int:
         loader = get_loader()
         key = loader.get_model_key(ModelCategory.EMBEDDING)
         dims = {
-            "e5-small-v2": 384,
-            "bge-m3":      1024,
-            "gritlm-7b":   4096,
+            "intfloat/e5-small-v2": 384,
+            "BAAI/bge-m3":      1024,
+            "GritLM/GritLM-7B":   4096,
         }
         return dims.get(key, 0)
     except Exception:
@@ -81,15 +103,14 @@ class _PathResolverMixin:
         """Return the FileRecord for a bare filename. Raises KeyError if missing."""
         record = self.registry._find_by_name(filename)
         if record is None:
-            raise KeyError(
-                f"'{filename}' is not in the registry. "
-                f"Call store.registry.register(full_path) before saving artifacts."
-            )
+            TerminalUI.error(f"File '{filename}' is not registered. Register it before saving artifacts.")
+            return None
         return record
 
     def _hash_for(self, filename: str) -> str:
         """Resolve a bare filename to its file hash."""
-        return self._record_for(filename).file_hash
+        record = self._record_for(filename)
+        return record.file_hash if record else ""
 
     def _dir_for(self, filename: str):
         """Return (and create) the index directory for a bare filename."""
@@ -217,7 +238,16 @@ class MarkdownMixin(_PathResolverMixin):
 
             skip_fields = {"text", "error", "filename", "images", "embedding_text", "display_text"}
             extras = {k: v for k, v in dataclasses.asdict(doc).items() if k not in skip_fields}
+            
             self._update_meta(filename, "markdown", extras=extras)
+           
+            record = self._record_for(filename)
+            if record:
+                self.registry.update_pipeline(
+                    record.last_seen_path or filename,
+                    "markdown",
+                    **extras
+                )
 
             TerminalUI.success(f"Markdown saved: {md_path.name}")
         except Exception as e:
@@ -259,6 +289,14 @@ class ChunksMixin(_PathResolverMixin):
 
         extras = {**(chunk_meta or {}), "chunk_count": len(chunks)}
         self._update_meta(filename, "chunks", extras=extras)
+        record = self._record_for(filename)
+        if record:
+                self.registry.update_pipeline(
+                    record.last_seen_path or filename,
+                    "chunks",
+                    **extras
+                )
+
 
     def load_chunks(self, filename: str) -> list[Chunk]:
         path = self._dir_for(filename) / "chunks.json"
@@ -293,7 +331,7 @@ class VectorMixin(_PathResolverMixin):
         d = self._dir_for(filename)
 
         from usearch.index import Index
-
+        model_name = _normalize_model_name(model_name)
         dimension = vectors.shape[1]
         index = Index(ndim=dimension, metric="cos", dtype="f32")
         index.add(
@@ -307,7 +345,7 @@ class VectorMixin(_PathResolverMixin):
             "dimension":     dimension,
             "chunk_ids":     chunk_ids,
             "total_vectors": len(vectors),
-            "model":         model_name,
+            "embedding_model":         model_name,
             "created_at":    now(),
         }
         write_json(d / "vector.json", meta_data)
@@ -316,14 +354,17 @@ class VectorMixin(_PathResolverMixin):
             "vector_model":     model_name,
             "vector_dimension": dimension,
         })
+
+        record = self._record_for(filename)
+        if record:
+                self.registry.update_pipeline(
+                    record.last_seen_path or filename,
+                    "vector")
+
         TerminalUI.success(f"Vector index saved: {len(vectors)} vectors")
 
     def load_vector(self, filename: str):
-        """
-        Load USearch index and return (index, chunk_ids).
-
-        Returns (None, None) if the index was built with a different model.
-        """
+        """Load USearch index and return (index, chunk_ids)."""
         d = self._dir_for(filename)
         index_path = d / "vector.usearch"
         meta_path  = d / "vector.json"
@@ -331,11 +372,14 @@ class VectorMixin(_PathResolverMixin):
         if not index_path.exists() or not meta_path.exists():
             raise FileNotFoundError(f"No vector index found for '{filename}'")
 
-        meta         = read_json(meta_path)
-        stored_model = meta.get("model", "unknown")
+        meta = read_json(meta_path)
+        stored_model = meta.get("embedding_model", "unknown")
         current_model = _get_current_model_name()
-        TerminalUI.text(f"stored vector model: {stored_model}")
-        TerminalUI.text(f"current vector model: {current_model}")
+        
+        TerminalUI.info("Model Comparison", 
+            f"Stored: '{stored_model}' | Current: '{current_model}' | "
+            f"Match: {stored_model == current_model}"
+        )
 
         if stored_model != current_model and stored_model != "unknown":
             TerminalUI.warn(
@@ -344,7 +388,7 @@ class VectorMixin(_PathResolverMixin):
                 f"    Search results will be wrong. Run 'darwin reindex' to rebuild."
             )
             return None, None
-
+        
         expected_dim = _get_current_model_dimensions()
         if expected_dim and meta.get("dimension") != expected_dim:
             TerminalUI.warn(
@@ -417,9 +461,7 @@ class EmbeddingsMixin(_PathResolverMixin):
 
     def has_embeddings(self, filename: str) -> bool:
         current_model = _get_current_model_name()
-        TerminalUI.text(f"Checking for embeddings with model '{current_model}'")
         fh = self._hash_for(filename)
-        TerminalUI.text(f"Resolved file hash: {fh}")
         return self.paths.npz_path(fh, current_model).exists()
 
     def save_embeddings(
@@ -436,14 +478,14 @@ class EmbeddingsMixin(_PathResolverMixin):
         if chunks is None or len(chunks) == 0:
             TerminalUI.error(f"No chunks provided for embedding save of {filename}")
             return
-        
+
         if model_name is None:
             model_name = _get_current_model_name()
+        
+        model_name = _normalize_model_name(model_name)
 
         fh   = self._hash_for(filename)
         path = self.paths.npz_path(fh, model_name)
-
-
 
         if len(vectors) != len(chunks):
             raise ValueError(
@@ -463,7 +505,7 @@ class EmbeddingsMixin(_PathResolverMixin):
 
             meta_path = path.with_suffix(".meta.json")
             write_json(meta_path, {
-                "model_name":  model_name,
+                "embedding_model":  model_name,
                 "dimensions":  vectors.shape[1],
                 "chunk_count": len(chunks),
                 "created_at":  now(),
@@ -473,6 +515,12 @@ class EmbeddingsMixin(_PathResolverMixin):
                 "embedding_model":      model_name,
                 "embedding_dimensions": vectors.shape[1],
             })
+            record = self._record_for(filename)
+            if record:
+                self.registry.update_pipeline(
+                record.last_seen_path or filename,
+                "embeddings")
+                
             TerminalUI.success(f"Saved embeddings: {path.name}")
 
         except Exception as e:
@@ -503,11 +551,10 @@ class EmbeddingsMixin(_PathResolverMixin):
             )
 
         meta_path = path.with_suffix(".meta.json")
+        
         if meta_path.exists():
             stored_meta  = read_json(meta_path)
             stored_model = stored_meta.get("embedding_model", "unknown")
-            TerminalUI.text(f"stored vector model: {stored_model}")
-            TerminalUI.text(f"current vector model: {current_model}")
 
             if stored_model != current_model and stored_model != "unknown":
                 TerminalUI.warn(
@@ -589,6 +636,11 @@ class BM25Mixin(_PathResolverMixin):
             })
 
             self._update_meta(filename, "bm25")
+            record = self._record_for(filename)
+            if record:
+                    self.registry.update_pipeline(
+                        record.last_seen_path or filename,
+                        "bm25")
             TerminalUI.success(f"Saved BM25 index: {npz_path.name}")
 
         except Exception as e:
@@ -638,6 +690,12 @@ class StopwordsMixin(_PathResolverMixin):
         d = self._dir_for(filename)
         write_json(d / "stopwords.json", {"stopwords": sorted(stopwords)})
         self._update_meta(filename, "stopwords")
+        record = self._record_for(filename)
+        if record:
+                    self.registry.update_pipeline(
+                        record.last_seen_path or filename,
+                        "stopwords")
+
 
     def load_stopwords(self, filename: str) -> set[str]:
         path = self._dir_for(filename) / "stopwords.json"
@@ -676,6 +734,16 @@ class GraphMixin(_PathResolverMixin):
                 "built_at":                 now(),
             }
         })
+        record = self._record_for(filename)
+        if record:
+            self.registry.update_pipeline(
+            record.last_seen_path or filename,
+            "graph",
+            concept_count=len(graph_data.nodes),
+            edge_count=len(graph_data.edges),
+        )
+                            
+                    
 
     def save_graph_html(self, filename: str, html: str, ) -> None:
         if html is None:
@@ -688,6 +756,13 @@ class GraphMixin(_PathResolverMixin):
         d.mkdir(parents=True, exist_ok=True)
         (d / "graph.html").write_text(html, encoding="utf-8")
         self._update_meta(filename, "graph_vis")
+        record = self._record_for(filename)
+        if record:
+                    self.registry.update_pipeline(
+                        record.last_seen_path or filename,
+                        "graph_vis")
+
+        
 
     def load_graph(self, filename: str) -> dict:
         path = self._dir_for(filename) / "graph" / "graph.json"
@@ -732,105 +807,18 @@ class WikiMixin(_PathResolverMixin):
         }
         write_json(path, wiki_dict)
 
-        self._update_meta(filename, "wiki", extras={
-            **{k: wiki_dict[k] for k in ("mode", "concept_count", "pages")},
-            "page_num": len(wiki.pages),
-        })
+        record = self._record_for(filename)
+        if record:
+                    self.registry.update_pipeline(
+                        record.last_seen_path or filename,
+                        "wiki",
+                        page_num=len(wiki.pages),
+                        concept_count=wiki.concept_count,
+                    )
+
 
     def load_wiki(self, filename: str) -> dict:
         path = self._dir_for(filename) / "wiki" / "wiki.json"
         if not path.exists():
             raise FileNotFoundError(f"No wiki found for '{filename}'.")
         return read_json(path) or {}
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Mixin: Checkpoint
-# ═══════════════════════════════════════════════════════════════════════════
-
-class CheckpointMixin(_PathResolverMixin):
-
-    def save_parse_checkpoint(self, filename: str, stage: str, **data) -> None:
-        """Save parser progress for resume."""
-        fh   = self._hash_for(filename)
-        path = self.paths.parsing_checkpoint_path(fh)
-        checkpoint = {
-            "stage":     stage,
-            "timestamp": now(),
-            "filename":  filename,
-            **data,
-        }
-        write_json(path, checkpoint)
-        TerminalUI.dim(f"   💾 Checkpoint saved ({stage})")
-
-    def save_raw_parsing_extraction(
-        self, filename: str, display_text: str, embedding_text: str, images: list
-    ) -> None:
-        """Save extracted text to disk so we don't lose it on interruption."""
-        fh       = self._hash_for(filename)
-        raw_path = self.paths.raw_parsing_extraction(fh)
-
-        image_dicts = []
-        for img in images:
-            if dataclasses.is_dataclass(img):
-                image_dicts.append(dataclasses.asdict(img))
-            elif isinstance(img, dict):
-                image_dicts.append(img)
-            else:
-                image_dicts.append({
-                    "path":    str(getattr(img, "path", "")),
-                    "caption": getattr(img, "caption", ""),
-                })
-
-        write_json(raw_path, {
-            "display_text":   display_text,
-            "embedding_text": embedding_text,
-            "images":         image_dicts,
-            "timestamp":      now(),
-        })
-
-    def load_raw_extraction(self, filename: str) -> Optional[dict]:
-        """Load previously saved raw extraction."""
-        fh       = self._hash_for(filename)
-        raw_path = self.paths.raw_parsing_extraction(fh)
-        if not raw_path.exists():
-            return None
-        try:
-            data = read_json(raw_path)
-            # Expire checkpoints older than 7 days
-            ts = data.get("timestamp")
-            if ts:
-                from datetime import datetime, timezone
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
-                if age > 7 * 86400:
-                    raw_path.unlink()
-                    return None
-            return data
-        except Exception:
-            return None
-
-    def load_parse_checkpoint(self, filename: str) -> Optional[dict]:
-        """Returns checkpoint dict if one exists, else None."""
-        fh   = self._hash_for(filename)
-        path = self.paths.parsing_checkpoint_path(fh)
-        if not path.exists():
-            return None
-        try:
-            data = read_json(path)
-            ts = data.get("timestamp")
-            if ts:
-                from datetime import datetime, timezone
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(ts)).total_seconds()
-                if age > 7 * 86400:
-                    path.unlink()
-                    return None
-            return data
-        except Exception:
-            return None
-
-    def clear_parse_checkpoint(self, filename: str) -> None:
-        """Remove checkpoint after successful completion."""
-        fh   = self._hash_for(filename)
-        path = self.paths.parsing_checkpoint_path(fh)
-        if path.exists():
-            path.unlink()

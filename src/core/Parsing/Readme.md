@@ -235,18 +235,6 @@ class ExtractedImage:
     width:   int    # pixels
     height:  int    # pixels
 ```
-
-### ExtractedLink
-
-```python
-@dataclass
-class ExtractedLink:
-    url:  str         # destination URI
-    page: int         # 0-based page number
-    text: str         # anchor text (may be empty for image links)
-    rect: List[float] # [x0, y0, x1, y1] bounding box
-```
-
 ---
 
 ## Modes
@@ -283,21 +271,7 @@ the Chunker — it relies on them for section detection and page tracking.
 
 ---
 
-## Link Extraction
 
-Links are extracted for every PDF page processed and attached to
-`ParsedDocument.links`. To pass them to the Chunker:
-
-```python
-from src.core.Parsing.ParserUtils import links_to_dict
-
-doc = parse(path)
-raw_links = links_to_dict(doc.links)   # serialisable list of dicts
-chunks, meta = chunk_for_model(text=doc.embedding_text, raw_links=raw_links)
-# each chunk.links now contains the hyperlinks scoped to its page range
-```
-
----
 
 ## Image Extraction and Captioning
 

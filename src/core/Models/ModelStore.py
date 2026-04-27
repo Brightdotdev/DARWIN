@@ -1,3 +1,5 @@
+
+
 # src/core/Models/ModelStore.py
 
 from pathlib import Path
@@ -18,7 +20,7 @@ import io
 
 from src.core.Models.ModelRegistry import get_spec, REGISTRY
 
-from src.core.Models.lib import (IGNORE_PATTERNS, ALLOW_PATTERNS, REQUIRED_FILES,SPACY_URLS,tarball_urls)
+from src.core.Models.lib import (IGNORE_PATTERNS, ALLOW_PATTERNS, REQUIRED_FILES, SPACY_URLS, tarball_urls)
 from src.lib.AppPaths import default_models_dir
 
 @dataclass
@@ -49,9 +51,7 @@ class IntegrityError(Exception):
 
 class ModelStore:
     """Production-ready model storage with robust download/resume/caching."""
-    
-    # spaCy model download sources - multiple mirrors
-  
+
     def __init__(self, progress_callback: Optional[Callable[[DownloadProgress], None]] = None):
         self.root = default_models_dir()
         self.progress_callback = progress_callback
@@ -88,8 +88,12 @@ class ModelStore:
         if spec.loader == "spacy":
             return self._verify_spacy_model(path)
         
-        # Generic model check
-        required = REQUIRED_FILES.get(spec.loader, ["config.json"])
+        # Generic model check — requires a REQUIRED_FILES entry for the loader
+        required = REQUIRED_FILES.get(spec.loader)
+        if required is None:
+            # Unknown loader: fall back to basic existence
+            return True
+        
         for req_file in required:
             if not (path / req_file).exists():
                 return False
@@ -188,7 +192,7 @@ class ModelStore:
             (path / ".incomplete").touch()
             
             try:
-                # ── SPA CY MODELS ──
+                # ── SPACY MODELS ──
                 if spec.loader == "spacy":
                     return self._download_spacy_model(spec, path, key)
                 
@@ -361,8 +365,6 @@ class ModelStore:
         """
         Fallback: Download tarball from GitHub releases.
         """
-       
-        
         urls = tarball_urls.get(model_name, [])
         if not urls:
             raise DownloadError(f"No tarball URLs for {model_name}")
@@ -460,7 +462,7 @@ class ModelStore:
                 if meta.get('name') == model_name or meta.get('lang') == 'en':
                     if (meta_path.parent / "tokenizer").exists():
                         return meta_path.parent
-            except:
+            except Exception:
                 continue
         
         return None
@@ -480,13 +482,18 @@ class ModelStore:
                 if meta.get('name') == model_name:
                     if (meta_path.parent / "tokenizer").exists():
                         return meta_path.parent
-            except:
+            except Exception:
                 continue
         
         return None
 
     def _download_file(self, url: str, dest_path: Path, max_retries: int = 3) -> None:
-        """Download a file with retry logic."""
+        """
+        Download a file with retry logic.
+        
+        Uses Path.suffixes to correctly handle compound extensions like .tar.gz,
+        rather than relying on Path.suffix which only returns the last part.
+        """
         for attempt in range(max_retries):
             try:
                 print(f"   📥 Downloading... ({url[:60]}...)")
@@ -521,15 +528,18 @@ class ModelStore:
                                     total_bytes=total_size
                                 ))
                 
-                # Verify download
+                # Verify download — use suffixes to handle compound extensions
                 if dest_path.exists() and dest_path.stat().st_size > 0:
-                    # Try to verify it's a valid archive
-                    if dest_path.suffix in ['.whl', '.zip']:
+                    suffixes = [s.lower() for s in dest_path.suffixes]
+                    is_zip  = ".whl" in suffixes or ".zip" in suffixes
+                    is_tar  = ".tar" in suffixes or ".tgz" in suffixes
+
+                    if is_zip:
                         with zipfile.ZipFile(dest_path, 'r') as zf:
                             if len(zf.namelist()) == 0:
                                 raise Exception("Empty archive")
-                    elif dest_path.suffix in ['.gz', '.tgz']:
-                        with tarfile.open(dest_path, 'r:gz') as tar:
+                    elif is_tar:
+                        with tarfile.open(dest_path) as tar:
                             if len(tar.getmembers()) == 0:
                                 raise Exception("Empty archive")
                     
@@ -553,15 +563,29 @@ class ModelStore:
         shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
 
     def _optimize_spacy_model(self, model_path: Path) -> None:
-        """Remove unnecessary spaCy components to save space."""
-        # Components not needed for concept extraction
-        removable = [
-            "textcat", "textcat_multilabel", "entity_linker",
-            "entity_ruler", "sentiment", 
-             "train", "accuracy.json",
+        """
+        Remove unnecessary spaCy components to save space.
+
+        Only removes specific named components that are confirmed safe to drop
+        for concept extraction. Preserves vocab/lookups needed for lemmatization.
+        """
+        # Pipeline components not needed for concept extraction
+        removable_components = [
+            "textcat",
+            "textcat_multilabel",
+            "entity_linker",
+            "entity_ruler",
+            "sentiment",
         ]
-        
-        for component in removable:
+
+        # Specific non-component files/dirs that are safe to drop
+        removable_files = [
+            "training",
+            "train",
+            "accuracy.json",
+        ]
+
+        for component in removable_components + removable_files:
             comp_path = model_path / component
             if comp_path.exists():
                 try:
@@ -571,10 +595,19 @@ class ModelStore:
                         comp_path.unlink(missing_ok=True)
                 except Exception:
                     pass
-        
-        # Remove large vector files if present (not needed for basic NLP)
-        for pattern in ["*.msgpack", "*.pickle", "*.pt", "*.onnx"]:
+
+        # Remove only onnx/pt exports — NOT vocab/*.bin or lookups files
+        for pattern in ["*.onnx"]:
             for f in model_path.glob(pattern):
+                try:
+                    f.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # Safe to remove: top-level .pt files that are optimizer/checkpoint
+        safe_pt_names = {"optimizer.pt", "scheduler.pt"}
+        for f in model_path.glob("*.pt"):
+            if f.name in safe_pt_names:
                 try:
                     f.unlink(missing_ok=True)
                 except Exception:
@@ -585,15 +618,29 @@ class ModelStore:
     # ═══════════════════════════════════════════════════════════════════════
 
     def ensure(self, key: str, force: bool = False) -> Path:
-        """Ensure model is downloaded and valid."""
+        """
+        Ensure model is downloaded and valid.
+
+        Raises IntegrityError if download validation fails so callers always
+        get a valid path or a clear exception.
+        """
         if not self.is_downloaded(key) or force:
             self.download(key, force=force)
         
         path = self.model_path(key)
         
         if not self.is_downloaded(key):
+            # First download passed without raising but verification failed.
+            # Wipe and retry once with force=True.
             shutil.rmtree(path, ignore_errors=True)
-            return self.download(key, force=True)
+            self.download(key, force=True)
+
+            # If still not valid after the forced retry, give up loudly.
+            if not self.is_downloaded(key):
+                raise IntegrityError(
+                    f"Model '{key}' failed verification after forced re-download. "
+                    f"Check disk space and try again, or inspect: {path}"
+                )
         
         return path
 

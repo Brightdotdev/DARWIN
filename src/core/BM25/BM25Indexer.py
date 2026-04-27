@@ -165,7 +165,6 @@ def run_bm25_indexing_pipeline(
     store:         DarwinStore,
     threshold:     float = DOMAIN_STOP_THRESHOLD,
     idf_smoothing: float = DEFAULT_IDF_SMOOTHING,
-    rerun:         bool  = False,
 ) -> Optional[BM25Data]:
     """
     Build and persist a BM25 index for one document.
@@ -180,8 +179,8 @@ def run_bm25_indexing_pipeline(
     data = index_chunks_for_bm25(chunks, filename, threshold=threshold, idf_smoothing=idf_smoothing)
 
     if data:
-        store.save_bm25(filename, data, rerun=rerun)
-        store.save_stopwords(filename, set(data.domain_stopwords), rerun=rerun)
+        store.save_bm25(filename, data)
+        store.save_stopwords(filename, set(data.domain_stopwords))
 
     return data
 

@@ -1,15 +1,34 @@
-
-
-
+# src/core/Models/lib.py
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Required files per loader type (minimum for inference)
 # ═══════════════════════════════════════════════════════════════════════════
+
+# FIX: Added "embedding_hf" and "embedding_st" entries that were previously
+# missing, causing is_downloaded() to fall through to a loose config.json
+# check that could pass prematurely.
+#
+# FIX: Removed "spacy" entry — it was dead code. ModelStore.is_downloaded()
+# delegates spaCy verification to _verify_spacy_model(), never reaching
+# REQUIRED_FILES for that loader. Having it here was misleading.
+
 REQUIRED_FILES: dict[str, list[str]] = {
     "sentence_transformers": [
         "config.json",
         "tokenizer_config.json",
         "sentence_bert_config.json",
+    ],
+    "embedding_st": [
+        # SentenceTransformers-based embeddings (e.g. bge-m3)
+        "config.json",
+        "tokenizer_config.json",
+        "sentence_bert_config.json",
+    ],
+    "embedding_hf": [
+        # Raw HuggingFace AutoModel embeddings (e.g. e5-small-v2)
+        "config.json",
+        "tokenizer_config.json",
+        "tokenizer.json",
     ],
     "cross_encoder": [
         "config.json",
@@ -21,21 +40,7 @@ REQUIRED_FILES: dict[str, list[str]] = {
         "tokenizer_config.json",
         "generation_config.json",
     ],
-    "embedding_hf": [
-        "config.json",
-        "tokenizer_config.json",
-        "tokenizer.json",
-    ],
-    "spacy": [
-        "config.cfg",
-        "meta.json",
-        "tokenizer",
-        "vocab",
-        "tagger",
-        "parser",
-        "ner",
-        "lemmatizer"
-    ],
+    # "spacy" intentionally omitted — verified by ModelStore._verify_spacy_model()
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -81,7 +86,6 @@ IGNORE_PATTERNS = [
 ]
 
 
-
 SPACY_URLS = {
     "en_core_web_md": [
         # Try newest versions first (compatible with spaCy 3.8)
@@ -93,7 +97,6 @@ SPACY_URLS = {
         "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl",
     ],
 }
-
 
 tarball_urls = {
     "en_core_web_md": [
@@ -107,4 +110,3 @@ tarball_urls = {
         "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1.tar.gz",
     ],
 }
-

@@ -51,7 +51,7 @@ from src.core.Search.Hybrid.HybridSearch import (
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Terminal import TerminalUI
-
+from src.core.Models import setup
 
 # ============================================================================
 # Inspect
@@ -118,7 +118,7 @@ def handle_reranking(args: RerankingArgs) -> None:
 
     # ── Step 1: retrieve candidates ──────────────────────────────────────────
     TerminalUI.dim(f"  retrieving candidates ({args.search_type})...")
-
+    setup()
     if args.search_type == "semantic":
         candidates = (
             semantic_single(args.query, args.file, store, top_k=args.pool_size)
