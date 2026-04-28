@@ -21,20 +21,20 @@ uv run src/core/Embedding/main.py --rerun
 
 import sys
 import argparse
+import asyncio
 from pathlib import Path
 
 import numpy as np
-
-from src.lib.AppPaths import default_models_dir
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from src.core.Embedding.Embedder import run_embedding_pipeline
 from src.core.Storage.DarwinStore import DarwinStore
-from src.lib.Terminal import TerminalUI
 from src.core.Embedding.EmbedderUtils import EmbeddingArgs
 from src.core.Models import get_loader, ModelCategory, setup
+from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -46,7 +46,7 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
     try:
         data = store.load_embeddings(filename)
     except FileNotFoundError:
-        TerminalUI.error("Could not load embeddings for inspection")
+        darwin.log("Could not load embeddings for inspection", LogType.ERROR)
         return
 
     vectors  = data["vectors"]
@@ -54,48 +54,48 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
     headings = data["headings"]
     pages    = data["pages"]
 
-    TerminalUI.blank()
-    TerminalUI.rule(f"embedding inspection — {filename}")
-    TerminalUI.blank()
+    darwin.log("")
+    darwin.log(f"── embedding inspection — {filename} ──", LogType.INFO)
+    darwin.log("")
 
     norms    = np.linalg.norm(vectors, axis=1)
     dot_self = float(np.dot(vectors[0], vectors[0])) if len(vectors) else 0
 
-    TerminalUI.table(
-        headers=["metric", "value"],
-        rows=[
-            ["vectors shape",     str(vectors.shape)],
-            ["dtype",             str(vectors.dtype)],
-            ["embedding dim",     str(vectors.shape[1]) if vectors.ndim > 1 else "—"],
-            ["L2 norms (should be ~1.0)", f"min={norms.min():.4f} max={norms.max():.4f}"],
-            ["v[0] · v[0] (should be ~1.0)", f"{dot_self:.4f}"],
-            ["unique pages",      str(len(set(pages)))],
-            ["chunks with heading", f"{sum(1 for h in headings if h)} / {len(headings)}"],
-        ],
-    )
+    # Summary table
+    darwin.log("  metric                          value", LogType.INFO)
+    darwin.log("  ──────────────────────────────  ─────", LogType.INFO)
+    darwin.log(f"  vectors shape                   {vectors.shape}", LogType.INFO)
+    darwin.log(f"  dtype                           {vectors.dtype}", LogType.INFO)
+    if vectors.ndim > 1:
+        darwin.log(f"  embedding dim                   {vectors.shape[1]}", LogType.INFO)
+    darwin.log(f"  L2 norms (should be ~1.0)       min={norms.min():.4f} max={norms.max():.4f}", LogType.INFO)
+    darwin.log(f"  v[0] · v[0] (should be ~1.0)    {dot_self:.4f}", LogType.INFO)
+    darwin.log(f"  unique pages                    {len(set(pages))}", LogType.INFO)
+    heading_count = sum(1 for h in headings if h)
+    darwin.log(f"  chunks with heading             {heading_count} / {len(headings)}", LogType.INFO)
+    darwin.log("")
 
-    TerminalUI.blank()
-    TerminalUI.dim("── sample chunks from .npz ──")
-    TerminalUI.blank()
+    darwin.log("── sample chunks from .npz ──", LogType.INFO)
+    darwin.log("")
 
     indices = [0, len(texts) // 2, len(texts) - 1] if len(texts) >= 3 else list(range(len(texts)))
     for idx in indices:
-        TerminalUI.info("index",   str(idx))
-        TerminalUI.info("heading", headings[idx] or "(none)")
-        TerminalUI.info("page",    str(pages[idx]))
-        TerminalUI.blank()
+        darwin.log(f"  index:     {idx}", LogType.INFO)
+        darwin.log(f"  heading:   {headings[idx] or '(none)'}", LogType.INFO)
+        darwin.log(f"  page:      {pages[idx]}", LogType.INFO)
+        darwin.log("")
         preview = texts[idx][:300].replace("\n", " ").strip()
         if len(texts[idx]) > 300:
             preview += "..."
-        TerminalUI.dim(f"  text: {preview}")
-        TerminalUI.blank()
-        TerminalUI.dim(f"  vector: [{vectors[idx][0]:.4f}, {vectors[idx][1]:.4f}, ... {vectors[idx][-1]:.4f}]")
-        TerminalUI.blank()
-        TerminalUI.divider()
-        TerminalUI.blank()
+        darwin.log(f"  text:   {preview}", LogType.INFO)
+        darwin.log("")
+        darwin.log(f"  vector: [{vectors[idx][0]:.4f}, {vectors[idx][1]:.4f}, ... {vectors[idx][-1]:.4f}]", LogType.INFO)
+        darwin.log("")
+        darwin.log("─" * 40, LogType.INFO)
+        darwin.log("")
 
-    TerminalUI.rule()
-    TerminalUI.blank()
+    darwin.log("─" * 60, LogType.INFO)
+    darwin.log("")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -103,48 +103,57 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def handle_embedding(args: EmbeddingArgs) -> None:
+    """Main embedding handler — loads chunks, embeds them, saves vectors."""
     store = DarwinStore()
     
+    # Bug fix: setup() may fail silently if models dir doesn't exist
     try:
         loader = get_loader()
     except RuntimeError:
-        TerminalUI.dim("Initializing models...")
-        loader = setup()
+        darwin.log("Initializing models...", LogType.INFO)
+        try:
+            loader = setup()
+        except Exception as e:
+            darwin.log(f"Failed to initialize models: {e}", LogType.ERROR)
+            return
 
-    TerminalUI.print_darwin()
-    TerminalUI.blank()
-    TerminalUI.bold("Embedding")
-    TerminalUI.dim(f" Rerun: {args.rerun} | Inspect: {args.inspect}")
-    TerminalUI.blank()
+    darwin.log("")
+    darwin.log("Embedding", LogType.INFO)
+    darwin.log(f"Rerun: {args.rerun} | Inspect: {args.inspect}", LogType.INFO)
+    darwin.log("")
 
     # Resolve which files to embed
     if args.file:
         filenames = [args.file]
     else:
-        status = store.status()
-        filenames = [
-            fname for fname, info in status.get("files", {}).items()
-            if info["components"]["chunks"]
-        ]
+        try:
+            status = store.status()
+            filenames = [
+                fname for fname, info in status.get("files", {}).items()
+                if info.get("components", {}).get("chunks", False)
+            ]
+        except Exception as e:
+            darwin.log(f"Failed to read store status: {e}", LogType.ERROR)
+            return
 
     if not filenames:
-        TerminalUI.error("No chunked files found. Run chunking first.")
+        darwin.log("No chunked files found. Run chunking first.", LogType.ERROR)
         return
 
-    TerminalUI.bold(f"Embedding {len(filenames)} file(s)")
+    darwin.log(f"Embedding {len(filenames)} file(s)", LogType.INFO)
 
     succeeded = failed = skipped = 0
     total = len(filenames)
 
     for i, filename in enumerate(filenames):
-        if not args.rerun  and store.has_embeddings(filename):
-            TerminalUI.dim(f"skipping {filename} (fresh embeddings exist)")
+        if not args.rerun and store.has_embeddings(filename):
+            darwin.log(f"skipping {filename} (fresh embeddings exist)", LogType.INFO)
             skipped += 1
             continue
 
         chunks = store.load_chunks(filename)
         if not chunks:
-            TerminalUI.error(f"{filename} — no chunks found, skipping")
+            darwin.log(f"{filename} — no chunks found, skipping", LogType.ERROR)
             failed += 1
             continue
 
@@ -153,11 +162,11 @@ def handle_embedding(args: EmbeddingArgs) -> None:
 
         try:
             vectors = run_embedding_pipeline(
-                filename     = filename,
-                chunks       = chunks,
-                store        = store,
-                rerun        = args.rerun,
-                unload_after = is_last,  # ← free RAM after final file
+                filename=filename,
+                chunks=chunks,
+                store=store,
+                rerun=args.rerun,
+                unload_after=is_last,
             )
 
             if vectors is not None:
@@ -168,28 +177,25 @@ def handle_embedding(args: EmbeddingArgs) -> None:
                 skipped += 1
 
         except Exception as e:
-            TerminalUI.error(f"{filename} — {type(e).__name__}: {e}")
+            darwin.log(f"{filename} — {type(e).__name__}: {e}", LogType.ERROR)
             failed += 1
 
-    # ── Safety: ensure model is unloaded even if something went wrong ──
+    # Bug fix: unload safety — e was undefined in original except block
     try:
         loader.unload(ModelCategory.EMBEDDING)
-        TerminalUI.dim("Embedding model unloaded from memory")
-    except Exception:
-        import traceback
-        tb_str = ''.join(traceback.format_exception(e))
-        TerminalUI.warn(tb_str)
-        pass
+        darwin.log("Embedding model unloaded from memory", LogType.INFO)
+    except Exception as unload_err:
+        darwin.log(f"Failed to unload embedding model: {unload_err}", LogType.WARNING)
 
-    TerminalUI.blank()
-    TerminalUI.success(f"done — {succeeded} embedded · {skipped} skipped · {failed} failed")
+    darwin.log("")
+    darwin.log(f"done — {succeeded} embedded · {skipped} skipped · {failed} failed", LogType.SUCCESS)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CLI
 # ═══════════════════════════════════════════════════════════════════════════
 
-def main() -> int:
+async def main() -> int:
     parser = argparse.ArgumentParser(
         description="Embed chunked documents into vector index"
     )
@@ -198,19 +204,45 @@ def main() -> int:
     parser.add_argument("--project", "-p", default=None,           help="Project directory (default: cwd)")
     parser.add_argument("--inspect", "-i", action="store_true",    help="Print vector stats and sample chunks")
     parser.add_argument("--rerun",   "-R", action="store_true",    help="Re-embed even if fresh embeddings exist")
+    parser.add_argument("--ws-port", type=int, default=8765,       help="WebSocket server port (default: 8765)")
+    parser.add_argument("--no-ws",   action="store_true",          help="Disable WebSocket server")
 
     args = parser.parse_args()
 
-    handle_embedding(EmbeddingArgs(
-        target  = args.path,
-        file    = args.file,
-        project = args.project or args.path,
-        inspect = args.inspect,
-        rerun   = args.rerun,
-    ))
+    # Validate target path
+    target_path = Path(args.path).resolve()
+    if not target_path.exists():
+        darwin.log(f"Path does not exist: {args.path}", LogType.ERROR)
+        return 1
 
-    return 0
+    # Setup WebSocket
+    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+
+    try:
+        embedding_args = EmbeddingArgs(
+            target=args.path,
+            file=args.file,
+            project=args.project or args.path,
+            inspect=args.inspect,
+            rerun=args.rerun,
+        )
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, handle_embedding, embedding_args)
+        return 0
+
+    except KeyboardInterrupt:
+        darwin.log("")
+        darwin.log("Goodbye!", LogType.INFO)
+        return 130
+    except Exception as e:
+        import traceback
+        darwin.log(f"Fatal error: {e}", LogType.ERROR)
+        darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
+        return 1
+    finally:
+        shutdown_websocket(ws_server)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    asyncio.run(main())

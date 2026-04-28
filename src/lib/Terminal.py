@@ -587,3 +587,5 @@ class TerminalUI:
             line = char * width
         
         cls.console.print(f"[{style}]{line}[/{style}]")
+
+

@@ -137,7 +137,6 @@ class ChunkingArgs:
     project:        Optional[str] = None
     inspect:        bool = False
     rerun:          bool = False
-    embedding_text: str  = ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────

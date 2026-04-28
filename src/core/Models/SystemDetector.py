@@ -41,14 +41,12 @@ class SystemInfo:
         return self.disk_free_gb >= total_gb + 1
 
 
-
 def detect_system() -> SystemInfo:
     """Read actual hardware specs. Works on Linux, macOS, Windows."""
     ram = psutil.virtual_memory()
     ram_gb = int(ram.total / (1024**3))
-    disk = psutil.disk_usage(str(Path.home()))  # ← str() here
+    disk = psutil.disk_usage(str(Path.home()))
     disk_free_gb = disk.free / (1024**3)
-
 
     cpu_cores = psutil.cpu_count(logical=True)
 
@@ -70,40 +68,43 @@ def detect_system() -> SystemInfo:
         disk_free_gb=disk_free_gb,
     )
 
+
 def recommend_defaults(system: SystemInfo) -> dict[str, str]:
     """
     Recommend best models based on system capabilities.
-    Returns a dict of category -> recommended_key.
+    Returns a dict of category -> canonical model_id (registry key).
+    
+    Uses full canonical model_id strings that match REGISTRY keys
+    (e.g., 'BAAI/bge-m3' not 'bge-m3').
     """
     recommendations = {}
     
-    # Reranker (always the same tiny model)
-    recommendations["reranker"] = "reranker-medium"
+    # Reranker — always the same tiny cross-encoder
+    recommendations["reranker"] = "cross-encoder/ms-marco-MiniLM-L-12-v2"
     
     # Embedding based on RAM
     if system.ram_gb >= 32 and system.has_gpu:
-        recommendations["embedding"] = "gritlm-7b"
+        recommendations["embedding"] = "GritLM/GritLM-7B"
     elif system.ram_gb >= 16:
-        recommendations["embedding"] = "bge-m3"
+        recommendations["embedding"] = "BAAI/bge-m3"
     else:
-        recommendations["embedding"] = "e5-small-v2"
+        recommendations["embedding"] = "intfloat/e5-small-v2"
     
     # Vision based on RAM
     if system.ram_gb >= 16:
-        recommendations["vision"] = "moondream2"
+        recommendations["vision"] = "vikhyatk/moondream2"
     elif system.ram_gb >= 4:
-        recommendations["vision"] = "smolvlm"
+        recommendations["vision"] = "HuggingFaceTB/SmolVLM-256M-Instruct"
     else:
         recommendations["vision"] = None  # Skip vision for very low RAM
     
-    # Tokenizer (spaCy) - always recommend medium as best balance
+    # Tokenizer (spaCy) — medium is the best default balance
     if system.ram_gb >= 16 and system.disk_free_gb > 2:
-        recommendations["tokenizer"] = "spacy-en-core-lg"
+        recommendations["tokenizer"] = "en_core_web_lg"
     else:
-        recommendations["tokenizer"] = "spacy-en-core-md"
+        recommendations["tokenizer"] = "en_core_web_md"
     
     return recommendations
-
 
 
 def default_models_dir() -> Path:

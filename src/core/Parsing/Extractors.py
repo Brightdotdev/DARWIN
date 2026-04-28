@@ -1,9 +1,13 @@
+# ============================================================================
+# src/core/Parsing/Extractors.py
+# ============================================================================
+
 import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict
-from src.lib.Terminal import TerminalUI
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 MIN_IMAGE_SIZE_PX = 100
@@ -13,11 +17,11 @@ HEADING_SIZE_RATIO  = 1.20
 CAPTION_SIZE_RATIO  = 0.85
 LARGE_HEADING_RATIO = 1.50
 
-# ── Table detection thresholds (raised to reduce false positives) ──────────────
-TABLE_X_SPREAD      = 0.45   # was 0.35 — require wider column spread
-TABLE_MIN_SPANS     = 6      # was 3 — need more spans to call it a table
-TABLE_MIN_COLS      = 3      # minimum distinct x-column positions
-TABLE_MIN_ROWS      = 3      # was implicitly 2
+# ── Table detection thresholds ─────────────────────────────────────────────────
+TABLE_X_SPREAD      = 0.45
+TABLE_MIN_SPANS     = 6
+TABLE_MIN_COLS      = 3
+TABLE_MIN_ROWS      = 3
 TABLE_Y_GAP_RATIO   = 2.5
 COLUMN_BUCKETS      = 2
 
@@ -41,7 +45,7 @@ def _make_image_slot(index: int) -> str:
 
 
 def _make_page_header(page_label: str) -> str:
-    """Explicit page boundary marker written by the extractor (not from PDF content)."""
+    """Explicit page boundary marker written by the extractor."""
     return f"[Page {page_label}]"
 
 
@@ -63,7 +67,7 @@ def _convert_markdown_images_to_slots(
         filename = Path(img_ref).name
         if filename in filename_to_slot:
             return _make_image_slot(filename_to_slot[filename])
-        return match.group(0)  # leave unknown refs untouched
+        return match.group(0)
 
     display_text   = img_pattern.sub(replace_with_slot, display_text)
     embedding_text = img_pattern.sub(replace_with_slot, embedding_text)
@@ -102,10 +106,7 @@ def _cluster_rows(all_spans: List[dict], y_threshold: float = 3.0) -> List[List[
 
 
 def _is_table_block(all_spans: List[dict], page_w: float) -> bool:
-    """
-    Heuristic table detector. Tuned conservatively to avoid flagging
-    multi-column body text as tables.
-    """
+    """Heuristic table detector."""
     if len(all_spans) < TABLE_MIN_SPANS:
         return False
 
@@ -118,14 +119,13 @@ def _is_table_block(all_spans: List[dict], page_w: float) -> bool:
 
     x_range = (max(xs) - min(xs)) / max(page_w, 1.0)
     if x_range < TABLE_X_SPREAD:
-        return False  # ← early exit, not wide enough
+        return False
 
     rows = _cluster_rows(spans)
     row_count = len(rows)
     if row_count < TABLE_MIN_ROWS:
         return False
 
-    # Reject if row gaps are inconsistent (indicates paragraph breaks, not table rows)
     y_gaps = []
     for i in range(1, len(rows)):
         prev_max_y = max(s.get("bbox", [0, 0, 0, 0])[3] for s in rows[i - 1])
@@ -138,20 +138,17 @@ def _is_table_block(all_spans: List[dict], page_w: float) -> bool:
         avg_gap = sum(y_gaps) / len(y_gaps)
         max_gap = max(y_gaps)
         if max_gap > avg_gap * TABLE_Y_GAP_RATIO:
-            return False  # large gap → paragraph break, not table row
+            return False
 
-    # Reject if span count per row varies wildly (prose lines vary; table rows don't)
     spans_per_row = [len(row) for row in rows]
     avg_spans = sum(spans_per_row) / len(spans_per_row)
     if avg_spans < 2:
-        return False  # single-column content isn't a table
+        return False
     variance = sum((s - avg_spans) ** 2 for s in spans_per_row) / len(spans_per_row)
     if variance > avg_spans * 2:
         return False
 
-    # Require consistent x-column alignment across rows
-    # (bucket x positions to account for minor jitter)
-    BUCKET = 5.0  # points
+    BUCKET = 5.0
     def bucket_x(x: float) -> int:
         return int(x / BUCKET)
 
@@ -162,9 +159,8 @@ def _is_table_block(all_spans: List[dict], page_w: float) -> bool:
     pattern_counts = Counter(row_x_sets)
     most_common_count = pattern_counts.most_common(1)[0][1] if pattern_counts else 0
     if most_common_count < row_count * 0.5:
-        return False  # rows don't share a column pattern → not a table
+        return False
 
-    # Final: require enough distinct columns
     col_positions = set(bucket_x(x) for x in xs)
     if len(col_positions) < TABLE_MIN_COLS:
         return False
@@ -178,7 +174,7 @@ def _format_table(rows: List[List[dict]]) -> str:
         row_sorted = sorted(row, key=lambda s: s.get("bbox", [0, 0, 0, 0])[0])
         cells = [s.get("text", "").strip() for s in row_sorted if s.get("text", "").strip()]
         if cells:
-            formatted_rows.append(" | ".join(cells))  # pipe-separated for clarity
+            formatted_rows.append(" | ".join(cells))
     return "\n".join(formatted_rows)
 
 
@@ -191,19 +187,7 @@ def fitz_extract(
     pages: List[int],
     images_dir: Optional[str] = None,
 ) -> Tuple[str, str, List[Dict]]:
-    """
-    Extract text and images from a PDF using PyMuPDF (fitz).
-
-    Args:
-        pdf_path:   Path to the PDF file.
-        pages:      0-based page indices to extract.
-        images_dir: Directory to save extracted images. If None, images are skipped.
-
-    Returns:
-        (display_text, embedding_text, extracted_imgs)
-        Image placeholders in both texts use [Image:N] slots.
-        Page boundaries use [Page N] headers based on PDF page labels.
-    """
+    """Extract text and images from a PDF using PyMuPDF (fitz)."""
     import fitz
 
     doc     = fitz.open(pdf_path)
@@ -213,7 +197,6 @@ def fitz_extract(
     display_pages:   List[str] = []
     embedding_pages: List[str] = []
     extracted_imgs:  List[Dict] = []
-
 
     label_map: Dict[int, str] = {}
     try:
@@ -225,35 +208,36 @@ def fitz_extract(
                 label_map[start + i] = str(entry.get("prefix", "") or (start + i + 1))
     except Exception:
         label_map = {}
-    
 
     def _page_label(idx: int) -> str:
-        """Return a human-readable page label for page index `idx`."""
         if label_map and idx in label_map:
             return label_map[idx]
-        # Fallback: use 1-based index so "page 1" matches what readers see
         return str(idx + 1)
 
-    seen_xrefs: set = set()  # global dedup across pages
+    seen_xrefs: set = set()
 
     for page_num in pages:
+        
         if page_num >= doc.page_count:
-            TerminalUI.warn(f"Page index {page_num} out of range (doc has {doc.page_count} pages), skipping.")
+            darwin.log(f"Page index {page_num} out of range (doc has {doc.page_count} pages), skipping.", LogType.WARNING)
             continue
 
-        page      = doc[page_num]
-        # TEXT_DEHYPHENATE helps with hyphenated words split across lines;
-        # drop TEXT_PRESERVE_WHITESPACE which can corrupt spacing in some PDFs.
-        page_dict = page.get_text(
-            "dict",
-            flags=fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_DEHYPHENATE,
-        )
+        page = doc[page_num]
+        try:
+            page_dict = page.get_text(
+                "dict",
+                flags=fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_DEHYPHENATE,
+            )
+        except Exception as e:
+            darwin.log(f"Failed to extract text from page {page_num}: {e}", LogType.ERROR)
+            continue  # Skip corrupted page, continue with remaining pages
+        
         page_w = page.rect.width or 1.0
         label  = _page_label(page_num)
 
         blocks = page_dict.get("blocks", [])
 
-        # ── Modal (body) font size for this page ─────────────────────────────
+        # ── Modal (body) font size ───────────────────────────────────────────
         size_votes: Counter = Counter()
         for block in blocks:
             if block.get("type") != 0:
@@ -270,7 +254,6 @@ def fitz_extract(
         text_blocks  = [b for b in blocks if b.get("type") == 0]
         image_blocks = [b for b in blocks if b.get("type") == 1]
 
-        # Sort text blocks: column-first then top-to-bottom
         if COLUMN_BUCKETS > 1 and text_blocks:
             bucket_w    = page_w / COLUMN_BUCKETS
             text_blocks = sorted(
@@ -285,7 +268,6 @@ def fitz_extract(
 
         image_blocks = sorted(image_blocks, key=lambda b: b.get("bbox", [0, 0])[1])
 
-        # Merge text + image blocks in reading order
         all_blocks: List[dict] = []
         ti = ii = 0
         while ti < len(text_blocks) and ii < len(image_blocks):
@@ -300,13 +282,13 @@ def fitz_extract(
 
         # ── Image extraction ─────────────────────────────────────────────────
         page_img_start_index = img_index
-        page_img_xrefs: List[int] = []   # xrefs actually saved this page
+        page_img_xrefs: List[int] = []
 
         if img_dir:
             for img_info in page.get_images(full=True):
                 xref = img_info[0]
                 if xref in seen_xrefs:
-                    continue  # skip duplicate embedded image
+                    continue
                 if img_index >= MAX_IMAGES_PER_DOC:
                     break
                 try:
@@ -334,21 +316,17 @@ def fitz_extract(
                     pix = None
                     img_index += 1
                 except Exception as e:
-                    TerminalUI.warn(f"Image extraction failed page {page_num} xref {xref}: {e}")
+                    darwin.log(f"Image extraction failed page {page_num} xref {xref}: {e}", LogType.WARNING)
 
         # ── Render page content ──────────────────────────────────────────────
         display_parts:   List[str] = []
         embedding_parts: List[str] = []
         page_img_cursor = 0
-
-        # Track whether the *immediately preceding rendered block* was an image,
-        # so we can style the next line as a caption. Reset per-block.
         prev_block_was_image = False
 
         for block in all_blocks:
             btype = block.get("type")
 
-            # ── Image block ──────────────────────────────────────────────────
             if btype == 1:
                 if img_dir and page_img_cursor < len(page_img_xrefs):
                     slot_index = page_img_start_index + page_img_cursor
@@ -357,25 +335,18 @@ def fitz_extract(
                     embedding_parts.append(slot)
                     page_img_cursor += 1
                     prev_block_was_image = True
-                else:
-                    # Image skipped (no dir, or over limit) — don't emit a slot
-                    pass
                 continue
 
             if btype != 0:
                 continue
 
-            # ── Text block ───────────────────────────────────────────────────
             lines     = block.get("lines", [])
             all_spans = [s for ln in lines for s in ln.get("spans", [])]
 
-            # Skip blocks that are clearly just a lone page number printed by the PDF.
-            # These are single short numeric spans near the page top or bottom.
             if (
                 len(all_spans) == 1
                 and all_spans[0].get("text", "").strip().isdigit()
             ):
-                # Suppress: the extractor emits its own [Page N] header instead.
                 prev_block_was_image = False
                 continue
 
@@ -418,7 +389,6 @@ def fitz_extract(
                     is_bold = bool(flags & (1 << 4))
 
                     if sz >= modal_size * HEADING_SIZE_RATIO:
-                        # Headings: no inline markdown — handled at line level below
                         line_d.append(text); line_e.append(text)
                     elif is_bold:
                         line_d.append(f"**{text}**"); line_e.append(text)
@@ -437,7 +407,6 @@ def fitz_extract(
                     line_display   = f"### {line_display}"
                     line_embedding = f"### {line_embedding}"
                 elif line_size <= modal_size * CAPTION_SIZE_RATIO and prev_block_was_image:
-                    # Caption: only applies to the first text block after an image
                     line_display   = f"*{line_display}*"
                     line_embedding = f"[Caption: {line_embedding}]"
 
@@ -447,21 +416,16 @@ def fitz_extract(
             if block_display:
                 display_parts.append("\n".join(block_display))
                 embedding_parts.append("\n".join(block_embedding))
-                # Only the very first text block after an image gets caption treatment
                 prev_block_was_image = False
 
-        # Append any images not interleaved in text (e.g. full-page images)
         for i in range(page_img_cursor, len(page_img_xrefs)):
             slot_index = page_img_start_index + i
             slot = _make_image_slot(slot_index)
             display_parts.append(slot)
             embedding_parts.append(slot)
 
-        # ── Assemble page with explicit header ───────────────────────────────
         page_header = _make_page_header(label)
 
-        # Join parts with a single blank line; parts themselves don't carry
-        # leading/trailing newlines any more — we normalise here.
         def _join_parts(parts: List[str]) -> str:
             cleaned = [p.strip() for p in parts if p.strip()]
             return "\n\n".join(cleaned)

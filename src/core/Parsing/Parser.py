@@ -1,6 +1,6 @@
-"""
-Parser.py - Production document parser with image captioning
-"""
+# ============================================================================
+# src/core/Parsing/Parser.py
+# ============================================================================
 
 import logging
 from pathlib import Path
@@ -16,7 +16,7 @@ from src.core.Parsing.ParserUtils import (
     is_good_enough,
     is_supported,
 )
-from src.lib.Terminal import TerminalUI
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,8 @@ def parse(
     timeout: int = PARSE_TIMEOUT_SECONDS,
     precise: bool = False,
 ) -> ParsedDocument:
-    """
-    Parse a single file into a ParsedDocument.
-    Never raises — errors go into .error field.
-    """
+    """Parse a single file into a ParsedDocument. Never raises — errors go into .error field."""
     path  = Path(file_path).resolve()
-    timer = TerminalUI.timer(f"Parsing {path.name}")
 
     if not path.exists():
         return ParsedDocument(
@@ -60,7 +56,7 @@ def parse(
         )
 
     try:
-        TerminalUI.dim(f"Parsing {path.name}...")
+        darwin.log(f"Parsing {path.name}...", LogType.INFO)
 
         if file_type == "pdf":
             display_text, embedding_text, page_count, metadata, all_images = parse_pdf(
@@ -70,10 +66,9 @@ def parse(
                 precise=precise,
             )
         else:
-            # parse_markitdown returns (display_text, embedding_text, page_count, metadata, images)
             display_text, embedding_text, page_count, metadata, all_images = parse_markitdown(path)
             if images_dir:
-                TerminalUI.warn(f"Image extraction is not supported for {path.suffix} files")
+                darwin.log(f"Image extraction is not supported for {path.suffix} files", LogType.WARNING)
 
         if not is_good_enough(embedding_text):
             return ParsedDocument(
@@ -82,7 +77,7 @@ def parse(
                 error="parsed text is empty or garbled",
             )
 
-        timer.done(msg=f"[green]✓[/green] Parsed {path.name} successfully")
+        darwin.log(f"Parsed {path.name} successfully", LogType.SUCCESS)
 
         return ParsedDocument(
             display_text=display_text,
@@ -114,21 +109,18 @@ def scan_directory(
     target: str | Path,
     recursive: bool = False,
 ) -> list[Path]:
-    """
-    Detects if the input is a single file or a directory.
-    Returns a list of valid, supported Path objects.
-    """
+    """Detects if the input is a single file or a directory. Returns list of valid Path objects."""
     path = Path(target).resolve()
 
     if not path.exists():
-        TerminalUI.error(f"Path does not exist: {path}")
+        darwin.log(f"Path does not exist: {path}", LogType.ERROR)
         return []
 
     if path.is_file():
         if is_supported(path):
             return [path]
         else:
-            TerminalUI.warn(f"File type not supported: {path.suffix}")
+            darwin.log(f"File type not supported: {path.suffix}", LogType.WARNING)
             return []
 
     if path.is_dir():
@@ -141,12 +133,9 @@ def scan_directory(
         ]
 
         if found_files:
-            TerminalUI.info(
-                label="Found Files",
-                value=f"Scanner found {len(found_files)} supported files in {path.name}",
-            )
+            darwin.log(f"Scanner found {len(found_files)} supported files in {path.name}", LogType.INFO)
         else:
-            TerminalUI.warn(f"No supported files found in directory: {path}")
+            darwin.log(f"No supported files found in directory: {path}", LogType.WARNING)
 
         return found_files
 

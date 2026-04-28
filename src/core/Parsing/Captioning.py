@@ -1,13 +1,21 @@
+# ============================================================================
 # src/core/Parsing/Captioning.py
+# ============================================================================
 
 import re
 from pathlib import Path
 from typing import Dict
 import json
-from src.lib.Terminal import TerminalUI
+
+from src.core.Logger.DarwinLogger import darwin, LogType
+
+# ── Constants ──────────────────────────────────────────────────────────────────
 
 CACHE_CAPTIONS = True
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Caption cache helpers
+# ═══════════════════════════════════════════════════════════════════════════
 
 def get_caption_cache_path(images_dir: Path) -> Path:
     return images_dir / ".captions_cache.json"
@@ -23,7 +31,7 @@ def load_caption_cache(images_dir: Path) -> Dict[str, str]:
             with open(cache_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            TerminalUI.error(f"Failed to load caption cache: {e}")
+            darwin.log(f"Failed to load caption cache: {e}", LogType.ERROR)
     return {}
 
 
@@ -34,11 +42,11 @@ def save_caption_cache(images_dir: Path, cache: Dict[str, str]) -> None:
         with open(get_caption_cache_path(images_dir), "w", encoding="utf-8") as f:
             json.dump(cache, f, indent=2)
     except Exception as e:
-        TerminalUI.warn(f"Failed to save caption cache: {e}")
+        darwin.log(f"Failed to save caption cache: {e}", LogType.WARNING)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Caption one image — receives already-loaded model from the loader
+# Caption one image
 # ═══════════════════════════════════════════════════════════════════════════
 
 def caption_image(
@@ -62,7 +70,7 @@ def caption_image(
 
     result = ""
     try:
-        TerminalUI.dim(f"Captioning {image_path.name}")
+        darwin.log(f"Captioning {image_path.name}", LogType.INFO)
 
         image = preloaded_image or PILImage.open(image_path).convert("RGB")
 
@@ -122,11 +130,10 @@ def caption_image(
             result = result.rsplit("\n", 1)[-1].strip()
 
     except Exception as e:
-        TerminalUI.error(f"Caption failed for {image_path.name}: {e}")
+        darwin.log(f"Caption failed for {image_path.name}: {e}", LogType.ERROR)
         result = ""
 
-    # FIX: Always write to cache — even on failure (empty string) — so we don't
-    # attempt to re-caption the same broken image on every subsequent run.
+    # Always write to cache — even on failure (empty string)
     if CACHE_CAPTIONS:
         cache[cache_key] = result
 

@@ -21,14 +21,10 @@ from src.core.Models.EmbeddingConfig import (
     ModelPreset,
     get_preset,
     get_model_batch_size,
-
 )
 from src.core.Chunking.ChunkerUtils import Chunk
 from src.core.Models import get_loader, ModelCategory
-from src.lib.Terminal import TerminalUI
-
-
-
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 def prepare_passage_text(text: str, preset: ModelPreset | str | None = None) -> str:
@@ -76,6 +72,7 @@ def prepare_query_text(query: str, preset: ModelPreset | str | None = None) -> s
 # ═══════════════════════════════════════════════════════════════════════════
 # Core embedding
 # ═══════════════════════════════════════════════════════════════════════════
+
 def embed_chunks(
     chunks: List[Chunk],
     file_name: str,
@@ -98,41 +95,46 @@ def embed_chunks(
         numpy array of shape (n_chunks, embedding_dim) or None on failure
     """
     if not chunks:
-        TerminalUI.warn("No chunks found to embed")
+        darwin.log("No chunks found to embed", LogType.WARNING)
         return np.array([], dtype=np.float32)
 
     # ── Resolve preset ──
     preset = get_preset()
 
-
     loader = get_loader()
-    embedder = loader.get(ModelCategory.EMBEDDING)
+    
+    # Bug fix: loader.get() for embedding models returns (model,) not (processor, model, device)
+    result = loader.get(ModelCategory.EMBEDDING)
+    if isinstance(result, tuple):
+        embedder = result[0]  # Some loaders return (model,) tuple
+    else:
+        embedder = result
 
     texts = [prepare_passage_text(c.clean, preset) for c in chunks]
 
     optimal_batch = batch_size or get_model_batch_size(preset=preset)
     n_batches = (len(texts) + optimal_batch - 1) // optimal_batch
 
-    TerminalUI.info(
-        label=f" Embedding with {preset.model_name}",
-        value=f"({preset.category}, {preset.max_tokens} token limit) [batch_size={optimal_batch}]"
+    darwin.log(
+        f"Embedding with {preset.model_name} ({preset.category}, {preset.max_tokens} token limit) [batch_size={optimal_batch}]",
+        LogType.INFO
     )
 
     all_vectors: list = []
+    
+    # Progress tracking via event system
+    progress_id = f"embed_{file_name}"
+    darwin.progress_start(progress_id, n_batches, f"Embedding {file_name}")
 
-    with TerminalUI.track_embedding(
-        n_batches,
-        model_name=preset.model_name.split('/')[-1],
-        file_name=file_name
-    ) as update_progress:
-
+    try:
         for batch_num in range(0, len(texts), optimal_batch):
             batch_texts = texts[batch_num:batch_num + optimal_batch]
             progress_num = batch_num // optimal_batch + 1
 
-            update_progress(
+            darwin.progress_update(
+                progress_id, 
                 progress_num,
-                msg=f"Encoding batch {progress_num}/{n_batches}"
+                f"Encoding batch {progress_num}/{n_batches}"
             )
 
             encode_kwargs = {
@@ -150,7 +152,8 @@ def embed_chunks(
                 all_vectors.extend(vecs)
 
             except torch.cuda.OutOfMemoryError:
-                TerminalUI.warn(f"⚠️ OOM at batch_size={optimal_batch}, falling back to 16")
+                darwin.log(f"OOM at batch_size={optimal_batch}, falling back to 16", LogType.WARNING)
+                darwin.progress_end(progress_id)
                 return embed_chunks(
                     chunks,
                     file_name,
@@ -161,20 +164,25 @@ def embed_chunks(
                 )
 
             except KeyboardInterrupt:
-                TerminalUI.warn("⚠️ Embedding interrupted")
+                darwin.log("Embedding interrupted", LogType.WARNING)
+                darwin.progress_end(progress_id)
                 if unload_after:
                     loader.unload(ModelCategory.EMBEDDING)
                 raise
+
+    finally:
+        darwin.progress_end(progress_id)
 
     vectors = np.vstack(all_vectors).astype(np.float32)
 
     if unload_after:
         loader.unload(ModelCategory.EMBEDDING)
-        TerminalUI.dim("🧹 Embedding model unloaded from memory")
+        darwin.log("Embedding model unloaded from memory", LogType.INFO)
 
-    TerminalUI.success(
-        f"✅ Embedded {len(chunks)} chunks → {vectors.shape} "
-        f"(model: {preset.model_name.split('/')[-1]}, batch_size={optimal_batch})"
+    model_short = preset.model_name.split('/')[-1]
+    darwin.log(
+        f"Embedded {len(chunks)} chunks → {vectors.shape} (model: {model_short}, batch_size={optimal_batch})",
+        LogType.SUCCESS
     )
 
     return vectors
@@ -200,7 +208,13 @@ def embed_query(
     preset = get_preset()
 
     loader = get_loader()
-    model = loader.get(ModelCategory.EMBEDDING)
+    
+    # Bug fix: same tuple handling as embed_chunks
+    result = loader.get(ModelCategory.EMBEDDING)
+    if isinstance(result, tuple):
+        model = result[0]
+    else:
+        model = result
 
     prepared = prepare_query_text(query, preset)
 
@@ -245,20 +259,20 @@ def run_embedding_pipeline(
         numpy array of shape (n_chunks, embedding_dim) or None
     """
     if not chunks:
-        TerminalUI.warn(f"No chunks to embed for {filename}")
+        darwin.log(f"No chunks to embed for {filename}", LogType.WARNING)
         return None
 
     if not rerun and store.has_embeddings(filename):
-        TerminalUI.dim(f"   ⏭️  Skipping embedding: fresh index exists for {filename}")
+        darwin.log(f"Skipping embedding: fresh index exists for {filename}", LogType.INFO)
         return None
 
     # ── Auto-detect model ──
     preset = get_preset()
     model_name = preset.model_name
 
-    TerminalUI.bold(
-        f" Embedding {filename} ({len(chunks)} chunks) "
-        f"with {model_name}"
+    darwin.log(
+        f"Embedding {filename} ({len(chunks)} chunks) with {model_name}",
+        LogType.INFO
     )
 
     vectors = embed_chunks(

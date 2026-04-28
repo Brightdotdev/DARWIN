@@ -35,82 +35,63 @@ def create_loader(
     return loader, system
 
 
-
 def _download_required(store: ModelStore, preferences: dict, system: SystemInfo) -> None:
-    from src.core.Models.ModelRegistry import REGISTRY
+    """
+    Download required and user-selected optional models.
     
-    # Build lookups
-    id_to_key = {spec.model_id: key for key, spec in REGISTRY.items()}
+    Only processes known model categories (embedding, reranker, vision, tokenizer).
+    Non-model config keys like 'version', 'llm_mode', 'created_at' are ignored.
+    Legacy shorthand names are handled by ModelLoader._migrate_preferences()
+    before this function is called, so we only deal with canonical keys here.
+    """
+    from src.core.Models.ModelRegistry import REGISTRY, get_spec
     
-    # Normalize: may contain model_ids or shorthand keys
-    normalized = {}
-    for category, value in preferences.items():
-        if not value:
-            continue
-            
-        if value in REGISTRY:
-            # It's a shorthand key — keep as key for internal use
-            normalized[category] = value
-        elif value in id_to_key:
-            # It's a model_id — convert to key
-            normalized[category] = id_to_key[value]
-            print(f"   ℹ️  Resolved '{value}' → '{id_to_key[value]}'")
-        else:
-            print(f"⚠️  Unknown model '{value}' in category '{category}' — skipping")
+    VALID_CATEGORIES = {"embedding", "reranker", "vision", "tokenizer"}
     
-    required_keys = [
-        k for k in normalized.values()
-        if k in REGISTRY and REGISTRY[k].required
-    ]
+    # Filter to only valid model categories with non-empty values
+    selected = {
+        cat: val for cat, val in preferences.items()
+        if cat in VALID_CATEGORIES and val and val not in {"none", "not set"}
+    }
     
-    optional_keys = [
-        k for k in normalized.values()
-        if k in REGISTRY and not REGISTRY[k].required
-    ]
-    if not required_keys:
+    if not selected:
         return
     
+    # Separate required vs optional
+    required_keys = [
+        k for k in selected.values()
+        if k in REGISTRY and REGISTRY[k].required
+    ]
+    optional_keys = [
+        k for k in selected.values()
+        if k in REGISTRY and not REGISTRY[k].required
+    ]
+    
+    # Calculate sizes before downloading
+    all_keys = required_keys + optional_keys
+    new_downloads = [k for k in all_keys if not store.is_downloaded(k)]
+    total_new_mb = sum(get_spec(k).disk_mb for k in new_downloads)
     
     print(f"\n📦 Models directory: {store.root}")
     print(f"💻 System: {system.ram_gb}GB RAM, {system.disk_free_gb:.1f}GB free")
-    print()
-
-    # ── Calculate total download size BEFORE downloading ──────────────────
-    all_keys = required_keys + optional_keys
-    total_new_mb = sum(
-        get_spec(k).disk_mb
-        for k in all_keys
-        if not store.is_downloaded(k)
-    )
-
-    # ── Required models ──
-    print("── Required models ───────────────────────────────────────────")
-    for key in required_keys:
+    
+    if not new_downloads:
+        print("\n   ✅ All models already cached\n")
+        return
+    
+    print(f"\n   Downloading {len(new_downloads)} model(s) — ~{total_new_mb / 1024:.1f}GB total\n")
+    
+    for key in all_keys:
         spec = get_spec(key)
         if store.is_downloaded(key):
-            size = store.installed_size(key)
-            print(f"   ✅ {key} — {size}")
+            print(f"   ✅ {key} — {store.installed_size(key)}")
         else:
-            print(f"   ⬇️  {key} ({spec.disk_mb}MB) — {spec.notes}")
+            label = "REQUIRED" if spec.required else "optional"
+            print(f"   ⬇️  {key} ({spec.disk_mb}MB) [{label}] — {spec.notes}")
             store.download(key)
-
-    # ── Optional models (only if user selected them) ──
-    if optional_keys:
-        print()
-        print("── Optional models ───────────────────────────────────────────")
-        for key in optional_keys:
-            spec = get_spec(key)
-            if store.is_downloaded(key):
-                size = store.installed_size(key)
-                print(f"   ✅ {key} — {size}")
-            else:
-                print(f"   ⬇️  {key} ({spec.disk_mb}MB) — {spec.notes}")
-                store.download(key)
-
+    
     print()
-    if total_new_mb > 0:
-        print(f"   Total download: ~{total_new_mb / 1024:.1f}GB")
-    print()
+    
 
 
 def run_onboarding(models_dir: Optional[Path] = None) -> ModelLoader:

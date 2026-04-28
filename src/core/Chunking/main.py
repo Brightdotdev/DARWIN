@@ -24,6 +24,8 @@ uv run src/core/Chunking/main.py --model bge-m3
 
 import sys
 import argparse
+import time
+import asyncio
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -32,20 +34,26 @@ if __name__ == "__main__":
 from src.core.Chunking.Chunker import chunk_for_model
 from src.core.Chunking.ChunkerUtils import Chunk, ChunkingArgs
 from src.core.Storage.DarwinStore import DarwinStore
-from src.lib.Terminal import TerminalUI
+from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ── Inspection helpers ─────────────────────────────────────────────────────────
 
 def _print_inspection(chunks: list[Chunk], filename: str) -> None:
-    TerminalUI.blank()
-    TerminalUI.rule(f"chunk inspection — {filename}")
-    TerminalUI.blank()
+    """Print detailed chunk inspection output."""
+    darwin.log("")
+    darwin.log(f"── chunk inspection — {filename} ──", LogType.INFO)
+    darwin.log("")
 
-    total        = len(chunks)
-    avg_tokens   = sum(c.token_count for c in chunks) / total if total else 0
-    min_tok      = min(c.token_count for c in chunks) if chunks else 0
-    max_tok      = max(c.token_count for c in chunks) if chunks else 0
+    total = len(chunks)
+    if total == 0:
+        darwin.log("  No chunks to inspect", LogType.WARNING)
+        return
+    
+    avg_tokens   = sum(c.token_count for c in chunks) / total
+    min_tok      = min(c.token_count for c in chunks)
+    max_tok      = max(c.token_count for c in chunks)
     with_heading = sum(1 for c in chunks if c.heading)
     tables       = sum(1 for c in chunks if "[Table]" in c.text)
     captions     = sum(1 for c in chunks if "[Caption:" in c.text)
@@ -53,149 +61,183 @@ def _print_inspection(chunks: list[Chunk], filename: str) -> None:
     with_links   = sum(1 for c in chunks if c.links)
     total_links  = sum(len(c.links) for c in chunks)
 
-    TerminalUI.table(
-        headers=["metric", "value"],
-        rows=[
-            ["total chunks",   str(total)],
-            ["avg tokens",     f"{avg_tokens:.0f}"],
-            ["min tokens",     str(min_tok)],
-            ["max tokens",     str(max_tok)],
-            ["with heading",   f"{with_heading} ({with_heading/total*100:.0f}%)"],
-            ["table chunks",   str(tables)],
-            ["caption chunks", str(captions)],
-            ["overlap chunks", str(overlaps)],
-            ["chunks w/ links", str(with_links)],
-            ["total links",    str(total_links)],
-        ],
-    )
+    darwin.log("  metric              value", LogType.INFO)
+    darwin.log("  ──────────────────  ─────", LogType.INFO)
+    darwin.log(f"  total chunks        {total}", LogType.INFO)
+    darwin.log(f"  avg tokens          {avg_tokens:.0f}", LogType.INFO)
+    darwin.log(f"  min tokens          {min_tok}", LogType.INFO)
+    darwin.log(f"  max tokens          {max_tok}", LogType.INFO)
+    pct_heading = (with_heading / total * 100) if total > 0 else 0
+    darwin.log(f"  with heading        {with_heading} ({pct_heading:.0f}%)", LogType.INFO)
+    darwin.log(f"  table chunks        {tables}", LogType.INFO)
+    darwin.log(f"  caption chunks      {captions}", LogType.INFO)
+    darwin.log(f"  overlap chunks      {overlaps}", LogType.INFO)
+    darwin.log(f"  chunks w/ links     {with_links}", LogType.INFO)
+    darwin.log(f"  total links         {total_links}", LogType.INFO)
+    darwin.log("")
 
-    TerminalUI.blank()
-    TerminalUI.dim("── first 3 chunks ──")
-    for chunk in chunks[:3]:
+    preview_count = min(3, total)
+    darwin.log(f"── first {preview_count} chunk(s) ──", LogType.INFO)
+    for chunk in chunks[:preview_count]:
         _print_chunk(chunk)
 
     if total > 6:
-        TerminalUI.dim(f"── middle chunk ({total // 2}) ──")
-        _print_chunk(chunks[total // 2])
+        mid_idx = total // 2
+        darwin.log(f"── middle chunk ({mid_idx}) ──", LogType.INFO)
+        _print_chunk(chunks[mid_idx])
 
-    TerminalUI.dim("── last chunk ──")
+    darwin.log("── last chunk ──", LogType.INFO)
     _print_chunk(chunks[-1])
-    TerminalUI.rule()
-    TerminalUI.blank()
+    darwin.log("─" * 60, LogType.INFO)
+    darwin.log("")
 
 
 def _print_chunk(chunk: Chunk) -> None:
-    TerminalUI.info("index",   str(chunk.index))
-    TerminalUI.info("heading", chunk.heading or "(none)")
-    TerminalUI.info("page",    f"{chunk.page}–{chunk.page_end}")
-    TerminalUI.info("tokens",  str(chunk.token_count))
-    TerminalUI.info("overlap", chunk.overlap_direction.value)
-    TerminalUI.info("links",   str(len(chunk.links)))
-    TerminalUI.blank()
+    """Print a single chunk's details."""
+    overlap_str = getattr(chunk, 'overlap_direction', None)
+    overlap_val = overlap_str.value if overlap_str else "none"
+    
+    darwin.log(f"  index:     {chunk.index}", LogType.INFO)
+    darwin.log(f"  heading:   {chunk.heading or '(none)'}", LogType.INFO)
+    darwin.log(f"  page:      {chunk.page}–{chunk.page_end}", LogType.INFO)
+    darwin.log(f"  tokens:    {chunk.token_count}", LogType.INFO)
+    darwin.log(f"  overlap:   {overlap_val}", LogType.INFO)
+    darwin.log(f"  links:     {len(chunk.links) if chunk.links else 0}", LogType.INFO)
+    darwin.log("")
 
-    preview = chunk.text[:300].replace("\n", " ").strip()
-    if len(chunk.text) > 300:
+    text = chunk.text or ""
+    preview = text[:300].replace("\n", " ").strip()
+    if len(text) > 300:
         preview += "..."
-    TerminalUI.dim(f"  text:  {preview}")
+    darwin.log(f"  text:  {preview}", LogType.INFO)
 
     if chunk.links:
-        for lk in chunk.links[:3]:
+        max_links = min(3, len(chunk.links))
+        for lk in chunk.links[:max_links]:
             label = f" [{lk.text}]" if lk.text else ""
-            TerminalUI.dim(f"  link:  {lk.url}{label}")
+            darwin.log(f"  link:  {lk.url}{label}", LogType.INFO)
         if len(chunk.links) > 3:
-            TerminalUI.dim(f"  ... and {len(chunk.links) - 3} more links")
+            darwin.log(f"  ... and {len(chunk.links) - 3} more links", LogType.INFO)
 
-    TerminalUI.blank()
-    TerminalUI.divider()
-    TerminalUI.blank()
+    darwin.log("")
+    darwin.log("─" * 40, LogType.INFO)
+    darwin.log("")
 
 
 # ── Core handler ───────────────────────────────────────────────────────────────
 
 def handle_chunking(args: ChunkingArgs) -> None:
+    """Main chunking handler — loads markdown, chunks it, saves results."""
     store = DarwinStore()
 
-    TerminalUI.print_darwin()
-    TerminalUI.blank()
-    TerminalUI.bold("Chunking")
-    TerminalUI.dim(f"Rerun: {args.rerun} | Inspect: {args.inspect}")
-    TerminalUI.blank()
+    darwin.log("")
+    darwin.log("Chunking", LogType.INFO)
+    darwin.log(f"Rerun: {args.rerun} | Inspect: {args.inspect}", LogType.INFO)
+    darwin.log("")
 
+    # Resolve files to process
     if args.file:
         filenames = [args.file]
     else:
-        status    = store.status()
-        filenames = [
-        fname for fname, info in status.get("files", {}).items()
-        if info["is_parsed"]]
-       
-       
+        try:
+            status = store.status()
+            filenames = [
+                fname for fname, info in status.get("files", {}).items()
+                if info.get("is_parsed", False)
+            ]
+        except Exception as e:
+            darwin.log(f"Failed to read store status: {e}", LogType.ERROR)
+            return
 
     if not filenames:
-        TerminalUI.error("No parsed files found. Run parsing first.")
+        darwin.log("No parsed files found. Run parsing first.", LogType.ERROR)
         return
 
-    succeeded = failed = skipped = 0
-    
+    succeeded = failed = 0
+
     for filename in filenames:
-        record = store.registry._find_by_name(filename)
-        if record is None:
-            TerminalUI.error(f"{filename} — not registered, run parsing first")
+        try:
+            record = store.registry._find_by_name(filename)
+        except AttributeError:
+            darwin.log(f"{filename} — registry method unavailable", LogType.ERROR)
             failed += 1
             continue
 
-        tobe_chunked =  store.load_markdown(filename)
+        if record is None:
+            darwin.log(f"{filename} — not registered, run parsing first", LogType.ERROR)
+            failed += 1
+            continue
+
+        if not args.rerun and store.has_chunks(filename):
+            darwin.log(f"{filename} — already chunked (use --rerun to rechunk)", LogType.INFO)
+            succeeded += 1
+            continue
+
+        tobe_chunked = store.load_markdown(filename)
 
         if tobe_chunked is None:
-            TerminalUI.error(f"{filename} — no markdown found, skipping")
+            darwin.log(f"{filename} — no markdown found, skipping", LogType.ERROR)
+            failed += 1
+            continue
+    
+        # Handle both string and ParsedDocument returns
+        if hasattr(tobe_chunked, 'embedding_text'):
+            chunk_text = tobe_chunked.embedding_text
+        elif isinstance(tobe_chunked, str):
+            chunk_text = tobe_chunked
+        else:
+            darwin.log(f"{filename} — unexpected markdown type: {type(tobe_chunked)}", LogType.ERROR)
             failed += 1
             continue
 
-        # Load link metadata if the store has it — zero-cost when absent
-
         try:
-            t = TerminalUI.timer(f"chunk:{filename}")
+            t0 = time.perf_counter()
+
             chunks, chunk_metadata = chunk_for_model(
-                text      = tobe_chunked,
-                source    = filename,
+                text=chunk_text,
+                source=filename,
             )
-            t.done()
+
+            elapsed = time.perf_counter() - t0
+            darwin.log(f"  chunk:{filename} — {elapsed:.2f}s", LogType.INFO)
 
             if not chunks:
-                TerminalUI.error(f"{filename} — produced 0 chunks")
+                darwin.log(f"{filename} — produced 0 chunks", LogType.ERROR)
                 failed += 1
                 continue
 
             total_links = sum(len(c.links) for c in chunks) if chunks else 0
-          
+
             store.save_chunks(
-                filename   = filename,
-                chunks     = chunks,
-                chunk_meta = {**chunk_metadata, "total_links": total_links},
+                filename=filename,
+                chunks=chunks,
+                chunk_meta={**chunk_metadata, "total_links": total_links},
             )
 
-            TerminalUI.success(
+            avg_tokens = sum(c.token_count for c in chunks) // len(chunks)
+            darwin.log(
                 f"{filename} — {len(chunks)} chunks · "
-                f"avg {sum(c.token_count for c in chunks) // len(chunks)} tokens · "
-                f"{total_links} links distributed"
+                f"avg {avg_tokens} tokens · "
+                f"{total_links} links distributed",
+                LogType.SUCCESS
             )
-          
+
             succeeded += 1
 
             if args.inspect:
                 _print_inspection(chunks, filename)
 
         except Exception as e:
-            TerminalUI.error(f"{filename} — {type(e).__name__}: {e}")
+            darwin.log(f"{filename} — {type(e).__name__}: {e}", LogType.ERROR)
             failed += 1
 
-    TerminalUI.blank()
-    TerminalUI.success(f"done — {succeeded} chunked · {skipped} skipped · {failed} failed")
+    darwin.log("")
+    darwin.log(f"done — {succeeded} chunked · {failed} failed", LogType.SUCCESS)
 
 
-# ── CLI ────────────────────────────────────────────────────────────────────────
+# ── CLI entry point ────────────────────────────────────────────────────────────
 
-def main() -> int:
+async def main() -> int:
     parser = argparse.ArgumentParser(
         description="Chunk parsed documents into embedding-ready pieces"
     )
@@ -204,18 +246,45 @@ def main() -> int:
     parser.add_argument("--project", "-p", default=None,           help="Project directory (default: cwd)")
     parser.add_argument("--inspect", "-i", action="store_true",    help="Print sample chunks to terminal")
     parser.add_argument("--rerun",   "-R", action="store_true",    help="Rechunk even if fresh chunks exist")
+    parser.add_argument("--ws-port", type=int, default=8765,       help="WebSocket server port (default: 8765)")
+    parser.add_argument("--no-ws",   action="store_true",          help="Disable WebSocket server")
 
     args = parser.parse_args()
 
-    handle_chunking(ChunkingArgs(
-        target  = args.path,
-        file    = args.file,
-        project = args.project or args.path,
-        inspect = args.inspect,
-        rerun   = args.rerun,
-    ))
-    return 0
+    # Validate target path
+    target_path = Path(args.path).resolve()
+    if not target_path.exists():
+        darwin.log(f"Path does not exist: {args.path}", LogType.ERROR)
+        return 1
+
+    # setup_websocket() handles configure() + start() — don't duplicate
+    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+
+    try:
+        chunking_args = ChunkingArgs(
+            target=args.path,
+            file=args.file,
+            project=args.project or args.path,
+            inspect=args.inspect,
+            rerun=args.rerun,
+        )
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, handle_chunking, chunking_args)
+        return 0
+
+    except KeyboardInterrupt:
+        darwin.log("")
+        darwin.log("Goodbye!", LogType.INFO)
+        return 130
+    except Exception as e:
+        import traceback
+        darwin.log(f"Fatal error: {e}", LogType.ERROR)
+        darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
+        return 1
+    finally:
+        shutdown_websocket(ws_server)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    asyncio.run(main())
