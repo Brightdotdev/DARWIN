@@ -18,7 +18,7 @@ This ensures query tokens match the BM25 index vocabulary.
 
 from dataclasses import dataclass,field
 from typing import List, Optional
-
+from enum import Enum
 from src.core.BM25.BM25Utils import (
     BM25Data,compute_idf
     
@@ -27,6 +27,41 @@ from src.core.BM25.BM25Utils import (
 # ============================================================================
 # Data model
 # ============================================================================
+
+
+class OverlapDirection(str, Enum):
+    """
+    Describes which side(s) of a chunk carry overlap sentences.
+
+    NONE   — no overlap; chunk is self-contained
+    LEFT   — chunk *opens* with sentences repeated from the tail of the
+             previous chunk  (this chunk "looks left")
+    RIGHT  — chunk *closes* with sentences repeated at the head of the
+             next chunk  (this chunk "donates right")
+    BOTH   — interior window: received from the left AND donates to the right
+
+    Use str-Enum so the value serialises cleanly to JSON as a plain string
+    ("none", "left", "right", "both") without needing a custom encoder.
+    """
+    NONE  = "none"
+    LEFT  = "left"
+    RIGHT = "right"
+    BOTH  = "both"
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data model
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class ChunkLink:
+    """A hyperlink scoped to a chunk."""
+    url:  str
+    text: str = ""
+
+
+
 
 @dataclass
 class KeywordSearchResult:
@@ -39,8 +74,9 @@ class KeywordSearchResult:
     heading: str        # Section heading
     chunk_index: int    # Original chunk position
     matched_terms: List[str]
-    is_overlap: bool 
-    links: List[tuple[str, str]] = field(default_factory=list)
+    overlap_direction : OverlapDirection =  OverlapDirection.NONE 
+    links:            List[ChunkLink]  = field(default_factory=list)
+    
     
     def __repr__(self) -> str:
         return f"KeywordSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
@@ -50,8 +86,9 @@ class KeywordSearchResult:
 # Constants
 # ============================================================================
 
-DEFAULT_TOP_K = 5
-DEFAULT_K1 = 1.5      # BM25 term frequency saturation
+DEFAULT_TOP_K = 40
+DEFAULT_K1 = 1.5   # higher == favour repeated stuff ,lower == favour scarcer stuff :: range from 1.2 to 2.0 is common in literature, 1.5 is a good default
+
 DEFAULT_B = 0.75      # BM25 length normalization
 
 

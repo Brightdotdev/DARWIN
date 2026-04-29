@@ -44,16 +44,25 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 def _print_inspection(filename: str, store: DarwinStore) -> None:
     """Load the saved .npz and print stats."""
     try:
-        data = store.load_embeddings(filename)
+        result = store.load_embeddings(filename)
+        # Handle both return types
+        if isinstance(result, tuple):
+            vectors, chunks = result
+            # Need to extract texts, headings, pages from chunks
+            texts = [c.text for c in chunks]
+            headings = [c.heading for c in chunks]
+            pages = [c.page for c in chunks]
+            source = [c.source for c in chunks]
+        else:
+            vectors = result["vectors"]
+            texts = result["text"]
+            headings = result["headings"]
+            pages = result["pages"]
+            source = result["source"]
     except FileNotFoundError:
         darwin.log("Could not load embeddings for inspection", LogType.ERROR)
         return
-
-    vectors  = data["vectors"]
-    texts    = data["text"]
-    headings = data["headings"]
-    pages    = data["pages"]
-
+    
     darwin.log("")
     darwin.log(f"── embedding inspection — {filename} ──", LogType.INFO)
     darwin.log("")

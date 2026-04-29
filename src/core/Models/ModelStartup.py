@@ -1,235 +1,276 @@
+"""
+src/core/Models/startup.py
+---------------------------
+Model initialization and onboarding.
+Supports both terminal (print/input) and frontend (darwin.prompt) modes.
+"""
 
-# src/core/Models/startup.py
-
-from pathlib import Path
 from typing import Optional
 from src.core.Models.ModelStore import ModelStore
 from src.core.Models.ModelLoader import ModelLoader
+from src.core.Models.ModelRegistry import REGISTRY, TIER_LABELS, get_spec
 from src.core.Models.SystemDetector import detect_system, recommend_defaults, SystemInfo
-from src.core.Models.ModelRegistry import (
-    REGISTRY, TIER_LABELS, get_spec,
+from src.core.Models.ModelSetup import (
+    validate_model, calculate_download_size, validate_all_selections,
 )
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
-def create_loader(
-    preferences: Optional[dict] = None,
-    skip_download: bool = False,
-) -> tuple[ModelLoader, SystemInfo]:
-    """
-    Create a ModelLoader. If no preferences given, auto-detect from hardware.
-
-    Only downloads REQUIRED models by default. Optional models (vision, tokenizer)
-    are downloaded on-demand when the user passes --caption or uses NLP features.
-    """
+def create_loader(preferences=None, skip_download=False):
+    """Create a ModelLoader. Auto-detects hardware if no preferences given."""
     store = ModelStore()
     system = detect_system()
-
     if preferences is None:
         preferences = recommend_defaults(system)
-
     loader = ModelLoader(store, preferences)
-
     if not skip_download:
         _download_required(store, preferences, system)
-
     return loader, system
 
 
-def _download_required(store: ModelStore, preferences: dict, system: SystemInfo) -> None:
-    """
-    Download required and user-selected optional models.
-    
-    Only processes known model categories (embedding, reranker, vision, tokenizer).
-    Non-model config keys like 'version', 'llm_mode', 'created_at' are ignored.
-    Legacy shorthand names are handled by ModelLoader._migrate_preferences()
-    before this function is called, so we only deal with canonical keys here.
-    """
-    from src.core.Models.ModelRegistry import REGISTRY, get_spec
-    
+def _download_required(store, preferences, system):
+    """Download required models with hardware validation."""
     VALID_CATEGORIES = {"embedding", "reranker", "vision", "tokenizer"}
-    
-    # Filter to only valid model categories with non-empty values
-    selected = {
-        cat: val for cat, val in preferences.items()
-        if cat in VALID_CATEGORIES and val and val not in {"none", "not set"}
-    }
-    
+    selected = {cat: val for cat, val in preferences.items()
+                if cat in VALID_CATEGORIES and val and val not in {"none", "not set"}}
     if not selected:
         return
-    
-    # Separate required vs optional
-    required_keys = [
-        k for k in selected.values()
-        if k in REGISTRY and REGISTRY[k].required
-    ]
-    optional_keys = [
-        k for k in selected.values()
-        if k in REGISTRY and not REGISTRY[k].required
-    ]
-    
-    # Calculate sizes before downloading
+
+    required_keys, optional_keys, failed_validation = [], [], []
+    for cat, key in selected.items():
+        if key not in REGISTRY: continue
+        validation = validate_model(key, system, store)
+        if not validation.can_run:
+            failed_validation.append((key, validation.warnings))
+        elif REGISTRY[key].required:
+            required_keys.append(key)
+        else:
+            optional_keys.append(key)
+
     all_keys = required_keys + optional_keys
+    download_info = calculate_download_size({k: k for k in all_keys}, store) if all_keys else {"total_gb": 0}
+
+    # Use darwin.log so frontend sees these messages
+    darwin.log(f"Models directory: {store.root}", LogType.INFO)
+    darwin.log(f"System: {system.ram_gb}GB RAM, {system.disk_free_gb:.1f}GB free", LogType.INFO)
+
+    if failed_validation:
+        darwin.log(f"{len(failed_validation)} model(s) rejected (insufficient hardware)", LogType.WARNING)
+        for key, warnings in failed_validation:
+            darwin.log(f"  {key}: {', '.join(warnings)}", LogType.WARNING)
+
     new_downloads = [k for k in all_keys if not store.is_downloaded(k)]
-    total_new_mb = sum(get_spec(k).disk_mb for k in new_downloads)
-    
-    print(f"\n📦 Models directory: {store.root}")
-    print(f"💻 System: {system.ram_gb}GB RAM, {system.disk_free_gb:.1f}GB free")
-    
     if not new_downloads:
-        print("\n   ✅ All models already cached\n")
+        darwin.log("All compatible models already cached", LogType.SUCCESS)
         return
-    
-    print(f"\n   Downloading {len(new_downloads)} model(s) — ~{total_new_mb / 1024:.1f}GB total\n")
-    
+
+    if download_info["total_gb"] > system.disk_free_gb * 0.8:
+        darwin.log(f"Downloads need {download_info['total_gb']:.1f}GB but only {system.disk_free_gb:.1f}GB free", LogType.WARNING)
+
+    darwin.log(f"Downloading {len(new_downloads)} model(s) — ~{download_info['total_gb']:.1f}GB", LogType.INFO)
+
     for key in all_keys:
         spec = get_spec(key)
         if store.is_downloaded(key):
-            print(f"   ✅ {key} — {store.installed_size(key)}")
+            darwin.log(f"{key} — cached ({store.installed_size(key)})", LogType.SUCCESS)
         else:
-            label = "REQUIRED" if spec.required else "optional"
-            print(f"   ⬇️  {key} ({spec.disk_mb}MB) [{label}] — {spec.notes}")
+            darwin.log(f"Downloading {key} ({spec.disk_mb}MB)...", LogType.INFO)
             store.download(key)
-    
-    print()
-    
 
 
-def run_onboarding(models_dir: Optional[Path] = None) -> ModelLoader:
+# ═══════════════════════════════════════════════════════════════════════════
+# Async onboarding — works with both terminal and frontend
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def run_onboarding_async() -> ModelLoader:
     """
-    Interactive first-run setup.
-
-    Flow:
-    1. Detect hardware, show specs
-    2. Required models: auto-pick best for hardware, let user override
-    3. Optional models: ask if they want vision/spaCy now or later
-    4. Download selected models
+    Interactive first-run setup with custom model selection.
+    Uses darwin.prompt() so it works in terminal AND browser.
     """
     store = ModelStore()
     system = detect_system()
     recommended = recommend_defaults(system)
 
-    print("\n" + "=" * 60)
-    print("🧠  Welcome to Darwin — Let's set up your AI models")
-    print("=" * 60)
-    print(f"\n💻  Your system: {system.ram_gb}GB RAM | {system.cpu_cores} cores | "
-          f"{system.disk_free_gb:.0f}GB free disk")
+    darwin.log("")
+    darwin.log("Welcome to Darwin — Let's set up your AI models", LogType.INFO)
+    darwin.log(f"System: {system.ram_gb}GB RAM | {system.cpu_cores} cores | {system.disk_free_gb:.0f}GB free disk", LogType.INFO)
     if system.has_gpu:
-        print(f"🎮  GPU: {system.gpu_name}")
-    print(f"📊  Best tier for your hardware: {TIER_LABELS[system.tier]}")
-    print()
+        darwin.log(f"GPU: {system.gpu_name}", LogType.INFO)
+    darwin.log(f"Best tier for your hardware: {TIER_LABELS[system.tier]}", LogType.INFO)
+    darwin.log("")
 
-    choices: dict[str, str | None] = {
-        "embedding": None,
-        "reranker":  "cross-encoder/ms-marco-MiniLM-L-12-v2",
-        "vision":    None,
-        "tokenizer": None,
-    }
+    choices: dict[str, str | None] = {}
 
-    # ── STEP 1: Required — Embedding ─────────────────────────────────────
-    print("─" * 60)
-    print("🔤  Step 1/3: Embedding model (REQUIRED)")
-    print("   This turns your documents into searchable vectors.")
-    print(f"   Recommended for your hardware: {recommended['embedding']}")
-    print()
-    print("   Options:")
-    opts = [k for k in REGISTRY if REGISTRY[k].category == "embedding"]
-    for i, key in enumerate(opts):
-        spec = REGISTRY[key]
-        star = " ⭐" if key == recommended['embedding'] else ""
-        can = "✅" if system.can_run(spec) else "⚠️  needs more RAM"
-        req = " (required)" if spec.required else " (experimental)"
-        print(f"   [{i+1}] {key} — {TIER_LABELS[spec.tier]} "
-              f"| {spec.disk_mb}MB | ~{spec.ram_gb}GB RAM {can}{star}{req}")
+    # ── STEP 1: Embedding (required) ─────────────────────────────────────
+    choices["embedding"] = await _onboard_category_async(
+        category="embedding",
+        title="Embedding model (REQUIRED) — turns documents into searchable vectors",
+        recommended_key=recommended["embedding"],
+        system=system,
+        store=store,
+        required=True,
+    )
 
-    choice = input(f"\n   Pick (1-{len(opts)}) or Enter for recommended: ").strip()
-    if choice.isdigit() and 1 <= int(choice) <= len(opts):
-        choices["embedding"] = opts[int(choice) - 1]
-    else:
-        choices["embedding"] = recommended['embedding']
+    # ── STEP 2: Vision (optional) ────────────────────────────────────────
+    choices["vision"] = await _onboard_category_async(
+        category="vision",
+        title="Vision model (OPTIONAL) — describes images in PDFs",
+        recommended_key=recommended.get("vision"),
+        system=system,
+        store=store,
+        required=False,
+    )
 
-    # ── STEP 2: Optional — Vision ────────────────────────────────────────
-    print("\n" + "─" * 60)
-    print("👁️  Step 2/3: Vision model (OPTIONAL)")
-    print("   Describes images in your PDFs. Only needed with --caption.")
-    print("   Skip this if you don't have image-heavy PDFs.")
-    print()
-    print("   Options:")
-    opts = [k for k in REGISTRY if REGISTRY[k].category == "vision"]
-    for i, key in enumerate(opts):
-        spec = REGISTRY[key]
-        can = "✅" if system.can_run(spec) else "⚠️  needs more RAM"
-        print(f"   [{i+1}] {key:<40} — {spec.disk_mb:>4}MB | {spec.notes:<50} {can}")
-    print(f"   [s] Skip — no vision model for now (can add later)")
+    # ── STEP 3: Tokenizer (optional) ─────────────────────────────────────
+    choices["tokenizer"] = await _onboard_category_async(
+        category="tokenizer",
+        title="NLP tokenizer (OPTIONAL) — better sentence splitting",
+        recommended_key=recommended.get("tokenizer"),
+        system=system,
+        store=store,
+        required=False,
+    )
 
-    choice = input(f"\n   Pick (1-{len(opts)}) or [s]kip: ").strip().lower()
-    if choice == 's' or choice == '':
-        choices["vision"] = None
-        print("   ⏭️  Skipped. Use --caption later to auto-download.")
-    elif choice.isdigit() and 1 <= int(choice) <= len(opts):
-        choices["vision"] = opts[int(choice) - 1]
-    else:
-        choices["vision"] = None
+    # ── STEP 4: Reranker (optional) ──────────────────────────────────────
+    choices["reranker"] = await _onboard_category_async(
+        category="reranker",
+        title="Reranker model (OPTIONAL) — re-ranks search results",
+        recommended_key=recommended.get("reranker"),
+        system=system,
+        store=store,
+        required=False,
+    )
 
-    # ── STEP 3: Optional — spaCy tokenizer ───────────────────────────────
-    print("\n" + "─" * 60)
-    print("📝  Step 3/3: NLP tokenizer (OPTIONAL)")
-    print("   Better sentence splitting for chunking. Improves retrieval quality.")
-    print("   You can use the app without it — we fall back to regex.")
-    print()
-    print("   Options:")
-    opts = [k for k in REGISTRY if REGISTRY[k].category == "tokenizer"]
-    for i, key in enumerate(opts):
-        spec = REGISTRY[key]
-        print(f"   [{i+1}] {key:<40} — {spec.disk_mb:>4}MB | {spec.notes}")
-    print(f"   [s] Skip — no tokenizer for now (can add later)")
+    # ── Validate and summarize ───────────────────────────────────────────
+    validation = validate_all_selections(
+        {k: v for k, v in choices.items() if v},
+        system, store
+    )
 
-    choice = input(f"\n   Pick (1-{len(opts)}) or [s]kip: ").strip().lower()
-    if choice == 's' or choice == '':
-        choices["tokenizer"] = None
-        print("   ⏭️  Skipped. Install later from settings.")
-    elif choice.isdigit() and 1 <= int(choice) <= len(opts):
-        choices["tokenizer"] = opts[int(choice) - 1]
-    else:
-        choices["tokenizer"] = None
-
-    # ── Summary ──────────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("📦  Summary")
-    print("=" * 60)
-
-    total_download = 0
+    darwin.log("")
+    darwin.log("── Summary ──", LogType.INFO)
     for cat, key in choices.items():
-        if key:
+        if key and key in REGISTRY:
             spec = REGISTRY[key]
-            total_download += spec.disk_mb if not store.is_downloaded(key) else 0
-            status = "✅ cached" if store.is_downloaded(key) else f"⬇️  {spec.disk_mb}MB"
-            req = "REQUIRED" if spec.required else "optional"
-            print(f"   {cat:<12} {key:<45} {TIER_LABELS[spec.tier]:<20} {status:<15} {req}")
+            status = "cached" if store.is_downloaded(key) else f"{spec.disk_mb}MB to download"
+            can = "fits" if system.can_run(spec) else "may not fit"
+            darwin.log(f"  {cat}: {key} ({spec.tier}, {status}, {can})", LogType.INFO)
+        elif key:
+            darwin.log(f"  {cat}: {key}", LogType.INFO)
         else:
-            print(f"   {cat:<12} (none)")
+            darwin.log(f"  {cat}: (none)", LogType.INFO)
 
-    if total_download > 0:
-        print(f"\n   Total to download: ~{total_download / 1024:.1f}GB")
-        print(f"   Free disk space: {system.disk_free_gb:.1f}GB")
+    if validation["rejected"]:
+        darwin.log(f"{len(validation['rejected'])} model(s) rejected (insufficient hardware)", LogType.WARNING)
 
-        if total_download / 1024 > system.disk_free_gb:
-            print(f"\n   ⚠️  Not enough disk space! Free up {(total_download / 1024 - system.disk_free_gb):.1f}GB.")
-            confirm = input("\n   Continue anyway? [y/N]: ").strip().lower()
-            if confirm != 'y':
-                print("   Setup cancelled. Run again later.")
-                return ModelLoader(store, choices)
-    else:
-        print(f"\n   Nothing to download — all models already cached.")
+    if validation["download_info"] and validation["download_info"]["total_mb"] > 0:
+        info = validation["download_info"]
+        darwin.log(f"Total to download: ~{info['total_gb']:.1f}GB (free: {system.disk_free_gb:.1f}GB)", LogType.INFO)
 
-    print()
-    confirm = input("   Download and start? [Y/n]: ").strip().lower()
-    if confirm and confirm != 'y':
-        print("   Using your selections...")
-    else:
-        print("\n⬇️  Downloading...")
-        for category, key in choices.items():
-            if key and not store.is_downloaded(key):
-                store.download(key)
+    # Download valid models
+    for category, key in choices.items():
+        if key and key in REGISTRY and validate_model(key, system, store).can_run and not store.is_downloaded(key):
+            darwin.log(f"Downloading {key}...", LogType.INFO)
+            store.download(key)
 
-    print("✅  All models ready!\n")
-    return ModelLoader(store, choices)
+    darwin.log("All models ready!", LogType.SUCCESS)
+    return ModelLoader(store, {k: v for k, v in choices.items() if v})
+
+
+async def _onboard_category_async(
+    category: str,
+    title: str,
+    recommended_key: Optional[str],
+    system: SystemInfo,
+    store: ModelStore,
+    required: bool = False,
+) -> Optional[str]:
+    """Async model selection for one category. Works in terminal + browser."""
+    darwin.log("")
+    darwin.log(f"── {title} ──", LogType.INFO)
+
+    # Get all models with validation
+    opts = []
+    for key in REGISTRY:
+        if REGISTRY[key].category != category:
+            continue
+        validation = validate_model(key, system, store)
+        spec = REGISTRY[key]
+        opts.append((key, spec, validation))
+
+    if not opts:
+        darwin.log("No models available for this category.", LogType.WARNING)
+        return None if not required else recommended_key
+
+    darwin.log(f"Available {category} models:", LogType.INFO)
+    options = []
+    for i, (key, spec, validation) in enumerate(opts):
+        star = " ⭐" if key == recommended_key else ""
+        cached = " [cached]" if store.is_downloaded(key) else ""
+        can = "✅" if validation.can_run else "⚠️"
+        label = f"[{i+1}] {key} ({spec.tier}, {spec.disk_mb}MB, {spec.ram_gb}GB RAM) {can}{star}{cached}"
+        options.append(label)
+        darwin.log(f"  {label}", LogType.INFO)
+
+    if not required:
+        options.append(f"[s] Skip — no {category} model for now")
+        if recommended_key:
+            options.append(f"[r] Use recommended: {recommended_key}")
+
+    # Use darwin.prompt() — works in terminal AND WebSocket browser
+    choice = await darwin.prompt(
+        id=f"onboard_{category}",
+        message=f"Select {category} model" + (" (required)" if required else ""),
+        options=options,
+        action="onboard_select",
+        params={"category": category, "opts": opts, "recommended": recommended_key, "required": required},
+    )
+
+    # Parse the choice
+    if choice == "s" and not required:
+        darwin.log(f"Skipped {category}. Install later from settings.", LogType.INFO)
+        return None
+    if choice == "r" and recommended_key:
+        return recommended_key
+
+    # Try to parse as option number
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(opts):
+            key, spec, validation = opts[idx]
+            if not validation.can_run:
+                darwin.log(f"This model may not run well: {', '.join(validation.warnings)}", LogType.WARNING)
+            return key
+    except (ValueError, TypeError):
+        pass
+
+    # Fallback to recommended
+    if recommended_key:
+        darwin.log(f"Using recommended: {recommended_key}", LogType.INFO)
+        return recommended_key
+    return opts[0][0] if opts else None
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Onboarding action handler — register this with darwin.register_action()
+# ═══════════════════════════════════════════════════════════════════════════
+
+def onboard_select_action(choice: str, **params) -> str:
+    """
+    Action handler for darwin.prompt() during onboarding.
+    Parses the user's model selection and returns the resolved choice.
+    """
+    opts = params.get("opts", [])
+    recommended = params.get("recommended")
+    required = params.get("required", False)
+
+    # Parse choice format: "[1] model_name (...)" → extract "1"
+    import re
+    match = re.match(r'\[(\d+)\]', choice)
+    if match:
+        return match.group(1)  # Return just the number
+    if choice.startswith("[s]"):
+        return "s"
+    if choice.startswith("[r]"):
+        return "r"
+    return choice  # Return as-is for fallback

@@ -1,5 +1,3 @@
-
-
 # src/core/Models/ModelStore.py
 
 from pathlib import Path
@@ -11,7 +9,6 @@ import urllib.error
 import tarfile
 import tempfile
 import zipfile
-
 import time
 
 from typing import Optional, Callable, Union
@@ -19,9 +16,9 @@ from dataclasses import dataclass
 import io
 
 from src.core.Models.ModelRegistry import get_spec, REGISTRY
-
 from src.core.Models.lib import (IGNORE_PATTERNS, ALLOW_PATTERNS, REQUIRED_FILES, SPACY_URLS, tarball_urls)
 from src.lib.AppPaths import default_models_dir
+
 
 @dataclass
 class DownloadProgress:
@@ -88,10 +85,9 @@ class ModelStore:
         if spec.loader == "spacy":
             return self._verify_spacy_model(path)
         
-        # Generic model check — requires a REQUIRED_FILES entry for the loader
+        # Generic model check
         required = REQUIRED_FILES.get(spec.loader)
         if required is None:
-            # Unknown loader: fall back to basic existence
             return True
         
         for req_file in required:
@@ -113,7 +109,6 @@ class ModelStore:
     
     def _verify_spacy_model(self, path: Path) -> bool:
         """Verify spaCy model has minimum required components."""
-        # Minimum required components for concept extraction
         essential = [
             "tokenizer",
             "meta.json",
@@ -161,17 +156,13 @@ class ModelStore:
     # ═══════════════════════════════════════════════════════════════════════
 
     def download(self, key: str, force: bool = False, minimal: bool = True) -> Path:
-        """
-        Download a model with fallback strategies.
-        """
+        """Download a model with fallback strategies."""
         spec = get_spec(key)
         path = self.model_path(key)
         
-        # Check if already downloaded and valid
         if self.is_downloaded(key) and not force:
             return path
         
-        # Track active download
         if key in self._active_downloads:
             raise DownloadError(
                 f"Download already in progress for {key}",
@@ -182,23 +173,16 @@ class ModelStore:
         self._active_downloads.add(key)
         
         try:
-            # Clean up previous corrupted download if forcing
             if path.exists() and force:
                 shutil.rmtree(path, ignore_errors=True)
             
             path.mkdir(parents=True, exist_ok=True)
-            
-            # Create incomplete marker
             (path / ".incomplete").touch()
             
             try:
-                # ── SPACY MODELS ──
                 if spec.loader == "spacy":
                     return self._download_spacy_model(spec, path, key)
-                
-                # ── HUGGING FACE MODELS ──
                 return self._download_huggingface(spec, path, key, minimal)
-                
             except Exception as e:
                 if isinstance(e, (DownloadError, IntegrityError)):
                     raise
@@ -206,10 +190,8 @@ class ModelStore:
                     f"Failed to download {key}: {str(e)}",
                     "Check internet connection and disk space"
                 )
-                
         finally:
             self._active_downloads.discard(key)
-            # Remove incomplete marker if download succeeded
             if (path / ".incomplete").exists():
                 if self.is_downloaded(key):
                     (path / ".incomplete").unlink(missing_ok=True)
@@ -253,22 +235,16 @@ class ModelStore:
             raise DownloadError(f"HuggingFace download failed: {e}")
 
     def _download_spacy_model(self, spec, target_path: Path, key: str) -> Path:
-        """
-        Download spaCy model using multiple strategies.
-        PRIMARY STRATEGY: Download wheel from GitHub and extract model directly.
-        NO pip/spaCy CLI required.
-        """
+        """Download spaCy model using multiple strategies."""
         model_name = spec.model_id
         
         print(f"   ⬇️  Downloading {model_name} (minimal NLP components)...")
         
-        # Try strategies in order
         strategies = [
             ("GitHub wheel download", lambda: self._download_spacy_wheel(model_name, target_path)),
             ("GitHub tarball fallback", lambda: self._download_spacy_tarball(model_name, target_path)),
         ]
         
-        # If spaCy package is available, try pip install
         try:
             import spacy
             strategies.append(
@@ -283,9 +259,7 @@ class ModelStore:
                 print(f"   📥 Attempting: {strategy_name}")
                 result = strategy_fn()
                 if result and self._verify_spacy_model(target_path):
-                    # Optimize the model
                     self._optimize_spacy_model(target_path)
-                    
                     size = self.installed_size(key)
                     print(f"   ✅ {key} ready ({size})")
                     return target_path
@@ -304,10 +278,7 @@ class ModelStore:
         )
 
     def _download_spacy_wheel(self, model_name: str, target_path: Path) -> bool:
-        """
-        Download spaCy model wheel from GitHub and extract model files.
-        This is the PRIMARY method - no spaCy package needed.
-        """
+        """Download spaCy model wheel from GitHub and extract model files."""
         urls = self.SPACY_URLS.get(model_name, [])
         if not urls:
             raise DownloadError(f"No download URLs for {model_name}")
@@ -316,17 +287,14 @@ class ModelStore:
             tmp_path = Path(tmpdir)
             wheel_path = tmp_path / f"{model_name}.whl"
             
-            # Try each URL
             last_error = None
             for url in urls:
                 try:
-                    # Download wheel file
                     self._download_file(url, wheel_path)
                     
                     if not wheel_path.exists() or wheel_path.stat().st_size == 0:
                         continue
                     
-                    # Extract wheel (it's just a ZIP file)
                     print(f"   📦 Extracting wheel...")
                     extract_dir = tmp_path / "extracted"
                     extract_dir.mkdir(exist_ok=True)
@@ -334,18 +302,15 @@ class ModelStore:
                     with zipfile.ZipFile(wheel_path, 'r') as zf:
                         zf.extractall(extract_dir)
                     
-                    # Find the model directory in the wheel
                     model_dir = self._find_model_in_wheel(extract_dir, model_name)
                     
                     if model_dir:
-                        # Copy to target
                         if target_path.exists():
                             shutil.rmtree(target_path, ignore_errors=True)
                         
                         print(f"   📋 Copying model files...")
                         self._copy_directory(model_dir, target_path)
                         
-                        # Verify critical files exist
                         essential_files = ["config.cfg", "meta.json", "tokenizer"]
                         for f in essential_files:
                             if not (target_path / f).exists():
@@ -362,9 +327,7 @@ class ModelStore:
             raise DownloadError(f"Wheel download failed: {last_error}")
 
     def _download_spacy_tarball(self, model_name: str, target_path: Path) -> bool:
-        """
-        Fallback: Download tarball from GitHub releases.
-        """
+        """Fallback: Download tarball from GitHub releases."""
         urls = tarball_urls.get(model_name, [])
         if not urls:
             raise DownloadError(f"No tarball URLs for {model_name}")
@@ -381,7 +344,6 @@ class ModelStore:
                     with tarfile.open(tarball_path, 'r:gz') as tar:
                         tar.extractall(tmp_path)
                     
-                    # Find model directory
                     model_dir = self._find_model_in_extracted(tmp_path, model_name)
                     
                     if model_dir:
@@ -397,19 +359,14 @@ class ModelStore:
             raise DownloadError("Tarball download failed for all URLs")
 
     def _download_spacy_via_package(self, model_name: str, target_path: Path) -> bool:
-        """
-        Use spaCy package to download (requires spaCy installed).
-        """
+        """Use spaCy package to download (requires spaCy installed)."""
         try:
             import spacy
             from spacy.cli.download import download as spacy_download
             
             spacy_download(model_name, direct=False)
-            
-            # Get the installed path
             installed_path = Path(spacy.util.get_package_path(model_name))
             
-            # Copy to our managed directory
             if target_path.exists():
                 shutil.rmtree(target_path, ignore_errors=True)
             self._copy_directory(installed_path, target_path)
@@ -420,41 +377,23 @@ class ModelStore:
             raise DownloadError(f"spaCy package download failed: {e}")
 
     def _find_model_in_wheel(self, extract_dir: Path, model_name: str) -> Optional[Path]:
-        """
-        Find the actual model directory inside an extracted wheel.
-        
-        Wheel structure typically:
-          en_core_web_md/
-            __init__.py
-            en_core_web_md-3.7.1/
-              config.cfg
-              meta.json
-              tokenizer/
-              vocab/
-              ...
-        """
-        # Method 1: Look for the exact model package directory
+        """Find the actual model directory inside an extracted wheel."""
         pkg_name = model_name.replace("-", "_")
         
         for candidate_name in [model_name, pkg_name]:
             for path in extract_dir.rglob(candidate_name):
                 if path.is_dir():
-                    # Check if this contains model files directly
                     if (path / "config.cfg").exists() and (path / "meta.json").exists():
                         return path
-                    
-                    # Check if it contains a version subdirectory
                     for subdir in path.iterdir():
                         if subdir.is_dir() and (subdir / "config.cfg").exists():
                             return subdir
         
-        # Method 2: Search for config.cfg and verify
         for config_path in extract_dir.rglob("config.cfg"):
             parent = config_path.parent
             if (parent / "meta.json").exists() and (parent / "tokenizer").exists():
                 return parent
         
-        # Method 3: Look for meta.json with matching name
         for meta_path in extract_dir.rglob("meta.json"):
             try:
                 with open(meta_path, 'r') as f:
@@ -469,7 +408,6 @@ class ModelStore:
 
     def _find_model_in_extracted(self, base_path: Path, model_name: str) -> Optional[Path]:
         """Find model directory in extracted tarball."""
-        # Same logic as wheel but for tarball structure
         for config_path in base_path.rglob("config.cfg"):
             parent = config_path.parent
             if (parent / "meta.json").exists() and (parent / "tokenizer").exists():
@@ -488,12 +426,7 @@ class ModelStore:
         return None
 
     def _download_file(self, url: str, dest_path: Path, max_retries: int = 3) -> None:
-        """
-        Download a file with retry logic.
-        
-        Uses Path.suffixes to correctly handle compound extensions like .tar.gz,
-        rather than relying on Path.suffix which only returns the last part.
-        """
+        """Download a file with retry logic."""
         for attempt in range(max_retries):
             try:
                 print(f"   📥 Downloading... ({url[:60]}...)")
@@ -507,7 +440,6 @@ class ModelStore:
                 )
                 
                 with urllib.request.urlopen(req, timeout=60) as response:
-                    # Handle redirects
                     if response.geturl() != url:
                         print(f"   ↪️  Redirected to: {response.geturl()}")
                     
@@ -516,7 +448,7 @@ class ModelStore:
                     
                     with open(dest_path, 'wb') as f:
                         while True:
-                            chunk = response.read(65536)  # 64KB chunks
+                            chunk = response.read(65536)
                             if not chunk:
                                 break
                             f.write(chunk)
@@ -528,11 +460,10 @@ class ModelStore:
                                     total_bytes=total_size
                                 ))
                 
-                # Verify download — use suffixes to handle compound extensions
                 if dest_path.exists() and dest_path.stat().st_size > 0:
                     suffixes = [s.lower() for s in dest_path.suffixes]
-                    is_zip  = ".whl" in suffixes or ".zip" in suffixes
-                    is_tar  = ".tar" in suffixes or ".tgz" in suffixes
+                    is_zip = ".whl" in suffixes or ".zip" in suffixes
+                    is_tar = ".tar" in suffixes or ".tgz" in suffixes
 
                     if is_zip:
                         with zipfile.ZipFile(dest_path, 'r') as zf:
@@ -563,27 +494,12 @@ class ModelStore:
         shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
 
     def _optimize_spacy_model(self, model_path: Path) -> None:
-        """
-        Remove unnecessary spaCy components to save space.
-
-        Only removes specific named components that are confirmed safe to drop
-        for concept extraction. Preserves vocab/lookups needed for lemmatization.
-        """
-        # Pipeline components not needed for concept extraction
+        """Remove unnecessary spaCy components to save space."""
         removable_components = [
-            "textcat",
-            "textcat_multilabel",
-            "entity_linker",
-            "entity_ruler",
-            "sentiment",
+            "textcat", "textcat_multilabel", "entity_linker",
+            "entity_ruler", "sentiment",
         ]
-
-        # Specific non-component files/dirs that are safe to drop
-        removable_files = [
-            "training",
-            "train",
-            "accuracy.json",
-        ]
+        removable_files = ["training", "train", "accuracy.json"]
 
         for component in removable_components + removable_files:
             comp_path = model_path / component
@@ -596,7 +512,6 @@ class ModelStore:
                 except Exception:
                     pass
 
-        # Remove only onnx/pt exports — NOT vocab/*.bin or lookups files
         for pattern in ["*.onnx"]:
             for f in model_path.glob(pattern):
                 try:
@@ -604,7 +519,6 @@ class ModelStore:
                 except Exception:
                     pass
 
-        # Safe to remove: top-level .pt files that are optimizer/checkpoint
         safe_pt_names = {"optimizer.pt", "scheduler.pt"}
         for f in model_path.glob("*.pt"):
             if f.name in safe_pt_names:
@@ -613,29 +527,16 @@ class ModelStore:
                 except Exception:
                     pass
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # Public API
-    # ═══════════════════════════════════════════════════════════════════════
-
     def ensure(self, key: str, force: bool = False) -> Path:
-        """
-        Ensure model is downloaded and valid.
-
-        Raises IntegrityError if download validation fails so callers always
-        get a valid path or a clear exception.
-        """
+        """Ensure model is downloaded and valid."""
         if not self.is_downloaded(key) or force:
             self.download(key, force=force)
         
         path = self.model_path(key)
         
         if not self.is_downloaded(key):
-            # First download passed without raising but verification failed.
-            # Wipe and retry once with force=True.
             shutil.rmtree(path, ignore_errors=True)
             self.download(key, force=True)
-
-            # If still not valid after the forced retry, give up loudly.
             if not self.is_downloaded(key):
                 raise IntegrityError(
                     f"Model '{key}' failed verification after forced re-download. "

@@ -9,10 +9,46 @@ from typing import List, Optional
 from src.core.Chunking.ChunkerUtils import ChunkLink, OverlapDirection
 from src.core.Chunking.Chunker import Chunk
 
+from enum import Enum
+
 
 # ============================================================================
 # Data model
 # ============================================================================
+
+
+class OverlapDirection(str, Enum):
+    """
+    Describes which side(s) of a chunk carry overlap sentences.
+
+    NONE   — no overlap; chunk is self-contained
+    LEFT   — chunk *opens* with sentences repeated from the tail of the
+             previous chunk  (this chunk "looks left")
+    RIGHT  — chunk *closes* with sentences repeated at the head of the
+             next chunk  (this chunk "donates right")
+    BOTH   — interior window: received from the left AND donates to the right
+
+    Use str-Enum so the value serialises cleanly to JSON as a plain string
+    ("none", "left", "right", "both") without needing a custom encoder.
+    """
+    NONE  = "none"
+    LEFT  = "left"
+    RIGHT = "right"
+    BOTH  = "both"
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data model
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class ChunkLink:
+    """A hyperlink scoped to a chunk."""
+    url:  str
+    text: str = ""
+
+
 
 @dataclass
 class SematicSearchResult:
@@ -35,7 +71,7 @@ class SematicSearchResult:
 # Constants
 # ============================================================================
 
-DEFAULT_TOP_K = 5
+DEFAULT_TOP_K =  80
 DEFAULT_MIN_SCORE = 0.0
 
 

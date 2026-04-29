@@ -27,6 +27,7 @@ uv run src/core/KeywordSearch/main.py "DNA replication" --inspect
 import sys
 import argparse
 import time
+import asyncio
 from pathlib import Path
 from typing import List
 
@@ -35,9 +36,9 @@ if __name__ == "__main__":
 
 from src.core.Search.Keyword.KeywordSearch import (
     search_across_documents_keyword,
-    KeywordSearchResult,
 )
 from src.core.Search.Keyword.KeywordUtilities import (
+    KeywordSearchResult,
     KeywordSearchArgs,
     DEFAULT_TOP_K,
     DEFAULT_K1,
@@ -47,8 +48,9 @@ from src.core.Search.Keyword.KeywordUtilities import (
 )
 from src.lib.Utils import scan_folder
 from src.core.Storage.DarwinStore import DarwinStore
-from src.lib.Terminal import TerminalUI
 from src.core.Models import setup
+from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ============================================================================
@@ -57,199 +59,150 @@ from src.core.Models import setup
 
 def _print_inspection(results: List[KeywordSearchResult], query: str) -> None:
     """Print detailed inspection of keyword search results."""
-    TerminalUI.blank()
-    TerminalUI.rule(f"keyword search inspection — '{query}'")
-    TerminalUI.blank()
+    darwin.log("")
+    darwin.log(f"── keyword search inspection — '{query}' ──", LogType.INFO)
+    darwin.log("")
     
-    TerminalUI.table(
-        headers=["metric", "value"],
-        rows=[
-            ["total results", str(len(results))],
-            ["top score", f"{results[0].score:.4f}" if results else "N/A"],
-            ["lowest score", f"{results[-1].score:.4f}" if results else "N/A"],
-        ],
-    )
+    darwin.log("  metric              value", LogType.INFO)
+    darwin.log("  ──────────────────  ─────", LogType.INFO)
+    darwin.log(f"  total results       {len(results)}", LogType.INFO)
+    top_score = f"{results[0].score:.4f}" if results else "N/A"
+    darwin.log(f"  top score           {top_score}", LogType.INFO)
+    low_score = f"{results[-1].score:.4f}" if results else "N/A"
+    darwin.log(f"  lowest score        {low_score}", LogType.INFO)
+    darwin.log("")
     
-    TerminalUI.blank()
-    TerminalUI.dim("── top results ──")
-    TerminalUI.blank()
+    darwin.log("── top results ──", LogType.INFO)
+    darwin.log("")
     
     for i, r in enumerate(results[:5], 1):
-        TerminalUI.info("rank", str(i))
-        TerminalUI.info("score", f"{r.score:.4f}")
-        TerminalUI.info("source", r.source)
-        TerminalUI.info("page", str(r.page))
-        TerminalUI.info("heading", r.heading or "(none)")
-        TerminalUI.info("matches", ", ".join(r.matched_terms))
-        TerminalUI.blank()
+        darwin.log(f"  rank:     {i}", LogType.INFO)
+        darwin.log(f"  score:    {r.score:.4f}", LogType.INFO)
+        darwin.log(f"  source:   {r.source}", LogType.INFO)
+        darwin.log(f"  page:     {r.page}", LogType.INFO)
+        darwin.log(f"  heading:  {r.heading or '(none)'}", LogType.INFO)
+        darwin.log(f"  matches:  {', '.join(r.matched_terms)}", LogType.INFO)
+        darwin.log("")
         
-        # Show first 500 chars
         preview = r.text[:500].replace("\n", " ").strip()
         if len(r.text) > 500:
             preview += "..."
-        TerminalUI.dim(f"  {preview}")
-        TerminalUI.blank()
-        TerminalUI.divider()
-        TerminalUI.blank()
+        darwin.log(f"  {preview}", LogType.INFO)
+        darwin.log("")
+        darwin.log("─" * 40, LogType.INFO)
+        darwin.log("")
     
-    TerminalUI.rule()
+    darwin.log("─" * 60, LogType.INFO)
 
-def _is_kw_searchable(filename :  str | None, status) -> bool:
+
+def _is_kw_searchable(filename: str | None, status: dict) -> bool:
     """Determine which files to search based on args and registry status."""
     if filename is None:
         return False
         
     key = Path(filename).name
     file_data = status.get("files", {}).get(key)
-    print(file_data)
     if file_data is None:
         return False
-    return file_data.get("is_kw_searchable")
-    
-
-
+    return file_data.get("is_kw_searchable", False)
 
 
 # ============================================================================
-# Fancy Search with Spinner
+# Search wrapper
 # ============================================================================
 
 def _search_wrapper(
     store: DarwinStore,
     args: KeywordSearchArgs,
 ) -> List[KeywordSearchResult]:
-    """
-    Execute search with fancy spinner animation.
-    """
-    # Determine search scope for spinner message
+    """Execute search and return results."""
     status = store.status()
     tobe_searched = []
     
     if args.file:
-        if not _is_kw_searchable(args.file,status):
-            TerminalUI.dim(f"Cannot search {args.file} the file is not searchable")
+        if not _is_kw_searchable(args.file, status):
+            darwin.log(f"Cannot search {args.file} — the file is not searchable", LogType.ERROR)
             return []
         
         tobe_searched = [args.file]
-        TerminalUI.dim(f"Searching {args.file} for {args.query}")
+        darwin.log(f"Searching {args.file} for '{args.query}'", LogType.INFO)
     else:
-        # Count available files with BM25 indexes
-        raw_files =[str(f) for f in scan_folder()]
-        TerminalUI.dim(f"Found {len(raw_files)} supported files in {Path.cwd()}")
+        raw_files = [str(f) for f in scan_folder()]
+        darwin.log(f"Found {len(raw_files)} supported files in {Path.cwd()}", LogType.INFO)
         tobe_searched = [
-        r.original_name
-        for r in store.registry.list_kw_searchable()
-    ]
-        TerminalUI.dim(f"Searching {len(tobe_searched)} files for {args.query}")
+            r.original_name
+            for r in store.registry.list_kw_searchable()
+        ]
+        darwin.log(f"Searching {len(tobe_searched)} files for '{args.query}'", LogType.INFO)
     
+    if not tobe_searched:
+        darwin.log("No searchable files found. Run BM25 indexing first.", LogType.WARNING)
+        return []
     
-    results = []
+    start_time = time.perf_counter()
     
+    results = search_across_documents_keyword(
+        filenames=tobe_searched,
+        query=args.query,
+        store=store,
+        top_k=args.top_k,
+        k1=args.k1,
+        b=args.b,
+    )
     
-    with TerminalUI.spinner_progress(
-    ) as (progress, task_id):
-        
-        # Simulate search time (optional - makes spinner visible for fast searches)
-        start_time = time.perf_counter()
-        
-        results = search_across_documents_keyword(
-                filenames=tobe_searched,
-                query=args.query,
-                store=store,
-                top_k=args.top_k,
-            )
+    elapsed = time.perf_counter() - start_time
     
-        elapsed = time.perf_counter() - start_time
-        if elapsed < 0.5:
-            time.sleep(0.5 - elapsed)
-        
-        # Update spinner with completion message
-        if results:
-            progress.update(
-                task_id,
-                description=f"[green]✓ Found {len(results)} results[/green] for '[cyan]{args.query}[/cyan]'"
-            )
-        else:
-            progress.update(
-                task_id,
-                description=f"[yellow]⚠ No results found[/yellow] for '[cyan]{args.query}[/cyan]'"
-            )
+    if results:
+        darwin.log(f"Found {len(results)} results in {elapsed:.2f}s", LogType.SUCCESS)
+    else:
+        darwin.log(f"No results found for '{args.query}'", LogType.WARNING)
     
     return results
 
 
 # ============================================================================
-# Results Display with Animation
+# Results Display
 # ============================================================================
 
 def _display_search_results(results: List[KeywordSearchResult], args: KeywordSearchArgs) -> None:
-    """Display results with fancy formatting."""
+    """Display results with formatting."""
     
     if not results:
-        TerminalUI.blank()
-        TerminalUI.panel(
-            f"No results found for '[cyan]{args.query}[/cyan]'\n\n"
-            "Try:\n"
-            "  • Using fewer or different keywords\n"
-            "  • Checking spelling\n"
-            "  • Searching a specific file with --file",
-            title=" Search Results",
-            border_style="yellow"
-        )
+        darwin.log("")
+        darwin.log(f"No results found for '{args.query}'", LogType.WARNING)
+        darwin.log("")
+        darwin.log("Try:", LogType.INFO)
+        darwin.log("  • Using fewer or different keywords", LogType.INFO)
+        darwin.log("  • Checking spelling", LogType.INFO)
+        darwin.log("  • Searching a specific file with --file", LogType.INFO)
         return
     
-    TerminalUI.blank()
+    darwin.log("")
+    darwin.log(f"Found {len(results)} results for '{args.query}'", LogType.SUCCESS)
+    darwin.log("")
     
-    # Animated count reveal (optional - feels premium)
-    TerminalUI.success(f"Found {len(results)} results for '[cyan]{args.query}[/cyan]'")
-    TerminalUI.blank()
+    # Results table
+    darwin.log("  #    Score       Source                  Page  Preview", LogType.INFO)
+    darwin.log("  ───  ──────────  ──────────────────────  ────  ───────", LogType.INFO)
     
-    # Table view with color-coded scores
-    table_rows = []
     for i, r in enumerate(results[:args.top_k], 1):
         preview = r.text[:60].replace('\n', ' ').strip()
-        
-        # Color code scores
-        if r.score > 10:
-            score_display = f"[green]{r.score:.3f}[/green]"
-        elif r.score > 5:
-            score_display = f"[yellow]{r.score:.3f}[/yellow]"
-        else:
-            score_display = f"[dim]{r.score:.3f}[/dim]"
-        
-        table_rows.append([
-            str(i),
-            score_display,
-            r.source[:25],
-            str(r.page),
-            preview + "..."
-        ])
+        darwin.log(f"  {i:<4} {r.score:.3f}      {r.source[:25]:<25}  {r.page:<4}  {preview}...", LogType.INFO)
     
-    TerminalUI.table(
-        headers=["#", "Score", "Source", "Page", "Preview"],
-        rows=table_rows,
-        title=f"BM25 Search Results (k1={args.k1}, b={args.b})"
-    )
-    
-    # Show LLM context preview with animation feel
-    TerminalUI.blank()
-    TerminalUI.divider("LLM Context Preview")
-    TerminalUI.blank()
+    # LLM context preview
+    darwin.log("")
+    darwin.log("── LLM Context Preview ──", LogType.INFO)
+    darwin.log("")
     
     context = to_llm_context(results, max_chunks=3)
-    TerminalUI.panel(
-        context, 
-        title="Ready for LLM", 
-        border_style="cyan"
-    )
+    darwin.log(context, LogType.INFO)
     
-    # Show search stats
-    TerminalUI.blank()
-    TerminalUI.dim(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    TerminalUI.dim(f"  BM25 parameters: k1={args.k1}, b={args.b}")
-    TerminalUI.dim(f"  Top score: {results[0].score:.3f}")
-    TerminalUI.dim(f"  Sources: {len(set(r.source for r in results))} files")
-    TerminalUI.dim(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    # Search stats
+    darwin.log("")
+    darwin.log(f"  BM25 parameters: k1={args.k1}, b={args.b}", LogType.INFO)
+    darwin.log(f"  Top score: {results[0].score:.3f}", LogType.INFO)
+    darwin.log(f"  Sources: {len(set(r.source for r in results))} files", LogType.INFO)
+    darwin.log("")
 
 
 # ============================================================================
@@ -259,59 +212,37 @@ def _display_search_results(results: List[KeywordSearchResult], args: KeywordSea
 def handle_keyword_search(args: KeywordSearchArgs) -> None:
     store = DarwinStore()
     
+    darwin.log("")
+    darwin.log("Keyword Search", LogType.INFO)
+    darwin.log(f"Query: {args.query}", LogType.INFO)
+    darwin.log(f"BM25: k1={args.k1}, b={args.b}", LogType.INFO)
+    darwin.log(f"Top-K: {args.top_k}", LogType.INFO)
+    darwin.log(f"Scope: {args.file if args.file else 'all documents'}", LogType.INFO)
+    darwin.log("")
     
-    TerminalUI.print_darwin()
-    TerminalUI.blank()
-    
-    # Show search configuration
-    config_panel = (
-        f"[cyan]Keyword Search[/cyan]\n"
-        f"[cyan]Query:[/cyan] {args.query}\n"
-        f"[cyan]BM25:[/cyan] k1={args.k1}, b={args.b}\n"
-        f"[cyan]Top-K:[/cyan] {args.top_k}\n"
-        f"[cyan]Scope:[/cyan] {args.file if args.file else 'all documents'}"
-    )
-    TerminalUI.panel(config_panel, title="Keyword Search", border_style="cyan")
-    TerminalUI.blank()
     setup()
-
     
     results = _search_wrapper(store, args)
-    
-    
     _display_search_results(results, args)
     
-    # Inspection mode
     if args.inspect and results:
         _print_inspection(results, args.query)
     
-    # JSON output if requested
     if args.json_output:
-        TerminalUI.blank()
-        TerminalUI.dim("── JSON Output ──")
+        darwin.log("── JSON Output ──", LogType.INFO)
         print(format_keyword_results(results, json_output=True))
 
 
 # ============================================================================
 # CLI
-# =============
-def main() -> int:
+# ============================================================================
+
+async def main() -> int:
     parser = argparse.ArgumentParser(
         description="BM25 keyword search over indexed documents"
     )
-    
-    # Make query flexible - positional OR flag
-    parser.add_argument(
-        "query", 
-        nargs="?",  # Optional positional
-        default=None,
-        help="Search query string"
-    )
-    parser.add_argument(
-        "--query", "-q", 
-        dest="query_flag",
-        help="Search query (alternative to positional)"
-    )
+    parser.add_argument("query", nargs="?", default=None, help="Search query string")
+    parser.add_argument("--query", "-q", dest="query_flag", help="Search query (alternative)")
     parser.add_argument("--file", "-f", default=None, help="Search specific file")
     parser.add_argument("--project", "-p", default=None, help="Project directory")
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K)
@@ -319,29 +250,47 @@ def main() -> int:
     parser.add_argument("--b", type=float, default=DEFAULT_B)
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--json", "-j", action="store_true")
-    
+    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
+    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+
     args = parser.parse_args()
     
-    # Resolve query from either source
     query = args.query or args.query_flag
     
     if not query:
         parser.error("Query required (either as positional or --query)")
 
+    # Setup WebSocket
+    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
 
-    handle_keyword_search(KeywordSearchArgs(
-        query=query,
-        file=args.file,
-        project=args.project,
-        top_k=args.top_k,
-        k1=args.k1,
-        b=args.b,
-        inspect=args.inspect,
-        json_output=args.json,
-    ))
-    
-    return 0
+    try:
+        search_args = KeywordSearchArgs(
+            query=query,
+            file=args.file,
+            project=args.project,
+            top_k=args.top_k,
+            k1=args.k1,
+            b=args.b,
+            inspect=args.inspect,
+            json_output=args.json,
+        )
+        
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, handle_keyword_search, search_args)
+        return 0
+
+    except KeyboardInterrupt:
+        darwin.log("")
+        darwin.log("Goodbye!", LogType.INFO)
+        return 130
+    except Exception as e:
+        import traceback
+        darwin.log(f"Fatal error: {e}", LogType.ERROR)
+        darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
+        return 1
+    finally:
+        shutdown_websocket(ws_server)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    asyncio.run(main())

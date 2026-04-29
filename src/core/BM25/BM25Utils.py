@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 from src.core.Chunking.ChunkerUtils import Chunk
-from src.lib.Terminal import TerminalUI
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -140,7 +140,7 @@ def _blingfire_words(text: str) -> List[str]:
         from blingfire import text_to_words
         return text_to_words(text).split()
     except ImportError:
-        TerminalUI.warn("BlingFire not available — using regex fallback")
+        darwin.log("BlingFire not available — using regex fallback", LogType.WARNING)
         return re.findall(r"[a-zA-Z]{2,}", text)
 
 
@@ -214,14 +214,14 @@ def detect_domain_stopwords(
     for chunk in chunks:
         doc_freq.update(set(re.findall(r"[a-zA-Z]{3,}", chunk.clean.lower())))
 
-    n  = len(chunks)
+    n = len(chunks)
     stops = {term for term, count in doc_freq.items() if count / n > threshold}
 
     if stops:
         preview = ", ".join(sorted(stops, key=lambda t: doc_freq[t], reverse=True)[:10])
-        TerminalUI.dim(f"Domain stops ({len(stops)}): {preview}…")
+        darwin.log(f"Domain stops ({len(stops)}): {preview}…", LogType.INFO)
     else:
-        TerminalUI.dim("No domain stopwords detected")
+        darwin.log("No domain stopwords detected", LogType.INFO)
 
     return stops
 
@@ -277,6 +277,6 @@ def extract_phrases(query: str) -> Tuple[List[str], List[List[str]]]:
             phrases.append(tokens)
         return " "
 
-    remaining  = re.sub(r'"([^"]+)"', _collect_phrase, query)
+    remaining = re.sub(r'"([^"]+)"', _collect_phrase, query)
     individual = tokenize_text(remaining)
     return individual, phrases

@@ -1,4 +1,3 @@
-
 """
 src/core/Storage/StoreArtifacts.py
 -----------------------------------
@@ -22,8 +21,8 @@ import numpy as np
 from src.core.Chunking.ChunkerUtils import Chunk
 from src.core.Parsing.ParserUtils import ParsedDocument
 from src.core.Storage.StoreUtils import file_hash, now, read_json, write_json
-from src.lib.Terminal import TerminalUI
 from src.core.BM25.BM25Utils import BM25Data
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -42,23 +41,18 @@ def _chunk_from_dict(raw: dict) -> Chunk:
 
 
 def _normalize_model_name(name: str) -> str:
-    """
-    Convert any model identifier to the canonical model_id.
-    Handles both registry keys and model_ids.
-    """
+    """Convert any model identifier to the canonical model_id."""
     from src.core.Models.ModelRegistry import REGISTRY
     
-    # If it's a registry key, convert to model_id
     if name in REGISTRY:
         return REGISTRY[name].model_id
     
-    # If it's already a model_id, check if any spec uses it
     id_to_key = {spec.model_id: key for key, spec in REGISTRY.items()}
     if name in id_to_key:
         return name
     
-    # Unknown - return as-is
     return name
+
 
 def _get_current_model_name() -> str:
     """Resolve the currently active embedding model name (full model_id)."""
@@ -67,7 +61,7 @@ def _get_current_model_name() -> str:
         loader = get_loader()
         return loader.get_model_key(ModelCategory.EMBEDDING)
     except Exception as e:
-        TerminalUI.error(f"Failed to detect current model: {e}")
+        darwin.log(f"Failed to detect current model: {e}", LogType.ERROR)
         return "unknown"
     
 
@@ -79,8 +73,8 @@ def _get_current_model_dimensions() -> int:
         key = loader.get_model_key(ModelCategory.EMBEDDING)
         dims = {
             "intfloat/e5-small-v2": 384,
-            "BAAI/bge-m3":      1024,
-            "GritLM/GritLM-7B":   4096,
+            "BAAI/bge-m3": 1024,
+            "GritLM/GritLM-7B": 4096,
         }
         return dims.get(key, 0)
     except Exception:
@@ -92,18 +86,13 @@ def _get_current_model_dimensions() -> int:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class _PathResolverMixin:
-    """
-    Bridge between calling code (bare filenames) and StorePaths (file hashes).
-
-    All artifact mixins inherit this. The registry is the source of truth —
-    a file must be registered before any artifact can be saved for it.
-    """
+    """Bridge between calling code (bare filenames) and StorePaths (file hashes)."""
 
     def _record_for(self, filename: str):
         """Return the FileRecord for a bare filename. Raises KeyError if missing."""
         record = self.registry._find_by_name(filename)
         if record is None:
-            TerminalUI.error(f"File '{filename}' is not registered. Register it before saving artifacts.")
+            darwin.log(f"File '{filename}' is not registered. Register it before saving artifacts.", LogType.ERROR)
             return None
         return record
 
@@ -133,10 +122,6 @@ class MetaMixin(_PathResolverMixin):
     """Handles meta.json read/write and file freshness checks."""
 
     def _update_meta(self, filename: str, component: str, extras: dict | None = None) -> None:
-        """
-        Record that `component` was just processed for `filename`.
-        All pipeline stages call this so meta.json is an audit trail.
-        """
         meta_path = self._dir_for(filename) / "meta.json"
         meta = read_json(meta_path) or {
             "filename":   filename,
@@ -162,10 +147,6 @@ class MetaMixin(_PathResolverMixin):
         return read_json(self._dir_for(filename) / "meta.json") or {}
 
     def is_fresh(self, filename: str) -> bool:
-        """
-        True when the source file's MD5 hash matches the stored hash.
-        A stale result means the file changed since last processing.
-        """
         meta_path = self._dir_for(filename) / "meta.json"
         if not meta_path.exists():
             return False
@@ -182,12 +163,7 @@ class MetaMixin(_PathResolverMixin):
 # ═══════════════════════════════════════════════════════════════════════════
 
 class ConfigMixin:
-    """
-    Handles config.json (global user preferences).
-
-    This stores what the user WANTS — not what actually happened per file.
-    Per-file state lives in meta.json, embeddings.meta.json, and vector.json.
-    """
+    """Handles config.json (global user preferences)."""
 
     def load_config(self) -> dict:
         return read_json(self.paths.config_path) or {}
@@ -201,16 +177,11 @@ class ConfigMixin:
         self.save_config(config)
 
     def get_user_embedding_model(self) -> str:
-        """The model the user selected during onboarding/settings."""
         return self.load_config().get("embedding_model", "unknown")
 
     def set_user_embedding_model(self, model_name: str) -> None:
-        """Called when the user changes their embedding model preference."""
         self.update_config(embedding_model=model_name)
-        TerminalUI.info(
-            label="Embedding model updated",
-            value=f"New files will use {model_name}. Existing files may need re-embedding."
-        )
+        darwin.log(f"Embedding model updated — new files will use {model_name}. Existing files may need re-embedding.", LogType.INFO)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -223,15 +194,12 @@ class MarkdownMixin(_PathResolverMixin):
         return (self._dir_for(filename) / "markdown.md").exists()
 
     def save_markdown(self, filename: str, doc: ParsedDocument) -> None:
-        
         if doc.error:
-            TerminalUI.info("Markdown Error", f"Skipping {filename}: {doc.error}")
+            darwin.log(f"Skipping markdown save for {filename}: {doc.error}", LogType.INFO)
             return
-        
 
         d = self._dir_for(filename)
         md_path = d / "markdown.md"
-
 
         try:
             md_path.write_text(doc.embedding_text, encoding="utf-8")
@@ -249,19 +217,19 @@ class MarkdownMixin(_PathResolverMixin):
                     **extras
                 )
 
-            TerminalUI.success(f"Markdown saved: {md_path.name}")
+            darwin.log(f"Markdown saved: {md_path.name}", LogType.SUCCESS)
         except Exception as e:
-            TerminalUI.error(f"Failed to save markdown for {filename}: {e}")
+            darwin.log(f"Failed to save markdown for {filename}: {e}", LogType.ERROR)
 
     def load_markdown(self, filename: str) -> str | None:
         md_path = self._dir_for(filename) / "markdown.md"
         if not md_path.exists():
-            TerminalUI.error(f"Markdown not found for {filename}")
+            darwin.log(f"Markdown not found for {filename}", LogType.ERROR)
             return None
         try:
             return md_path.read_text(encoding="utf-8")
         except Exception as e:
-            TerminalUI.error(f"Error reading markdown for {filename}: {e}")
+            darwin.log(f"Error reading markdown for {filename}: {e}", LogType.ERROR)
             return None
 
 
@@ -281,7 +249,7 @@ class ChunksMixin(_PathResolverMixin):
         chunk_meta: dict | None = None,
     ) -> None:
         if not chunks:
-            TerminalUI.error(f"No chunks to save for {filename}")
+            darwin.log(f"No chunks to save for {filename}", LogType.ERROR)
             return
         
         d = self._dir_for(filename)
@@ -291,12 +259,11 @@ class ChunksMixin(_PathResolverMixin):
         self._update_meta(filename, "chunks", extras=extras)
         record = self._record_for(filename)
         if record:
-                self.registry.update_pipeline(
-                    record.last_seen_path or filename,
-                    "chunks",
-                    **extras
-                )
-
+            self.registry.update_pipeline(
+                record.last_seen_path or filename,
+                "chunks",
+                **extras
+            )
 
     def load_chunks(self, filename: str) -> list[Chunk]:
         path = self._dir_for(filename) / "chunks.json"
@@ -321,8 +288,6 @@ class VectorMixin(_PathResolverMixin):
         vectors: np.ndarray,
         chunk_ids: list[str],
     ) -> None:
-        """Build and save USearch index with per-file model metadata."""
-        
         if len(vectors) != len(chunk_ids):
             raise ValueError(
                 f"vectors ({len(vectors)}) and chunk_ids ({len(chunk_ids)}) must be the same length."
@@ -342,32 +307,29 @@ class VectorMixin(_PathResolverMixin):
         index.save(str(d / "vector.usearch"))
 
         meta_data = {
-            "dimension":     dimension,
-            "chunk_ids":     chunk_ids,
+            "dimension": dimension,
+            "chunk_ids": chunk_ids,
             "total_vectors": len(vectors),
-            "embedding_model":         model_name,
-            "created_at":    now(),
+            "embedding_model": model_name,
+            "created_at": now(),
         }
         write_json(d / "vector.json", meta_data)
 
         self._update_meta(filename, "vector", extras={
-            "vector_model":     model_name,
+            "vector_model": model_name,
             "vector_dimension": dimension,
         })
 
         record = self._record_for(filename)
         if record:
-                self.registry.update_pipeline(
-                    record.last_seen_path or filename,
-                    "vector")
+            self.registry.update_pipeline(record.last_seen_path or filename, "vector")
 
-        TerminalUI.success(f"Vector index saved: {len(vectors)} vectors")
+        darwin.log(f"Vector index saved: {len(vectors)} vectors", LogType.SUCCESS)
 
     def load_vector(self, filename: str):
-        """Load USearch index and return (index, chunk_ids)."""
         d = self._dir_for(filename)
         index_path = d / "vector.usearch"
-        meta_path  = d / "vector.json"
+        meta_path = d / "vector.json"
 
         if not index_path.exists() or not meta_path.exists():
             raise FileNotFoundError(f"No vector index found for '{filename}'")
@@ -375,25 +337,22 @@ class VectorMixin(_PathResolverMixin):
         meta = read_json(meta_path)
         stored_model = meta.get("embedding_model", "unknown")
         current_model = _get_current_model_name()
-        
-        TerminalUI.info("Model Comparison", 
-            f"Stored: '{stored_model}' | Current: '{current_model}' | "
-            f"Match: {stored_model == current_model}"
-        )
 
         if stored_model != current_model and stored_model != "unknown":
-            TerminalUI.warn(
-                f"⚠️  Vector index for '{filename}' was built with '{stored_model}' "
-                f"but your current embedding model is '{current_model}'.\n"
-                f"    Search results will be wrong. Run 'darwin reindex' to rebuild."
+            darwin.log(
+                f"Vector index for '{filename}' was built with '{stored_model}' "
+                f"but current model is '{current_model}'. Search results will be wrong. "
+                f"Run 'darwin reindex' to rebuild.",
+                LogType.WARNING
             )
             return None, None
         
         expected_dim = _get_current_model_dimensions()
         if expected_dim and meta.get("dimension") != expected_dim:
-            TerminalUI.warn(
-                f"⚠️  Vector dimension mismatch: index has {meta['dimension']}d "
-                f"but current model expects {expected_dim}d. Re-embedding required."
+            darwin.log(
+                f"Vector dimension mismatch: index has {meta['dimension']}d "
+                f"but current model expects {expected_dim}d. Re-embedding required.",
+                LogType.WARNING
             )
             return None, None
 
@@ -407,9 +366,7 @@ class VectorMixin(_PathResolverMixin):
         query_vec: np.ndarray,
         k: int = 10,
     ) -> list[tuple[str, float]]:
-        """Search vector index and return (chunk_id, score) pairs."""
         index, chunk_ids = self.load_vector(filename)
-
         if index is None or chunk_ids is None:
             return []
 
@@ -438,14 +395,12 @@ class VectorMixin(_PathResolverMixin):
         return results
 
     def load_vector_metadata(self, filename: str) -> Optional[dict]:
-        """Return per-file vector metadata (model, dimension, chunk_ids)."""
         path = self._dir_for(filename) / "vector.json"
         if not path.exists():
             return None
         return read_json(path)
 
     def is_vector_compatible(self, filename: str) -> bool:
-        """Quick check: can we search this file's index with the current model?"""
         try:
             index, chunk_ids = self.load_vector(filename)
             return index is not None and chunk_ids is not None
@@ -471,12 +426,8 @@ class EmbeddingsMixin(_PathResolverMixin):
         chunks: list[Chunk],
         model_name: str = None,
     ) -> None:
-        """
-        Save vectors + chunk metadata as a single .npz bundle.
-        Per-file model metadata is saved alongside for mismatch detection.
-        """
         if chunks is None or len(chunks) == 0:
-            TerminalUI.error(f"No chunks provided for embedding save of {filename}")
+            darwin.log(f"No chunks provided for embedding save of {filename}", LogType.ERROR)
             return
 
         if model_name is None:
@@ -484,7 +435,7 @@ class EmbeddingsMixin(_PathResolverMixin):
         
         model_name = _normalize_model_name(model_name)
 
-        fh   = self._hash_for(filename)
+        fh = self._hash_for(filename)
         path = self.paths.npz_path(fh, model_name)
 
         if len(vectors) != len(chunks):
@@ -493,52 +444,54 @@ class EmbeddingsMixin(_PathResolverMixin):
             )
 
         try:
+            import json
             np.savez_compressed(
                 path,
-                vectors  = vectors.astype(np.float32),
-                text     = np.array([c.text    for c in chunks], dtype=object),
-                clean    = np.array([c.clean   for c in chunks], dtype=object),
-                headings = np.array([c.heading for c in chunks], dtype=object),
-                pages    = np.array([c.page    for c in chunks], dtype=np.int32),
-                source   = np.array([c.source  for c in chunks], dtype=object),
-            )
-
+                vectors=vectors.astype(np.float32),
+                text=np.array([c.text for c in chunks], dtype=object),
+                clean=np.array([c.clean for c in chunks], dtype=object),
+                headings=np.array([c.heading for c in chunks], dtype=object),
+                pages=np.array([c.page for c in chunks], dtype=np.int32),
+                pages_end=np.array([c.page_end for c in chunks], dtype=np.int32),
+                overlap_direction=np.array([c.overlap_direction.value for c in chunks], dtype=object),
+                token_counts=np.array([c.token_count for c in chunks], dtype=np.int32),
+                source=np.array([c.source for c in chunks], dtype=object),
+                # links are more complex - need JSON serialization
+                links_json=np.array([json.dumps([{"url": l.url, "text": l.text} for l in c.links]) for c in chunks], dtype=object),
+)
             meta_path = path.with_suffix(".meta.json")
             write_json(meta_path, {
-                "embedding_model":  model_name,
-                "dimensions":  vectors.shape[1],
+                "embedding_model": model_name,
+                "dimensions": vectors.shape[1],
                 "chunk_count": len(chunks),
-                "created_at":  now(),
+                "created_at": now(),
             })
 
             self._update_meta(filename, "embeddings", extras={
-                "embedding_model":      model_name,
+                "embedding_model": model_name,
                 "embedding_dimensions": vectors.shape[1],
             })
             record = self._record_for(filename)
             if record:
-                self.registry.update_pipeline(
-                record.last_seen_path or filename,
-                "embeddings")
+                self.registry.update_pipeline(record.last_seen_path or filename, "embeddings")
                 
-            TerminalUI.success(f"Saved embeddings: {path.name}")
+            darwin.log(f"Saved embeddings: {path.name}", LogType.SUCCESS)
 
         except Exception as e:
-            TerminalUI.error(f"Failed to save embeddings for {filename}: {e}")
+            darwin.log(f"Failed to save embeddings for {filename}: {e}", LogType.ERROR)
 
-    def load_embeddings(self, filename: str) -> dict:
-        """
-        Load the NPZ bundle. Warns if the stored model differs from the
-        user's current preference.
-        """
+    
+
+    def load_embeddings(self, filename: str) -> tuple[np.ndarray, list[Chunk]]:
+        """Load embeddings and return (vectors, chunks)."""
         current_model = _get_current_model_name()
-        fh   = self._hash_for(filename)
+        fh = self._hash_for(filename)
         path = self.paths.npz_path(fh, current_model)
 
         if not path.exists():
             meta_path = self._dir_for(filename) / "meta.json"
             if meta_path.exists():
-                file_meta    = read_json(meta_path)
+                file_meta = read_json(meta_path)
                 stored_model = file_meta.get("embedding_model", "unknown")
                 if stored_model != "unknown" and stored_model != current_model:
                     raise FileNotFoundError(
@@ -551,32 +504,62 @@ class EmbeddingsMixin(_PathResolverMixin):
             )
 
         meta_path = path.with_suffix(".meta.json")
-        
         if meta_path.exists():
-            stored_meta  = read_json(meta_path)
+            stored_meta = read_json(meta_path)
             stored_model = stored_meta.get("embedding_model", "unknown")
-
             if stored_model != current_model and stored_model != "unknown":
-                TerminalUI.warn(
-                    f"⚠️  Embeddings were created with '{stored_model}' "
-                    f"but current model is '{current_model}'. "
-                    f"Re-embedding recommended."
+                darwin.log(
+                    f"Embeddings were created with '{stored_model}' "
+                    f"but current model is '{current_model}'. Re-embedding recommended.",
+                    LogType.WARNING
                 )
 
         data = np.load(path, allow_pickle=True)
-        return {
-            "vectors":  data["vectors"],
-            "text":     data["text"].tolist(),
-            "clean":    data["clean"].tolist(),
-            "headings": data["headings"].tolist(),
-            "pages":    data["pages"].tolist(),
-            "source":   data["source"].tolist(),
-        }
+        vectors = data["vectors"]
+        
+        # Reconstruct chunks
+        from src.core.Chunking.ChunkerUtils import Chunk, ChunkLink, OverlapDirection
+        import json
+        
+        chunks = []
+        n_chunks = len(data['text'])
+        
+        for i in range(n_chunks):
+            # Parse links from JSON
+            links_json = data.get('links_json', [None])[i] if 'links_json' in data else None
+            if links_json and links_json != 'null' and links_json is not None:
+                links = [ChunkLink(url=l['url'], text=l.get('text', '')) 
+                        for l in json.loads(links_json)]
+            else:
+                links = []
+            
+            # Get overlap direction with default
+            overlap_dir_raw = data.get('overlap_direction', ['none'])[i] if 'overlap_direction' in data else 'none'
+            if isinstance(overlap_dir_raw, str):
+                overlap_dir = OverlapDirection(overlap_dir_raw)
+            else:
+                overlap_dir = OverlapDirection.NONE
+            
+            chunk = Chunk(
+                text=str(data['text'][i]),
+                clean=str(data['clean'][i]),
+                index=i,
+                source=str(data['source'][i]),
+                token_count=int(data.get('token_counts', [0])[i]) if 'token_counts' in data else 0,
+                heading=str(data['headings'][i]),
+                page=int(data['pages'][i]),
+                page_end=int(data.get('pages_end', [data['pages'][i]])[i]) if 'pages_end' in data else int(data['pages'][i]),
+                overlap_direction=overlap_dir,
+                links=links,
+            )
+            chunks.append(chunk)
+        
+        return vectors, chunks
 
     def get_embedding_metadata(self, filename: str) -> Optional[dict]:
         current_model = _get_current_model_name()
-        fh        = self._hash_for(filename)
-        path      = self.paths.npz_path(fh, current_model)
+        fh = self._hash_for(filename)
+        path = self.paths.npz_path(fh, current_model)
         meta_path = path.with_suffix(".meta.json")
         if not meta_path.exists():
             return None
@@ -600,17 +583,11 @@ class BM25Mixin(_PathResolverMixin):
         return (self._dir_for(filename) / "bm25.npz").exists()
 
     def save_bm25(self, filename: str, data: BM25Data) -> None:
-        """
-        Persist BM25Data as two files:
-            bm25.npz        — tokens (object array) + doc_lengths (int32)
-            bm25_meta.json  — everything else
-        """
-  
         if not data.tokens or not data.doc_lengths:
-            TerminalUI.error(f"No BM25 data to save for {filename}")
+            darwin.log(f"No BM25 data to save for {filename}", LogType.ERROR)
             return
-        d         = self._dir_for(filename)
-        npz_path  = d / "bm25.npz"
+        d = self._dir_for(filename)
+        npz_path = d / "bm25.npz"
         meta_path = d / "bm25_meta.json"
 
         try:
@@ -620,57 +597,240 @@ class BM25Mixin(_PathResolverMixin):
 
             np.savez_compressed(
                 npz_path,
-                tokens      = tokens_arr,
-                doc_lengths = np.array(data.doc_lengths, dtype=np.int32),
+                tokens=tokens_arr,
+                doc_lengths=np.array(data.doc_lengths, dtype=np.int32),
             )
 
             write_json(meta_path, {
-                "avgdl":            data.avgdl,
-                "chunk_count":      data.chunk_count,
-                "vocab_size":       data.vocab_size,
-                "threshold":        data.threshold,
-                "idf_smoothing":    data.idf_smoothing,
+                "avgdl": data.avgdl,
+                "chunk_count": data.chunk_count,
+                "vocab_size": data.vocab_size,
+                "threshold": data.threshold,
+                "idf_smoothing": data.idf_smoothing,
                 "domain_stopwords": data.domain_stopwords,
-                "doc_freqs":        data.doc_freqs,
+                "doc_freqs": data.doc_freqs,
                 "precomputed_idfs": data.precomputed_idfs or {},
             })
 
             self._update_meta(filename, "bm25")
             record = self._record_for(filename)
             if record:
-                    self.registry.update_pipeline(
-                        record.last_seen_path or filename,
-                        "bm25")
-            TerminalUI.success(f"Saved BM25 index: {npz_path.name}")
+                self.registry.update_pipeline(record.last_seen_path or filename, "bm25")
+            darwin.log(f"Saved BM25 index: {npz_path.name}", LogType.SUCCESS)
 
         except Exception as e:
-            TerminalUI.error(f"Failed to save BM25 for {filename}: {e}")
+            darwin.log(f"Failed to save BM25 for {filename}: {e}", LogType.ERROR)
 
     def load_bm25(self, filename: str) -> BM25Data | None:
-        d         = self._dir_for(filename)
-        npz_path  = d / "bm25.npz"
+        d = self._dir_for(filename)
+        npz_path = d / "bm25.npz"
         meta_path = d / "bm25_meta.json"
 
         if not npz_path.exists() or not meta_path.exists():
             return None
 
-        raw  = np.load(npz_path, allow_pickle=True)
+        raw = np.load(npz_path, allow_pickle=True)
         meta = read_json(meta_path)
 
         tokens = [list(tok_list) for tok_list in raw["tokens"]]
 
         return BM25Data(
-            tokens           = tokens,
-            doc_freqs        = meta["doc_freqs"],
-            avgdl            = meta["avgdl"],
-            doc_lengths      = raw["doc_lengths"].tolist(),
-            domain_stopwords = meta["domain_stopwords"],
-            threshold        = meta["threshold"],
-            chunk_count      = meta["chunk_count"],
-            vocab_size       = meta["vocab_size"],
-            idf_smoothing    = meta["idf_smoothing"],
-            precomputed_idfs = meta.get("precomputed_idfs") or None,
+            tokens=tokens,
+            doc_freqs=meta["doc_freqs"],
+            avgdl=meta["avgdl"],
+            doc_lengths=raw["doc_lengths"].tolist(),
+            domain_stopwords=meta["domain_stopwords"],
+            threshold=meta["threshold"],
+            chunk_count=meta["chunk_count"],
+            vocab_size=meta["vocab_size"],
+            idf_smoothing=meta["idf_smoothing"],
+            precomputed_idfs=meta.get("precomputed_idfs") or None,
         )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Term Bank (NEW — Query Expansion without LLM)
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TermBankMixin(_PathResolverMixin):
+    """
+    Per-document term bank for query expansion.
+
+    Storage
+    -------
+    term_bank.json          — raw terms + frequencies (model-agnostic, tiny)
+    term_embeddings.npz     — embedded terms (model-specific, ~3-6MB)
+    term_embedding_meta.json — which model produced the embeddings
+
+    Separation means model switches only require re-embedding the vocabulary,
+    not rebuilding it from scratch.
+    """
+
+    def has_term_bank(self, filename: str) -> bool:
+        return (self._dir_for(filename) / "term_bank.json").exists()
+
+    def has_term_embeddings(self, filename: str) -> bool:
+        current_model = _get_current_model_name()
+        path = self._dir_for(filename) / f"term_embeddings_{current_model.replace('/', '_')}.npz"
+        return path.exists()
+
+    def save_term_bank(
+        self,
+        filename: str,
+        terms: list[str],
+        term_freqs: dict[str, int],
+        chunk_count: int,
+    ) -> None:
+        """
+        Save the raw vocabulary as a model-agnostic JSON file.
+        Called once during BM25 indexing — never needs rebuilding.
+        """
+        if not terms:
+            darwin.log(f"No terms to save for term bank: {filename}", LogType.WARNING)
+            return
+
+        d = self._dir_for(filename)
+        path = d / "term_bank.json"
+
+        write_json(path, {
+            "terms": terms,
+            "term_freqs": term_freqs,
+            "vocab_size": len(terms),
+            "chunk_count": chunk_count,
+            "created_at": now(),
+        })
+
+        self._update_meta(filename, "term_bank")
+        darwin.log(f"Term bank saved: {len(terms)} terms", LogType.SUCCESS)
+
+    def load_term_bank(self, filename: str) -> dict | None:
+        """Load raw terms + frequencies (no embeddings)."""
+        path = self._dir_for(filename) / "term_bank.json"
+        if not path.exists():
+            return None
+        return read_json(path)
+
+    def save_term_embeddings(
+        self,
+        filename: str,
+        term_embeddings: np.ndarray,
+        terms: list[str],
+        model_name: str | None = None,
+    ) -> None:
+        """
+        Save embedded terms for a specific model.
+        Called during BM25 indexing (if embedder available) or on model switch.
+        """
+        if model_name is None:
+            model_name = _get_current_model_name()
+        model_name = _normalize_model_name(model_name)
+
+        if len(term_embeddings) != len(terms):
+            raise ValueError(
+                f"term_embeddings ({len(term_embeddings)}) and terms ({len(terms)}) must match"
+            )
+
+        d = self._dir_for(filename)
+        safe_name = model_name.replace("/", "_")
+        npz_path = d / f"term_embeddings_{safe_name}.npz"
+        meta_path = d / f"term_embedding_meta_{safe_name}.json"
+
+        np.savez_compressed(
+            npz_path,
+            embeddings=term_embeddings.astype(np.float16),
+            terms=np.array(terms, dtype=object),
+        )
+
+        write_json(meta_path, {
+            "model": model_name,
+            "dim": term_embeddings.shape[1],
+            "dtype": "float16",
+            "term_count": len(terms),
+            "created_at": now(),
+        })
+
+        darwin.log(f"Term embeddings saved: {len(terms)} terms @ {term_embeddings.shape[1]}d", LogType.SUCCESS)
+
+    def load_term_embeddings(self, filename: str) -> tuple[list[str], np.ndarray] | tuple[None, None]:
+        """
+        Load term embeddings for the current model.
+        Returns (terms, embeddings) or (None, None) if not found.
+        """
+        current_model = _get_current_model_name()
+        d = self._dir_for(filename)
+        safe_name = current_model.replace("/", "_")
+        npz_path = d / f"term_embeddings_{safe_name}.npz"
+
+        if not npz_path.exists():
+            return None, None
+
+        data = np.load(npz_path, allow_pickle=True)
+        return data["terms"].tolist(), data["embeddings"].astype(np.float32)
+
+    def get_term_embedding_model(self, filename: str) -> str | None:
+        """Return the model name used for the current term embeddings, or None."""
+        current_model = _get_current_model_name()
+        d = self._dir_for(filename)
+        safe_name = current_model.replace("/", "_")
+        meta_path = d / f"term_embedding_meta_{safe_name}.json"
+
+        if not meta_path.exists():
+            return None
+        return read_json(meta_path).get("model")
+
+    def expand_query(
+        self,
+        filename: str,
+        query: str,
+        top_n: int = 5,
+        min_similarity: float = 0.5,
+    ) -> str:
+        """
+        Expand a query with top-N most similar terms from the document's vocabulary.
+
+        Only used for keyword (BM25) search — semantic search doesn't need expansion.
+        Terms already in the query are excluded. Terms below min_similarity are filtered.
+        """
+        terms, embeddings = self.load_term_embeddings(filename)
+
+        if terms is None or embeddings is None:
+            darwin.log(f"No term embeddings for {filename} — query not expanded", LogType.INFO)
+            return query
+
+        try:
+            from src.core.Embedding.Embedder import embed_query
+            query_vec = embed_query(query)
+
+            if query_vec is None:
+                return query
+
+            # Cosine similarity (both are normalized)
+            sims = embeddings @ query_vec
+
+            # Get top-N, filtering by similarity and dedup
+            top_indices = np.argsort(sims)[::-1]
+            query_lower = query.lower()
+            expansion_terms = []
+
+            for idx in top_indices:
+                if len(expansion_terms) >= top_n:
+                    break
+                term = terms[idx]
+                if sims[idx] < min_similarity:
+                    continue
+                if term.lower() in query_lower:
+                    continue
+                expansion_terms.append(term)
+
+            if expansion_terms:
+                expanded = f"{query} {' '.join(expansion_terms)}"
+                darwin.log(f"Query expanded: '{query}' → '{expanded}'", LogType.INFO)
+                return expanded
+
+        except Exception as e:
+            darwin.log(f"Query expansion failed: {e}", LogType.WARNING)
+
+        return query
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -683,19 +843,15 @@ class StopwordsMixin(_PathResolverMixin):
         return (self._dir_for(filename) / "stopwords.json").exists()
 
     def save_stopwords(self, filename: str, stopwords: set[str]) -> None:
-
         if not stopwords:
-            TerminalUI.error(f"No stopwords to save for {filename}")
+            darwin.log(f"No stopwords to save for {filename}", LogType.ERROR)
             return
         d = self._dir_for(filename)
         write_json(d / "stopwords.json", {"stopwords": sorted(stopwords)})
         self._update_meta(filename, "stopwords")
         record = self._record_for(filename)
         if record:
-                    self.registry.update_pipeline(
-                        record.last_seen_path or filename,
-                        "stopwords")
-
+            self.registry.update_pipeline(record.last_seen_path or filename, "stopwords")
 
     def load_stopwords(self, filename: str) -> set[str]:
         path = self._dir_for(filename) / "stopwords.json"
@@ -718,7 +874,7 @@ class GraphMixin(_PathResolverMixin):
 
     def save_graph(self, filename: str, graph_data: Any) -> None:
         if not graph_data:
-            TerminalUI.error(f"No graph data to save for {filename}")
+            darwin.log(f"No graph data to save for {filename}", LogType.ERROR)
             return
 
         d = self._dir_for(filename) / "graph"
@@ -727,30 +883,26 @@ class GraphMixin(_PathResolverMixin):
 
         self._update_meta(filename, "graph", extras={
             "graph": {
-                "concept_count":            len(graph_data.nodes),
-                "edge_count":               len(graph_data.edges),
-                "chunk_count":              graph_data.chunk_count,
+                "concept_count": len(graph_data.nodes),
+                "edge_count": len(graph_data.edges),
+                "chunk_count": graph_data.chunk_count,
                 "total_concepts_extracted": graph_data.total_concepts_extracted,
-                "built_at":                 now(),
+                "built_at": now(),
             }
         })
         record = self._record_for(filename)
         if record:
             self.registry.update_pipeline(
-            record.last_seen_path or filename,
-            "graph",
-            concept_count=len(graph_data.nodes),
-            edge_count=len(graph_data.edges),
-        )
-                            
-                    
+                record.last_seen_path or filename,
+                "graph",
+                concept_count=len(graph_data.nodes),
+                edge_count=len(graph_data.edges),
+            )
 
-    def save_graph_html(self, filename: str, html: str, ) -> None:
+    def save_graph_html(self, filename: str, html: str) -> None:
         if html is None:
-            TerminalUI.error(f"No graph HTML to save for {filename}")
+            darwin.log(f"No graph HTML to save for {filename}", LogType.ERROR)
             return
-
-
 
         d = self._dir_for(filename) / "graph"
         d.mkdir(parents=True, exist_ok=True)
@@ -758,11 +910,7 @@ class GraphMixin(_PathResolverMixin):
         self._update_meta(filename, "graph_vis")
         record = self._record_for(filename)
         if record:
-                    self.registry.update_pipeline(
-                        record.last_seen_path or filename,
-                        "graph_vis")
-
-        
+            self.registry.update_pipeline(record.last_seen_path or filename, "graph_vis")
 
     def load_graph(self, filename: str) -> dict:
         path = self._dir_for(filename) / "graph" / "graph.json"
@@ -780,27 +928,26 @@ class WikiMixin(_PathResolverMixin):
     def has_wiki(self, filename: str) -> bool:
         return (self._dir_for(filename) / "wiki" / "wiki.json").exists()
 
-    def save_wiki(self, filename: str, wiki: Any,) -> None:
+    def save_wiki(self, filename: str, wiki: Any) -> None:
         if wiki is None:
-            TerminalUI.error(f"No wiki data to save for {filename}")
+            darwin.log(f"No wiki data to save for {filename}", LogType.ERROR)
             return
         
         d = self._dir_for(filename) / "wiki"
         d.mkdir(parents=True, exist_ok=True)
         path = d / "wiki.json"
 
-
         wiki_dict = {
-            "filename":      wiki.filename,
-            "mode":          wiki.mode,
+            "filename": wiki.filename,
+            "mode": wiki.mode,
             "concept_count": wiki.concept_count,
             "pages": [
                 {
-                    "title":       p.title,
-                    "content":     p.content,
-                    "concept":     p.concept,
+                    "title": p.title,
+                    "content": p.content,
+                    "concept": p.concept,
                     "chunk_count": p.chunk_count,
-                    "related":     p.related,
+                    "related": p.related,
                 }
                 for p in wiki.pages
             ],
@@ -809,13 +956,12 @@ class WikiMixin(_PathResolverMixin):
 
         record = self._record_for(filename)
         if record:
-                    self.registry.update_pipeline(
-                        record.last_seen_path or filename,
-                        "wiki",
-                        page_num=len(wiki.pages),
-                        concept_count=wiki.concept_count,
-                    )
-
+            self.registry.update_pipeline(
+                record.last_seen_path or filename,
+                "wiki",
+                page_num=len(wiki.pages),
+                concept_count=wiki.concept_count,
+            )
 
     def load_wiki(self, filename: str) -> dict:
         path = self._dir_for(filename) / "wiki" / "wiki.json"

@@ -591,7 +591,7 @@ def run_graph_extraction_pipeline(
     chunk_vectors = None
     if store.has_embeddings(filename):
         try:
-            chunk_vectors = store.load_embeddings(filename)["vectors"]
+         vectors , _ = store.load_embeddings(filename)
         except Exception as e:
             TerminalUI.warn(f"Could not load embeddings ({e})")
 

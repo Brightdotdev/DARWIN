@@ -1,147 +1,136 @@
 # src/core/Models/ModelLoader.py
 
-from pathlib import Path
-from typing import Optional
 import json
+from pathlib import Path
+from typing import Optional, Dict, Any, Tuple
 
 from src.core.Models.ModelStore import ModelStore
 from src.core.Models.ModelRegistry import get_spec, ModelCategory, REGISTRY
 from src.core.Models.SpacyConceptExtractor import SpacyConceptExtractor
+from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Storage.DarwinStore import DarwinStore
 
 
 class ModelLoader:
+    """Lazy-loads models, caches in memory, handles unload."""
+    
     def __init__(self, store: ModelStore, preferences: dict[str, str] = None):
         self.store = store
         self._preferences = preferences or {}
-        self._cache: dict[str, object] = {}
+        self._cache: dict[str, Any] = {}
 
     def _resolve_key(self, key: str) -> str:
-        """
-        Resolve any model identifier to its canonical registry key.
-        
-        Accepts:
-        - Registry key (e.g., 'BAAI/bge-m3') → returns as-is
-        - Model ID (e.g., 'BAAI/bge-m3') → returns matching registry key
-        - Shorthand (e.g., 'bge-m3') → returns full registry key if found
-        
-        Returns the registry key if found, otherwise returns the input unchanged.
-        """
-        # Direct registry key match
+        """Resolve any model identifier to its canonical registry key."""
         if key in REGISTRY:
             return key
-        
-        # Model ID to registry key lookup
+
         id_to_key = {spec.model_id: k for k, spec in REGISTRY.items()}
         if key in id_to_key:
             return id_to_key[key]
-        
-        # Not found — return as-is for error handling upstream
+
         return key
 
     def set_preference(self, category: str, key: str, cleanup_old: bool = False) -> None:
+        """Set model preference for a category."""
         old_key = self._preferences.get(category)
+
         if old_key and old_key != key:
-            # Clear old model from cache using RESOLVED registry key
             resolved_old = self._resolve_key(old_key)
             self._cache.pop(resolved_old, None)
+
             if cleanup_old:
                 self.store.delete(resolved_old)
+
         self._preferences[category] = key
 
-    def get(self, category: ModelCategory):
+    def get(self, category: ModelCategory) -> Any:
+        """Get loaded model instance for a category."""
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str)
-        
+
         if not key:
-            raise ValueError(f"No model set for '{cat_str}'.")
-        
-        # Resolve to canonical registry key
+            raise ValueError(f"No model set for '{cat_str}'. Run darwin setup first.")
+
         registry_key = self._resolve_key(key)
-        
+
         if registry_key not in REGISTRY:
-            raise ValueError(f"Unknown model '{key}' for '{cat_str}'. Available: {list(REGISTRY.keys())}")
-        
-        # Return cached instance if available
+            raise ValueError(
+                f"Unknown model '{key}' for '{cat_str}'. "
+                f"Available: {list(REGISTRY.keys())}"
+            )
+
         if registry_key in self._cache:
             return self._cache[registry_key]
-        
+
         spec = get_spec(registry_key)
         path = str(self.store.ensure(registry_key))
-        
-        # ═══════════════════════════════════════════════════════════════
-        # 1. SentenceTransformers Embeddings
-        # ═══════════════════════════════════════════════════════════════
+
+        # SentenceTransformers Embeddings
         if spec.loader == "embedding_st":
             from sentence_transformers import SentenceTransformer
             model = SentenceTransformer(path)
-            self._cache[registry_key] = model  # ✅ Cache with registry_key
+            self._cache[registry_key] = model
             return model
-        
-        # ═══════════════════════════════════════════════════════════════
-        # 2. HF Native Embeddings
-        # ═══════════════════════════════════════════════════════════════
+
+        # HF Native Embeddings
         elif spec.loader == "embedding_hf":
             import torch
             from transformers import AutoTokenizer, AutoModel
-            
+
             tokenizer = AutoTokenizer.from_pretrained(path)
             model = AutoModel.from_pretrained(path)
-            
+
             device = (
                 "cuda" if torch.cuda.is_available()
                 else "mps" if torch.backends.mps.is_available()
                 else "cpu"
             )
-            
+
             model.to(device)
             model.eval()
-            
+
             wrapper = self._HFEmbeddingWrapper(model, tokenizer, device)
-            self._cache[registry_key] = wrapper  # ✅ Cache with registry_key
+            self._cache[registry_key] = wrapper
             return wrapper
-        
-        # ═══════════════════════════════════════════════════════════════
-        # 3. CrossEncoder (Reranker)
-        # ═══════════════════════════════════════════════════════════════
+
+        # CrossEncoder (Reranker)
         elif spec.loader == "cross_encoder":
             from sentence_transformers import CrossEncoder
             model = CrossEncoder(path)
-            self._cache[registry_key] = model  # ✅ Cache with registry_key
+            self._cache[registry_key] = model
             return model
-        
-        # ═══════════════════════════════════════════════════════════════
-        # 4. spaCy (Optimized Concept Extraction)
-        # ═══════════════════════════════════════════════════════════════
+
+        # spaCy
         elif spec.loader == "spacy":
             model = SpacyConceptExtractor(path, spec.model_id)
-            self._cache[registry_key] = model  # ✅ Cache with registry_key
+            self._cache[registry_key] = model
             return model
-        
-        # ═══════════════════════════════════════════════════════════════
-        # 5. Vision Models
-        # ═══════════════════════════════════════════════════════════════
+
+        # Vision Models
         elif spec.loader == "transformers":
             result = self._load_vision_model(path, registry_key)
-            self._cache[registry_key] = result  # ✅ Cache with registry_key
+            self._cache[registry_key] = result
             return result
-        
+
         raise ValueError(f"Unknown loader type: {spec.loader}")
 
-    def _load_vision_model(self, path: str, key: str):
+    def _load_vision_model(self, path: str, key: str) -> Tuple[Any, Any, str]:
+        """Load vision model (processor, model, device)."""
         import torch
-        
+
         if torch.cuda.is_available():
             device, dtype = "cuda", torch.float16
         elif torch.backends.mps.is_available():
             device, dtype = "mps", torch.float16
         else:
             device, dtype = "cpu", torch.float32
-        
+
         config_path = Path(path) / "config.json"
         with open(config_path) as f:
             config = json.load(f)
+
         model_type = config.get("model_type", "").lower()
-        
+
         try:
             if "idefics" in model_type:
                 from transformers import Idefics3ForConditionalGeneration, AutoProcessor
@@ -171,10 +160,10 @@ class ModelLoader:
                     path, dtype=dtype, low_cpu_mem_usage=True,
                     device_map="auto", trust_remote_code=True
                 )
-            
-            print(f"   ✅ Vision model loaded on {device}")
-            return (processor, model, device)
-            
+
+            darwin.log(f"Vision model loaded on {device}", LogType.INFO)
+            return processor, model, device
+
         except ImportError as e:
             raise ImportError(
                 f"Missing required class for {model_type} model. "
@@ -182,57 +171,63 @@ class ModelLoader:
             )
 
     class _HFEmbeddingWrapper:
+        """Wrapper for HuggingFace embedding models."""
+        
         def __init__(self, model, tokenizer, device):
             self.model = model
             self.tokenizer = tokenizer
             self.device = device
-        
+
         def encode(self, texts, batch_size=32, convert_to_numpy=True, **kwargs):
             import torch
-            import numpy as np
-            
+
             if isinstance(texts, str):
                 texts = [texts]
-            
+
             embeddings = []
+
             for i in range(0, len(texts), batch_size):
-                batch = texts[i:i+batch_size]
+                batch = texts[i:i + batch_size]
+
                 inputs = self.tokenizer(
-                    batch, padding=True, truncation=True,
-                    return_tensors="pt"
+                    batch,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt",
                 ).to(self.device)
-                
+
                 with torch.no_grad():
                     outputs = self.model(**inputs)
                     emb = outputs.last_hidden_state.mean(dim=1)
                     emb = emb / emb.norm(dim=1, keepdim=True)
-                
+
                 embeddings.append(emb.cpu())
-            
+
             result = torch.cat(embeddings, dim=0)
-            
+
             if convert_to_numpy:
                 return result.numpy()
             return result
 
     def unload(self, category: ModelCategory) -> None:
+        """Unload model from memory to free RAM."""
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str)
-        
+
         if key:
-            # Clear using resolved registry key
             resolved_key = self._resolve_key(key)
             cached = self._cache.pop(resolved_key, None)
+
             if cached is not None:
                 try:
                     import torch
-                    if isinstance(cached, tuple):
-                        obj = cached[1]
-                    else:
-                        obj = cached
+                    obj = cached[1] if isinstance(cached, tuple) else cached
+
                     if hasattr(obj, "cpu"):
                         obj.cpu()
+
                     del obj, cached
+
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()
                 except Exception:
@@ -243,23 +238,149 @@ class ModelLoader:
         return dict(self._preferences)
 
     def get_model_name(self, category: ModelCategory) -> str:
-        """Return the model_id (e.g., 'BAAI/bge-m3')."""
+        """Get human-readable model name."""
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str)
+
         if not key:
             return "not set"
+
         registry_key = self._resolve_key(key)
+
         if registry_key in REGISTRY:
             return get_spec(registry_key).model_id
         return key
 
     def get_model_key(self, category: ModelCategory) -> str:
-        """Return the model_id (e.g., 'BAAI/bge-m3'), not shorthand."""
+        """Get canonical registry key."""
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str, "not set")
-        
-        # Resolve to registry key first, then get model_id
         registry_key = self._resolve_key(key)
+
         if registry_key in REGISTRY:
             return get_spec(registry_key).model_id
         return key
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Embedding Migration
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def migrate_embeddings(
+        self,
+        store: 'DarwinStore',
+        filename: Optional[str] = None,
+        force: bool = False,
+    ) -> dict:
+        """Migrate embeddings to current model."""
+        current_model = self.get_model_key(ModelCategory.EMBEDDING)
+        stats = {"reembedded": 0, "skipped": 0, "term_banks_updated": 0, "failed": 0}
+
+        if filename:
+            files_to_process = [filename]
+        else:
+            health = store.get_embedding_health()
+            files_to_process = health.get("needs_reembed", [])
+
+            if force:
+                files_to_process.extend(health.get("up_to_date", []))
+
+        if not files_to_process:
+            darwin.log("All files are up-to-date with current embedding model", LogType.SUCCESS)
+            return stats
+
+        darwin.log(f"Migrating {len(files_to_process)} file(s) to {current_model}", LogType.INFO)
+
+        for fname in files_to_process:
+            try:
+                chunks = store.load_chunks(fname)
+
+                if not chunks:
+                    darwin.log(f"{fname} — no chunks found, skipping", LogType.WARNING)
+                    stats["failed"] += 1
+                    continue
+
+                class _EmbedChunk:
+                    def __init__(self, chunk, idx: int, source: str):
+                        self.clean = chunk.clean
+                        self.index = idx
+                        self.text = chunk.text
+                        self.page = chunk.page
+                        self.heading = chunk.heading
+                        self.links = getattr(chunk, "links", []) or []
+                        self.is_overlap = getattr(chunk, "is_overlap", False)
+                        self.source = getattr(chunk, "source", source)
+
+                embed_chunks_list = [
+                    _EmbedChunk(c, i, fname) for i, c in enumerate(chunks)
+                ]
+
+                from src.core.Embedding.Embedder import embed_chunks
+
+                vectors = embed_chunks(
+                    chunks=embed_chunks_list,
+                    file_name=fname,
+                    preset=current_model,
+                    unload_after=False,
+                )
+
+                if vectors is None:
+                    darwin.log(f"{fname} — embedding failed", LogType.ERROR)
+                    stats["failed"] += 1
+                    continue
+
+                store.save_embeddings(
+                    fname,
+                    vectors,
+                    embed_chunks_list,
+                    model_name=current_model,
+                )
+
+                chunk_ids = [str(c.index) for c in embed_chunks_list]
+                store.save_vector(fname, current_model, vectors, chunk_ids)
+
+                stats["reembedded"] += 1
+                darwin.log(f"{fname} — migrated ({len(chunks)} chunks)", LogType.SUCCESS)
+
+                # Term bank update
+                if store.has_term_bank(fname):
+                    try:
+                        term_data = store.load_term_bank(fname)
+
+                        if term_data:
+                            terms = term_data.get("terms", [])
+
+                            if terms:
+                                from src.core.BM25.TermBank import embed_terms
+
+                                term_embeddings = embed_terms(
+                                    terms, model_name=current_model
+                                )
+
+                                if term_embeddings is not None:
+                                    store.save_term_embeddings(
+                                        fname,
+                                        term_embeddings,
+                                        terms,
+                                        model_name=current_model,
+                                    )
+                                    stats["term_banks_updated"] += 1
+                    except Exception as e:
+                        darwin.log(f"{fname} — term bank update failed: {e}", LogType.WARNING)
+
+            except Exception as e:
+                darwin.log(f"{fname} — {type(e).__name__}: {e}", LogType.ERROR)
+                stats["failed"] += 1
+
+        try:
+            self.unload(ModelCategory.EMBEDDING)
+        except Exception:
+            pass
+
+        darwin.log(
+            f"Migration complete: {stats['reembedded']} migrated · "
+            f"{stats['term_banks_updated']} term banks updated · "
+            f"{stats['failed']} failed",
+            LogType.SUCCESS,
+        )
+
+        return stats

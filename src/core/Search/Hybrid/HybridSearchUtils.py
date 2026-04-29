@@ -6,17 +6,67 @@ Utilities for hybrid search: RRF fusion, result merging, and formatting.
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any
-
-
+from src.core.Search.Sematic.SematicSearchUtils import SematicSearchResult
+from src.core.Search.Keyword.KeywordSearch import KeywordSearchResult
+import copy
+from enum import Enum
 # ============================================================================
 # Constants
 # ============================================================================
 
-DEFAULT_TOP_K    = 5
+DEFAULT_TOP_K    = 20 # how many final results to return after fusion
 DEFAULT_RRF_K    = 60       # magic constant from Cormack et al. 2009 RRF paper
-DEFAULT_SEMANTIC_WEIGHT = 1.0
-DEFAULT_KEYWORD_WEIGHT  = 1.0
-DEFAULT_POOL_SIZE = 50
+DEFAULT_SEMANTIC_WEIGHT = 1.0 # higher == more semantic influence, lower == more keyword influence
+DEFAULT_KEYWORD_WEIGHT  = 1.0 # higher == more keyword influence, lower == more semantic influence
+DEFAULT_POOL_SIZE = 100 # how many candidates from each retriever to keep before fusion — this is a speed-quality tradeoff. RRF helps mitigate the noise from larger pools, so we can afford to be generous here.
+
+DEFAULT_ALPHA =  0.3 # higer == more semantic influence, lower == more keyword influence
+DEFAULT_BETA  = 0.2 # additive boost for keyword score after normalization :: this only boosts keyword scores, it doesn't reduce semantic influence like alpha does 
+
+
+HYBBRID_SEARCH_PARAMS = {
+    "top_k": DEFAULT_TOP_K,
+    "rrf_k": DEFAULT_RRF_K,
+    "semantic_weight": DEFAULT_SEMANTIC_WEIGHT,
+    "keyword_weight": DEFAULT_KEYWORD_WEIGHT,
+    "pool_size": DEFAULT_POOL_SIZE,
+    "alpha": DEFAULT_ALPHA,
+    "beta": DEFAULT_BETA
+}
+
+
+
+class OverlapDirection(str, Enum):
+    """
+    Describes which side(s) of a chunk carry overlap sentences.
+
+    NONE   — no overlap; chunk is self-contained
+    LEFT   — chunk *opens* with sentences repeated from the tail of the
+             previous chunk  (this chunk "looks left")
+    RIGHT  — chunk *closes* with sentences repeated at the head of the
+             next chunk  (this chunk "donates right")
+    BOTH   — interior window: received from the left AND donates to the right
+
+    Use str-Enum so the value serialises cleanly to JSON as a plain string
+    ("none", "left", "right", "both") without needing a custom encoder.
+    """
+    NONE  = "none"
+    LEFT  = "left"
+    RIGHT = "right"
+    BOTH  = "both"
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data model
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class ChunkLink:
+    """A hyperlink scoped to a chunk."""
+    url:  str
+    text: str = ""
+
 
 
 # ============================================================================
@@ -38,14 +88,19 @@ class HybridSearchResult:
     heading:       str = ""
     chunk_index:   int = 0
     links:         List[Any] = field(default_factory=list)  # List[ChunkLink]
-    is_overlap:    bool = False
-    matched_terms: List[str] = field(default_factory=list)
-
+    matched_terms: List[str] | None = None
+    overlap_direction : OverlapDirection =  OverlapDirection.NONE 
+    links:            List[ChunkLink]  = field(default_factory=list)
+    
     def __repr__(self) -> str:
         return (
-            f"HybridSearchResult(rrf={self.rrf_score:.3f}, "
-            f"final={self.final_score:.3f}, source='{self.source}', page={self.page})"
-        )
+    f"HybridSearchResult(rrf={self.rrf_score:.3f}, "
+    f"final={self.final_score:.3f}, "
+    f"sem={self.semantic_score}, kw={self.keyword_score}, "
+    f"src='{self.source}', p={self.page})"
+)
+        
+        
 
 
 # ============================================================================
@@ -60,6 +115,8 @@ class HybridSearchArgs:
     top_k:            int             = DEFAULT_TOP_K
     rrf_k:            int             = DEFAULT_RRF_K
     semantic_weight:  float           = DEFAULT_SEMANTIC_WEIGHT
+    alpha:            float           = DEFAULT_ALPHA
+    beta:             float           = DEFAULT_BETA
     keyword_weight:   float           = DEFAULT_KEYWORD_WEIGHT
     pool_size:        int             = DEFAULT_POOL_SIZE
     inspect:          bool            = False
@@ -70,57 +127,61 @@ class HybridSearchArgs:
 # Result building and merging
 # ============================================================================
 
+
 def build_unified_result(
-    result,
+    result: Any,
     semantic_score: Optional[float] = None,
-    keyword_score:  Optional[float] = None,
+    keyword_score: Optional[float] = None,
 ) -> HybridSearchResult:
     """Create a HybridSearchResult from a semantic or keyword result."""
     return HybridSearchResult(
-        text           = result.text,
-        clean          = result.clean,
-        rrf_score      = 0.0,
-        final_score    = 0.0,
-        semantic_score = semantic_score,
-        keyword_score  = keyword_score,
-        source         = result.source,
-        page           = result.page,
-        page_end       = getattr(result, "page_end", result.page),
-        heading        = result.heading,
-        chunk_index    = result.chunk_index,
-        links          = getattr(result, "links", []),
-        is_overlap     = getattr(result, "is_overlap", False),
-        matched_terms  = list(getattr(result, "matched_terms", [])),
+        text=result.text,
+        clean=result.clean,
+        rrf_score=0.0,
+        final_score=0.0,
+        semantic_score=semantic_score,
+        keyword_score=keyword_score,
+        source=result.source,
+        page=result.page,
+        page_end=getattr(result, "page_end", result.page),
+        heading=result.heading,
+        chunk_index=result.chunk_index,
+        links=getattr(result, "links", []),
+        matched_terms=set(getattr(result, "matched_terms", [])),
+        overlap_direction=getattr(result, "overlap_direction", OverlapDirection.NONE),
     )
 
+    
 
 def merge_results(
-    semantic_results: List,
-    keyword_results:  List,
+    semantic_results: List[SematicSearchResult],
+    keyword_results:  List[KeywordSearchResult],
 ) -> List[HybridSearchResult]:
     """
-    Merge semantic and keyword results, deduplicating by (source, chunk_index).
+    Merge semantic and keyword results, deduplicating by (source, page, chunk_index).
     """
     seen: Dict[tuple, HybridSearchResult] = {}
 
+    # Semantic results
     for r in semantic_results:
-        k = (r.source, r.chunk_index)
+        k = (r.source, r.page, r.chunk_index)
+
         if k not in seen:
             seen[k] = build_unified_result(r, semantic_score=r.score)
         else:
             seen[k].semantic_score = r.score
 
+    # Keyword results
     for r in keyword_results:
-        k = (r.source, r.chunk_index)
+        k = (r.source, r.page, r.chunk_index)
+
         if k not in seen:
             seen[k] = build_unified_result(r, keyword_score=r.score)
         else:
             seen[k].keyword_score = r.score
+
             if hasattr(r, "matched_terms") and r.matched_terms:
-                existing = set(seen[k].matched_terms)
-                seen[k].matched_terms.extend(
-                    t for t in r.matched_terms if t not in existing
-                )
+                seen[k].matched_terms.update(r.matched_terms)
 
     return list(seen.values())
 
@@ -132,16 +193,9 @@ def build_ranked_lists(
     Build separate ranked lists for semantic and keyword results,
     each sorted by its respective score descending.
     """
-    semantic_list = sorted(
-        [x for x in items if x.semantic_score is not None],
-        key=lambda x: x.semantic_score,
-        reverse=True,
-    )
-    keyword_list = sorted(
-        [x for x in items if x.keyword_score is not None],
-        key=lambda x: x.keyword_score,
-        reverse=True,
-    )
+    semantic_list = [x for x in items if x.semantic_score is not None]
+    keyword_list = [x for x in items if x.keyword_score is not None]
+
     return [semantic_list, keyword_list]
 
 
@@ -173,8 +227,11 @@ def reciprocal_rank_fusion(
             f"weights length ({len(weights)}) must match result_lists ({len(result_lists)})"
         )
 
+    if any(w < 0 for w in weights):
+        raise ValueError("weights must be non-negative")
+
     rank_maps = [
-        {(item.source, item.chunk_index): rank
+        {(item.source, item.page, item.chunk_index): rank
          for rank, item in enumerate(lst, start=1)}
         for lst in result_lists
     ]
@@ -182,7 +239,7 @@ def reciprocal_rank_fusion(
     items_by_key: Dict[tuple, HybridSearchResult] = {}
     for lst in result_lists:
         for item in lst:
-            items_by_key[(item.source, item.chunk_index)] = item
+            items_by_key[(item.source, item.page, item.chunk_index)] = copy.copy(item)
 
     for key, item in items_by_key.items():
         item.rrf_score = sum(
@@ -200,8 +257,8 @@ def reciprocal_rank_fusion(
 
 def apply_hybrid_scoring(
     items: List[HybridSearchResult],
-    alpha: float = 0.3,
-    beta:  float = 0.2,
+    alpha: float = DEFAULT_ALPHA,
+    beta:  float = DEFAULT_BETA,
 ) -> List[HybridSearchResult]:
     """
     final = rrf_score + alpha * norm_semantic + beta * norm_keyword
