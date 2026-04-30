@@ -40,9 +40,7 @@ def validate_model(key: str, system: SystemInfo, store: Optional[ModelStore] = N
     if not disk_ok:
         needed_gb = spec.disk_mb / 1024
         warnings.append(f"Needs {needed_gb:.1f}GB disk (you have {system.disk_free_gb:.1f}GB free)")
-    if not spec.can_inference:
-        warnings.append(f"This model may not support inference on CPU")
-    
+ 
     return ValidationResult(
         model_key=key,
         can_run=(ram_ok and disk_ok),

@@ -58,7 +58,7 @@ REGISTRY: dict[str, ModelSpec] = {
         loader="sentence_transformers",
         required=False,
         experimental=True,
-        notes="7B LLM repurposed as embedder. 4096-dim. Needs 32GB+ RAM or GPU.",
+        notes="7B LLM repurposed as embedder. 4096-dim. GPU strongly recommended; CPU inference will be prohibitively slow (minutes per document)."
     ),
 
     # ═══════════════════════════════════════════════════════════════════════

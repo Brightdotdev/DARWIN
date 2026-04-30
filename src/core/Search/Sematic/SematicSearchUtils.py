@@ -7,64 +7,8 @@ Utilities and argument handling for semantic search.
 from dataclasses import dataclass, field
 from typing import List, Optional
 from src.core.Chunking.ChunkerUtils import ChunkLink, OverlapDirection
-from src.core.Chunking.Chunker import Chunk
-
-from enum import Enum
-
-
-# ============================================================================
-# Data model
-# ============================================================================
-
-
-class OverlapDirection(str, Enum):
-    """
-    Describes which side(s) of a chunk carry overlap sentences.
-
-    NONE   — no overlap; chunk is self-contained
-    LEFT   — chunk *opens* with sentences repeated from the tail of the
-             previous chunk  (this chunk "looks left")
-    RIGHT  — chunk *closes* with sentences repeated at the head of the
-             next chunk  (this chunk "donates right")
-    BOTH   — interior window: received from the left AND donates to the right
-
-    Use str-Enum so the value serialises cleanly to JSON as a plain string
-    ("none", "left", "right", "both") without needing a custom encoder.
-    """
-    NONE  = "none"
-    LEFT  = "left"
-    RIGHT = "right"
-    BOTH  = "both"
-
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data model
-# ─────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class ChunkLink:
-    """A hyperlink scoped to a chunk."""
-    url:  str
-    text: str = ""
-
-
-
-@dataclass
-class SematicSearchResult:
-    """Single search result with all metadata needed for RAG."""
-    text: str           # Original text (for LLM context)
-    clean: str          # Cleaned text (what was embedded)
-    score: float        # Cosine similarity (0-1)
-    source: str         # Document filename
-    page: int           # Page number
-    heading: str        # Section heading
-    chunk_index: int    # Original chunk position
-    is_overlap: bool    # Whether this chunk overlaps with adjacent chunks
-    links: List[tuple[str, str]] = field(default_factory=list)
-    
-    def __repr__(self) -> str:
-        return f"SematicSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
+from src.core.Chunking.lib import Chunk
+from src.core.Search.lib import (SematicSearchResult)
 
 
 # ============================================================================
@@ -73,8 +17,6 @@ class SematicSearchResult:
 
 DEFAULT_TOP_K =  80
 DEFAULT_MIN_SCORE = 0.0
-
-
 # ============================================================================
 # Args
 # ============================================================================
@@ -96,52 +38,73 @@ class SearchArgs:
 
 def reconstruct_chunks(data: dict, source: str) -> List[Chunk]:
     """Reconstruct Chunk objects from stored .npz data."""
+    from src.core.Chunking.ChunkerUtils import Chunk, ChunkLink, OverlapDirection
+    import json
+    
     chunks = []
+    n_chunks = len(data.get("text", []))
 
-    texts = data.get("text", [])
-    headings = data.get("headings", [])
-    pages = data.get("pages", [])
-    page_ends = data.get("page_ends", pages)
-    overlap_directions = data.get("overlap_direction", [])
-    links_data = data.get("links", [[] for _ in texts])
-
-    for i, text in enumerate(texts):
-        # Restore overlap direction enum safely
-        direction_raw = (
-            overlap_directions[i]
-            if i < len(overlap_directions)
-            else "none"
-        )
-
-        try:
-            direction = OverlapDirection(direction_raw)
-        except ValueError:
-            direction = OverlapDirection.NONE
-
-        # Restore links
+    for i in range(n_chunks):
+        # Parse links from JSON
         links = []
-        if i < len(links_data):
-            for l in links_data[i]:
-                links.append(ChunkLink(**l))
-
-        # Build chunk
-        chunks.append(
-            Chunk(
-                text=text,
-                clean=text,  # same unless you stored separately
-                index=i,
-                source=source,
-                token_count=0,
-                heading=headings[i] if i < len(headings) else "",
-                page=int(pages[i]) if i < len(pages) else 0,
-                page_end=int(page_ends[i]) if i < len(page_ends) else 0,
-                overlap_direction=direction,
-                links=links,
-            )
+        if 'links_json' in data and i < len(data['links_json']):
+            links_json = data['links_json'][i]
+            if links_json and links_json != 'null' and links_json != "[]":
+                try:
+                    if isinstance(links_json, str):
+                        links_data = json.loads(links_json)
+                    else:
+                        links_data = links_json
+                    
+                    for l in links_data:
+                        if isinstance(l, dict):
+                            links.append(ChunkLink(
+                                url=l.get('url', ''),
+                                text=l.get('text', '')
+                            ))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        
+        # Get overlap direction as Enum
+        overlap_raw = "none"
+        if 'overlap_direction' in data and i < len(data['overlap_direction']):
+            overlap_raw = str(data['overlap_direction'][i])
+        
+        try:
+            overlap_dir = OverlapDirection(overlap_raw)
+        except ValueError:
+            overlap_dir = OverlapDirection.NONE
+        
+        # Get page with fallback
+        page = 0
+        if 'pages' in data and i < len(data['pages']):
+            page = int(data['pages'][i])
+        
+        # Get page_end with fallback
+        page_end = page
+        if 'pages_end' in data and i < len(data['pages_end']):
+            page_end = int(data['pages_end'][i])
+        
+        # Get token_count with fallback
+        token_count = 0
+        if 'token_counts' in data and i < len(data['token_counts']):
+            token_count = int(data['token_counts'][i])
+        
+        chunk = Chunk(
+            text=str(data['text'][i]),
+            clean=str(data.get('clean', data['text'])[i]),  # Fallback to text if clean missing
+            index=i,
+            source=source,
+            token_count=token_count,
+            heading=str(data['headings'][i]) if i < len(data['headings']) else "",
+            page=page,
+            page_end=page_end,
+            overlap_direction=overlap_dir,
+            links=links,
         )
-
+        chunks.append(chunk)
+    
     return chunks
-
 
 # ============================================================================
 # Result formatting

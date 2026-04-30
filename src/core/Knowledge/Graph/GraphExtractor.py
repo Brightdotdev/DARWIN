@@ -17,9 +17,8 @@ no hairballs. Query-time highlighting lights up relevant concepts.
 import re
 import numpy as np
 from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple
-
+from typing import List, Dict, Optional, Tupler
+from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Chunking.Chunker import Chunk
 from src.core.Knowledge.Graph.GraphUtils import (
     CONCEPT_STOPWORDS,
@@ -562,7 +561,6 @@ def extract_graph_from_chunks(
 
 def run_graph_extraction_pipeline(
     filename: str,
-    chunks: List[Chunk],
     store: DarwinStore,
     min_freq: int = DEFAULT_MIN_CONCEPT_FREQ,
     max_concepts: int = DEFAULT_MAX_CONCEPTS,
@@ -576,9 +574,7 @@ def run_graph_extraction_pipeline(
     Full graph extraction pipeline for one document.
     Saves graph JSON + optional HTML visualization.
     """
-    if not chunks:
-        TerminalUI.warn(f"No chunks for {filename}")
-        return None
+    
 
     if not rerun and store.is_fresh(filename) and store.has_graph(filename):
         try:
@@ -587,20 +583,19 @@ def run_graph_extraction_pipeline(
         except Exception as e:
             TerminalUI.warn(f"Cached graph corrupted ({e}) — re-extracting...")
 
-    # Load chunk vectors for context-based edges
-    chunk_vectors = None
-    if store.has_embeddings(filename):
-        try:
-         vectors , _ = store.load_embeddings(filename)
-        except Exception as e:
-            TerminalUI.warn(f"Could not load embeddings ({e})")
 
+    if store.has_embeddings(filename):
+        vectors , chunks = store.load_embeddings(filename)
+        if vector and chunks is None:
+            darwin.log("No chunks and vectors provided for graph extraction", Logtype.ERROR)
+        
+        
     graph = extract_graph_from_chunks(
         chunks=chunks,
         filename=filename,
         min_freq=min_freq,
         max_concepts=max_concepts,
-        chunk_vectors=chunk_vectors,
+        chunk_vectors=vectors,
         similarity_threshold=similarity_threshold,
         extraction_mode=extraction_mode,
         elevation_mode=elevation_mode,

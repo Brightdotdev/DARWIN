@@ -4,12 +4,12 @@ src/core/HybridSearch/HybridSearchUtils.py
 Utilities for hybrid search: RRF fusion, result merging, and formatting.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Dict, Optional, Any
 from src.core.Search.Sematic.SematicSearchUtils import SematicSearchResult
 from src.core.Search.Keyword.KeywordSearch import KeywordSearchResult
 import copy
-from enum import Enum
+from src.core.Search.lib import HybridSearchResult,OverlapDirection,ChunkLink
 # ============================================================================
 # Constants
 # ============================================================================
@@ -36,71 +36,8 @@ HYBBRID_SEARCH_PARAMS = {
 
 
 
-class OverlapDirection(str, Enum):
-    """
-    Describes which side(s) of a chunk carry overlap sentences.
-
-    NONE   — no overlap; chunk is self-contained
-    LEFT   — chunk *opens* with sentences repeated from the tail of the
-             previous chunk  (this chunk "looks left")
-    RIGHT  — chunk *closes* with sentences repeated at the head of the
-             next chunk  (this chunk "donates right")
-    BOTH   — interior window: received from the left AND donates to the right
-
-    Use str-Enum so the value serialises cleanly to JSON as a plain string
-    ("none", "left", "right", "both") without needing a custom encoder.
-    """
-    NONE  = "none"
-    LEFT  = "left"
-    RIGHT = "right"
-    BOTH  = "both"
 
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data model
-# ─────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class ChunkLink:
-    """A hyperlink scoped to a chunk."""
-    url:  str
-    text: str = ""
-
-
-
-# ============================================================================
-# Data model
-# ============================================================================
-
-@dataclass
-class HybridSearchResult:
-    """Single hybrid search result with scores from both retrievers."""
-    text:          str
-    clean:         str
-    rrf_score:     float = 0.0
-    final_score:   float = 0.0
-    semantic_score: Optional[float] = None
-    keyword_score:  Optional[float] = None
-    source:        str = ""
-    page:          int = 0
-    page_end:      int = 0
-    heading:       str = ""
-    chunk_index:   int = 0
-    links:         List[Any] = field(default_factory=list)  # List[ChunkLink]
-    matched_terms: List[str] | None = None
-    overlap_direction : OverlapDirection =  OverlapDirection.NONE 
-    links:            List[ChunkLink]  = field(default_factory=list)
-    
-    def __repr__(self) -> str:
-        return (
-    f"HybridSearchResult(rrf={self.rrf_score:.3f}, "
-    f"final={self.final_score:.3f}, "
-    f"sem={self.semantic_score}, kw={self.keyword_score}, "
-    f"src='{self.source}', p={self.page})"
-)
-        
-        
 
 
 # ============================================================================
@@ -255,33 +192,59 @@ def reciprocal_rank_fusion(
 # Hybrid Scoring
 # ============================================================================
 
+# src/core/Search/Hybrid/HybridSearchUtils.py
+
 def apply_hybrid_scoring(
-    items: List[HybridSearchResult],
-    alpha: float = DEFAULT_ALPHA,
-    beta:  float = DEFAULT_BETA,
+    rrf_scores: Dict[str, float],
+    merged: Dict[str, dict] = None,
+    alpha: float = 0.5,
+    beta: float = 0.5
 ) -> List[HybridSearchResult]:
-    """
-    final = rrf_score + alpha * norm_semantic + beta * norm_keyword
-
-    Scores are normalized to [0, 1] before weighting so neither retriever's
-    raw score magnitude dominates the other.
-    """
-    if not items:
-        return []
-
-    sem_scores = [x.semantic_score for x in items if x.semantic_score is not None]
-    kw_scores  = [x.keyword_score  for x in items if x.keyword_score  is not None]
-
-    sem_max = max(sem_scores) if sem_scores else 1.0
-    kw_max  = max(kw_scores)  if kw_scores  else 1.0
-
-    for item in items:
-        norm_sem = (item.semantic_score / sem_max) if item.semantic_score is not None and sem_max > 0 else 0.0
-        norm_kw  = (item.keyword_score  / kw_max)  if item.keyword_score  is not None and kw_max  > 0 else 0.0
-        item.final_score = item.rrf_score + alpha * norm_sem + beta * norm_kw
-
-    items.sort(key=lambda x: x.final_score, reverse=True)
-    return items
+    """Apply hybrid scoring to RRF results."""
+    results = []
+    
+    for chunk_id, rrf_score in rrf_scores.items():
+        data = merged.get(chunk_id, {}) if merged else {}
+        
+        semantic_score = data.get("semantic_score")
+        keyword_score = data.get("keyword_score")
+        
+        final_score = rrf_score
+        if semantic_score is not None and keyword_score is not None:
+            final_score = (alpha * semantic_score + beta * keyword_score) / (alpha + beta)
+        elif semantic_score is not None:
+            final_score = semantic_score
+        elif keyword_score is not None:
+            final_score = keyword_score
+        
+        # Convert links back to ChunkLink objects if they're dicts
+        links = data.get("links", [])
+        chunk_links = []
+        for l in links:
+            if isinstance(l, dict):
+                chunk_links.append(ChunkLink(url=l.get('url', ''), text=l.get('text', '')))
+            else:
+                chunk_links.append(l)
+        
+        results.append(HybridSearchResult(
+            text=data.get("text", ""),
+            clean=data.get("clean", ""),
+            rrf_score=rrf_score,
+            final_score=final_score,
+            semantic_score=semantic_score,
+            keyword_score=keyword_score,
+            source=data.get("source", ""),
+            page=data.get("page", 0),
+            page_end=data.get("page_end", data.get("page", 0)),
+            heading=data.get("heading", ""),
+            chunk_index=int(chunk_id) if chunk_id.isdigit() else 0,
+            links=chunk_links,
+            matched_terms=data.get("matched_terms", set()),
+            overlap_direction=data.get("overlap_direction", OverlapDirection.NONE),
+        ))
+    
+    results.sort(key=lambda x: x.final_score, reverse=True)
+    return results
 
 
 # ============================================================================

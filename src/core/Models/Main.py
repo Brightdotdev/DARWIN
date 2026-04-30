@@ -5,11 +5,9 @@ import sys
 from typing import Optional
 
 from src.core.Models.SystemDetector import detect_system, recommend_defaults
-from src.core.Models.ModelStore import ModelStore
-from src.core.Models.ModelLoader import ModelLoader
 from src.core.Models.ModelRegistry import ModelCategory, by_category
 from src.core.Models.ModelManager import ModelManager
-from src.core.Models.ModelUtils import handle_download_error
+from src.core.Models.ModelSetup import handle_download_error
 from src.core.Storage.DarwinStore import DarwinStore
 
 

@@ -1,6 +1,4 @@
 """
-src/core/Embedding/EmbedderUtils.py
------------------------------------
 Utility functions and configuration for embedding models.
 
 """

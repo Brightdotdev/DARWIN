@@ -24,11 +24,11 @@ def create_loader(preferences=None, skip_download=False):
         preferences = recommend_defaults(system)
     loader = ModelLoader(store, preferences)
     if not skip_download:
-        _download_required(store, preferences, system)
+        download_required(store, preferences, system)
     return loader, system
 
 
-def _download_required(store, preferences, system):
+def download_required(store, preferences, system):
     """Download required models with hardware validation."""
     VALID_CATEGORIES = {"embedding", "reranker", "vision", "tokenizer"}
     selected = {cat: val for cat, val in preferences.items()

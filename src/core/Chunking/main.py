@@ -32,7 +32,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from src.core.Chunking.Chunker import chunk_for_model
-from src.core.Chunking.ChunkerUtils import Chunk, ChunkingArgs
+from src.core.Chunking.lib import Chunk, ChunkingArgs
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 from src.core.Logger.DarwinLogger import darwin, LogType

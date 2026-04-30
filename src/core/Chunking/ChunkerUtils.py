@@ -49,95 +49,10 @@ Outputs:
 
 import re
 import functools
-from dataclasses import dataclass, field
-from enum import Enum
 from typing import List, Optional, Tuple
 from src.core.Chunking.ChunkConfig import get_chunk_config
 from src.core.Chunking.ChunkCleaners import prepare_embedding_text
-
-
-# ── Block-type sentinels (must match ChunkCleaners + extractor) ───────────────
-# These are present in the *raw* extractor output (before cleaning).
-# The chunker reads them to make split decisions, then they are cleaned away
-# by prepare_embedding_text before chunks reach the embedding model.
-TABLE_OPEN_TOKEN  = "[TABLE]"          # fitz extractor display text
-TABLE_CLOSE_TOKEN = "[/TABLE]"
-TABLE_EMB_TOKEN   = "[Table]"          # fitz extractor embedding text
-CAPTION_TOKEN     = "[Caption:"        # fitz extractor embedding text
-PAGE_HEADER_RE    = re.compile(r"^\[Page\s+[^\]]+\]\s*$", re.MULTILINE)
-
-# Legacy separator kept for backwards compat with pymupdf4llm output
-_LEGACY_PAGE_SEP_RE = re.compile(r"^---\s*$", re.MULTILINE)
-
-
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Overlap direction
-# ─────────────────────────────────────────────────────────────────────────────
-
-class OverlapDirection(str, Enum):
-    """
-    Describes which side(s) of a chunk carry overlap sentences.
-
-    NONE   — no overlap; chunk is self-contained
-    LEFT   — chunk *opens* with sentences repeated from the tail of the
-             previous chunk  (this chunk "looks left")
-    RIGHT  — chunk *closes* with sentences repeated at the head of the
-             next chunk  (this chunk "donates right")
-    BOTH   — interior window: received from the left AND donates to the right
-
-    Use str-Enum so the value serialises cleanly to JSON as a plain string
-    ("none", "left", "right", "both") without needing a custom encoder.
-    """
-    NONE  = "none"
-    LEFT  = "left"
-    RIGHT = "right"
-    BOTH  = "both"
-
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data model
-# ─────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class ChunkLink:
-    """A hyperlink scoped to a chunk."""
-    url:  str
-    text: str = ""
-
-
-@dataclass
-class Chunk:
-    text:             str              # original text → shown to user / sent to LLM
-    clean:            str              # stripped text → fed to embedding model
-    index:            int              # position in document (0-based)
-    source:           str              # filename for citations
-    token_count:      int              # estimated tokens of clean text
-    heading:          str              # nearest section heading above this chunk
-    page:             int              # first page this chunk touches
-    page_end:         int              # last page this chunk touches
-    overlap_direction: OverlapDirection = OverlapDirection.NONE
-    links:            List[ChunkLink]  = field(default_factory=list)
-
-    # ------------------------------------------------------------------
-    # Back-compat shim: existing code that reads .is_overlap still works.
-    # A chunk "has overlap" if its direction is anything other than NONE.
-    # ------------------------------------------------------------------
-    @property
-    def is_overlap(self) -> bool:
-        return self.overlap_direction != OverlapDirection.NONE
-
-
-@dataclass
-class ChunkingArgs:
-    target:         str
-    file:           Optional[str] = None
-    project:        Optional[str] = None
-    inspect:        bool = False
-    rerun:          bool = False
-
+from src.core.Chunking.lib import (OverlapDirection, ChunkLink, Chunk,count_page_seps, TABLE_OPEN_TOKEN, TABLE_EMB_TOKEN, CAPTION_TOKEN)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Link extraction
@@ -192,23 +107,6 @@ def _split_sentences(text: str) -> List[str]:
     abbrev = r"(?<!\b(?:Mr|Mrs|Dr|Prof|Sr|Jr|Fig|vs|etc|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec))"
     parts  = re.split(abbrev + r"(?<=[.!?])\s+", text.strip())
     return [s.strip() for s in parts if s.strip()]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Page tracking
-# ─────────────────────────────────────────────────────────────────────────────
-
-def count_page_seps(text: str) -> int:
-    """
-    Count page boundaries in a text fragment.
-
-    Supports both formats:
-    - New extractor:  [Page N]  lines
-    - Legacy pymupdf4llm / old extractor:  ---  lines
-    """
-    new_style    = len(PAGE_HEADER_RE.findall(text))
-    legacy_style = len(_LEGACY_PAGE_SEP_RE.findall(text))
-    return new_style + legacy_style
 
 
 # ─────────────────────────────────────────────────────────────────────────────

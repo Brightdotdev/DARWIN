@@ -129,6 +129,7 @@ def _search_wrapper(
     else:
         raw_files = [str(f) for f in scan_folder()]
         darwin.log(f"Found {len(raw_files)} supported files in {Path.cwd()}", LogType.INFO)
+        
         tobe_searched = [
             r.original_name
             for r in store.registry.list_kw_searchable()

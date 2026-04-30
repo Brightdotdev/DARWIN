@@ -5,10 +5,9 @@ Pure BM25 (sparse) retrieval over chunked document text.
 With automatic query expansion via term bank (falls back to raw query).
 """
 
-import numpy as np
 from typing import List
-
-from src.core.Search.Keyword.KeywordUtilities import KeywordSearchResult, calculate_bm25
+from src.core.Search.Keyword.KeywordUtilities import calculate_bm25
+from src.core.Search.lib import KeywordSearchResult
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Storage.DarwinStore import DarwinStore
 

@@ -31,8 +31,8 @@ if __name__ == "__main__":
 
 from src.core.Embedding.Embedder import run_embedding_pipeline
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Embedding.EmbedderUtils import EmbeddingArgs
-from src.core.Models import get_loader, ModelCategory, setup
+from src.core.Embedding.lib import EmbeddingArgs
+from src.core.Models import get_loader, ModelCategory
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -42,27 +42,23 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _print_inspection(filename: str, store: DarwinStore) -> None:
+
     """Load the saved .npz and print stats."""
-    try:
-        result = store.load_embeddings(filename)
-        # Handle both return types
-        if isinstance(result, tuple):
-            vectors, chunks = result
-            # Need to extract texts, headings, pages from chunks
-            texts = [c.text for c in chunks]
-            headings = [c.heading for c in chunks]
-            pages = [c.page for c in chunks]
-            source = [c.source for c in chunks]
-        else:
-            vectors = result["vectors"]
-            texts = result["text"]
-            headings = result["headings"]
-            pages = result["pages"]
-            source = result["source"]
-    except FileNotFoundError:
+ 
+
+    result = store.load_embeddings(filename)
+    # Handle both return types
+    if isinstance(result, tuple):
+        vectors, chunks = result
+   
+        texts = [c.text for c in chunks]
+        headings = [c.heading for c in chunks]
+        pages = [c.page for c in chunks]
+    elif result is None:
         darwin.log("Could not load embeddings for inspection", LogType.ERROR)
-        return
-    
+        return        
+   
+
     darwin.log("")
     darwin.log(f"── embedding inspection — {filename} ──", LogType.INFO)
     darwin.log("")
@@ -112,20 +108,19 @@ def _print_inspection(filename: str, store: DarwinStore) -> None:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def handle_embedding(args: EmbeddingArgs) -> None:
-    """Main embedding handler — loads chunks, embeds them, saves vectors."""
     store = DarwinStore()
     
-    # Bug fix: setup() may fail silently if models dir doesn't exist
-    try:
-        loader = get_loader()
-    except RuntimeError:
-        darwin.log("Initializing models...", LogType.INFO)
-        try:
-            loader = setup()
-        except Exception as e:
-            darwin.log(f"Failed to initialize models: {e}", LogType.ERROR)
-            return
-
+    
+    loader = get_loader()
+        
+    
+    
+    if not loader.ensure_ready(ModelCategory.EMBEDDING):
+        darwin.log("Embedding model not available. Run 'darwin models install --embedding'", LogType.ERROR)
+        return
+    
+    
+    
     darwin.log("")
     darwin.log("Embedding", LogType.INFO)
     darwin.log(f"Rerun: {args.rerun} | Inspect: {args.inspect}", LogType.INFO)

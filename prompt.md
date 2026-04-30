@@ -1,176 +1,53 @@
+caveman mode - this is a skill that makes responses more concise and to the point, by removing unnecessary words and phrases. It is designed to make communication more efficient and direct, while still conveying the intended message clearly. The skill can be applied in various contexts, such as writing, speaking, or even in casual conversations. By using caveman move, you can save time and get your point across more effectively....especially in situations where brevity is valued, such as in business communications, social media, or when giving instructions. The key to mastering caveman move is to focus on the core message and eliminate any fluff or filler words that do not add value to the communication.
 
-You are designing a **decoupled, event-driven terminal system** called **Darwin Terminal**.
 
-The system must separate:
+intent mode - get the intent of the query and question this is the second layer of understanding the query it also help aids proper tool calls,selection and thought process
 
-1. **Core Event API (Darwin Logger)**
-2. **CLI Renderer (Terminal UI)**
-3. **Frontend Event Emitter (WebSocket/JSON bridge)**
+bad usser filter - this gets the intend of the query and then if it passes a certain threshold of good will then it will be processed...if not we will ask the user again to repeeat them self ,we do this three times and then humorously redirect the user to a rick roll vodeo on youtube depending on the context base one:
+if its self harm we dont rick roll we give them resources and support information
+if its just trolling or bad faith we rick roll after three strikes
+if its harm on others we give them a warning and then rick roll after three strikes
+then after the third srike we save the prompt in the log incase they ask again in the future so we can rick roll them immediately and save resources.....this step is never overlooked as it is important to maintain a positive and safe environment for all users. The bad user filter is designed to deter negative behavior and encourage respectful interactions, while also providing support and resources for those who may be struggling with harmful thoughts or actions. By implementing this filter, we can create a more welcoming and inclusive community for everyone.
 
-The system must NEVER couple logic to rendering.
 
----
 
-# 1. Core: Darwin Logger (Event System)
 
-This is the only source of truth. It emits structured events only.
+import re
 
-It must NOT print anything.
-
-### Events
-
-### log
-
-```python
-log(message: str, log_type: LogType = "info", style: str = "")
-```
-
-* Stateless event
-* Used for messages
-* log_type must be an enum:
-
-  * INFO
-  * WARNING
-  * ERROR
-  * SUCCESS
-
----
-
-### progress
-
-```python
-progress_start(id: str, total: int, label: str)
-progress_update(id: str, current: int, status: str = "")
-progress_end(id: str)
-```
-
-* Stateful tracking by id
-* No printing
-* Only emits events
-
----
-
-### prompt (blocking event)
-
-```python
-prompt(id: str, message: str, options: list, action: str, params: dict)
-```
-
-* Must pause execution until resolved
-* When a response is received:
-
-  * route to registered action:
-
-```python
-action(choice=..., **params)
-```
-
----
-
-### Action Registry
-
-```python
-register_action(name: str, func: callable)
-```
-
-* Stores callable actions
-* Used by prompt resolution system
-
----
-
-# 2. Terminal UI (CLI Renderer)
-
-Create a separate module:
-
-```python
-terminalui.py
-```
-
-Responsibilities:
-
-* Subscribes to Darwin Logger events
-* Uses **Rich library**
-* Renders:
-
-  * logs
-  * progress bars
-  * prompts
-
-Rules:
-
-* Must NOT contain business logic
-* Must NOT emit events
-* Only renders received events
-
-ASCII branding required:
-
-```
-██████╗  █████╗ ██████╗ ██╗    ██╗██╗███╗   ██╗
-██╔══██╗██╔══██╗██╔══██╗██║    ██║██║████╗  ██║
-██║  ██║███████║██████╔╝██║ █╗ ██║██║██╔██╗ ██║
-██║  ██║██╔══██║██╔══██╗██║███╗██║██║██║╚██╗██║
-██████╔╝██║  ██║██║  ██║╚███╔███╔╝██║██║ ╚████║
-╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝
-```
-
----
-
-# 3. Frontend Emitter (Darwin Front Bridge)
-
-Create:
-
-```python
-darwin_logger.py
-```
-
-Responsibilities:
-
-* Converts all events into JSON
-* Sends them over WebSocket (or stdout fallback)
-* Used by frontend UI (React / web terminal)
-
-### Event format (strict)
-
-```json
-{
-  "type": "log | progress | prompt",
-  "payload": {}
+PATTERNS = {
+    "comparison": r"\b(compare|vs|versus|difference|between|contrast)\b",
+    "summary":    r"\b(summarize|summary|overview|tldr|brief)\b",
+    "deep_dive":  r"\b(everything|all|deep|detail|elaborate|explain)\b",
+    "question":   r"^(what|who|when|where|why|how|is|are|does|did|can)\b",
 }
-```
 
----
+def classify_query(text: str) -> str:
+    text = text.lower().strip()
+    for intent, pattern in PATTERNS.items():
+        if re.search(pattern, text, re.IGNORECASE):
+            return intent
+    return "search"  # default fallback
 
-### WebSocket Mode
 
-* Streams events in real time
-* Used by frontend terminal UI
 
-### Fallback Mode
+    # zero extra downloads, reuses your existing transformers install
+# model is pulled once, ~90MB, cached forever
 
-* Prints JSON lines (NDJSON)
+from transformers import pipeline
 
----
+_classifier = None
 
-# Architecture Rules
+def get_classifier():
+    global _classifier
+    if _classifier is None:
+        _classifier = pipeline(
+            "text-classification",
+            model="martin-ha/toxic-comment-model",  # 50MB, BERT-tiny fine-tuned on toxicity
+            device=-1
+        )
+    return _classifier
 
-* NEVER print inside core logic
-* NEVER mix rendering with event generation
-* Terminal UI and Web UI are just subscribers
-* Everything flows through events only
-
----
-
-# Required Design Output
-
-Return full Python implementation for:
-
-1. `darwin_logger.py` (core event system + actions + blocking prompts)
-2. `terminalui.py` (Rich-based CLI renderer)
-3. WebSocket JSON emitter inside `darwin_logger.py`
-
----
-
-# Extra Requirement
-
-Both CLI and frontend must display the same ASCII “Darwin” banner on startup.
-
+def safety_check(text: str) -> dict:
+    result = get_classifier()(text)[0]
+    is_toxic = result["label"] == "toxic" and result["score"] > 0.8
+    return {"safe": not is_toxic, "score": result["score"]}

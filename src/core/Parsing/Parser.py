@@ -5,16 +5,17 @@
 import logging
 from pathlib import Path
 
-from src.core.Parsing.ParserUtils import (
+from src.core.Parsing.lib import (ParsedDocument,
     SUPPORTED_TYPES,
-    ParsedDocument,
+    detect_type,
+    is_supported)
+
+from src.core.Parsing.ParserUtils import (
     PARSE_TIMEOUT_SECONDS,
     check_file_size,
     parse_markitdown,
     parse_pdf,
-    detect_type,
     is_good_enough,
-    is_supported,
 )
 from src.core.Logger.DarwinLogger import darwin, LogType
 

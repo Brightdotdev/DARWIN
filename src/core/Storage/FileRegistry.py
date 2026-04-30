@@ -319,6 +319,8 @@ class FileRegistry:
         """Files that are keyword-searchable (parsed + chunked + BM25)."""
         return [r for r in self.list_all() if r.is_kw_searchable]
 
+
+
     def list_needing_work(self) -> list["FileRecord"]:
         """Files that are not yet fully keyword-searchable."""
         return [r for r in self.list_all() if not r.is_kw_searchable]

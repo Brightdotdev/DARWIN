@@ -24,9 +24,9 @@ loader.set_preference("embedding", "BAAI/bge-m3", cleanup_old=True)  # Switch + 
 loader.unload(ModelCategory.EMBEDDING)                      # Free RAM
 
 # Migration
-loader.migrate_embeddings(store)                   # All stale files
-loader.migrate_embeddings(store, filename="x.pdf") # Single file
-loader.migrate_embeddings(store, force=True)       # Everything
+loader.migrate_embeddings()                   # All stale files
+loader.migrate_embeddings(filename="x.pdf") # Single file
+loader.migrate_embeddings(force=True)       # Everything
 
 # ── ModelManager (user orchestration) ────────────────────────────────────
 manager.switch_embedding("BAAI/bge-m3")           # Auto-download + migrate

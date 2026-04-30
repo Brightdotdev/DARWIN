@@ -182,7 +182,6 @@ class DarwinLogger:
             self.subscribe(bridge)
             await bridge.send_banner()
             
-            self.log("Frontend client connected", LogType.SUCCESS)
             
             try:
                 async for raw in ws:

@@ -94,16 +94,11 @@ def handle_graph_extraction(args: GraphExtractionArgs) -> None:
             skipped += 1
             continue
 
-        chunks = store.load_chunks(filename)
-        if not chunks:
-            TerminalUI.error(f"  ❌ {filename} — no chunks")
-            failed += 1
-            continue
+
 
         try:
             graph = run_graph_extraction_pipeline(
                 filename=filename,
-                chunks=chunks,
                 store=store,
                 min_freq=args.min_freq,
                 max_concepts=args.max_concepts,

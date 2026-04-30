@@ -261,17 +261,28 @@ class ModelLoader:
             return get_spec(registry_key).model_id
         return key
 
+        # In src/core/Models/ModelLoader.py
+    def ensure_ready(self, category: ModelCategory) -> bool:
+        """Ensure model is downloaded and loadable. Returns True if ready."""
+        try:
+            self.get(category)
+            return True
+        except (FileNotFoundError, OSError, ValueError) as e:
+            darwin.log(f"Model {category.value} not ready: {e}", LogType.ERROR)
+            return False
     # ═══════════════════════════════════════════════════════════════════════
     # Embedding Migration
     # ═══════════════════════════════════════════════════════════════════════
 
     def migrate_embeddings(
         self,
-        store: 'DarwinStore',
         filename: Optional[str] = None,
         force: bool = False,
     ) -> dict:
         """Migrate embeddings to current model."""
+        from src.core.Storage.DarwinStore import DarwinStore
+        store = DarwinStore()
+
         current_model = self.get_model_key(ModelCategory.EMBEDDING)
         stats = {"reembedded": 0, "skipped": 0, "term_banks_updated": 0, "failed": 0}
 
@@ -299,27 +310,11 @@ class ModelLoader:
                     stats["failed"] += 1
                     continue
 
-                class _EmbedChunk:
-                    def __init__(self, chunk, idx: int, source: str):
-                        self.clean = chunk.clean
-                        self.index = idx
-                        self.text = chunk.text
-                        self.page = chunk.page
-                        self.heading = chunk.heading
-                        self.links = getattr(chunk, "links", []) or []
-                        self.is_overlap = getattr(chunk, "is_overlap", False)
-                        self.source = getattr(chunk, "source", source)
-
-                embed_chunks_list = [
-                    _EmbedChunk(c, i, fname) for i, c in enumerate(chunks)
-                ]
-
                 from src.core.Embedding.Embedder import embed_chunks
 
                 vectors = embed_chunks(
-                    chunks=embed_chunks_list,
+                    chunks=chunks,
                     file_name=fname,
-                    preset=current_model,
                     unload_after=False,
                 )
 
@@ -331,11 +326,11 @@ class ModelLoader:
                 store.save_embeddings(
                     fname,
                     vectors,
-                    embed_chunks_list,
+                    chunks,
                     model_name=current_model,
                 )
 
-                chunk_ids = [str(c.index) for c in embed_chunks_list]
+                chunk_ids = [str(c.index) for c in chunks]
                 store.save_vector(fname, current_model, vectors, chunk_ids)
 
                 stats["reembedded"] += 1

@@ -11,129 +11,36 @@ Chunker    →  receives clean text; ChunkCleaners strips any residual artefacts
 import os
 import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List, Union, Tuple, Dict, Any
+from typing import Optional, List, Tuple, Dict, Any
 
 from src.core.Parsing.Captioning import (
     caption_image,
     load_caption_cache,
     save_caption_cache,
 )
+from src.core.Parsing.lib import (
+    should_caption_image,
+    MAX_NEW_TOKENS,
+    ExtractedImage,
+    MIN_TEXT_LENGTH,
+    ASCII_RATIO_THRESHOLD,
+    MAX_FILE_SIZE_MB,
+    NON_LATIN_ASCII_FLOOR,
+    IMAGE_SLOT_RE,
+    prepare_image,
+    LARGE_PDF_CHUNK_PAGES,
+    LARGE_PDF_PAGE_THRESHOLD,
+    CPU_COUNT,
+    PARSE_TIMEOUT_SECONDS,
+
+    )
 from src.core.Parsing.Extractors import fitz_extract, pymupdf4llm_extract
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Models import get_loader, ModelCategory
 
-
-# ── Constants ──────────────────────────────────────────────────────────────────
-
-SUPPORTED_TYPES: Dict[str, str] = {
-    ".pdf":  "pdf",
-    ".docx": "markitdown",
-    ".pptx": "markitdown",
-    ".txt":  "markitdown",
-    ".md":   "markitdown",
-}
-
-CPU_COUNT          = os.cpu_count() or 4
-MAX_FILE_SIZE_MB   = 500
-MIN_IMAGE_SIZE_PX  = 100
-MAX_IMAGES_PER_DOC = 50
-
-PARSE_TIMEOUT_SECONDS   = 300
-CAPTION_TIMEOUT_SECONDS = 30
-
-LARGE_PDF_PAGE_THRESHOLD = 80
-LARGE_PDF_CHUNK_PAGES    = 80
-
-# is_good_enough tuning
-MIN_TEXT_LENGTH       = 100
-ASCII_RATIO_THRESHOLD = 0.60
-NON_LATIN_ASCII_FLOOR = 0.20
-
-# Compiled once at module level — used in hot paths
-_IMAGE_SLOT_RE = re.compile(r"\[Image:(\d+)\]")
-
-_MIN_DIMENSION   = 100
-_MAX_CAPTION_DIM = 512
-_MAX_NEW_TOKENS  = 40
-
-
-def _should_caption_image(img_dict: dict) -> tuple[bool, str]:
-    """Returns (should_caption, reason_if_skipped)."""
-    w = img_dict.get("width", 0)
-    h = img_dict.get("height", 0)
-
-    if w < _MIN_DIMENSION or h < _MIN_DIMENSION:
-        return False, f"too small ({w}x{h}px)"
-
-    return True, ""
-
-
-def _prepare_image(image_path: Path):
-    """Open, convert to RGB, and resize to model's expected input size."""
-    from PIL import Image as PILImage
-
-    image = PILImage.open(image_path).convert("RGB")
-
-    if max(image.size) > _MAX_CAPTION_DIM:
-        image.thumbnail((_MAX_CAPTION_DIM, _MAX_CAPTION_DIM), PILImage.LANCZOS)
-
-    return image
-
-
-# ── Dataclasses ────────────────────────────────────────────────────────────────
-
-@dataclass
-class FileWithImages:
-    file: Union[str, Path]
-    image_dir: Optional[Path] = None
-
-
-@dataclass
-class ExtractedImage:
-    path:    Path
-    page:    int
-    index:   int
-    caption: str
-    width:   int
-    height:  int
-
-
-@dataclass
-class ParsingArgs:
-    target:      str
-    images:      bool = False
-    caption:     bool = False
-    recursive:   bool = False
-    rerun:       bool = False
-    file:        Optional[str] = None
-    precise:     bool = False
-    save:        bool = True
-    timeout:     int  = PARSE_TIMEOUT_SECONDS
-    cleanup:     bool = True
-
-
-@dataclass
-class ParsedDocument:
-    display_text:   str
-    embedding_text: str
-    filename:       str
-    page_count:     int
-    file_type:      str
-    metadata:       Dict                  = field(default_factory=dict)
-    error:          Optional[str]         = None
-    images:         List[ExtractedImage]  = field(default_factory=list)
-
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def detect_type(path: Path) -> Optional[str]:
-    return SUPPORTED_TYPES.get(path.suffix.lower())
-
-
-def is_supported(path: Path) -> bool:
-    return detect_type(path) is not None
 
 
 def is_good_enough(text: str) -> bool:
@@ -202,8 +109,8 @@ def _replace_image_slots(
         caption = info.get("caption", "")
         return f"\n\n[Image: {caption}]\n\n" if caption else "\n\n[Image]\n\n"
 
-    display_text   = _IMAGE_SLOT_RE.sub(_display,   display_text)
-    embedding_text = _IMAGE_SLOT_RE.sub(_embed, embedding_text)
+    display_text   = IMAGE_SLOT_RE.sub(_display,   display_text)
+    embedding_text = IMAGE_SLOT_RE.sub(_embed, embedding_text)
     return display_text, embedding_text
 
 
@@ -219,8 +126,8 @@ def _remap_image_slots(
     def _shift(m: re.Match) -> str:
         return f"[Image:{int(m.group(1)) + offset}]"
 
-    display_text   = _IMAGE_SLOT_RE.sub(_shift, display_text)
-    embedding_text = _IMAGE_SLOT_RE.sub(_shift, embedding_text)
+    display_text   = IMAGE_SLOT_RE.sub(_shift, display_text)
+    embedding_text = IMAGE_SLOT_RE.sub(_shift, embedding_text)
     return display_text, embedding_text
 
 
@@ -294,18 +201,18 @@ def _run_captioning(
                 img_caption = cache_hit
                 darwin.log(f"  [cache] {img_path.name}", LogType.INFO)
             else:
-                ok, reason = _should_caption_image(img_dict)
+                ok, reason = should_caption_image(img_dict)
                 if not ok:
                     darwin.log(f"  [skip] {img_path.name} — {reason}", LogType.INFO)
                     cache[img_path.name] = ""
                 else:
                     try:
-                        image = _prepare_image(img_path)
+                        image = prepare_image(img_path)
                         img_caption = caption_image(
                             img_path, processor, model, device,
                             cache,
                             preloaded_image=image,
-                            max_new_tokens=_MAX_NEW_TOKENS,
+                            max_new_tokens=MAX_NEW_TOKENS,
                         )
                     except Exception as e:
                         darwin.log(f"Captioning failed for {img_path.name}: {e}", LogType.WARNING)

@@ -15,7 +15,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.Parsing.Parser import parse as _parse, scan_directory
-from src.core.Parsing.ParserUtils import (
+from src.core.Parsing.lib import (
     ParsedDocument,
     FileWithImages,
     CPU_COUNT,

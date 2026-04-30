@@ -135,7 +135,6 @@ class ModelManager:
             return {"reembedded": 0, "failed": 1}
         
         return self.loader.migrate_embeddings(
-            store=self._darwin_store,
             filename=file,
             force=force,
         )

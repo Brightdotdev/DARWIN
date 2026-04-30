@@ -37,15 +37,15 @@ from src.core.BM25.BM25Indexer import (
     run_bm25_indexing_pipeline,
     inspect_bm25_index,
 )
-from src.core.BM25.BM25Utils import (
+from src.core.BM25.lib import (
     BM25IndexingArgs,
     DOMAIN_STOP_THRESHOLD,
     DEFAULT_IDF_SMOOTHING,
 )
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Models import setup
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 from src.core.Logger.DarwinLogger import darwin, LogType
+from src.lib.Utils import scan_folder
 
 
 # ── Inspection helper ──────────────────────────────────────────────────────────
@@ -56,6 +56,23 @@ def _print_inspection(filename: str, store) -> None:
         inspect_bm25_index(data)
     except FileNotFoundError:
         darwin.log("Could not load BM25 index for inspection", LogType.ERROR)
+
+
+
+
+def _is_bm25_indexable(filename: str | None, status: dict) -> bool:
+    """Determine which files to search based on args and registry status."""
+    if filename is None:
+        return False
+        
+    key = Path(filename).name
+    file_data = status.get("files", {}).get(key)
+    print("*************")
+    print(file_data)
+    print("*************")
+    if file_data is None:
+        return False
+    return file_data.get("is_chunked", False)
 
 
 # ── Core handler ───────────────────────────────────────────────────────────────
@@ -72,30 +89,27 @@ def handle_bm25_indexing(args: BM25IndexingArgs) -> None:
     )
     darwin.log("")
 
-    if args.file:
-        filenames = [args.file]
-    else:
-        try:
-            status = store.status()
-            filenames = [
-                fname for fname, info in status.get("files", {}).items()
-                if info.get("is_chunked", False)
-            ]
-        except Exception as e:
-            darwin.log(f"Failed to read store status: {e}", LogType.ERROR)
-            return
+    status = store.status()
+    filenames = []
 
+    if args.file:
+        if not _is_bm25_indexable(args.file, status):
+            darwin.log(f"Cannot index {args.file} — no chunks found", LogType.WARNING)
+            return        
+        filenames = [args.file]
+    else:    
+        # Get all files with chunks from store
+        filenames = [
+            fname for fname, info in status.get("files", {}).items()
+             if info.get("is_chunked", False)
+        ]
+    
     if not filenames:
         darwin.log("No chunked files found. Run chunking first.", LogType.ERROR)
         return
 
     darwin.log(f"Indexing {len(filenames)} file(s)", LogType.INFO)
-
-    # Initialize models once
-    try:
-        setup()
-    except Exception as e:
-        darwin.log(f"Model setup failed: {e}", LogType.WARNING)
+    
 
     succeeded = failed = skipped = 0
 

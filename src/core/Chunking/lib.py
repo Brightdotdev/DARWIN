@@ -1,0 +1,116 @@
+
+from dataclasses import dataclass, field
+from enum import Enum
+import re
+from typing import List, Optional
+
+
+
+# ── Block-type sentinels (must match ChunkCleaners + extractor) ───────────────
+# These are present in the *raw* extractor output (before cleaning).
+# The chunker reads them to make split decisions, then they are cleaned away
+# by prepare_embedding_text before chunks reach the embedding model.
+TABLE_OPEN_TOKEN  = "[TABLE]"          # fitz extractor display text
+TABLE_CLOSE_TOKEN = "[/TABLE]"
+TABLE_EMB_TOKEN   = "[Table]"          # fitz extractor embedding text
+CAPTION_TOKEN     = "[Caption:"        # fitz extractor embedding text
+PAGE_HEADER_RE    = re.compile(r"^\[Page\s+[^\]]+\]\s*$", re.MULTILINE)
+
+# Legacy separator kept for backwards compat with pymupdf4llm output
+LEGACY_PAGE_SEP_RE = re.compile(r"^---\s*$", re.MULTILINE)
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Overlap direction
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OverlapDirection(str, Enum):
+    """
+    Describes which side(s) of a chunk carry overlap sentences.
+
+    NONE   — no overlap; chunk is self-contained
+    LEFT   — chunk *opens* with sentences repeated from the tail of the
+             previous chunk  (this chunk "looks left")
+    RIGHT  — chunk *closes* with sentences repeated at the head of the
+             next chunk  (this chunk "donates right")
+    BOTH   — interior window: received from the left AND donates to the right
+
+    Use str-Enum so the value serialises cleanly to JSON as a plain string
+    ("none", "left", "right", "both") without needing a custom encoder.
+    """
+    NONE  = "none"
+    LEFT  = "left"
+    RIGHT = "right"
+    BOTH  = "both"
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data model
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class ChunkLink:
+    """A hyperlink scoped to a chunk."""
+    url:  str
+    text: str = ""
+
+
+
+
+@dataclass
+class Chunk:
+    text: str
+    clean: str
+    index: int
+    source: str
+    token_count: int
+    heading: str
+    page: int
+    page_end: int
+    overlap_direction: OverlapDirection = OverlapDirection.NONE
+    links: List[ChunkLink] = field(default_factory=list)
+    
+    def __post_init__(self):
+        """Ensure overlap_direction is always an Enum."""
+        if isinstance(self.overlap_direction, str):
+            try:
+                self.overlap_direction = OverlapDirection(self.overlap_direction)
+            except ValueError:
+                self.overlap_direction = OverlapDirection.NONE
+    
+    @property
+    def is_overlap(self) -> bool:
+        """Legacy property for backward compatibility."""
+        return self.overlap_direction != OverlapDirection.NONE
+
+@dataclass
+class ChunkingArgs:
+    target:         str
+    file:           Optional[str] = None
+    project:        Optional[str] = None
+    inspect:        bool = False
+    rerun:          bool = False
+
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Page tracking
+# ─────────────────────────────────────────────────────────────────────────────
+
+def count_page_seps(text: str) -> int:
+    """
+    Count page boundaries in a text fragment.
+
+    Supports both formats:
+    - New extractor:  [Page N]  lines
+    - Legacy pymupdf4llm / old extractor:  ---  lines
+    """
+    new_style    = len(PAGE_HEADER_RE.findall(text))
+    legacy_style = len(LEGACY_PAGE_SEP_RE.findall(text))
+    return new_style + legacy_style
+

@@ -38,8 +38,8 @@ class DarwinStore(
         self.paths = StorePaths(self._darwin_dir)
         self.registry = FileRegistry(self.paths)
 
-        from src.core.Models import setup, get_loader, ModelCategory
 
+        from src.core.Models import setup
         prefs = self.get_model_preferences() if self.paths.config_path.exists() else None
         setup(preferences=prefs)
 

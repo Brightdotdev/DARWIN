@@ -18,10 +18,10 @@ import dataclasses
 from typing import Any, Optional
 import numpy as np
 
-from src.core.Chunking.ChunkerUtils import Chunk
-from src.core.Parsing.ParserUtils import ParsedDocument
+from src.core.Chunking.lib import Chunk
+from src.core.Parsing.lib import ParsedDocument
 from src.core.Storage.StoreUtils import file_hash, now, read_json, write_json
-from src.core.BM25.BM25Utils import BM25Data
+from src.core.BM25.lib import BM25Data
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
@@ -408,24 +408,63 @@ class VectorMixin(_PathResolverMixin):
             return False
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Mixin: Embeddings (NPZ bundles)
-# ═══════════════════════════════════════════════════════════════════════════
+
 
 class EmbeddingsMixin(_PathResolverMixin):
+    """Mixin for saving/loading embeddings with full chunk metadata."""
 
     def has_embeddings(self, filename: str) -> bool:
         current_model = _get_current_model_name()
         fh = self._hash_for(filename)
         return self.paths.npz_path(fh, current_model).exists()
 
+    def _get_overlap_value(self, chunk) -> str:
+        """Safely extract overlap direction as string."""
+        if not hasattr(chunk, 'overlap_direction'):
+            return "none"
+        
+        od = chunk.overlap_direction
+        if hasattr(od, 'value'):
+            return od.value
+        return str(od)
+
+    def _serialize_links(self, chunk) -> str:
+        """Serialize chunk links to JSON string."""
+        import json
+        if not hasattr(chunk, 'links') or not chunk.links:
+            return "[]"
+        
+        links_data = []
+        for link in chunk.links:
+            if hasattr(link, 'url'):
+                # ChunkLink object
+                links_data.append({
+                    "url": link.url,
+                    "text": getattr(link, 'text', '')
+                })
+            elif isinstance(link, dict):
+                # Already a dict
+                links_data.append({
+                    "url": link.get('url', ''),
+                    "text": link.get('text', '')
+                })
+            else:
+                # Unknown type, try to get string representation
+                links_data.append({
+                    "url": str(link),
+                    "text": ""
+                })
+        
+        return json.dumps(links_data)
+
     def save_embeddings(
         self,
         filename: str,
         vectors: np.ndarray,
-        chunks: list[Chunk],
+        chunks: list,
         model_name: str = None,
     ) -> None:
+        """Save embeddings with full chunk metadata."""
         if chunks is None or len(chunks) == 0:
             darwin.log(f"No chunks provided for embedding save of {filename}", LogType.ERROR)
             return
@@ -444,7 +483,12 @@ class EmbeddingsMixin(_PathResolverMixin):
             )
 
         try:
-            import json
+            # Prepare overlap direction strings
+            overlap_values = [self._get_overlap_value(c) for c in chunks]
+            
+            # Prepare links JSON
+            links_json_list = [self._serialize_links(c) for c in chunks]
+            
             np.savez_compressed(
                 path,
                 vectors=vectors.astype(np.float32),
@@ -453,12 +497,12 @@ class EmbeddingsMixin(_PathResolverMixin):
                 headings=np.array([c.heading for c in chunks], dtype=object),
                 pages=np.array([c.page for c in chunks], dtype=np.int32),
                 pages_end=np.array([c.page_end for c in chunks], dtype=np.int32),
-                overlap_direction=np.array([c.overlap_direction.value for c in chunks], dtype=object),
+                overlap_direction=np.array(overlap_values, dtype=object),
                 token_counts=np.array([c.token_count for c in chunks], dtype=np.int32),
                 source=np.array([c.source for c in chunks], dtype=object),
-                # links are more complex - need JSON serialization
-                links_json=np.array([json.dumps([{"url": l.url, "text": l.text} for l in c.links]) for c in chunks], dtype=object),
-)
+                links_json=np.array(links_json_list, dtype=object),
+            )
+            
             meta_path = path.with_suffix(".meta.json")
             write_json(meta_path, {
                 "embedding_model": model_name,
@@ -471,6 +515,7 @@ class EmbeddingsMixin(_PathResolverMixin):
                 "embedding_model": model_name,
                 "embedding_dimensions": vectors.shape[1],
             })
+            
             record = self._record_for(filename)
             if record:
                 self.registry.update_pipeline(record.last_seen_path or filename, "embeddings")
@@ -478,12 +523,15 @@ class EmbeddingsMixin(_PathResolverMixin):
             darwin.log(f"Saved embeddings: {path.name}", LogType.SUCCESS)
 
         except Exception as e:
+            import traceback
             darwin.log(f"Failed to save embeddings for {filename}: {e}", LogType.ERROR)
+            darwin.log(traceback.format_exc(), LogType.DEBUG)
 
-    
-
-    def load_embeddings(self, filename: str) -> tuple[np.ndarray, list[Chunk]]:
+    def load_embeddings(self, filename: str) -> tuple[np.ndarray, list]:
         """Load embeddings and return (vectors, chunks)."""
+        import json
+        from src.core.Chunking.ChunkerUtils import Chunk, ChunkLink, OverlapDirection
+        
         current_model = _get_current_model_name()
         fh = self._hash_for(filename)
         path = self.paths.npz_path(fh, current_model)
@@ -494,14 +542,15 @@ class EmbeddingsMixin(_PathResolverMixin):
                 file_meta = read_json(meta_path)
                 stored_model = file_meta.get("embedding_model", "unknown")
                 if stored_model != "unknown" and stored_model != current_model:
-                    raise FileNotFoundError(
+                    darwin.log(
                         f"Embeddings for '{filename}' were built with '{stored_model}', "
                         f"but your current model is '{current_model}'. "
-                        f"Run the embedding pipeline to re-index."
+                        f"Run the embedding pipeline to re-index.",LogType.ERROR
                     )
-            raise FileNotFoundError(
-                f"No embeddings found for '{filename}'. Run the embedding pipeline first."
-            )
+                    return
+            darwin.log(
+                f"No embeddings found for '{filename}'. Run the embedding pipeline first.", LogType.ERROR)
+            return
 
         meta_path = path.with_suffix(".meta.json")
         if meta_path.exists():
@@ -518,37 +567,69 @@ class EmbeddingsMixin(_PathResolverMixin):
         vectors = data["vectors"]
         
         # Reconstruct chunks
-        from src.core.Chunking.ChunkerUtils import Chunk, ChunkLink, OverlapDirection
-        import json
-        
         chunks = []
         n_chunks = len(data['text'])
         
         for i in range(n_chunks):
             # Parse links from JSON
-            links_json = data.get('links_json', [None])[i] if 'links_json' in data else None
-            if links_json and links_json != 'null' and links_json is not None:
-                links = [ChunkLink(url=l['url'], text=l.get('text', '')) 
-                        for l in json.loads(links_json)]
-            else:
-                links = []
+            links = []
+            if 'links_json' in data and i < len(data['links_json']):
+                links_json = data['links_json'][i]
+                if links_json and links_json != 'null' and links_json != "[]":
+                    try:
+                        if isinstance(links_json, str):
+                            links_data = json.loads(links_json)
+                        else:
+                            links_data = links_json
+                        
+                        for l in links_data:
+                            if isinstance(l, dict):
+                                links.append(ChunkLink(
+                                    url=l.get('url', ''),
+                                    text=l.get('text', '')
+                                ))
+                            elif hasattr(l, 'url'):
+                                links.append(l)
+                    except (json.JSONDecodeError, TypeError) as e:
+                        darwin.log(f"Failed to parse links for chunk {i}: {e}", LogType.DEBUG)
             
-            # Get overlap direction with default
-            overlap_dir_raw = data.get('overlap_direction', ['none'])[i] if 'overlap_direction' in data else 'none'
-            if isinstance(overlap_dir_raw, str):
-                overlap_dir = OverlapDirection(overlap_dir_raw)
-            else:
+            # Get overlap direction as Enum
+            overlap_raw = "none"
+            if 'overlap_direction' in data and i < len(data['overlap_direction']):
+                overlap_raw = str(data['overlap_direction'][i])
+            
+            # Convert to Enum
+            try:
+                overlap_dir = OverlapDirection(overlap_raw)
+            except (ValueError, TypeError):
                 overlap_dir = OverlapDirection.NONE
+            
+            # Get page_end with fallback to page
+            page = int(data['pages'][i])
+            page_end = page
+            if 'pages_end' in data and i < len(data['pages_end']):
+                try:
+                    page_end = int(data['pages_end'][i])
+                except (ValueError, TypeError):
+                    page_end = page
+            
+            # Get token_count with fallback
+            token_count = 0
+            if 'token_counts' in data and i < len(data['token_counts']):
+                try:
+                    token_count = int(data['token_counts'][i])
+                except (ValueError, TypeError):
+                    token_count = 0
             
             chunk = Chunk(
                 text=str(data['text'][i]),
                 clean=str(data['clean'][i]),
                 index=i,
                 source=str(data['source'][i]),
-                token_count=int(data.get('token_counts', [0])[i]) if 'token_counts' in data else 0,
+                token_count=token_count,
                 heading=str(data['headings'][i]),
-                page=int(data['pages'][i]),
-                page_end=int(data.get('pages_end', [data['pages'][i]])[i]) if 'pages_end' in data else int(data['pages'][i]),
+                page=page,
+                page_end=page_end,
                 overlap_direction=overlap_dir,
                 links=links,
             )
@@ -557,6 +638,7 @@ class EmbeddingsMixin(_PathResolverMixin):
         return vectors, chunks
 
     def get_embedding_metadata(self, filename: str) -> Optional[dict]:
+        """Get embedding metadata for a file."""
         current_model = _get_current_model_name()
         fh = self._hash_for(filename)
         path = self.paths.npz_path(fh, current_model)
@@ -566,13 +648,12 @@ class EmbeddingsMixin(_PathResolverMixin):
         return read_json(meta_path)
 
     def is_embedding_compatible(self, filename: str) -> bool:
+        """Check if embeddings exist and are compatible with current model."""
         try:
             self.load_embeddings(filename)
             return True
         except FileNotFoundError:
             return False
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: BM25
 # ═══════════════════════════════════════════════════════════════════════════
@@ -726,9 +807,9 @@ class TermBankMixin(_PathResolverMixin):
         model_name = _normalize_model_name(model_name)
 
         if len(term_embeddings) != len(terms):
-            raise ValueError(
-                f"term_embeddings ({len(term_embeddings)}) and terms ({len(terms)}) must match"
-            )
+            darwin.log(f"term_embeddings ({len(term_embeddings)}) and terms ({len(terms)}) must match" ,LogType.ERROR)
+            return
+        
 
         d = self._dir_for(filename)
         safe_name = model_name.replace("/", "_")

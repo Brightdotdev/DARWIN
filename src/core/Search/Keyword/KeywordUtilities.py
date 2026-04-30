@@ -16,71 +16,12 @@ Query gets same treatment as chunks:
 This ensures query tokens match the BM25 index vocabulary.
 """
 
-from dataclasses import dataclass,field
+from dataclasses import dataclass
 from typing import List, Optional
-from enum import Enum
-from src.core.BM25.BM25Utils import (
+from src.core.BM25.lib import (
     BM25Data,compute_idf
     
 )
-
-# ============================================================================
-# Data model
-# ============================================================================
-
-
-class OverlapDirection(str, Enum):
-    """
-    Describes which side(s) of a chunk carry overlap sentences.
-
-    NONE   — no overlap; chunk is self-contained
-    LEFT   — chunk *opens* with sentences repeated from the tail of the
-             previous chunk  (this chunk "looks left")
-    RIGHT  — chunk *closes* with sentences repeated at the head of the
-             next chunk  (this chunk "donates right")
-    BOTH   — interior window: received from the left AND donates to the right
-
-    Use str-Enum so the value serialises cleanly to JSON as a plain string
-    ("none", "left", "right", "both") without needing a custom encoder.
-    """
-    NONE  = "none"
-    LEFT  = "left"
-    RIGHT = "right"
-    BOTH  = "both"
-
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data model
-# ─────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class ChunkLink:
-    """A hyperlink scoped to a chunk."""
-    url:  str
-    text: str = ""
-
-
-
-
-@dataclass
-class KeywordSearchResult:
-    """Single BM25 search result with all metadata."""
-    text: str           # Original text (for LLM context)
-    clean: str          # Cleaned text (what was indexed)
-    score: float        # BM25 score (not normalized to 0-1)
-    source: str         # Document filename
-    page: int           # Page number
-    heading: str        # Section heading
-    chunk_index: int    # Original chunk position
-    matched_terms: List[str]
-    overlap_direction : OverlapDirection =  OverlapDirection.NONE 
-    links:            List[ChunkLink]  = field(default_factory=list)
-    
-    
-    def __repr__(self) -> str:
-        return f"KeywordSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
-
 
 # ============================================================================
 # Constants

@@ -89,7 +89,6 @@ def embed_terms(
 
     try:
         from src.core.Embedding.Embedder import embed_chunks
-        from src.core.Chunking.ChunkerUtils import Chunk
 
         # Create lightweight Chunk objects just for embedding
         # The embedder only uses chunk.clean
@@ -105,13 +104,12 @@ def embed_terms(
                 self.source = "term_bank"
 
         term_chunks = [_TermChunk(term, i) for i, term in enumerate(terms)]
-
+        darwin.log("Loading embedding model to embed terms")
         embeddings = embed_chunks(
             chunks=term_chunks,
             file_name="term_bank",
-            preset=model_name,
             batch_size=64,
-            unload_after=False,  # Don't unload — caller may need it
+            unload_after=False, 
         )
 
         return embeddings

@@ -16,16 +16,14 @@ chunks
 """
 
 from collections import Counter
-from pathlib import Path
-from typing import Any, List, Optional
+from typing import  List, Optional
 
-import numpy as np
 
 from src.core.Chunking.ChunkerUtils import Chunk
+from src.core.BM25.lib import (BM25Data, DEFAULT_IDF_SMOOTHING,DOMAIN_STOP_THRESHOLD)
+
 from src.core.BM25.BM25Utils import (
-    BM25Data,
-    DOMAIN_STOP_THRESHOLD,
-    DEFAULT_IDF_SMOOTHING,
+
     detect_domain_stopwords,
     tokenize_text,
     stream_tokenize_chunks,

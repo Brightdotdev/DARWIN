@@ -45,6 +45,7 @@ from src.lib.Utils import scan_folder
 # Core fusion
 # ============================================================================
 
+
 def hybrid_search(
     semantic_results: List[SematicSearchResult],
     keyword_results: List[KeywordSearchResult],
@@ -55,15 +56,26 @@ def hybrid_search(
     alpha: float = DEFAULT_ALPHA,
     beta: float = DEFAULT_BETA
 ) -> List[HybridSearchResult]:
-    """
-    Combine semantic and keyword results using Reciprocal Rank Fusion.
-    """
-    merged = merge_results(semantic_results, keyword_results)
-    ranked = build_ranked_lists(merged)
-    rrf_results = reciprocal_rank_fusion(ranked, rrf_k, [semantic_weight, keyword_weight])
-    final = apply_hybrid_scoring(rrf_results, merged, alpha=alpha, beta=beta)
-    return final[:top_k]
+    """Combine semantic and keyword results using Reciprocal Rank Fusion."""
 
+    # Step 1: Merge into unified HybridSearchResult objects (deduped by source/page/chunk)
+    merged = merge_results(semantic_results, keyword_results)
+
+    # Step 2: Build separate ranked lists (by semantic score / keyword score)
+    ranked_lists = build_ranked_lists(merged)  # [semantic_list, keyword_list]
+
+    # Step 3: RRF over the unified typed lists
+    weights = [semantic_weight, keyword_weight]
+    results = reciprocal_rank_fusion(ranked_lists, rrf_k, weights)
+
+    # Step 4: Apply final scoring blend
+    for r in results:
+        if r.semantic_score is not None and r.keyword_score is not None:
+            r.final_score = (alpha * r.semantic_score + beta * r.keyword_score) / (alpha + beta)
+        else:
+            r.final_score = r.rrf_score
+
+    return results[:top_k]
 
 # ============================================================================
 # Single document

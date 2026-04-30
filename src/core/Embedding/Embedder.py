@@ -76,8 +76,6 @@ def prepare_query_text(query: str, preset: ModelPreset | str | None = None) -> s
 def embed_chunks(
     chunks: List[Chunk],
     file_name: str,
-    store=None,  # kept for compatibility, not used
-    preset: ModelPreset | str | None = None,
     batch_size: Optional[int] = None,
     unload_after: bool = False,
 ) -> Optional[np.ndarray]:
@@ -87,7 +85,6 @@ def embed_chunks(
     Args:
         chunks:       List of Chunk objects to embed
         file_name:    Display name (used for UI only)
-        preset:       ModelPreset, model key string, or None (auto-detect)
         batch_size:   Override batch size — auto-detected if None
         unload_after: Free the embedding model from RAM after encoding
 
@@ -103,12 +100,12 @@ def embed_chunks(
 
     loader = get_loader()
     
-    # Bug fix: loader.get() for embedding models returns (model,) not (processor, model, device)
-    result = loader.get(ModelCategory.EMBEDDING)
-    if isinstance(result, tuple):
-        embedder = result[0]  # Some loaders return (model,) tuple
-    else:
-        embedder = result
+    embedder = loader.get(ModelCategory.EMBEDDING)
+  
+  
+
+
+
 
     texts = [prepare_passage_text(c.clean, preset) for c in chunks]
 
@@ -157,9 +154,7 @@ def embed_chunks(
                 return embed_chunks(
                     chunks,
                     file_name,
-                    store=store,
-                    preset=preset,
-                    batch_size=16,
+                    batch_size=32,
                     unload_after=unload_after,
                 )
 
@@ -209,13 +204,9 @@ def embed_query(
 
     loader = get_loader()
     
-    # Bug fix: same tuple handling as embed_chunks
-    result = loader.get(ModelCategory.EMBEDDING)
-    if isinstance(result, tuple):
-        model = result[0]
-    else:
-        model = result
-
+    model = loader.get(ModelCategory.EMBEDDING)
+    
+    
     prepared = prepare_query_text(query, preset)
 
     encode_kwargs = {
@@ -278,8 +269,6 @@ def run_embedding_pipeline(
     vectors = embed_chunks(
         chunks,
         filename,
-        store=store,
-        preset=preset,
         unload_after=unload_after,
     )
 

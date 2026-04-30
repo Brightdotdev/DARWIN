@@ -40,9 +40,9 @@ from src.core.Search.Hybrid.HybridSearch import (
     search_single_document_hybrid,
     search_across_documents_hybrid,
 )
+from src.core.Search.lib import (HybridSearchResult)
 from src.core.Search.Hybrid.HybridSearchUtils import (
     HybridSearchArgs,
-    HybridSearchResult,
     DEFAULT_TOP_K,
     DEFAULT_RRF_K,
     DEFAULT_SEMANTIC_WEIGHT,

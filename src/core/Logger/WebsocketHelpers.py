@@ -72,7 +72,6 @@ class WebSocketServer:
             bridge = darwin._get_bridge(ws)
             darwin.subscribe(bridge)
             await bridge.send_banner()
-            darwin.log("Frontend client connected", LogType.SUCCESS)
             try:
                 async for raw in ws:
                     try:
