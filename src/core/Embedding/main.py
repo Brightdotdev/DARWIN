@@ -128,14 +128,14 @@ def handle_embedding(args: EmbeddingArgs) -> None:
 
     # Resolve which files to embed
     if args.file:
-        filenames = [args.file]
+        filenames = [args.file] if store.has_chunks(args.file) else []
     else:
         try:
-            status = store.status()
             filenames = [
-                fname for fname, info in status.get("files", {}).items()
-                if info.get("components", {}).get("chunks", False)
-            ]
+            record.original_name
+            for record in store.registry.list_all()
+            if record.is_chunked
+        ]
         except Exception as e:
             darwin.log(f"Failed to read store status: {e}", LogType.ERROR)
             return

@@ -335,33 +335,7 @@ class ModelLoader:
 
                 stats["reembedded"] += 1
                 darwin.log(f"{fname} — migrated ({len(chunks)} chunks)", LogType.SUCCESS)
-
-                # Term bank update
-                if store.has_term_bank(fname):
-                    try:
-                        term_data = store.load_term_bank(fname)
-
-                        if term_data:
-                            terms = term_data.get("terms", [])
-
-                            if terms:
-                                from src.core.BM25.TermBank import embed_terms
-
-                                term_embeddings = embed_terms(
-                                    terms, model_name=current_model
-                                )
-
-                                if term_embeddings is not None:
-                                    store.save_term_embeddings(
-                                        fname,
-                                        term_embeddings,
-                                        terms,
-                                        model_name=current_model,
-                                    )
-                                    stats["term_banks_updated"] += 1
-                    except Exception as e:
-                        darwin.log(f"{fname} — term bank update failed: {e}", LogType.WARNING)
-
+                
             except Exception as e:
                 darwin.log(f"{fname} — {type(e).__name__}: {e}", LogType.ERROR)
                 stats["failed"] += 1

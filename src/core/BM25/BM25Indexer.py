@@ -127,38 +127,7 @@ def run_bm25_indexing_pipeline(
         # Save BM25 index
         store.save_bm25(filename, data)
         store.save_stopwords(filename, set(data.domain_stopwords))
-
-        # ── Build and save term bank ──────────────────────────────────────
-        try:
-            from src.core.BM25.TermBank import build_term_bank, embed_terms
-
-            terms, term_freqs, chunk_count = build_term_bank(
-                chunks=chunks,
-                domain_stopwords=set(data.domain_stopwords),
-                min_freq=5,
-                max_terms=2000,
-            )
-
-            if terms:
-                # Save raw terms (model-agnostic)
-                store.save_term_bank(filename, terms, term_freqs, chunk_count)
-
-                # Embed and save term embeddings (model-specific)
-                term_embeddings = embed_terms(terms)
-                if term_embeddings is not None:
-                    store.save_term_embeddings(filename, term_embeddings, terms)
-                else:
-                    darwin.log(
-                        f"Term embeddings not created — query expansion will be unavailable "
-                        f"until embedding model is available",
-                        LogType.INFO
-                    )
-            else:
-                darwin.log(f"No terms met threshold for term bank", LogType.INFO)
-
-        except Exception as e:
-            darwin.log(f"Term bank creation failed (non-fatal): {e}", LogType.WARNING)
-
+        
     return data
 
 

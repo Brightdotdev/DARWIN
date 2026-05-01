@@ -154,31 +154,29 @@ class SpacyConceptExtractor:
         chunks = []
         seen: Set[str] = set()
 
-        # NER first
+        # NER first (highest quality)
         for ent in doc.ents:
-            if ent.label_ in self._SIGNIFICANT_ENTITIES:
+            if ent.label_ in self._SIGNIFICANT_ENTITIES and ent.label_ != "GPE":
                 key = self._normalize(ent.text)
                 if key and key not in seen and len(key) > 2:
                     seen.add(key)
                     chunks.append(key)
 
-        # Noun chunks
+        # Multi-word noun chunks only
         if self.has_parser:
             for chunk in doc.noun_chunks:
-                key = self._normalize(chunk.text)
-                if key and key not in seen and len(key) > 3:
-                    seen.add(key)
-                    chunks.append(key)
-
-        # Individual significant tokens (catch what chunks miss)
-        for token in doc:
-            if token.pos_ in self._CONCEPT_POS and not token.is_stop:
-                key = token.lemma_.lower()
-                if key and key not in seen and len(key) > 2:
-                    seen.add(key)
-                    chunks.append(key)
+                clean = " ".join(
+                    t.text.lower() for t in chunk
+                    if t.dep_ not in {"det", "poss"} and t.pos_ not in {"DET", "PRON"}
+                ).strip()
+                clean = self._normalize(clean)
+                if clean and clean not in seen and len(clean.split()) >= 2:
+                    seen.add(clean)
+                    chunks.append(clean)
 
         return chunks
+
+
 
     def split_sentences(self, text: str, max_length: int = 100000) -> List[str]:
         """
@@ -211,13 +209,14 @@ class SpacyConceptExtractor:
         Extract keywords from all chunks for graph building.
         Returns {keyword: [chunk_index, ...]} — same shape as yake output.
 
-        Used by: GraphExtractor as an alternative to yake/regex.
         """
         keywords: Dict[str, List[int]] = defaultdict(list)
 
         for chunk in chunks:
             text = chunk.clean[:3000]
             if not text.strip():
+                continue
+            if text.strip().startswith("[Image:"):
                 continue
 
             for kw in self.extract_noun_chunks(text)[:max_per_chunk]:

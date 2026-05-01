@@ -137,7 +137,7 @@ def handle_chunking(args: ChunkingArgs) -> None:
 
     # Resolve files to process
     if args.file:
-        filenames = [args.file]
+        filenames = [args.file] if store.has_markdown(args.file) else []
     else:
         try:
             status = store.status()

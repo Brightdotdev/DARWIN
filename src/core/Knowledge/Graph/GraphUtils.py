@@ -1,3 +1,5 @@
+# src/core/Knowledge/Graph/GraphUtils.py - Fixed (no TerminalUI)
+
 """
 src/core/Knowledge/Graph/GraphUtils.py
 --------------------------------------
@@ -26,7 +28,7 @@ class Relationship:
     source: str
     target: str
     weight: float
-    relation_type: str  # "context_similarity"
+    relation_type: str
 
 
 @dataclass
@@ -57,8 +59,8 @@ class GraphData:
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════
 
-DEFAULT_MIN_CONCEPT_FREQ = 10
-DEFAULT_MAX_CONCEPTS     = 10
+DEFAULT_MIN_CONCEPT_FREQ = 2 
+DEFAULT_MAX_CONCEPTS = 75
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -73,8 +75,8 @@ class GraphExtractionArgs:
     min_freq: int = DEFAULT_MIN_CONCEPT_FREQ
     max_concepts: int = DEFAULT_MAX_CONCEPTS
     similarity_threshold: Optional[float] = None
-    extraction_mode: str = "yake"
-    elevation_mode: str = "spacy"
+    extraction_mode: str = "spacy"
+    elevation_mode: str = "none"
     visualize: bool = False
     inspect: bool = False
     json_output: bool = False
@@ -112,6 +114,14 @@ CONCEPT_STOPWORDS = {
     "possible", "present", "rather", "second", "several",
     "something", "sometimes", "third", "though", "together",
     "unless", "using", "various", "whether", "whilst",
+    "step", "one", "two", "three", "four", "five",
+    "morning", "evening", "night", "day", "week", "month", "year",
+    "thing", "things", "way", "ways", "time", "times",
+    "example", "examples", "part", "parts", "type", "types",
+    "number", "lot", "bit", "kind", "need", "needs",
+    "people", "person", "user", "users", "someone", "everyone",
+    "place", "places", "point", "points", "case", "cases",
+    "new", "old", "good", "great", "real", "best", "right",
 }
 
 

@@ -1,3 +1,5 @@
+# src/core/Knowledge/Wiki/WikiGenerator.py - Fixed with darwin.log()
+
 """
 src/core/Knowledge/Wiki/WikiGenerator.py
 -----------------------------------------
@@ -7,7 +9,6 @@ Two modes:
   - index (offline):   Phonebook-style concept listing with citations
   - summary (LLM):     Wikipedia prose generated from chunk context
 
-Uses the same spaCy/yake/regex extraction pipeline as the graph module.
 LLM calls are opt-in via --mode summary. Everything else runs offline.
 
 Pipeline
@@ -22,13 +23,12 @@ Graph + Chunks
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import List, Dict, Optional
 
 from src.core.Chunking.Chunker import Chunk
 from src.core.Knowledge.Graph.GraphUtils import GraphData, ConceptNode, Relationship
 from src.core.Storage.DarwinStore import DarwinStore
-from src.lib.Terminal import TerminalUI
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -134,7 +134,7 @@ def _call_llm(prompt: str, model: str = "ollama/llama3.2") -> Optional[str]:
         )
         return response.choices[0].message.content
     except Exception as e:
-        TerminalUI.warn(f"LLM call failed: {e}")
+        darwin.log(f"LLM call failed: {e}", LogType.WARNING)
         return None
 
 
@@ -153,7 +153,7 @@ def generate_concept_index(
     Phonebook-style concept index. Fully offline.
     Each concept gets a page with chunk references + snippets.
     """
-    TerminalUI.bold(f"Generating concept index: {filename}")
+    darwin.log(f"Generating concept index: {filename}", LogType.INFO)
 
     sorted_nodes = sorted(graph.nodes, key=lambda n: n.frequency, reverse=True)
     top_concepts = sorted_nodes[:max_concepts]
@@ -182,7 +182,7 @@ def generate_concept_index(
 
     # ── Individual concept pages ──
     for node in top_concepts:
-        TerminalUI.dim(f"  {node.label}")
+        darwin.log(f"  {node.label}")
 
         concept_chunks = [chunks[i] for i in node.chunk_indices[:chunks_per_concept] if i < len(chunks)]
         related = neighbors.get(node.id, [])[:10]
@@ -210,7 +210,7 @@ def generate_concept_index(
             related=related,
         ))
 
-    TerminalUI.success(f"Generated {len(pages)} pages (index mode)")
+    darwin.log(f"Generated {len(pages)} pages (index mode)", LogType.SUCCESS)
     return WikiIndex(filename=filename, mode="index", pages=pages, concept_count=len(top_concepts))
 
 
@@ -225,13 +225,10 @@ def generate_concept_summaries(
     llm_model: str = "ollama/llama3.2",
     max_concepts: int = DEFAULT_MAX_CONCEPTS,
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
+    max_context_chars: int = 4000,
 ) -> WikiIndex:
-    """
-    Wikipedia-style summaries using an LLM.
-    Falls back to index mode if LLM is unavailable.
-    """
-    TerminalUI.bold(f"Generating Wikipedia summaries: {filename}")
-    TerminalUI.dim(f"LLM: {llm_model}")
+    darwin.log(f"Generating Wikipedia summaries: {filename}", LogType.INFO)
+    darwin.log(f"LLM: {llm_model}")
 
     sorted_nodes = sorted(graph.nodes, key=lambda n: n.frequency, reverse=True)
     top_concepts = sorted_nodes[:max_concepts]
@@ -239,7 +236,6 @@ def generate_concept_summaries(
 
     pages: List[WikiPage] = []
 
-    # ── LLM-generated master index ──
     concept_lines = []
     for node in top_concepts[:30]:
         related = neighbors.get(node.id, [])[:3]
@@ -261,15 +257,20 @@ def generate_concept_summaries(
         concept_count=len(top_concepts),
     ))
 
-    # ── LLM-generated concept summaries ──
     for i, node in enumerate(top_concepts):
-        TerminalUI.dim(f"  [{i+1}/{len(top_concepts)}] {node.label}")
+        darwin.log(f"  [{i+1}/{len(top_concepts)}] {node.label}")
 
         concept_chunks = [chunks[j] for j in node.chunk_indices[:chunks_per_concept] if j < len(chunks)]
-        context = "\n\n---\n\n".join(
-            f"[Page {c.page}] {c.heading or ''}\n{c.clean[:600]}"
-            for c in concept_chunks
-        )
+        
+        context_parts = []
+        total_chars = 0
+        for c in concept_chunks:
+            part = f"[Page {c.page}] {c.heading or ''}\n{c.clean[:600]}"
+            if total_chars + len(part) > max_context_chars:
+                break
+            context_parts.append(part)
+            total_chars += len(part)
+        context = "\n\n---\n\n".join(context_parts)
 
         summary = _call_llm(
             SUMMARY_PROMPT.format(concept=node.label, filename=filename, context=context),
@@ -277,7 +278,6 @@ def generate_concept_summaries(
         )
 
         if not summary:
-            # Fallback: plain snippet collection
             summary = f"# {node.label}\n\n*Mentioned in {node.frequency} chunks.*\n\n"
             for c in concept_chunks[:3]:
                 summary += f"- Page {c.page}: {_extract_snippet(c.clean, node.label, 150)}\n"
@@ -294,7 +294,7 @@ def generate_concept_summaries(
             related=related,
         ))
 
-    TerminalUI.success(f"Generated {len(pages)} pages (summary mode)")
+    darwin.log(f"Generated {len(pages)} pages (summary mode)", LogType.SUCCESS)
     return WikiIndex(filename=filename, mode="summary", pages=pages, concept_count=len(top_concepts))
 
 
@@ -354,23 +354,18 @@ def run_wiki_pipeline(
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
     rerun: bool = False,
 ) -> Optional[WikiIndex]:
-    """
-    Full wiki pipeline for one document.
-    Loads graph + chunks, generates wiki, saves to store.
-    """
     if not store.has_graph(filename):
-        TerminalUI.error(f"No graph found for '{filename}'. Run graph extraction first.")
+        darwin.log(f"No graph found for '{filename}'. Run graph extraction first.", LogType.ERROR)
         return None
 
     if not store.has_chunks(filename):
-        TerminalUI.error(f"No chunks found for '{filename}'")
+        darwin.log(f"No chunks found for '{filename}'", LogType.ERROR)
         return None
 
     if not rerun and store.has_wiki(filename):
-        TerminalUI.dim(f"Skipping wiki: fresh exists for {filename}")
+        darwin.log(f"Skipping wiki: fresh exists for {filename}", LogType.INFO)
         try:
             wiki_dict = store.load_wiki(filename)
-            # Reconstruct WikiIndex from dict
             pages = [
                 WikiPage(
                     title=p.get("title", ""),
@@ -378,6 +373,7 @@ def run_wiki_pipeline(
                     concept=p.get("concept"),
                     chunk_count=p.get("chunk_count", 0),
                     related=p.get("related", []),
+                    concept_count=p.get("concept_count", 0),
                 )
                 for p in wiki_dict.get("pages", [])
             ]
@@ -388,7 +384,7 @@ def run_wiki_pipeline(
                 concept_count=wiki_dict.get("concept_count", 0),
             )
         except Exception:
-            TerminalUI.warn("Cached wiki corrupted — regenerating...")
+            darwin.log("Cached wiki corrupted — regenerating...", LogType.WARNING)
 
     # ── Load graph ──
     graph_dict = store.load_graph(filename)
@@ -412,18 +408,30 @@ def run_wiki_pipeline(
         total_concepts_extracted=graph_dict.get("total_concepts_extracted", 0),
     )
 
+    # ── Load chunks and validate against graph ──
     chunks = store.load_chunks(filename)
     if not chunks:
-        TerminalUI.error(f"No chunks for '{filename}'")
+        darwin.log(f"No chunks for '{filename}'", LogType.ERROR)
         return None
 
-    # ── Generate ──
+    # Guard against stale graph indices
+    max_chunk_idx = max(
+        (idx for node in nodes for idx in node.chunk_indices),
+        default=0
+    )
+    if max_chunk_idx >= len(chunks):
+        darwin.log(
+            f"Graph indices are stale — graph references chunk {max_chunk_idx} "
+            f"but only {len(chunks)} chunks exist. Re-run graph extraction.",
+            LogType.ERROR
+        )
+        return None
+
     wiki = generate_wiki(
         graph=graph, chunks=chunks, filename=filename,
         mode=mode, llm_model=llm_model,
         max_concepts=max_concepts, chunks_per_concept=chunks_per_concept,
     )
 
-    # ── Save ──
     store.save_wiki(filename, wiki)
     return wiki

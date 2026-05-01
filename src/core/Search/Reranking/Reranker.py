@@ -122,7 +122,7 @@ def rerank_results(
         darwin.log("no candidates to rerank", LogType.WARNING)
         return []
 
-    darwin.log(f"reranking {len(candidates)} candidates...", LogType.DEBUG)
+    darwin.log(f"reranking {len(candidates)} candidates...")
 
     # Use ModelLoader to get cross-encoder
     loader = get_loader()

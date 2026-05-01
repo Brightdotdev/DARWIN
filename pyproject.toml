@@ -38,7 +38,6 @@ dependencies = [
     "typer>=0.24.1",
     "usearch>=2.25.1",
     "websockets>=16.0",
-    "yake>=0.7.3",
 ]
 
 [tool.setuptools.packages.find]

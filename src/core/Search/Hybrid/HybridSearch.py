@@ -45,6 +45,16 @@ from src.lib.Utils import scan_folder
 # Core fusion
 # ============================================================================
 
+def _normalize_scores(results: List[HybridSearchResult]) -> None:
+    """Min-max normalize keyword scores in-place."""
+    kw_scores = [r.keyword_score for r in results if r.keyword_score is not None]
+    if not kw_scores:
+        return
+    min_s, max_s = min(kw_scores), max(kw_scores)
+    span = max_s - min_s or 1.0
+    for r in results:
+        if r.keyword_score is not None:
+            r.keyword_score = (r.keyword_score - min_s) / span
 
 def hybrid_search(
     semantic_results: List[SematicSearchResult],
@@ -68,12 +78,21 @@ def hybrid_search(
     weights = [semantic_weight, keyword_weight]
     results = reciprocal_rank_fusion(ranked_lists, rrf_k, weights)
 
-    # Step 4: Apply final scoring blend
+    _normalize_scores(results)
+
+        # Step 4: Apply final scoring blend
     for r in results:
-        if r.semantic_score is not None and r.keyword_score is not None:
+        if r.semantic_score is not None and r.keyword_score is not None and r.keyword_score > 0:
             r.final_score = (alpha * r.semantic_score + beta * r.keyword_score) / (alpha + beta)
+        elif r.semantic_score is not None:
+            r.final_score = r.semantic_score
+        elif r.keyword_score is not None and r.keyword_score > 0:
+            r.final_score = r.keyword_score
         else:
             r.final_score = r.rrf_score
+
+    # Re-sort by final_score after blending
+    results.sort(key=lambda x: x.final_score, reverse=True)
 
     return results[:top_k]
 

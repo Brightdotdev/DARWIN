@@ -1,10 +1,12 @@
+# src/core/Knowledge/Graph/GraphExtractor.py - Fixed with darwin.log()
+
 """
 src/core/Knowledge/Graph/GraphExtractor.py
 ------------------------------------------
 Unipartite concept graph extraction using chunk-context vectors.
 
 Pipeline:
-  1. Extract raw keywords per chunk (yake, regex, or spacy)
+  1. Extract raw keywords per chunk ( regex, or spacy)
   2. Elevate to clean concepts (spaCy lemmatization + NER, or LLM)
   3. Build context vectors: each concept = mean of chunk embeddings it appears in
   4. Connect concepts by cosine similarity with auto-threshold (~3 edges/node)
@@ -17,7 +19,7 @@ no hairballs. Query-time highlighting lights up relevant concepts.
 import re
 import numpy as np
 from collections import defaultdict
-from typing import List, Dict, Optional, Tupler
+from typing import List, Dict, Optional, Tuple
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Chunking.Chunker import Chunk
 from src.core.Knowledge.Graph.GraphUtils import (
@@ -30,43 +32,25 @@ from src.core.Knowledge.Graph.GraphUtils import (
     Relationship,
 )
 from src.core.Storage.DarwinStore import DarwinStore
-from src.lib.Terminal import TerminalUI
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Step 1: Raw keyword extraction (per chunk)
-# ═══════════════════════════════════════════════════════════════════════════
 
-def extract_keywords_yake(chunks: List[Chunk], max_per_chunk: int = 15) -> Dict[str, List[int]]:
-    """
-    YAKE keyword extraction. Fast, offline, handles multi-word phrases.
-    Returns {keyword: [chunk_index, ...]}
-    """
+
+_tokenizer_cache = None
+
+def _get_tokenizer():
+    """Get or load the spaCy tokenizer once."""
+    global _tokenizer_cache
+    if _tokenizer_cache is not None:
+        return _tokenizer_cache
     try:
-        import yake
-    except ImportError:
-        TerminalUI.warn("yake not installed — falling back to regex. Run: uv add yake")
-        return extract_keywords_regex(chunks)
+        from src.core.Models import get_loader, ModelCategory
+        loader = get_loader()
+        _tokenizer_cache = loader.get(ModelCategory.TOKENIZER)
+        return _tokenizer_cache
+    except Exception:
+        return None
 
-    kw_extractor = yake.KeywordExtractor(
-        lan="en", n=3, dedupLim=0.7, top=max_per_chunk, stopwords=None,
-    )
-
-    keywords: Dict[str, List[int]] = defaultdict(list)
-
-    for chunk in chunks:
-        text = chunk.clean[:3000]
-        if not text.strip():
-            continue
-        try:
-            for kw, score in kw_extractor.extract_keywords(text):
-                keyword = kw.lower().strip()
-                if _is_valid_keyword(keyword):
-                    keywords[keyword].append(chunk.index)
-        except Exception:
-            continue
-
-    return dict(keywords)
 
 
 def extract_keywords_regex(chunks: List[Chunk]) -> Dict[str, List[int]]:
@@ -84,49 +68,89 @@ def extract_keywords_regex(chunks: List[Chunk]) -> Dict[str, List[int]]:
 
 
 def extract_keywords_spacy(chunks: List[Chunk]) -> Dict[str, List[int]]:
-    """spaCy keyword extraction via the ModelLoader."""
+    extractor = _get_tokenizer()
+    if extractor is None:
+        return extract_keywords_regex(chunks)
+    
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
-        extractor = loader.get(ModelCategory.TOKENIZER)
         raw = extractor.extract_keywords_for_graph(chunks)
-        # ── Apply stopword filter ──
-        return {
+        
+        darwin.log(f"Sample raw keywords: {list(raw.keys())[:30]}", LogType.INFO)
+        
+        result = {
             kw: indices for kw, indices in raw.items()
             if _is_valid_keyword(kw)
         }
-    except Exception:
-        return extract_keywords_yake(chunks)
+        darwin.log(f"Sample after filter: {list(result.keys())[:30]}", LogType.INFO)
+        return result
+    except Exception as e:
+        darwin.log(f"spaCy extraction failed: {e}, falling back to regex", LogType.WARNING)
+        return extract_keywords_regex(chunks)
 
 
 def _is_valid_keyword(keyword: str) -> bool:
-    """Filter noise: stopwords, too short, digits-only."""
-    return (
-        len(keyword) > 3
-        and keyword not in CONCEPT_STOPWORDS
-        and not keyword.isdigit()
-        and any(c.isalpha() for c in keyword)
-    )
+    import re
+    clean = re.sub(r'^[^a-zA-Z]+', '', keyword)  # strip leading non-alpha chars
+    clean = re.sub(r'[^a-zA-Z0-9\s]+$', '', clean)  # strip trailing non-alpha
+    clean = clean.strip()
+    
+    words = clean.split()
+    if len(words) < 2 or len(words) > 5:
+        return False
+    if len(clean) < 6:
+        return False
+    if clean in CONCEPT_STOPWORDS:
+        return False
+    if not any(c.isalpha() for c in clean):
+        return False
+    if re.search(r'[@\[\]"{}]|http|www\.', clean):
+        return False
+    if re.search(r'\s[-&]\s', clean):
+        return False
+    
+    return True
 
+
+
+def _score_concepts(concepts, total_chunks):
+    import math
+    scores = {}
+    for concept, chunk_indices in concepts.items():
+        df = len(set(chunk_indices))
+        idf = math.log((total_chunks + 1) / (df + 1))
+        scores[concept] = df * idf
+    return scores
+
+
+def _semantic_centrality_scores(
+    concepts: Dict[str, List[int]],
+    chunk_vectors: np.ndarray,
+) -> Dict[str, float]:
+    """
+    Score each concept by how central it is to the document.
+    Concept vector = mean of chunk embeddings it appears in.
+    Score = cosine similarity to document centroid.
+    Central concepts score high, peripheral examples score low.
+    """
+    doc_centroid = chunk_vectors.mean(axis=0)
+    doc_centroid = doc_centroid / (np.linalg.norm(doc_centroid) + 1e-9)
+
+    scores = {}
+    for concept, chunk_indices in concepts.items():
+        valid = [idx for idx in chunk_indices if idx < len(chunk_vectors)]
+        if not valid:
+            scores[concept] = 0.0
+            continue
+        concept_vec = chunk_vectors[valid].mean(axis=0)
+        concept_vec = concept_vec / (np.linalg.norm(concept_vec) + 1e-9)
+        scores[concept] = float(np.dot(concept_vec, doc_centroid))
+
+    return scores
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Step 2: Concept elevation (keyword → clean concept)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _load_spacy():
-    """Lazy-load spaCy model. Returns nlp or None."""
-    try:
-        import spacy
-        for model in ["en_core_web_md", "en_core_web_sm"]:
-            try:
-                return spacy.load(model)
-            except OSError:
-                continue
-        TerminalUI.warn("No spaCy model found. Run: python -m spacy download en_core_web_sm")
-        return None
-    except ImportError:
-        TerminalUI.warn("spaCy not installed. Run: uv add spacy")
-        return None
 
 
 def elevate_concepts_spacy(
@@ -134,13 +158,16 @@ def elevate_concepts_spacy(
     max_concepts: int = 10,
 ) -> Dict[str, List[int]]:
     """Elevate keywords using the loaded spaCy model."""
+    extractor = _get_tokenizer()
+    if extractor is None:
+        return raw_keywords
+    
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
-        extractor = loader.get(ModelCategory.TOKENIZER)
         return extractor.elevate_keywords(raw_keywords, max_concepts)
-    except Exception:
-        return raw_keywords  # fallback: return raw keywords unchanged
+    except Exception as e:
+        darwin.log(f"spaCy elevation failed: {e}", LogType.WARNING)
+        return raw_keywords
+
 
 
 def elevate_concepts_llm(
@@ -181,19 +208,19 @@ Return ONLY a JSON array:
 
     response = _call_llm(prompt)
     if not response:
-        TerminalUI.warn("LLM unavailable — falling back to spaCy")
+        darwin.log("LLM unavailable — falling back to spaCy", LogType.WARNING)
         return elevate_concepts_spacy(raw_keywords, max_keywords)
 
     cleaned = re.sub(r"```(?:json)?", "", response).strip()
     start, end = cleaned.find("["), cleaned.rfind("]")
     if start == -1 or end == -1:
-        TerminalUI.warn("LLM response malformed — falling back to spaCy")
+        darwin.log("LLM response malformed — falling back to spaCy", LogType.WARNING)
         return elevate_concepts_spacy(raw_keywords, max_keywords)
 
     try:
         elevated_list = json.loads(cleaned[start:end + 1])
     except json.JSONDecodeError:
-        TerminalUI.warn("LLM JSON parse failed — falling back to spaCy")
+        darwin.log("LLM JSON parse failed — falling back to spaCy", LogType.WARNING)
         return elevate_concepts_spacy(raw_keywords, max_keywords)
 
     keyword_to_indices = dict(sorted_keywords)
@@ -221,15 +248,13 @@ Return ONLY a JSON array:
     if not result:
         return elevate_concepts_spacy(raw_keywords, max_keywords)
 
-    TerminalUI.success(
-        f"Elevated {len(sorted_keywords)} keywords → {len(result)} concepts (LLM)"
-    )
+    darwin.log(f"Elevated {len(sorted_keywords)} keywords → {len(result)} concepts (LLM)", LogType.SUCCESS)
     return result
 
 
 def _call_llm(prompt: str) -> Optional[str]:
     """Placeholder — replace with your agnostic LLM wrapper."""
-    return None  # Offline by default
+    return None
 
 
 def elevate_concepts(
@@ -241,7 +266,7 @@ def elevate_concepts(
     Elevate raw keywords into clean semantic concepts.
 
     Args:
-        raw_keywords: {keyword: [chunk_indices]} from yake/regex/spacy
+        raw_keywords: {keyword: [chunk_indices]} from regex/spacy
         max_keywords: Max keywords to process
         mode:         "spacy" (offline, default) | "llm" (online) | "none"
 
@@ -256,7 +281,7 @@ def elevate_concepts(
         return raw_keywords
     elif mode == "llm":
         return elevate_concepts_llm(raw_keywords, max_keywords)
-    else:  # "spacy" (default)
+    else:
         return elevate_concepts_spacy(raw_keywords, max_keywords)
 
 
@@ -291,10 +316,6 @@ def _cosine_similarity_matrix(vectors: np.ndarray) -> np.ndarray:
 
 
 def _auto_threshold(sim_matrix: np.ndarray, target_avg_degree: float = 3.0) -> float:
-    """
-    Find threshold producing ~target_avg_degree edges per node.
-    3.0 = Obsidian-like: visible clusters with bridges, no hairball.
-    """
     n = sim_matrix.shape[0]
     if n < 2:
         return 0.75
@@ -309,9 +330,13 @@ def _auto_threshold(sim_matrix: np.ndarray, target_avg_degree: float = 3.0) -> f
 
     target_edges = max(n - 1, min(int((n * target_avg_degree) / 2), len(upper) - 1))
     threshold = upper[-target_edges] if target_edges <= len(upper) else upper[0]
-    threshold = max(0.45, min(0.85, threshold))
+    
+    # Dynamic cap based on corpus size — small docs need lower threshold
+    min_cap = 0.45
+    max_cap = 0.85 if n >= 30 else 0.95  # ← tighter for small concept sets
+    threshold = max(min_cap, min(max_cap, threshold))
 
-    TerminalUI.dim(f"Auto threshold: {threshold:.3f} → ~{target_avg_degree} edges/node")
+    darwin.log(f"Auto threshold: {threshold:.3f} → ~{target_avg_degree} edges/node")
     return threshold
 
 
@@ -340,10 +365,32 @@ def build_concept_graph(
     Returns:
         GraphData with concept nodes and context-similarity edges
     """
-    # Filter by frequency
-    filtered = {c: idx for c, idx in concepts.items() if len(idx) >= min_freq}
+    
+    tfidf_scores = _score_concepts(concepts, len(chunks))
+    centrality_scores = _semantic_centrality_scores(concepts, chunk_vectors)
+
+    # Normalize both to 0-1
+    max_tfidf = max(tfidf_scores.values()) or 1.0
+    max_cent = max(centrality_scores.values()) or 1.0
+
+    combined = {
+        c: (tfidf_scores[c] / max_tfidf) * 0.4 + (centrality_scores[c] / max_cent) * 0.6
+        for c in concepts
+    }
+
+    sorted_scores = sorted(combined.values())
+    cutoff_idx = int(len(sorted_scores) * 0.4)
+    cutoff_score = sorted_scores[cutoff_idx]
+
+    filtered = {
+        c: idx for c, idx in concepts.items()
+        if combined[c] >= cutoff_score and len(idx) >= min_freq}
+    
+
+    darwin.log(f"Top scored: {sorted(combined.items(), key=lambda x: x[1], reverse=True)[:10]}", LogType.INFO)
+
     if not filtered:
-        TerminalUI.warn("No concepts passed frequency filter")
+        darwin.log("No concepts passed frequency filter", LogType.WARNING)
         return GraphData(filename="", chunk_count=len(chunks), total_concepts_extracted=len(concepts))
 
     # Rank by frequency, take top N
@@ -363,7 +410,7 @@ def build_concept_graph(
     ]
 
     # Build context vectors from chunk embeddings
-    TerminalUI.dim(f"Building context vectors for {len(concept_labels)} concepts...")
+    darwin.log(f"Building context vectors for {len(concept_labels)} concepts...")
     context_vecs = _build_context_vectors(sorted_concepts, chunk_vectors)
 
     # Pairwise similarity → edges
@@ -383,10 +430,7 @@ def build_concept_graph(
                     relation_type="context_similarity",
                 ))
 
-    TerminalUI.dim(
-        f"Threshold: {threshold:.3f} → {len(edges)} edges "
-        f"({len(edges)/max(len(nodes),1):.1f}/node)"
-    )
+    darwin.log(f"Threshold: {threshold:.3f} → {len(edges)} edges ({len(edges)/max(len(nodes),1):.1f}/node)")
 
     return GraphData(
         filename="",
@@ -400,6 +444,7 @@ def build_concept_graph(
 # ═══════════════════════════════════════════════════════════════════════════
 # Query highlighting
 # ═══════════════════════════════════════════════════════════════════════════
+
 
 
 def highlight_concepts(graph: GraphData, query: str) -> Dict:
@@ -423,19 +468,18 @@ def highlight_concepts(graph: GraphData, query: str) -> Dict:
 
     # spaCy-enhanced matching if no direct matches
     if not highlighted_ids:
-        try:
-            from src.core.Models import get_loader, ModelCategory
-            loader = get_loader()
-            extractor = loader.get(ModelCategory.TOKENIZER)
-            query_concepts = set(extractor.extract_noun_chunks(query))
-            
-            for node in graph.nodes:
-                label_concepts = set(extractor.extract_noun_chunks(node.label))
-                if query_concepts & label_concepts:
-                    highlighted_ids.add(node.id)
-                    highlighted_labels.append(node.label)
-        except Exception:
-            pass
+        extractor = _get_tokenizer()
+        if extractor is not None:
+            try:
+                query_concepts = set(extractor.extract_noun_chunks(query))
+                
+                for node in graph.nodes:
+                    label_concepts = set(extractor.extract_noun_chunks(node.label))
+                    if query_concepts & label_concepts:
+                        highlighted_ids.add(node.id)
+                        highlighted_labels.append(node.label)
+            except Exception:
+                pass
 
     paths = []
     if len(highlighted_ids) >= 2:
@@ -454,6 +498,7 @@ def highlight_concepts(graph: GraphData, query: str) -> Dict:
     }
 
 
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Main extraction orchestration
 # ═══════════════════════════════════════════════════════════════════════════
@@ -465,14 +510,14 @@ def extract_graph_from_chunks(
     max_concepts: int = DEFAULT_MAX_CONCEPTS,
     chunk_vectors: Optional[np.ndarray] = None,
     similarity_threshold: Optional[float] = None,
-    extraction_mode: str = "yake",
-    elevation_mode: str = "spacy",
+    extraction_mode: str = "spacy",
+    elevation_mode: str = "none",
 ) -> GraphData:
     """
     Extract a unipartite concept graph from document chunks.
 
     Full pipeline:
-      1. Extract raw keywords per chunk (yake/regex/spacy)
+      1. Extract raw keywords per chunk (regex/spacy)
       2. Elevate to clean concepts (spacy lemmatization or LLM)
       3. Build context vectors from chunk embeddings
       4. Connect concepts by cosine similarity (auto-threshold)
@@ -484,37 +529,36 @@ def extract_graph_from_chunks(
         max_concepts:         Max nodes in graph (readability)
         chunk_vectors:        Pre-computed embeddings (n_chunks, dim)
         similarity_threshold: Cosine cutoff, None = auto
-        extraction_mode:      "yake" | "regex" | "spacy"
+        extraction_mode:     "regex" | "spacy"
         elevation_mode:       "spacy" | "llm" | "none"
 
     Returns:
         GraphData with concept nodes and context-similarity edges
     """
-    TerminalUI.bold(f"Extracting concept graph: {filename} ({len(chunks)} chunks)")
-    TerminalUI.dim(f"Extraction: {extraction_mode} | Elevation: {elevation_mode} | Max concepts: {max_concepts}")
+    darwin.log(f"Extracting concept graph: {filename} ({len(chunks)} chunks)", LogType.INFO)
+    darwin.log(f"Extraction: {extraction_mode} | Elevation: {elevation_mode} | Max concepts: {max_concepts}")
 
     # ── Step 1: Extract raw keywords ──
-    t = TerminalUI.timer("keyword_extraction")
+    darwin.log("Keyword extraction...")
     extractors = {
-        "yake":  extract_keywords_yake,
+        
         "regex": extract_keywords_regex,
         "spacy": extract_keywords_spacy,
     }
-    extractor = extractors.get(extraction_mode, extract_keywords_yake)
+    extractor = extractors.get(extraction_mode, extract_keywords_spacy)
+
     keywords = extractor(chunks)
-    TerminalUI.dim(f"Extracted {len(keywords)} raw keywords")
-    t.done()
+    darwin.log(f"Extracted {len(keywords)} raw keywords")
 
     # ── Step 2: Elevate to concepts ──
     if elevation_mode != "none":
-        t = TerminalUI.timer("concept_elevation")
+        darwin.log("Concept elevation...")
         concepts = elevate_concepts(keywords, max_keywords=max_concepts, mode=elevation_mode)
-        t.done()
     else:
         concepts = keywords
 
     # ── Step 3: Build graph ──
-    t = TerminalUI.timer("graph_building")
+    darwin.log("Graph building...")
 
     if chunk_vectors is not None:
         graph = build_concept_graph(
@@ -526,7 +570,7 @@ def extract_graph_from_chunks(
             similarity_threshold=similarity_threshold,
         )
     else:
-        TerminalUI.warn("No chunk vectors — cannot build graph edges")
+        darwin.log("No chunk vectors — cannot build graph edges", LogType.WARNING)
         graph = GraphData(
             filename=filename,
             nodes=[
@@ -541,16 +585,12 @@ def extract_graph_from_chunks(
 
     graph.filename = filename
     graph.total_concepts_extracted = len(concepts)
-    t.done()
 
-    TerminalUI.success(
-        f"Graph: {len(graph.nodes)} concepts, {len(graph.edges)} edges "
-        f"({len(graph.edges)/max(len(graph.nodes),1):.1f}/node)"
-    )
+    darwin.log(f"Graph: {len(graph.nodes)} concepts, {len(graph.edges)} edges ({len(graph.edges)/max(len(graph.nodes),1):.1f}/node)", LogType.SUCCESS)
 
     if graph.nodes:
         top = graph.nodes[:5]
-        TerminalUI.dim(f"Top: {', '.join(n.label for n in top)}")
+        darwin.log(f"Top: {', '.join(n.label for n in top)}")
 
     return graph
 
@@ -565,8 +605,8 @@ def run_graph_extraction_pipeline(
     min_freq: int = DEFAULT_MIN_CONCEPT_FREQ,
     max_concepts: int = DEFAULT_MAX_CONCEPTS,
     similarity_threshold: Optional[float] = None,
-    extraction_mode: str = "yake",
-    elevation_mode: str = "spacy",
+    extraction_mode: str = "spacy",
+    elevation_mode: str = "none",
     visualize: bool = False,
     rerun: bool = False,
 ) -> Optional[GraphData]:
@@ -574,22 +614,37 @@ def run_graph_extraction_pipeline(
     Full graph extraction pipeline for one document.
     Saves graph JSON + optional HTML visualization.
     """
-    
-
     if not rerun and store.is_fresh(filename) and store.has_graph(filename):
         try:
-            TerminalUI.dim(f"Skipping graph: fresh exists for {filename}")
+            darwin.log(f"Skipping graph: fresh exists for {filename}", LogType.INFO)
             return store.load_graph(filename)
         except Exception as e:
-            TerminalUI.warn(f"Cached graph corrupted ({e}) — re-extracting...")
+            darwin.log(f"Cached graph corrupted ({e}) — re-extracting...", LogType.WARNING)
 
-
+    # BUG FIX: The original had incorrect logic that would never load vectors/chunks
+    # Original: if vectors and chunks is None - WRONG - numpy array can't be in boolean context
+    # Fixed: Load embeddings properly
+    vectors = None
+    chunks = None
+    
     if store.has_embeddings(filename):
-        vectors , chunks = store.load_embeddings(filename)
-        if vector and chunks is None:
-            darwin.log("No chunks and vectors provided for graph extraction", Logtype.ERROR)
-        
-        
+        try:
+            vectors, chunks = store.load_embeddings(filename)
+            if vectors is None or chunks is None:
+                darwin.log(f"No chunk vectors found for {filename}", LogType.ERROR)
+                return None
+        except Exception as e:
+            darwin.log(f"Failed to load embeddings for {filename}: {e}", LogType.ERROR)
+            return None
+    else:
+        darwin.log(f"No embeddings found for {filename}. Run embedding first.", LogType.ERROR)
+        return None
+
+    # BUG: Original had wrong condition here - fixed
+    if vectors is None or chunks is None:
+        darwin.log("No chunks and vectors provided for graph extraction", LogType.ERROR)
+        return None
+
     graph = extract_graph_from_chunks(
         chunks=chunks,
         filename=filename,
@@ -609,8 +664,8 @@ def run_graph_extraction_pipeline(
             html = render_concept_graph(graph)
             if html:
                 store.save_graph_html(filename, html)
-                TerminalUI.success(f"Visualization saved for {filename}")
+                darwin.log(f"Visualization saved for {filename}", LogType.SUCCESS)
         except Exception as e:
-            TerminalUI.error(f"Visualization error: {e}")
+            darwin.log(f"Visualization error: {e}", LogType.WARNING)
 
     return graph

@@ -525,7 +525,7 @@ class EmbeddingsMixin(_PathResolverMixin):
         except Exception as e:
             import traceback
             darwin.log(f"Failed to save embeddings for {filename}: {e}", LogType.ERROR)
-            darwin.log(traceback.format_exc(), LogType.DEBUG)
+            darwin.log(traceback.format_exc(),)
 
     def load_embeddings(self, filename: str) -> tuple[np.ndarray, list]:
         """Load embeddings and return (vectors, chunks)."""
@@ -591,7 +591,7 @@ class EmbeddingsMixin(_PathResolverMixin):
                             elif hasattr(l, 'url'):
                                 links.append(l)
                     except (json.JSONDecodeError, TypeError) as e:
-                        darwin.log(f"Failed to parse links for chunk {i}: {e}", LogType.DEBUG)
+                        darwin.log(f"Failed to parse links for chunk {i}: {e}",)
             
             # Get overlap direction as Enum
             overlap_raw = "none"
@@ -728,190 +728,6 @@ class BM25Mixin(_PathResolverMixin):
             precomputed_idfs=meta.get("precomputed_idfs") or None,
         )
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Mixin: Term Bank (NEW — Query Expansion without LLM)
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TermBankMixin(_PathResolverMixin):
-    """
-    Per-document term bank for query expansion.
-
-    Storage
-    -------
-    term_bank.json          — raw terms + frequencies (model-agnostic, tiny)
-    term_embeddings.npz     — embedded terms (model-specific, ~3-6MB)
-    term_embedding_meta.json — which model produced the embeddings
-
-    Separation means model switches only require re-embedding the vocabulary,
-    not rebuilding it from scratch.
-    """
-
-    def has_term_bank(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "term_bank.json").exists()
-
-    def has_term_embeddings(self, filename: str) -> bool:
-        current_model = _get_current_model_name()
-        path = self._dir_for(filename) / f"term_embeddings_{current_model.replace('/', '_')}.npz"
-        return path.exists()
-
-    def save_term_bank(
-        self,
-        filename: str,
-        terms: list[str],
-        term_freqs: dict[str, int],
-        chunk_count: int,
-    ) -> None:
-        """
-        Save the raw vocabulary as a model-agnostic JSON file.
-        Called once during BM25 indexing — never needs rebuilding.
-        """
-        if not terms:
-            darwin.log(f"No terms to save for term bank: {filename}", LogType.WARNING)
-            return
-
-        d = self._dir_for(filename)
-        path = d / "term_bank.json"
-
-        write_json(path, {
-            "terms": terms,
-            "term_freqs": term_freqs,
-            "vocab_size": len(terms),
-            "chunk_count": chunk_count,
-            "created_at": now(),
-        })
-
-        self._update_meta(filename, "term_bank")
-        darwin.log(f"Term bank saved: {len(terms)} terms", LogType.SUCCESS)
-
-    def load_term_bank(self, filename: str) -> dict | None:
-        """Load raw terms + frequencies (no embeddings)."""
-        path = self._dir_for(filename) / "term_bank.json"
-        if not path.exists():
-            return None
-        return read_json(path)
-
-    def save_term_embeddings(
-        self,
-        filename: str,
-        term_embeddings: np.ndarray,
-        terms: list[str],
-        model_name: str | None = None,
-    ) -> None:
-        """
-        Save embedded terms for a specific model.
-        Called during BM25 indexing (if embedder available) or on model switch.
-        """
-        if model_name is None:
-            model_name = _get_current_model_name()
-        model_name = _normalize_model_name(model_name)
-
-        if len(term_embeddings) != len(terms):
-            darwin.log(f"term_embeddings ({len(term_embeddings)}) and terms ({len(terms)}) must match" ,LogType.ERROR)
-            return
-        
-
-        d = self._dir_for(filename)
-        safe_name = model_name.replace("/", "_")
-        npz_path = d / f"term_embeddings_{safe_name}.npz"
-        meta_path = d / f"term_embedding_meta_{safe_name}.json"
-
-        np.savez_compressed(
-            npz_path,
-            embeddings=term_embeddings.astype(np.float16),
-            terms=np.array(terms, dtype=object),
-        )
-
-        write_json(meta_path, {
-            "model": model_name,
-            "dim": term_embeddings.shape[1],
-            "dtype": "float16",
-            "term_count": len(terms),
-            "created_at": now(),
-        })
-
-        darwin.log(f"Term embeddings saved: {len(terms)} terms @ {term_embeddings.shape[1]}d", LogType.SUCCESS)
-
-    def load_term_embeddings(self, filename: str) -> tuple[list[str], np.ndarray] | tuple[None, None]:
-        """
-        Load term embeddings for the current model.
-        Returns (terms, embeddings) or (None, None) if not found.
-        """
-        current_model = _get_current_model_name()
-        d = self._dir_for(filename)
-        safe_name = current_model.replace("/", "_")
-        npz_path = d / f"term_embeddings_{safe_name}.npz"
-
-        if not npz_path.exists():
-            return None, None
-
-        data = np.load(npz_path, allow_pickle=True)
-        return data["terms"].tolist(), data["embeddings"].astype(np.float32)
-
-    def get_term_embedding_model(self, filename: str) -> str | None:
-        """Return the model name used for the current term embeddings, or None."""
-        current_model = _get_current_model_name()
-        d = self._dir_for(filename)
-        safe_name = current_model.replace("/", "_")
-        meta_path = d / f"term_embedding_meta_{safe_name}.json"
-
-        if not meta_path.exists():
-            return None
-        return read_json(meta_path).get("model")
-
-    def expand_query(
-        self,
-        filename: str,
-        query: str,
-        top_n: int = 5,
-        min_similarity: float = 0.5,
-    ) -> str:
-        """
-        Expand a query with top-N most similar terms from the document's vocabulary.
-
-        Only used for keyword (BM25) search — semantic search doesn't need expansion.
-        Terms already in the query are excluded. Terms below min_similarity are filtered.
-        """
-        terms, embeddings = self.load_term_embeddings(filename)
-
-        if terms is None or embeddings is None:
-            darwin.log(f"No term embeddings for {filename} — query not expanded", LogType.INFO)
-            return query
-
-        try:
-            from src.core.Embedding.Embedder import embed_query
-            query_vec = embed_query(query)
-
-            if query_vec is None:
-                return query
-
-            # Cosine similarity (both are normalized)
-            sims = embeddings @ query_vec
-
-            # Get top-N, filtering by similarity and dedup
-            top_indices = np.argsort(sims)[::-1]
-            query_lower = query.lower()
-            expansion_terms = []
-
-            for idx in top_indices:
-                if len(expansion_terms) >= top_n:
-                    break
-                term = terms[idx]
-                if sims[idx] < min_similarity:
-                    continue
-                if term.lower() in query_lower:
-                    continue
-                expansion_terms.append(term)
-
-            if expansion_terms:
-                expanded = f"{query} {' '.join(expansion_terms)}"
-                darwin.log(f"Query expanded: '{query}' → '{expanded}'", LogType.INFO)
-                return expanded
-
-        except Exception as e:
-            darwin.log(f"Query expansion failed: {e}", LogType.WARNING)
-
-        return query
 
 
 # ═══════════════════════════════════════════════════════════════════════════

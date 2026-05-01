@@ -13,9 +13,7 @@ from src.core.Storage.StoreArtifacts import (
     BM25Mixin,
     StopwordsMixin,
     GraphMixin,
-    WikiMixin,
-    TermBankMixin
-)
+    WikiMixin)
 from src.core.Storage.StoreUtils import DEFAULT_CONFIG, now, read_json, write_json
 from src.lib.Terminal import TerminalUI
 
@@ -31,7 +29,6 @@ class DarwinStore(
     StopwordsMixin,
     GraphMixin,
     WikiMixin,
-    TermBankMixin
 ):
     def __init__(self):
         self._darwin_dir = default_darwin_dir()
