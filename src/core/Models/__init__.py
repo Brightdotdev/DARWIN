@@ -14,22 +14,8 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 
 _LOADER_INSTANCE = None
 _PREFERENCES_CACHE = None
+_SYSTEM_CACHE = None 
 
-
-def get_loader() -> ModelLoader:
-    """Global ModelLoader singleton."""
-    global _LOADER_INSTANCE, _PREFERENCES_CACHE
-    
-    if _LOADER_INSTANCE is None:
-        store = ModelStore()
-        system = detect_system()
-        
-        if _PREFERENCES_CACHE is None:
-            _PREFERENCES_CACHE = recommend_defaults(system)
-        
-        _LOADER_INSTANCE = ModelLoader(store, _PREFERENCES_CACHE)
-    
-    return _LOADER_INSTANCE
 
 
 def set_preferences(preferences: dict) -> None:
@@ -38,36 +24,44 @@ def set_preferences(preferences: dict) -> None:
     _PREFERENCES_CACHE = preferences
 
 
-def setup(preferences: dict = None, skip_download: bool = False) -> ModelLoader:
-    """
-    Initialize the model system with optional preferences.
+def get_loader() -> ModelLoader:
+    """Global ModelLoader singleton."""
+    global _LOADER_INSTANCE, _PREFERENCES_CACHE, _SYSTEM_CACHE
     
-    Args:
-        preferences: Dict of category -> model key (e.g., {"embedding": "BAAI/bge-m3"})
-        skip_download: If True, don't download missing models
+    if _LOADER_INSTANCE is None:
+        store = ModelStore()
+        
+        if _SYSTEM_CACHE is None:          
+            _SYSTEM_CACHE = detect_system()
+        
+        if _PREFERENCES_CACHE is None:
+            _PREFERENCES_CACHE = recommend_defaults(_SYSTEM_CACHE)
+        
+        _LOADER_INSTANCE = ModelLoader(store, _PREFERENCES_CACHE)
     
-    Returns:
-        ModelLoader instance
-    """
-    global _LOADER_INSTANCE, _PREFERENCES_CACHE
-    
-    if preferences is not None:
-        _PREFERENCES_CACHE = preferences
-    
-    store = ModelStore()
-    system = detect_system()
-    
-    if _PREFERENCES_CACHE is None:
-        _PREFERENCES_CACHE = recommend_defaults(system)
-    
-    from src.core.Models.ModelStartup import download_required
-    
-    if not skip_download:
-        download_required(store, _PREFERENCES_CACHE, system)
-    
-    _LOADER_INSTANCE = ModelLoader(store, _PREFERENCES_CACHE)
     return _LOADER_INSTANCE
 
+
+def setup(preferences: dict = None, skip_download: bool = False) -> ModelLoader:
+    global _LOADER_INSTANCE, _PREFERENCES_CACHE, _SYSTEM_CACHE
+
+    if _SYSTEM_CACHE is None:              
+        _SYSTEM_CACHE = detect_system()
+
+    if preferences is not None:
+        _PREFERENCES_CACHE = preferences
+
+    if _PREFERENCES_CACHE is None:
+        _PREFERENCES_CACHE = recommend_defaults(_SYSTEM_CACHE)
+
+    if not skip_download:
+        from src.core.Models.ModelStartup import download_required
+        download_required(ModelStore(), _PREFERENCES_CACHE, _SYSTEM_CACHE)
+
+    if _LOADER_INSTANCE is None:           # ← don't overwrite existing instance
+        _LOADER_INSTANCE = ModelLoader(ModelStore(), _PREFERENCES_CACHE)
+
+    return _LOADER_INSTANCE
 
 __all__ = [
     "ModelStore",

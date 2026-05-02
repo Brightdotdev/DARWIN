@@ -221,7 +221,6 @@ def handle_keyword_search(args: KeywordSearchArgs) -> None:
     darwin.log(f"Scope: {args.file if args.file else 'all documents'}", LogType.INFO)
     darwin.log("")
     
-    setup()
     
     results = _search_wrapper(store, args)
     _display_search_results(results, args)
@@ -276,8 +275,7 @@ async def main() -> int:
             json_output=args.json,
         )
         
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_keyword_search, search_args)
+        handle_keyword_search(search_args)
         return 0
 
     except KeyboardInterrupt:

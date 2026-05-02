@@ -88,15 +88,12 @@ class TerminalUI(EventSubscriber):
         self._prompt_cancel_events: Dict[str, threading.Event] = {}
 
     def show_banner(self) -> None:
+        self.console.clear()
         self.console.print()
         for line in ASCII_BANNER:
             self.console.print(f"[cyan]{line}[/cyan]")
         self.console.print()
-        self.console.print(
-            Panel("[bold]welcome to darwin[/bold]\n\nevent-driven terminal system",
-                  border_style="dim", padding=(1, 2)))
-        self.console.print()
-
+        
     def attach(self) -> None:
         self.logger.subscribe(self)
         try:

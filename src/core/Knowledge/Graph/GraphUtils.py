@@ -1,5 +1,3 @@
-# src/core/Knowledge/Graph/GraphUtils.py - Fixed (no TerminalUI)
-
 """
 src/core/Knowledge/Graph/GraphUtils.py
 --------------------------------------
@@ -38,9 +36,11 @@ class GraphData:
     edges: List[Relationship] = field(default_factory=list)
     chunk_count: int = 0
     total_concepts_extracted: int = 0
+    # NEW: cluster-to-chunks mapping for wiki section generation
+    cluster_map: Optional[Dict[str, List[int]]] = None
 
     def to_dict(self) -> Dict:
-        return {
+        result = {
             "filename": self.filename,
             "nodes": [
                 {"id": n.id, "label": n.label, "freq": n.frequency, "chunks": n.chunk_indices}
@@ -53,18 +53,21 @@ class GraphData:
             "chunk_count": self.chunk_count,
             "total_concepts_extracted": self.total_concepts_extracted,
         }
+        if self.cluster_map:
+            result["cluster_map"] = self.cluster_map
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Constants
+# Constants (unchanged)
 # ═══════════════════════════════════════════════════════════════════════════
 
-DEFAULT_MIN_CONCEPT_FREQ = 2 
+DEFAULT_MIN_CONCEPT_FREQ = 2
 DEFAULT_MAX_CONCEPTS = 75
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# CLI Args
+# CLI Args (unchanged)
 # ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -84,7 +87,7 @@ class GraphExtractionArgs:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Stopwords
+# Stopwords (unchanged)
 # ═══════════════════════════════════════════════════════════════════════════
 
 CONCEPT_STOPWORDS = {
@@ -126,7 +129,7 @@ CONCEPT_STOPWORDS = {
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Regex fallback
+# Regex fallback (unchanged)
 # ═══════════════════════════════════════════════════════════════════════════
 
 _NOUN_PHRASE_RE = re.compile(
@@ -142,7 +145,7 @@ def extract_noun_phrases_regex(text: str) -> List[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Export
+# Export (unchanged)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def export_graph_json(graph: GraphData) -> str:

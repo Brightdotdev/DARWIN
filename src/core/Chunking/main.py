@@ -268,9 +268,8 @@ async def main() -> int:
             inspect=args.inspect,
             rerun=args.rerun,
         )
-        
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_chunking, chunking_args)
+     
+        handle_chunking(chunking_args)
         return 0
 
     except KeyboardInterrupt:

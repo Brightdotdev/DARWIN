@@ -294,8 +294,7 @@ async def main() -> int:
             beta=args.beta,
         )
         
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_hybrid_search, search_args)
+        handle_hybrid_search(search_args)
         return 0
 
     except KeyboardInterrupt:

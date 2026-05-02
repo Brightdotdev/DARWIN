@@ -189,9 +189,8 @@ async def main() -> int:
             inspect=args.inspect,
             rerun=args.rerun,
         )
-
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_bm25_indexing, bm25_args)
+        
+        handle_bm25_indexing(bm25_args)
         return 0
 
     except KeyboardInterrupt:

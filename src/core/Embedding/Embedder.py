@@ -81,6 +81,15 @@ def embed_chunks(
 ) -> Optional[np.ndarray]:
     """
     Embed chunks with model-specific prompting.
+
+    Args:
+        chunks:       List of Chunk objects to embed
+        file_name:    Display name (used for UI only)
+        batch_size:   Override batch size — auto-detected if None
+        unload_after: Free the embedding model from RAM after encoding
+
+    Returns:
+        numpy array of shape (n_chunks, embedding_dim) or None on failure
     """
     if not chunks:
         darwin.log("No chunks found to embed", LogType.WARNING)
@@ -88,50 +97,78 @@ def embed_chunks(
 
     # ── Resolve preset ──
     preset = get_preset()
+
     loader = get_loader()
+    
     embedder = loader.get(ModelCategory.EMBEDDING)
+  
+  
+
+
+
 
     texts = [prepare_passage_text(c.clean, preset) for c in chunks]
+
     optimal_batch = batch_size or get_model_batch_size(preset=preset)
-    
+    n_batches = (len(texts) + optimal_batch - 1) // optimal_batch
+
     darwin.log(
-        f"Embedding with {preset.model_name} "
-        f"({preset.category}, {preset.max_tokens} token limit) "
-        f"[batch_size={optimal_batch}, {len(texts)} texts]",
+        f"Embedding with {preset.model_name} ({preset.category}, {preset.max_tokens} token limit) [batch_size={optimal_batch}]",
         LogType.INFO
     )
 
-    # ── Encode all texts at once ──
-    encode_kwargs = {
-        "batch_size": optimal_batch,
-        "show_progress_bar": True,
-        "convert_to_numpy": True,
-        "normalize_embeddings": True,
-    }
-
-    if "bge-m3" in preset.model_name.lower():
-        encode_kwargs["return_dense"] = True
+    all_vectors: list = []
+    
+    # Progress tracking via event system
+    progress_id = f"embed_{file_name}"
+    darwin.progress_start(progress_id, n_batches, f"Embedding {file_name}")
 
     try:
-        vectors = embedder.encode(texts, **encode_kwargs)
-        
-    except torch.cuda.OutOfMemoryError:
-        darwin.log(f"GPU OOM, falling back to CPU", LogType.WARNING)
-        embedder = embedder.to('cpu')
-        vectors = embedder.encode(texts, **encode_kwargs)
-        
-    except KeyboardInterrupt:
-        darwin.log("Embedding interrupted", LogType.WARNING)
-        if unload_after:
-            loader.unload(ModelCategory.EMBEDDING)
-        raise
-    except Exception as e:
-        darwin.log(f"Encoding failed: {e}", LogType.ERROR)
-        if unload_after:
-            loader.unload(ModelCategory.EMBEDDING)
-        return None
+        for batch_num in range(0, len(texts), optimal_batch):
+            batch_texts = texts[batch_num:batch_num + optimal_batch]
+            progress_num = batch_num // optimal_batch + 1
 
-    vectors = vectors.astype(np.float32)
+            darwin.progress_update(
+                progress_id, 
+                progress_num,
+                f"Encoding batch {progress_num}/{n_batches}"
+            )
+
+            encode_kwargs = {
+                "batch_size": len(batch_texts),
+                "show_progress_bar": False,
+                "convert_to_numpy": True,
+                "normalize_embeddings": True,
+            }
+
+            if "bge-m3" in preset.model_name.lower():
+                encode_kwargs["return_dense"] = True
+
+            try:
+                vecs = embedder.encode(batch_texts, **encode_kwargs)
+                all_vectors.extend(vecs)
+
+            except torch.cuda.OutOfMemoryError:
+                darwin.log(f"OOM at batch_size={optimal_batch}, falling back to 16", LogType.WARNING)
+                darwin.progress_end(progress_id)
+                return embed_chunks(
+                    chunks,
+                    file_name,
+                    batch_size=32,
+                    unload_after=unload_after,
+                )
+
+            except KeyboardInterrupt:
+                darwin.log("Embedding interrupted", LogType.WARNING)
+                darwin.progress_end(progress_id)
+                if unload_after:
+                    loader.unload(ModelCategory.EMBEDDING)
+                raise
+
+    finally:
+        darwin.progress_end(progress_id)
+
+    vectors = np.vstack(all_vectors).astype(np.float32)
 
     if unload_after:
         loader.unload(ModelCategory.EMBEDDING)
@@ -139,12 +176,12 @@ def embed_chunks(
 
     model_short = preset.model_name.split('/')[-1]
     darwin.log(
-        f"Embedded {len(chunks)} chunks → {vectors.shape} "
-        f"(model: {model_short})",
+        f"Embedded {len(chunks)} chunks → {vectors.shape} (model: {model_short}, batch_size={optimal_batch})",
         LogType.SUCCESS
     )
 
     return vectors
+
 
 def embed_query(
     query: str,

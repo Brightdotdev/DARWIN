@@ -266,8 +266,8 @@ async def main() -> int:
             save=not args.no_save,
         )
 
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_parsing, parsing_args)
+
+        handle_parsing(parsing_args)
         return 0
 
     except KeyboardInterrupt:

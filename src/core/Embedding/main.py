@@ -41,23 +41,20 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 # Inspect
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _print_inspection(filename: str, store: DarwinStore) -> None:
+def _print_inspection(filename: str,store : DarwinStore, vectors,chunks) -> None:
 
     """Load the saved .npz and print stats."""
  
-
-    result = store.load_embeddings(filename)
-    # Handle both return types
-    if isinstance(result, tuple):
-        vectors, chunks = result
-   
-        texts = [c.text for c in chunks]
-        headings = [c.heading for c in chunks]
-        pages = [c.page for c in chunks]
-    elif result is None:
+    if not (store.has_embeddings(filename)):
         darwin.log("Could not load embeddings for inspection", LogType.ERROR)
-        return        
-   
+
+
+
+
+    texts = [c.text for c in chunks]
+    headings = [c.heading for c in chunks]
+    pages = [c.page for c in chunks]
+
 
     darwin.log("")
     darwin.log(f"── embedding inspection — {filename} ──", LogType.INFO)
@@ -176,7 +173,7 @@ def handle_embedding(args: EmbeddingArgs) -> None:
             if vectors is not None:
                 succeeded += 1
                 if args.inspect:
-                    _print_inspection(filename, store)
+                    _print_inspection(filename, store,vectors,chunks)
             else:
                 skipped += 1
 
@@ -231,8 +228,7 @@ async def main() -> int:
             rerun=args.rerun,
         )
         
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_embedding, embedding_args)
+        handle_embedding(embedding_args)
         return 0
 
     except KeyboardInterrupt:

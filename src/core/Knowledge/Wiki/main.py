@@ -29,30 +29,35 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 
 
+
 def _print_inspection(wiki, filename: str) -> None:
-    """Print detailed wiki inspection."""
     darwin.log(f"\n{'='*60}", LogType.INFO)
     darwin.log(f"Wiki — {filename}", LogType.INFO)
     darwin.log(f"{'='*60}", LogType.INFO)
-    
-    darwin.log(f"Mode: {wiki.mode}", LogType.INFO)
-    darwin.log(f"Pages: {len(wiki.pages)}", LogType.INFO)
-    darwin.log(f"Concepts: {wiki.concept_count}", LogType.INFO)
-    
-    if wiki.pages:
-        darwin.log(f"\n--- Index Preview ---", LogType.INFO)
-        preview = wiki.pages[0].content[:600]
-        darwin.log(f"{wiki.pages[0].title}\n{preview}", LogType.INFO)
-        
-        darwin.log(f"\n--- Sample Concept Pages ---", LogType.INFO)
-        for page in wiki.pages[1:4]:
-            preview = page.content[:250].replace("\n", " ")
-            darwin.log(f"{page.title} — {page.chunk_count} chunks", LogType.INFO)
-            darwin.log(f"  {preview}...")
-            darwin.log("-" * 40)
-    
-    darwin.log(f"{'='*60}", LogType.INFO)
 
+    darwin.log(f"Pages: {len(wiki.pages)}", LogType.INFO)
+    darwin.log(f"Manifest: {'generated' if wiki.manifest else 'pending'}", LogType.INFO)
+    summaries_done = sum(1 for p in wiki.pages if p.summary)
+    darwin.log(f"Summaries: {summaries_done}/{len(wiki.pages)}", LogType.INFO)
+
+    if wiki.manifest:
+        darwin.log(f"\n--- Manifest ---", LogType.INFO)
+        darwin.log(wiki.manifest[:400], LogType.INFO)
+
+    darwin.log(f"\n--- Concept Pages ---", LogType.INFO)
+    for page in wiki.pages[:5]:
+        related_str = ", ".join(page.related[:3]) if page.related else "—"
+        darwin.log(
+            f"  {page.concept} — {page.frequency} chunks | "
+            f"keywords: {', '.join(page.keywords[:3]) or '—'} | "
+            f"related: {related_str}",
+            LogType.INFO,
+        )
+        if page.summary:
+            darwin.log(f"  {page.summary[:150]}...", LogType.INFO)
+        darwin.log("-" * 40)
+
+    darwin.log(f"{'='*60}", LogType.INFO)
 
 def handle_wiki(args: WikiGenerationArgs) -> None:
     """Main handler for wiki generation."""
@@ -134,8 +139,7 @@ async def main() -> int:
             rerun=args.rerun,
         )
         
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_wiki, wiki_args)
+        handle_wiki(wiki_args)
         return 0
 
     except KeyboardInterrupt:

@@ -230,8 +230,7 @@ async def main() -> int:
             json_output=args.json,
         )
         
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_search, search_args)
+        handle_search(search_args)
         return 0
 
     except KeyboardInterrupt:

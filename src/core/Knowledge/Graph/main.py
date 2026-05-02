@@ -30,7 +30,6 @@ from src.core.Knowledge.Graph.GraphUtils import (
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-from src.core.Models import setup
 
 
 def _print_inspection(graph, filename: str) -> None:
@@ -64,22 +63,9 @@ def handle_graph_extraction(args: GraphExtractionArgs) -> None:
     """Main handler for graph extraction."""
     store = DarwinStore()
 
-    # Pre-load tokenizer once before processing files
-    if args.extraction_mode == "spacy" or args.elevation_mode == "spacy":
-        try:
-            from src.core.Models import get_loader, ModelCategory
-            loader = get_loader()
-            darwin.log("Pre-loading tokenizer model...", LogType.INFO)
-            loader.get(ModelCategory.TOKENIZER)
-            darwin.log("Tokenizer model loaded", LogType.SUCCESS)
-        except Exception as e:
-            darwin.log(f"Failed to load tokenizer: {e}. Falling back to regex.", LogType.WARNING)
-            args.extraction_mode = "regex"
-            if args.elevation_mode == "spacy":
-                args.elevation_mode = "none"
-
+    
     if args.file:
-        filenames = [args.file]
+        filenames = [args.file] if store.has_chunks(args.file) else []
     else:
         status = store.status()
         filenames = [
@@ -135,7 +121,7 @@ def handle_graph_extraction(args: GraphExtractionArgs) -> None:
 
     darwin.log(f"Done — {succeeded} extracted · {skipped} skipped · {failed} failed", LogType.SUCCESS)
 
-    
+
 async def main() -> int:
     """Async entry point with WebSocket support."""
     parser = argparse.ArgumentParser(description="Extract concept knowledge graphs from documents")
@@ -179,8 +165,8 @@ async def main() -> int:
             rerun=args.rerun,
         )
         
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, handle_graph_extraction, graph_args)
+        
+        handle_graph_extraction(graph_args)
         return 0
 
     except KeyboardInterrupt:

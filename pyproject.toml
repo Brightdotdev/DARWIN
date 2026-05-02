@@ -15,6 +15,7 @@ requires-python = ">=3.11"
 dependencies = [
     "accelerate>=1.13.0",
     "blingfire==0.1.8",
+    "hdbscan>=0.8.42",
     "keyring>=25.7.0",
     "litellm>=1.83.0",
     "markitdown>=0.1.5",
@@ -36,6 +37,7 @@ dependencies = [
     "toml>=0.10.2",
     "transformers>=4.49.0,<5.0.0",
     "typer>=0.24.1",
+    "umap-learn>=0.5.12",
     "usearch>=2.25.1",
     "websockets>=16.0",
 ]

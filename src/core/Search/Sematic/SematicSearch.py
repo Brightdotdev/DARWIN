@@ -18,6 +18,7 @@ from src.core.Search.Sematic.SematicSearchUtils import reconstruct_chunks, Semat
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
+
 # ============================================================================
 # Core search function (USearch + Fallback)
 # ============================================================================
@@ -204,9 +205,8 @@ def _execute_usearch_search(
     store: DarwinStore,
     top_k: int,
     min_score: float,
+    chunks : List[Chunk]
 ) -> List[SematicSearchResult]:
-    """Execute search using USearch index."""
-    chunks = store.load_chunks(filename)
     if not chunks:
         darwin.log(f"No chunks found for {filename}", LogType.INFO)
         return []
@@ -224,13 +224,13 @@ def _execute_usearch_search(
 def _execute_numpy_search(
     filename: str,
     query_vec: np.ndarray,
-    store: DarwinStore,
     top_k: int,
     min_score: float,
+    chunks: List[Chunk],
+    vectors, 
 ) -> List[SematicSearchResult]:
     """Execute search using numpy fallback."""
 
-    vectors, chunks = store.load_embeddings(filename)
     if vectors and chunks is None:
         darwin.log(f"No embeddings found for {filename}", LogType.INFO)
         return []
@@ -278,6 +278,10 @@ def search_across_documents(
     if query_vec is None or len(query_vec) == 0:
         darwin.log("Failed to embed query — check model availability", LogType.ERROR)
         return []
+
+    darwin.log("loading metadata for search")
+    vectors, chunks = store.load_embeddings(filename)
+
     
     for filename in filenames:
         try:
@@ -297,12 +301,15 @@ def search_across_documents(
                 doc_results = _execute_usearch_search(
                     filename=filename, query_vec=query_vec,
                     store=store, top_k=per_doc_k, min_score=min_score,
+                    chunks=chunks
                 )
                 stats["usearch"] += 1
             else:
                 doc_results = _execute_numpy_search(
                     filename=filename, query_vec=query_vec,
-                    store=store, top_k=per_doc_k, min_score=min_score,
+                   top_k=per_doc_k, min_score=min_score,
+                    chunks=chunks,
+                    vectors=vectors
                 )
                 stats["numpy"] += 1
             
@@ -346,6 +353,8 @@ def search_single_document(
             return []
         
         query_vec = embed_query(query, model_name)
+        darwin.log("Loading search metadata")
+        vectors, chunks = store.load_embeddings(filename)
         
         if query_vec is None or len(query_vec) == 0:
             darwin.log("Failed to embed query — check model availability", LogType.ERROR)
@@ -366,12 +375,15 @@ def search_single_document(
             return _execute_usearch_search(
                 filename=filename, query_vec=query_vec,
                 store=store, top_k=top_k, min_score=min_score,
+                chunks=chunks
             )
         else:
             darwin.log(f"Using numpy fallback for {filename}", LogType.INFO)
             return _execute_numpy_search(
                 filename=filename, query_vec=query_vec,
-                store=store, top_k=top_k, min_score=min_score,
+                 top_k=top_k, min_score=min_score,
+                chunks=chunks,
+                vectors=vectors
             )
         
     except FileNotFoundError:

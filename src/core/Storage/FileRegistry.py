@@ -70,7 +70,7 @@ class FileRecord:
         """Ready for keyword search: parsed + chunked + BM25."""
         return all(
             self._data.get("updates", {}).get(stage)
-            for stage in ["markdown", "chunks", "bm25","stopwords"]
+            for stage in ["markdown", "chunks", "bm25", "stopwords"]
         )
 
     @property
@@ -150,6 +150,8 @@ class FileRegistry:
     def __init__(self, paths: "StorePaths"):
         self.paths = paths
         self._cache: dict[str, FileRecord] | None = None
+        self._name_index: dict[str, FileRecord] | None = None
+        self._hash_cache: dict[str, str] = {}  # file_path -> file_hash
 
     @property
     def path(self) -> Path:
@@ -158,30 +160,61 @@ class FileRegistry:
     # ── Internal ──────────────────────────────────────────────────────────
 
     def _load(self) -> dict:
-        """Load the raw registry JSON."""
-        return read_json(self.path) or {"version": "1.0", "files": {}}
+        """Load the raw registry JSON, using cache when valid."""
+        if self._cache is not None and self._all_data is not None:
+            return self._all_data
+        self._all_data = read_json(self.path) or {"version": "1.0", "files": {}}
+        self._cache = {
+            fh: FileRecord(rec)
+            for fh, rec in self._all_data.get("files", {}).items()
+        }
+        self._name_index = {}
+        for fh, rec in self._all_data.get("files", {}).items():
+            name = rec.get("original_name", "")
+            if name and name not in self._name_index:
+                self._name_index[name] = FileRecord(rec)
+        return self._all_data
 
     def _save(self, data: dict) -> None:
         data["updated_at"] = now()
         write_json(self.path, data)
-        self._cache = None  # invalidate cache
+        self._all_data = data
+        self._cache = {
+            fh: FileRecord(rec)
+            for fh, rec in data.get("files", {}).items()
+        }
+        self._name_index = {}
+        for fh, rec in data.get("files", {}).items():
+            name = rec.get("original_name", "")
+            if name and name not in self._name_index:
+                self._name_index[name] = FileRecord(rec)
 
     def _all_raw(self) -> dict:
-        if self._cache is None:
-            self._all_data = self._load()
-            self._cache = {
-                fh: FileRecord(rec)
-                for fh, rec in self._all_data.get("files", {}).items()
-            }
-        return self._all_data
+        return self._load()
 
     # ── Public API ────────────────────────────────────────────────────────
+
+    def _get_hash(self, file_path: str | Path) -> str:
+        """Get file hash, using cache to avoid re-hashing large files."""
+        file_path_str = str(Path(file_path).resolve()) if Path(file_path).exists() else str(file_path)
+        if file_path_str in self._hash_cache:
+            return self._hash_cache[file_path_str]
+        if Path(file_path).exists():
+            fh = self.paths.file_hash(file_path)
+            self._hash_cache[file_path_str] = fh
+            return fh
+        # File doesn't exist, try to find by name
+        record = self._find_by_name(Path(file_path).name)
+        if record:
+            return record.file_hash
+        return ""
 
     def register(
         self,
         file_path: str | Path,
         page_count: int = 0,
         file_size: int = 0,
+        file_hash: str | None = None,
     ) -> "FileRecord":
         """
         Register a file (or update its last-seen path).
@@ -189,7 +222,8 @@ class FileRegistry:
         Returns the FileRecord.
         """
         file_path = Path(file_path).resolve()
-        fh = self.paths.file_hash(file_path)
+        fh = file_hash or self.paths.file_hash(file_path)
+        self._hash_cache[str(file_path)] = fh
         data = self._load()
 
         if fh not in data["files"]:
@@ -223,15 +257,26 @@ class FileRegistry:
         self,
         file_path: str | Path,
         stage: str,
+        file_hash: str | None = None,
         **extras,
     ) -> "FileRecord":
         """
         Mark a pipeline stage as completed for a file.
         e.g. registry.update_pipeline("bio.pdf", "embeddings", embedding_model="bge-m3")
         """
-        file_path = Path(file_path).resolve()
-        fh = self.paths.file_hash(file_path)
         data = self._load()
+        
+        if file_hash:
+            fh = file_hash
+        else:
+            file_path = Path(file_path).resolve()
+            fh = self._get_hash(file_path) if file_path.exists() else None
+            if not fh:
+                record = self._find_by_name(file_path.name)
+                if record:
+                    fh = record.file_hash
+                else:
+                    raise KeyError(f"File not registered: {file_path}")
 
         if fh not in data["files"]:
             raise KeyError(f"File not registered: {file_path}")
@@ -253,7 +298,7 @@ class FileRegistry:
             # File deleted — search by name in registry
             return self._find_by_name(file_path.name)
 
-        fh = self.paths.file_hash(file_path)
+        fh = self._get_hash(file_path)
         data = self._load()
         raw = data.get("files", {}).get(fh)
         return FileRecord(raw) if raw else None
@@ -265,12 +310,9 @@ class FileRegistry:
         return FileRecord(raw) if raw else None
 
     def _find_by_name(self, filename: str) -> "FileRecord | None":
-        """Fallback: find a file by original name when source is missing."""
-        data = self._load()
-        for fh, rec in data.get("files", {}).items():
-            if rec.get("original_name") == filename:
-                return FileRecord(rec)
-        return None
+        """O(1) lookup by original name."""
+        self._load()  # Ensure name index is built
+        return self._name_index.get(filename)
 
     def get_or_register(self, file_path: str | Path) -> "FileRecord":
         """Get existing record or create a new one."""
@@ -284,7 +326,7 @@ class FileRegistry:
         import shutil
 
         file_path = Path(file_path).resolve()
-        fh = self.paths.file_hash(file_path) if file_path.exists() else None
+        fh = self._get_hash(file_path) if file_path.exists() else None
 
         data = self._load()
 
@@ -313,13 +355,11 @@ class FileRegistry:
     def list_all(self) -> list["FileRecord"]:
         """All registered files."""
         data = self._load()
-        return [FileRecord(rec) for rec in data.get("files", {}).values()]
+        return list(self._cache.values())
 
     def list_kw_searchable(self) -> list["FileRecord"]:
         """Files that are keyword-searchable (parsed + chunked + BM25)."""
         return [r for r in self.list_all() if r.is_kw_searchable]
-
-
 
     def list_needing_work(self) -> list["FileRecord"]:
         """Files that are not yet fully keyword-searchable."""
@@ -336,16 +376,29 @@ class FileRegistry:
         return sum(r.chunk_count for r in self.list_all())
 
     def stats(self) -> dict:
-        """Aggregate statistics for the dashboard."""
-        all_files = self.list_all()
-        kw_searchable = self.list_kw_searchable()
+        """Aggregate statistics for the dashboard — single pass over cached data."""
+        all_records = self.list_all()
+        total_files = len(all_records)
+        kw_searchable = 0
+        total_chunks = 0
+        total_pages = 0
+        models_used = set()
+
+        for r in all_records:
+            total_chunks += r.chunk_count
+            total_pages += r.page_count
+            if r.is_kw_searchable:
+                kw_searchable += 1
+            if r.embedding_model:
+                models_used.add(r.embedding_model)
+
         return {
-            "total_files": len(all_files),
-            "keyword_searchable_files": len(kw_searchable),
-            "files_needing_work": len(all_files) - len(kw_searchable),
-            "total_chunks": sum(r.chunk_count for r in all_files),
-            "total_pages": sum(r.page_count for r in all_files),
-            "models_used": list({r.embedding_model for r in all_files if r.embedding_model}),
+            "total_files": total_files,
+            "keyword_searchable_files": kw_searchable,
+            "files_needing_work": total_files - kw_searchable,
+            "total_chunks": total_chunks,
+            "total_pages": total_pages,
+            "models_used": list(models_used),
         }
 
     def find_stale(self) -> list["FileRecord"]:

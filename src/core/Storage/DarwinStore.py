@@ -14,7 +14,7 @@ from src.core.Storage.StoreArtifacts import (
     StopwordsMixin,
     GraphMixin,
     WikiMixin)
-from src.core.Storage.StoreUtils import DEFAULT_CONFIG, now, read_json, write_json
+from src.core.Storage.StoreUtils import DEFAULT_CONFIG, now, read_json, write_json, invalidate_model_cache
 from src.lib.Terminal import TerminalUI
 
 
@@ -34,11 +34,12 @@ class DarwinStore(
         self._darwin_dir = default_darwin_dir()
         self.paths = StorePaths(self._darwin_dir)
         self.registry = FileRegistry(self.paths)
+        self._artifact_cache: dict = {}
 
-
-        from src.core.Models import setup
-        prefs = self.get_model_preferences() if self.paths.config_path.exists() else None
-        setup(preferences=prefs)
+        from src.core.Models import _LOADER_INSTANCE, setup
+        if _LOADER_INSTANCE is None:
+            prefs = self.get_model_preferences() if self.paths.config_path.exists() else None
+            setup(preferences=prefs)
 
         self._init_config()
 
@@ -46,6 +47,12 @@ class DarwinStore(
         self.models = ModelManager(darwin_store=self)
 
     # ─────────────────────────────────────────────
+
+    def invalidate(self, filename: str) -> None:
+        """Clear all cached artifacts for a file after save."""
+        keys_to_remove = [k for k in self._artifact_cache if k.endswith(f":{filename}")]
+        for k in keys_to_remove:
+            del self._artifact_cache[k]
 
     def _init_config(self) -> None:
         if self.paths.config_path.exists():
@@ -81,6 +88,7 @@ class DarwinStore(
         config = read_json(self.paths.config_path)
         config[f"{category}_model"] = key
         write_json(self.paths.config_path, config)
+        invalidate_model_cache()
         TerminalUI.dim(f"Config updated: {category}_model → {key}")
 
     def get_model_preferences(self) -> dict:
@@ -264,8 +272,26 @@ class DarwinStore(
         files = {}
 
         for record in self.registry.list_all():
-            ref = Path(record.last_seen_path) if record.last_seen_path else record.original_name
-            files[record.original_name] = self.file_status(ref)
+            files[record.original_name] = {
+                "file_hash": record.file_hash,
+                "original_name": record.original_name,
+                "last_seen_path": record.last_seen_path,
+                "file_size_mb": round(record.file_size_mb, 1),
+                "page_count": record.page_count,
+                "is_parsed": record.is_parsed,
+                "is_chunked": record.is_chunked,
+                "is_embedded": record.is_embedded,
+                "is_kw_searchable": record.is_kw_searchable,
+                "is_embedding_searchable": record.is_embedding_searchable,
+                "is_hybrid_searchable": record.is_hybrid_searchable,
+                "progress_percent": record.progress_percent(),
+                "status_summary": record.status_summary(),
+                "missing_stages": record.missing_stages(),
+                "embedding_model": record.embedding_model,
+                "chunk_count": record.chunk_count,
+                "created_at": record.created_at,
+                "updated_at": record.updated_at,
+            }
 
         return {
             "darwin_dir": str(self._darwin_dir),

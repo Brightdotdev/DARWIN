@@ -16,11 +16,19 @@ set by DarwinStore.__init__:
 
 import dataclasses
 from typing import Any, Optional
+from pathlib import Path
 import numpy as np
 
 from src.core.Chunking.lib import Chunk
 from src.core.Parsing.lib import ParsedDocument
-from src.core.Storage.StoreUtils import file_hash, now, read_json, write_json
+from src.core.Storage.StoreUtils import (
+    file_hash,
+    now,
+    read_json,
+    write_json,
+    get_current_model_name,
+    invalidate_model_cache,
+)
 from src.core.BM25.lib import BM25Data
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -54,17 +62,6 @@ def _normalize_model_name(name: str) -> str:
     return name
 
 
-def _get_current_model_name() -> str:
-    """Resolve the currently active embedding model name (full model_id)."""
-    try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
-        return loader.get_model_key(ModelCategory.EMBEDDING)
-    except Exception as e:
-        darwin.log(f"Failed to detect current model: {e}", LogType.ERROR)
-        return "unknown"
-    
-
 def _get_current_model_dimensions() -> int:
     """Expected embedding dimensions for the active model. Safe fallback."""
     try:
@@ -96,14 +93,23 @@ class _PathResolverMixin:
             return None
         return record
 
+    def _resolve(self, filename: str) -> tuple[str, Path]:
+        """Resolve a bare filename to (file_hash, index_dir) in one registry lookup."""
+        record = self._record_for(filename)
+        if record is None:
+            return "", None
+        fh = record.file_hash
+        return fh, self.paths.dir_for_hash(fh)
+
     def _hash_for(self, filename: str) -> str:
         """Resolve a bare filename to its file hash."""
-        record = self._record_for(filename)
-        return record.file_hash if record else ""
+        fh, _ = self._resolve(filename)
+        return fh
 
     def _dir_for(self, filename: str):
         """Return (and create) the index directory for a bare filename."""
-        return self.paths.dir_for_hash(self._hash_for(filename))
+        _, d = self._resolve(filename)
+        return d
 
     def _source_path_for(self, filename: str):
         """Return the last-known source Path for a file (may not exist if moved)."""
@@ -122,7 +128,10 @@ class MetaMixin(_PathResolverMixin):
     """Handles meta.json read/write and file freshness checks."""
 
     def _update_meta(self, filename: str, component: str, extras: dict | None = None) -> None:
-        meta_path = self._dir_for(filename) / "meta.json"
+        fh, d = self._resolve(filename)
+        if d is None:
+            return
+        meta_path = d / "meta.json"
         meta = read_json(meta_path) or {
             "filename":   filename,
             "created_at": now(),
@@ -143,11 +152,40 @@ class MetaMixin(_PathResolverMixin):
 
         write_json(meta_path, meta)
 
+    def _batch_meta_update(self, filename: str, updates: dict[str, dict]) -> None:
+        """Write meta.json once for multiple component updates."""
+        fh, d = self._resolve(filename)
+        if d is None:
+            return
+        meta_path = d / "meta.json"
+        meta = read_json(meta_path) or {
+            "filename":   filename,
+            "created_at": now(),
+            "updates":    {},
+        }
+        meta.setdefault("updates", {})
+        timestamp = now()
+
+        for component, extras in updates.items():
+            meta["updates"][component] = timestamp
+            if extras:
+                for key, value in extras.items():
+                    if isinstance(value, dict) and isinstance(meta.get(key), dict):
+                        meta[key].update(value)
+                    else:
+                        meta[key] = value
+
+        meta["updated_at"] = timestamp
+        write_json(meta_path, meta)
+
     def load_meta(self, filename: str) -> dict:
         return read_json(self._dir_for(filename) / "meta.json") or {}
 
     def is_fresh(self, filename: str) -> bool:
-        meta_path = self._dir_for(filename) / "meta.json"
+        fh, d = self._resolve(filename)
+        if d is None:
+            return False
+        meta_path = d / "meta.json"
         if not meta_path.exists():
             return False
 
@@ -217,6 +255,7 @@ class MarkdownMixin(_PathResolverMixin):
                     **extras
                 )
 
+            self.invalidate(filename)
             darwin.log(f"Markdown saved: {md_path.name}", LogType.SUCCESS)
         except Exception as e:
             darwin.log(f"Failed to save markdown for {filename}: {e}", LogType.ERROR)
@@ -265,11 +304,22 @@ class ChunksMixin(_PathResolverMixin):
                 **extras
             )
 
+        self.invalidate(filename)
+
     def load_chunks(self, filename: str) -> list[Chunk]:
+        cache_key = f"chunks:{filename}"
+        if hasattr(self, '_artifact_cache') and cache_key in self._artifact_cache:
+            return self._artifact_cache[cache_key]
+
         path = self._dir_for(filename) / "chunks.json"
         if not path.exists():
-            return []
-        return [_chunk_from_dict(c) for c in (read_json(path) or [])]
+            result = []
+        else:
+            result = [_chunk_from_dict(c) for c in (read_json(path) or [])]
+
+        if hasattr(self, '_artifact_cache'):
+            self._artifact_cache[cache_key] = result
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -324,6 +374,7 @@ class VectorMixin(_PathResolverMixin):
         if record:
             self.registry.update_pipeline(record.last_seen_path or filename, "vector")
 
+        self.invalidate(filename)
         darwin.log(f"Vector index saved: {len(vectors)} vectors", LogType.SUCCESS)
 
     def load_vector(self, filename: str):
@@ -336,7 +387,7 @@ class VectorMixin(_PathResolverMixin):
 
         meta = read_json(meta_path)
         stored_model = meta.get("embedding_model", "unknown")
-        current_model = _get_current_model_name()
+        current_model = get_current_model_name()
 
         if stored_model != current_model and stored_model != "unknown":
             darwin.log(
@@ -408,14 +459,14 @@ class VectorMixin(_PathResolverMixin):
             return False
 
 
-
-
 class EmbeddingsMixin(_PathResolverMixin):
     """Mixin for saving/loading embeddings with full chunk metadata."""
 
     def has_embeddings(self, filename: str) -> bool:
-        current_model = _get_current_model_name()
-        fh = self._hash_for(filename)
+        fh, d = self._resolve(filename)
+        if d is None:
+            return False
+        current_model = get_current_model_name()
         return self.paths.npz_path(fh, current_model).exists()
 
     def _get_overlap_value(self, chunk) -> str:
@@ -470,11 +521,13 @@ class EmbeddingsMixin(_PathResolverMixin):
             return
 
         if model_name is None:
-            model_name = _get_current_model_name()
+            model_name = get_current_model_name()
         
         model_name = _normalize_model_name(model_name)
 
-        fh = self._hash_for(filename)
+        fh, d = self._resolve(filename)
+        if d is None:
+            return
         path = self.paths.npz_path(fh, model_name)
 
         if len(vectors) != len(chunks):
@@ -519,7 +572,8 @@ class EmbeddingsMixin(_PathResolverMixin):
             record = self._record_for(filename)
             if record:
                 self.registry.update_pipeline(record.last_seen_path or filename, "embeddings")
-                
+            
+            self.invalidate(filename)
             darwin.log(f"Saved embeddings: {path.name}", LogType.SUCCESS)
 
         except Exception as e:
@@ -531,13 +585,20 @@ class EmbeddingsMixin(_PathResolverMixin):
         """Load embeddings and return (vectors, chunks)."""
         import json
         from src.core.Chunking.ChunkerUtils import Chunk, ChunkLink, OverlapDirection
+
+        cache_key = f"embeddings:{filename}"
+        if hasattr(self, '_artifact_cache') and cache_key in self._artifact_cache:
+            return self._artifact_cache[cache_key]
+
+        fh, d = self._resolve(filename)
+        if d is None:
+            return None, None
         
-        current_model = _get_current_model_name()
-        fh = self._hash_for(filename)
+        current_model = get_current_model_name()
         path = self.paths.npz_path(fh, current_model)
 
         if not path.exists():
-            meta_path = self._dir_for(filename) / "meta.json"
+            meta_path = d / "meta.json"
             if meta_path.exists():
                 file_meta = read_json(meta_path)
                 stored_model = file_meta.get("embedding_model", "unknown")
@@ -545,12 +606,12 @@ class EmbeddingsMixin(_PathResolverMixin):
                     darwin.log(
                         f"Embeddings for '{filename}' were built with '{stored_model}', "
                         f"but your current model is '{current_model}'. "
-                        f"Run the embedding pipeline to re-index.",LogType.ERROR
+                        f"Run the embedding pipeline to re-index.", LogType.ERROR
                     )
-                    return
+                    return None, None
             darwin.log(
                 f"No embeddings found for '{filename}'. Run the embedding pipeline first.", LogType.ERROR)
-            return
+            return None, None
 
         meta_path = path.with_suffix(".meta.json")
         if meta_path.exists():
@@ -563,84 +624,71 @@ class EmbeddingsMixin(_PathResolverMixin):
                     LogType.WARNING
                 )
 
-        data = np.load(path, allow_pickle=True)
+        data = np.load(path, allow_pickle=True, mmap_mode='r')
         vectors = data["vectors"]
-        
-        # Reconstruct chunks
-        chunks = []
         n_chunks = len(data['text'])
+
+        darwin.log(f"Reconstructing {n_chunks} chunks...", LogType.INFO)
+
+        # Convert object arrays to lists upfront
+        texts = data['text'].tolist()
+        cleans = data['clean'].tolist()
+        sources = data['source'].tolist()
+        headings = data['headings'].tolist()
+        pages = data['pages'].tolist()
+        pages_end = data['pages_end'].tolist() if 'pages_end' in data else pages
+        token_counts = data['token_counts'].tolist() if 'token_counts' in data else [0] * n_chunks
+        overlap_raw = data['overlap_direction'].tolist()
+        links_raw = data['links_json'].tolist()
         
-        for i in range(n_chunks):
-            # Parse links from JSON
-            links = []
-            if 'links_json' in data and i < len(data['links_json']):
-                links_json = data['links_json'][i]
-                if links_json and links_json != 'null' and links_json != "[]":
-                    try:
-                        if isinstance(links_json, str):
-                            links_data = json.loads(links_json)
-                        else:
-                            links_data = links_json
-                        
-                        for l in links_data:
-                            if isinstance(l, dict):
-                                links.append(ChunkLink(
-                                    url=l.get('url', ''),
-                                    text=l.get('text', '')
-                                ))
-                            elif hasattr(l, 'url'):
-                                links.append(l)
-                    except (json.JSONDecodeError, TypeError) as e:
-                        darwin.log(f"Failed to parse links for chunk {i}: {e}",)
-            
-            # Get overlap direction as Enum
-            overlap_raw = "none"
-            if 'overlap_direction' in data and i < len(data['overlap_direction']):
-                overlap_raw = str(data['overlap_direction'][i])
-            
-            # Convert to Enum
+        overlap_dirs = []
+        for raw in overlap_raw:
             try:
-                overlap_dir = OverlapDirection(overlap_raw)
+                overlap_dirs.append(OverlapDirection(str(raw)))
             except (ValueError, TypeError):
-                overlap_dir = OverlapDirection.NONE
-            
-            # Get page_end with fallback to page
-            page = int(data['pages'][i])
-            page_end = page
-            if 'pages_end' in data and i < len(data['pages_end']):
+                overlap_dirs.append(OverlapDirection.NONE)
+
+        all_links = []
+        for links_json in links_raw:
+            links = []
+            if links_json and links_json not in ('null', '[]', ''):
                 try:
-                    page_end = int(data['pages_end'][i])
-                except (ValueError, TypeError):
-                    page_end = page
-            
-            # Get token_count with fallback
-            token_count = 0
-            if 'token_counts' in data and i < len(data['token_counts']):
-                try:
-                    token_count = int(data['token_counts'][i])
-                except (ValueError, TypeError):
-                    token_count = 0
-            
-            chunk = Chunk(
-                text=str(data['text'][i]),
-                clean=str(data['clean'][i]),
+                    parsed = json.loads(links_json if isinstance(links_json, str) else links_json)
+                    if isinstance(parsed, list):
+                        for l in parsed:
+                            links.append(ChunkLink(url=l.get('url', ''), text=l.get('text', '')))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            all_links.append(links)
+
+        chunks = [
+            Chunk(
+                text=str(texts[i]),
+                clean=str(cleans[i]),
                 index=i,
-                source=str(data['source'][i]),
-                token_count=token_count,
-                heading=str(data['headings'][i]),
-                page=page,
-                page_end=page_end,
-                overlap_direction=overlap_dir,
-                links=links,
+                source=str(sources[i]),
+                token_count=token_counts[i],
+                heading=str(headings[i]),
+                page=pages[i],
+                page_end=pages_end[i],
+                overlap_direction=overlap_dirs[i],
+                links=all_links[i],
             )
-            chunks.append(chunk)
-        
-        return vectors, chunks
+            for i in range(n_chunks)
+        ]
+
+        result = (vectors, chunks)
+        if hasattr(self, '_artifact_cache'):
+            self._artifact_cache[cache_key] = result
+        darwin.log(f"Loaded {len(chunks)} chunks", LogType.INFO)
+        return result
 
     def get_embedding_metadata(self, filename: str) -> Optional[dict]:
         """Get embedding metadata for a file."""
-        current_model = _get_current_model_name()
-        fh = self._hash_for(filename)
+        fh, d = self._resolve(filename)
+        if d is None:
+            return None
+        current_model = get_current_model_name()
         path = self.paths.npz_path(fh, current_model)
         meta_path = path.with_suffix(".meta.json")
         if not meta_path.exists():
@@ -650,10 +698,11 @@ class EmbeddingsMixin(_PathResolverMixin):
     def is_embedding_compatible(self, filename: str) -> bool:
         """Check if embeddings exist and are compatible with current model."""
         try:
-            self.load_embeddings(filename)
-            return True
+            result = self.load_embeddings(filename)
+            return result is not None and result[0] is not None
         except FileNotFoundError:
             return False
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: BM25
 # ═══════════════════════════════════════════════════════════════════════════
@@ -691,18 +740,23 @@ class BM25Mixin(_PathResolverMixin):
                 "domain_stopwords": data.domain_stopwords,
                 "doc_freqs": data.doc_freqs,
                 "precomputed_idfs": data.precomputed_idfs or {},
-            })
+            }, compact=True)
 
             self._update_meta(filename, "bm25")
             record = self._record_for(filename)
             if record:
                 self.registry.update_pipeline(record.last_seen_path or filename, "bm25")
+            self.invalidate(filename)
             darwin.log(f"Saved BM25 index: {npz_path.name}", LogType.SUCCESS)
 
         except Exception as e:
             darwin.log(f"Failed to save BM25 for {filename}: {e}", LogType.ERROR)
 
     def load_bm25(self, filename: str) -> BM25Data | None:
+        cache_key = f"bm25:{filename}"
+        if hasattr(self, '_artifact_cache') and cache_key in self._artifact_cache:
+            return self._artifact_cache[cache_key]
+
         d = self._dir_for(filename)
         npz_path = d / "bm25.npz"
         meta_path = d / "bm25_meta.json"
@@ -715,7 +769,7 @@ class BM25Mixin(_PathResolverMixin):
 
         tokens = [list(tok_list) for tok_list in raw["tokens"]]
 
-        return BM25Data(
+        result = BM25Data(
             tokens=tokens,
             doc_freqs=meta["doc_freqs"],
             avgdl=meta["avgdl"],
@@ -728,6 +782,9 @@ class BM25Mixin(_PathResolverMixin):
             precomputed_idfs=meta.get("precomputed_idfs") or None,
         )
 
+        if hasattr(self, '_artifact_cache'):
+            self._artifact_cache[cache_key] = result
+        return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -749,6 +806,7 @@ class StopwordsMixin(_PathResolverMixin):
         record = self._record_for(filename)
         if record:
             self.registry.update_pipeline(record.last_seen_path or filename, "stopwords")
+        self.invalidate(filename)
 
     def load_stopwords(self, filename: str) -> set[str]:
         path = self._dir_for(filename) / "stopwords.json"
@@ -795,6 +853,7 @@ class GraphMixin(_PathResolverMixin):
                 concept_count=len(graph_data.nodes),
                 edge_count=len(graph_data.edges),
             )
+        self.invalidate(filename)
 
     def save_graph_html(self, filename: str, html: str) -> None:
         if html is None:
@@ -807,18 +866,44 @@ class GraphMixin(_PathResolverMixin):
         self._update_meta(filename, "graph_vis")
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(record.last_seen_path or filename, "graph_vis")
+            self.registry.update_pipeline(
+                record.last_seen_path or filename, "graph_vis"
+            )
+        self.invalidate(filename)
+
+
+    def save_graph_centroids(self, filename: str, centroids: list) -> None:
+        d = self._dir_for(filename) / "graph"
+        d.mkdir(parents=True, exist_ok=True)
+        write_json(d / "centroids.json", centroids)
+        self._update_meta(filename, "graph_centroids")
+        record = self._record_for(filename)
+        if record:
+            self.registry.update_pipeline(
+                record.last_seen_path or filename, "graph_centroids"
+            )
+        self.invalidate(filename)
+
+    def load_graph_centroids(self, filename: str) -> list:
+        path = self._dir_for(filename) / "graph" / "centroids.json"
+        if not path.exists():
+            return []
+        return read_json(path) or []
 
     def load_graph(self, filename: str) -> dict:
+        cache_key = f"graph:{filename}"
+        if hasattr(self, '_artifact_cache') and cache_key in self._artifact_cache:
+            return self._artifact_cache[cache_key]
+
         path = self._dir_for(filename) / "graph" / "graph.json"
         if not path.exists():
             raise FileNotFoundError(f"No graph found for '{filename}'.")
-        return read_json(path) or {}
+        result = read_json(path) or {}
 
+        if hasattr(self, '_artifact_cache'):
+            self._artifact_cache[cache_key] = result
+        return result
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Mixin: Wiki
-# ═══════════════════════════════════════════════════════════════════════════
 
 class WikiMixin(_PathResolverMixin):
 
@@ -829,27 +914,27 @@ class WikiMixin(_PathResolverMixin):
         if wiki is None:
             darwin.log(f"No wiki data to save for {filename}", LogType.ERROR)
             return
-        
+
         d = self._dir_for(filename) / "wiki"
         d.mkdir(parents=True, exist_ok=True)
-        path = d / "wiki.json"
 
         wiki_dict = {
             "filename": wiki.filename,
-            "mode": wiki.mode,
-            "concept_count": wiki.concept_count,
+            "manifest": wiki.manifest,
             "pages": [
                 {
-                    "title": p.title,
-                    "content": p.content,
-                    "concept": p.concept,
-                    "chunk_count": p.chunk_count,
-                    "related": p.related,
+                    "concept":       p.concept,
+                    "chunk_indices": p.chunk_indices,
+                    "related":       p.related,
+                    "centroid":      p.centroid,
+                    "frequency":     p.frequency,
+                    "summary":       p.summary,
+                    "keywords":      p.keywords,
                 }
                 for p in wiki.pages
             ],
         }
-        write_json(path, wiki_dict)
+        write_json(d / "wiki.json", wiki_dict)
 
         record = self._record_for(filename)
         if record:
@@ -857,8 +942,8 @@ class WikiMixin(_PathResolverMixin):
                 record.last_seen_path or filename,
                 "wiki",
                 page_num=len(wiki.pages),
-                concept_count=wiki.concept_count,
             )
+        self.invalidate(filename)
 
     def load_wiki(self, filename: str) -> dict:
         path = self._dir_for(filename) / "wiki" / "wiki.json"

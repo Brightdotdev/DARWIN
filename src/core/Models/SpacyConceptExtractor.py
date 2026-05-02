@@ -9,7 +9,7 @@ need from the same object — no duplicate loading, no scattered spacy calls.
 """
 
 from pathlib import Path
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional, Set, Callable
 from collections import defaultdict
 
 
@@ -64,7 +64,6 @@ class SpacyConceptExtractor:
             self.nlp = load_model_from_path(self.model_path, exclude=minimal_exclude)
 
         self._enabled_pipes = set(self.nlp.pipe_names)
-        print(f"   ✅ spaCy loaded: {', '.join(self._enabled_pipes) or 'tokenizer only'}")
 
     # ──────────────────────────────────────────────────────────────────────
     # Public API — what graph & wiki actually call
@@ -151,6 +150,13 @@ class SpacyConceptExtractor:
             return []
 
         doc = self.nlp(text)
+        return self._extract_chunks_from_doc(doc)
+
+    def _extract_chunks_from_doc(self, doc, max_per_chunk: int = 20) -> List[str]:
+        """
+        Extract noun chunks from an already-processed spaCy Doc.
+        Used internally to avoid reprocessing.
+        """
         chunks = []
         seen: Set[str] = set()
 
@@ -174,9 +180,7 @@ class SpacyConceptExtractor:
                     seen.add(clean)
                     chunks.append(clean)
 
-        return chunks
-
-
+        return chunks[:max_per_chunk]
 
     def split_sentences(self, text: str, max_length: int = 100000) -> List[str]:
         """
@@ -204,24 +208,57 @@ class SpacyConceptExtractor:
         self,
         chunks: List,
         max_per_chunk: int = 20,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        batch_size: int = 128,
     ) -> Dict[str, List[int]]:
         """
         Extract keywords from all chunks for graph building.
-        Returns {keyword: [chunk_index, ...]} — same shape as yake output.
-
+        
+        Uses sequential nlp() calls instead of nlp.pipe() to avoid
+        threading deadlocks when called from executor threads.
+        
+        Args:
+            chunks: List of Chunk objects
+            max_per_chunk: Max keywords to extract per chunk
+            progress_callback: Optional callback(current, total, status)
+            batch_size: Ignored (kept for API compatibility)
+            
+        Returns:
+            {keyword: [chunk_index, ...]}
         """
         keywords: Dict[str, List[int]] = defaultdict(list)
-
+        
+        # Prepare texts and filter invalid ones
+        valid_chunks = []
+        
         for chunk in chunks:
             text = chunk.clean[:3000]
-            if not text.strip():
+            if not text.strip() or text.strip().startswith("[Image:"):
                 continue
-            if text.strip().startswith("[Image:"):
-                continue
-
-            for kw in self.extract_noun_chunks(text)[:max_per_chunk]:
+            valid_chunks.append(chunk)
+        
+        if not valid_chunks:
+            return dict(keywords)
+        
+        total = len(valid_chunks)
+        
+        if progress_callback:
+            progress_callback(0, total, "Extracting keywords...")
+        
+        # Sequential processing — safe from any thread
+        for i, chunk in enumerate(valid_chunks):
+            text = chunk.clean[:3000]
+            doc = self.nlp(text)
+            
+            for kw in self._extract_chunks_from_doc(doc)[:max_per_chunk]:
                 keywords[kw].append(chunk.index)
-
+            
+            if progress_callback and (i + 1) % 50 == 0:
+                progress_callback(i + 1, total, f"Extracting keywords... ({i + 1}/{total})")
+        
+        if progress_callback:
+            progress_callback(total, total, "Keywords extracted")
+        
         return dict(keywords)
 
     # ──────────────────────────────────────────────────────────────────────
@@ -232,20 +269,27 @@ class SpacyConceptExtractor:
         self,
         raw_keywords: Dict[str, List[int]],
         max_concepts: int = 100,
+        batch_size: int = 256,
     ) -> Dict[str, List[int]]:
         """
         Normalize raw keywords into clean concepts.
         - Lemmatizes ("running" → "run")
         - Deduplicates ("CO2" + "carbon dioxide" → "carbon dioxide")
         - Strips determiners ("the Calvin cycle" → "calvin cycle")
+        
+        Uses sequential nlp() calls — safe from any thread.
 
         Used by: ConceptElevator when mode="spacy".
         """
         sorted_kw = sorted(raw_keywords.items(), key=lambda x: len(x[1]), reverse=True)
         top_kw = sorted_kw[:max_concepts * 2]
-
+        
+        if not top_kw:
+            return {}
+        
         canonical_map: Dict[str, List[tuple]] = defaultdict(list)
-
+        
+        # Sequential processing for thread safety
         for kw, indices in top_kw:
             doc = self.nlp(kw[:100])
 
@@ -266,7 +310,7 @@ class SpacyConceptExtractor:
                 continue
 
             canonical_map[canonical].append((kw, indices))
-
+        
         elevated: Dict[str, List[int]] = {}
         for canonical, entries in canonical_map.items():
             merged = []
@@ -277,7 +321,7 @@ class SpacyConceptExtractor:
                         merged.append(idx)
                         seen.add(idx)
             elevated[canonical] = sorted(merged)
-
+        
         return dict(
             sorted(elevated.items(), key=lambda x: len(x[1]), reverse=True)[:max_concepts]
         )
@@ -317,7 +361,23 @@ class SpacyConceptExtractor:
         return " ".join(text.split())
 
     def _detect_components(self) -> Set[str]:
-        """Check which components exist in the model directory."""
+        """
+        Detect which NLP components are available in the model.
+        Uses spaCy's config if available, falls back to directory listing.
+        """
+        try:
+            from spacy.util import load_config
+            config_path = self.model_path / "config.cfg"
+            if config_path.exists():
+                config = load_config(config_path)
+                if "components" in config.get("nlp", {}):
+                    return set(config["nlp"]["components"].keys())
+                if "components" in config:
+                    return set(config["components"].keys())
+        except Exception:
+            pass
+        
+        # Fallback: directory listing
         available = set()
         for item in self.model_path.iterdir():
             if item.is_dir():

@@ -304,9 +304,20 @@ def to_llm_context(results: List[HybridSearchResult], max_chunks: int = 5) -> st
         part += f"\nContent: {r.text}"
         if r.links:
             part += "\nReferences:"
+
             for link in r.links:
-                label = link.text if link.text else link.url
-                part += f"\n  - {label}: {link.url}"
+                if hasattr(link, "text") and hasattr(link, "url"):
+                    label = link.text if link.text else link.url
+                    url = link.url
+                elif isinstance(link, dict):
+                    url = link.get("url", "")
+                    label = link.get("text") or url
+                else:
+                    # last-resort fallback
+                    url = str(link)
+                    label = url
+
+                part += f"\n  - {label}: {url}"
         part += "\n---"
         parts.append(part)
     return "\n".join(parts)

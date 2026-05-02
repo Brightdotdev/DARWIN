@@ -9,6 +9,7 @@ import hashlib
 import re
 from datetime import datetime, timezone
 import json
+from typing import Optional
 
 
 # ── Default global config ──────────────────────────────────────────────────
@@ -36,6 +37,33 @@ DEFAULT_CONFIG = {
 }
 
 
+# ── Model name cache ───────────────────────────────────────────────────────
+
+_model_name_cache: Optional[str] = None
+
+
+def get_current_model_name() -> str:
+    """Resolve the currently active embedding model name (full model_id)."""
+    global _model_name_cache
+    if _model_name_cache is not None:
+        return _model_name_cache
+    try:
+        from src.core.Models import get_loader, ModelCategory
+        loader = get_loader()
+        _model_name_cache = loader.get_model_key(ModelCategory.EMBEDDING)
+        return _model_name_cache
+    except Exception as e:
+        from src.core.Logger.DarwinLogger import darwin, LogType
+        darwin.log(f"Failed to detect current model: {e}", LogType.ERROR)
+        return "unknown"
+
+
+def invalidate_model_cache() -> None:
+    """Clear the cached model name so the next call re-detects."""
+    global _model_name_cache
+    _model_name_cache = None
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def sanitize(name: str) -> str:
@@ -47,8 +75,8 @@ def sanitize(name: str) -> str:
 
 
 def file_hash(path: str | Path) -> str:
-    """MD5 hash for quick change detection."""
-    h = hashlib.md5()
+    """SHA-256 hash for quick change detection."""
+    h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
@@ -60,12 +88,15 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def write_json(path: Path, data: dict) -> None:
+def write_json(path: Path, data: dict, compact: bool = False) -> None:
     """Atomic-ish JSON write (write to temp, then rename)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        if compact:
+            json.dump(data, f, separators=(',', ':'), ensure_ascii=False)
+        else:
+            json.dump(data, f, indent=2, ensure_ascii=False)
     tmp.replace(path)  # atomic on most OSes
 
 
