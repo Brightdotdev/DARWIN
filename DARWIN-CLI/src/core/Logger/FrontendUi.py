@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 
+from src.core.Logger.lib import ASCII_BANNER
 from src.core.Logger.DarwinLogger import (
     EventSubscriber,
     LogEvent,
@@ -17,15 +18,6 @@ from src.core.Logger.DarwinLogger import (
     DarwinLogger,
 )
 from typing import Optional
-
-ASCII_BANNER = [
-    "██████╗  █████╗ ██████╗ ██╗    ██╗██╗███╗   ██╗",
-    "██╔══██╗██╔══██╗██╔══██╗██║    ██║██║████╗  ██║",
-    "██║  ██║███████║██████╔╝██║ █╗ ██║██║██╔██╗ ██║",
-    "██║  ██║██╔══██║██╔══██╗██║███╗██║██║██║╚██╗██║",
-    "██████╔╝██║  ██║██║  ██║╚███╔███╔╝██║██║ ╚████║",
-    "╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝",
-]
 
 
 class FrontendBridge(EventSubscriber):

@@ -1,0 +1,283 @@
+"""
+main.py - Document parsing pipeline entry point
+"""
+
+import sys
+import multiprocessing
+import time
+import asyncio
+from pathlib import Path
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from typing import Optional
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from src.features.Parsing.Parser import parse as _parse, scan_directory
+from src.features.Parsing.lib import (
+    ParsedDocument,
+    FileWithImages,
+    CPU_COUNT,
+    ParsingArgs,
+    detect_type,
+)
+from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Logger.DarwinLogger import (darwin, LogType,)
+from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+
+
+
+# ── subprocess worker ──────────────────────────────────────────────────────────
+
+def parse_document(
+    path_with_images: FileWithImages,
+    caption_images: bool,
+    precise: bool,
+) -> ParsedDocument:
+    
+    file_path = Path(path_with_images.file)
+    try:
+        return _parse(
+            file_path,
+            images_dir=path_with_images.image_dir,
+            caption=caption_images,
+            precise=precise,
+        )
+    except Exception as e:
+        return ParsedDocument(
+            display_text="", embedding_text="", filename=file_path.name,
+            page_count=0, file_type=detect_type(file_path) or "unknown",
+            error=f"{type(e).__name__}: {e}",
+        )
+
+
+# ── main orchestrator ──────────────────────────────────────────────────────────
+
+def parse_documents(
+    files: list[FileWithImages],
+    caption_images: bool = False,
+    precise: bool = False,
+) -> list[ParsedDocument]:
+
+    if not files:
+        return []
+
+    file_names = [Path(fw.file).name for fw in files]
+    total_mb = sum(Path(fw.file).stat().st_size / (1024 * 1024) for fw in files)
+    mode_label = "precise" if precise else "fast"
+
+    darwin.log(f"Queueing {len(files)} files ({total_mb:.1f} MB) [{mode_label} mode]", LogType.INFO)
+
+    indexed_files = sorted(enumerate(files), key=lambda x: Path(x[1].file).stat().st_size)
+    n_workers = min(len(files), max(1, CPU_COUNT // 2) if caption_images else CPU_COUNT)
+
+    results: list[Optional[ParsedDocument]] = [None] * len(files)
+    completed_files: set[str] = set()
+    file_errors: dict[str, str] = {}
+
+    darwin.progress_start("parsing", len(file_names), f"Parsing {len(file_names)} files")
+
+    try:
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            future_to_info: dict = {}
+            for orig_idx, fw in indexed_files:
+                filename = Path(fw.file).name
+                future = executor.submit(parse_document, fw, caption_images, precise)
+                future_to_info[future] = (orig_idx, filename)
+
+            total_submitted = len(future_to_info)
+            processed_count = 0
+
+            darwin.log(f"Processing {total_submitted} files with {n_workers} workers…", LogType.INFO)
+
+            for future in as_completed(future_to_info):
+                orig_idx, filename = future_to_info[future]
+                processed_count += 1
+
+                try:
+                    doc = future.result()
+                    results[orig_idx] = doc
+
+                    if doc.error:
+                        file_errors[filename] = doc.error
+                        darwin.progress_update("parsing", processed_count, f"{filename}: {doc.error}")
+                        darwin.log(f"  {filename} — {doc.error}", LogType.ERROR)
+                    else:
+                        completed_files.add(filename)
+                        darwin.progress_update("parsing", processed_count, f"{filename}: {doc.page_count} pages")
+                        darwin.log(f"  {filename} — {doc.page_count} pages · {len(doc.embedding_text):,} chars", LogType.SUCCESS)
+                except Exception as e:
+                    results[orig_idx] = ParsedDocument(
+                        display_text="", embedding_text="", filename=filename,
+                        page_count=0, file_type="unknown", error=f"{type(e).__name__}: {e}",
+                    )
+                    file_errors[filename] = str(e)
+                    darwin.progress_update("parsing", processed_count, f"{filename}: {type(e).__name__}")
+                    darwin.log(f"  {filename} — {type(e).__name__}: {e}", LogType.ERROR)
+
+            darwin.progress_end("parsing")
+            darwin.log(f"All {processed_count} files processed!", LogType.SUCCESS)
+
+    except KeyboardInterrupt:
+        darwin.progress_end("parsing")
+        darwin.log("Interrupted — exiting.", LogType.WARNING)
+        raise
+
+    darwin.log("")
+    if completed_files:
+        darwin.log(f"Parsed: {len(completed_files)} files", LogType.SUCCESS)
+    if file_errors:
+        darwin.log(f"Failed: {len(file_errors)} files", LogType.ERROR)
+        for name, err in list(file_errors.items())[:5]:
+            darwin.log(f"  • {name}: {err}", LogType.ERROR)
+        if len(file_errors) > 5:
+            darwin.log(f"  … and {len(file_errors) - 5} more", LogType.ERROR)
+
+    return [r for r in results if r is not None]
+
+
+# ── handle_parsing ─────────────────────────────────────────────────────────────
+
+def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
+    target_paths: list[Path] = []
+
+    if args.file:
+        file_path = Path(args.file).resolve()
+        if not file_path.exists():
+            darwin.log(f"File not found: {args.file}", LogType.ERROR)
+            return []
+        if not file_path.is_file():
+            darwin.log(f"Not a file: {args.file}", LogType.ERROR)
+            return []
+        file_type = detect_type(file_path)
+        if file_type is None:
+            darwin.log(f"Unsupported file type: {file_path.suffix}", LogType.ERROR)
+            return []
+        target_paths = [file_path]
+    else:
+        target_dir = Path(args.target).resolve()
+        if not target_dir.exists():
+            darwin.log(f"Directory not found: {args.target}", LogType.ERROR)
+            return []
+        target_paths = scan_directory(target_dir, recursive=args.recursive)
+
+    if not target_paths:
+        darwin.log(f"No supported files found in {args.target}", LogType.ERROR)
+        darwin.log("Supported types: .pdf, .docx, .txt, .md, .html, .csv, .json", LogType.INFO)
+        return []
+
+    darwin.log("")
+    darwin.log(f"Parsing: {target_paths[0].name}" if args.file else f"Parsing directory: {args.target}", LogType.INFO)
+    darwin.log(f"Settings: Images={args.images} | Caption={args.caption} | Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}", LogType.INFO)
+    darwin.log("")
+
+    store = DarwinStore()
+    for path in target_paths:
+        store.registry.register(path)
+
+    to_process = []
+    skipped_count = 0
+    for path in target_paths:
+        if store.has_markdown(path.name) and not args.rerun:
+            skipped_count += 1
+            continue
+        to_process.append(path)
+
+    if skipped_count > 0:
+        darwin.log(f"Skipped {skipped_count} cached files (use --rerun to reprocess)", LogType.INFO)
+
+    if not to_process:
+        darwin.log("All files already parsed!", LogType.SUCCESS)
+        darwin.log("Use --rerun to reprocess with different settings", LogType.INFO)
+        return []
+
+    darwin.log(f"Processing {len(to_process)} file(s)...", LogType.INFO)
+
+    files = [FileWithImages(file=path, image_dir=store.ensure_image_dir(path.name) if args.images else None) for path in to_process]
+
+    darwin.log("Parsing files... this might take a while. Progress will be shown below. Do not close the terminal.", LogType.INFO)
+
+    t0 = time.perf_counter()
+    docs = parse_documents(files, caption_images=args.caption, precise=args.precise)
+    elapsed = time.perf_counter() - t0
+
+    succeeded = 0
+    failed = 0
+    for doc in docs:
+        if not doc:
+            continue
+        if doc.error:
+            failed += 1
+            darwin.log(f"{doc.filename} - {doc.error}", LogType.ERROR)
+        else:
+            if args.save:
+                matching_path = next((p for p in to_process if p.name == doc.filename), None)
+                if matching_path:
+                    store.registry.register(matching_path, page_count=doc.page_count)
+                store.save_markdown(doc.filename, doc)
+            succeeded += 1
+
+    darwin.log("")
+    darwin.log(f"Total time: {elapsed:.1f}s", LogType.INFO)
+    if succeeded > 0:
+        darwin.log(f"Successfully parsed {succeeded} file(s)", LogType.SUCCESS)
+    if failed > 0:
+        darwin.log(f"Failed to parse {failed} file(s)", LogType.WARNING)
+
+    return docs
+
+
+# ── CLI entry point ────────────────────────────────────────────────────────────
+
+async def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Parse documents into .darwin format")
+    parser.add_argument("path", nargs="?", default=".", help="File or directory to parse (default: current directory)")
+    parser.add_argument("--rerun", "-R", action="store_true", help="Reprocess cached files")
+    parser.add_argument("--recursive", "-r", action="store_true", help="Scan directories recursively")
+    parser.add_argument("--images", "-img", action="store_true", help="Extract images from documents")
+    parser.add_argument("--caption", "-c", action="store_true", help="Generate captions for images (requires --images)")
+    parser.add_argument("--file", "-f", default=None, help="Parse a single file instead of a directory")
+    parser.add_argument("--precise", action="store_true", help="Use pymupdf4llm for layout-accurate extraction")
+    parser.add_argument("--no-save", action="store_true", help="Don't save markdown files (preview only)")
+    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
+    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+
+    args = parser.parse_args()
+
+    # Use shared WebSocket setup — only ONE server starts
+    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+
+    try:
+        parsing_args = ParsingArgs(
+            target=args.path if not args.file else str(Path(args.file).parent),
+            images=args.images,
+            caption=args.caption,
+            recursive=args.recursive,
+            rerun=args.rerun,
+            file=args.file,
+            precise=args.precise,
+            save=not args.no_save,
+        )
+
+
+        handle_parsing(parsing_args)
+        return 0
+
+    except KeyboardInterrupt:
+        darwin.log("")
+        darwin.log("Goodbye!", LogType.INFO)
+        return 130
+    except Exception as e:
+        import traceback
+        darwin.log(f"Fatal error: {e}", LogType.ERROR)
+        darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
+        return 1
+    finally:
+        shutdown_websocket(ws_server)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

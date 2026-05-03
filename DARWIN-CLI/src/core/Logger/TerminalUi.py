@@ -10,7 +10,6 @@ import time
 from typing import Dict, Optional
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.progress import (
     BarColumn,
     Progress,
@@ -18,6 +17,8 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
+
+from src.core.Logger.lib import ASCII_BANNER
 
 from src.core.Logger.DarwinLogger import (
     DarwinLogger,
@@ -60,14 +61,7 @@ else:
 
 
 # Inline ASCII banner to avoid circular imports
-ASCII_BANNER = [
-    "██████╗  █████╗ ██████╗ ██╗    ██╗██╗███╗   ██╗",
-    "██╔══██╗██╔══██╗██╔══██╗██║    ██║██║████╗  ██║",
-    "██║  ██║███████║██████╔╝██║ █╗ ██║██║██╔██╗ ██║",
-    "██║  ██║██╔══██║██╔══██╗██║███╗██║██║██║╚██╗██║",
-    "██████╔╝██║  ██║██║  ██║╚███╔███╔╝██║██║ ╚████║",
-    "╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚═╝╚═╝  ╚═══╝",
-]
+
 
 LOG_ICONS = {
     LogType.INFO:    ("[cyan]ℹ[/cyan]", "cyan"),
