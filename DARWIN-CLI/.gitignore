@@ -79,7 +79,6 @@ prompt.md
 *.safetensors
 *.gguf
 *.onnx
-models/
 data/
 checkpoints/
 
