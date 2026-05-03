@@ -1,0 +1,90 @@
+# ──────────────────────────────────────────
+# Python
+# ──────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
+.eggs/
+
+# ──────────────────────────────────────────
+# Virtual Environment & Dependencies
+# ──────────────────────────────────────────
+.venv/
+venv/
+env/
+.uv/
+uv.lock
+
+# ──────────────────────────────────────────
+# IDE & Editor
+# ──────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ──────────────────────────────────────────
+# Python tooling
+# ──────────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ──────────────────────────────────────────
+# Environment & Secrets
+# ──────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.local
+
+# ──────────────────────────────────────────
+# Darwin-specific (your project)
+# ──────────────────────────────────────────
+*.lock
+centroids.json
+output.html
+output.json
+DARWIN.egg-info/
+
+# ──────────────────────────────────────────
+# Temporary & Junk
+# ──────────────────────────────────────────
+*.tmp
+*.temp
+*.log
+*.bak
+*.orig
+artstuff
+potentialstack
+easteregg.txt
+shenanigans.md
+prompt.md
+
+# ──────────────────────────────────────────
+# Large files / PDFs / Data
+# ──────────────────────────────────────────
+*.pdf
+*.bin
+*.safetensors
+*.gguf
+*.onnx
+models/
+data/
+checkpoints/
+
+# ──────────────────────────────────────────
+# OS junk
+# ──────────────────────────────────────────
+$RECYCLE.BIN/
+System Volume Information/

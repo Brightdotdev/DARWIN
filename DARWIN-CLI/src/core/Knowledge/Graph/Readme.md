@@ -38,7 +38,7 @@ uv run src/core/Knowledge/Graph/main.py --file theology.pdf --ai --threshold 0.5
 
 ```id="g3">
 chunks
-  → extract keywords (yake / regex / spacy)
+  → extract keywords (regex / spacy)
   → optionally elevate into real concepts (LLM ✨)
   → filter + rank
   → embed concept labels
@@ -91,14 +91,14 @@ Avoid it when:
 
 ## Concept extraction modes
 
-### YAKE (default)
 
-* fast
-* offline
-* good baseline
 
-```bash id="g6">
-uv add yake
+### spaCy (default)
+
+* better linguistic structure
+
+```bash id="g7">
+uv run python -m spacy download en_core_web_sm
 ```
 
 ---
@@ -109,15 +109,6 @@ uv add yake
 * lowest quality
 
 ---
-
-### spaCy (slow)
-
-* better linguistic structure
-* heavy and slow
-
-```bash id="g7">
-uv run python -m spacy download en_core_web_sm
-```
 
 ---
 
