@@ -15,7 +15,6 @@ Model lifecycle
 
 import numpy as np
 from typing import List, Optional
-import torch
 
 from src.core.Models.EmbeddingConfig import (
     ModelPreset,
@@ -23,7 +22,7 @@ from src.core.Models.EmbeddingConfig import (
     get_model_batch_size,
 )
 from src.core.Chunking.ChunkerUtils import Chunk
-from src.core.Models import get_loader, ModelCategory
+from src.core.Models import ModelCategory, ModelManager
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
@@ -91,6 +90,9 @@ def embed_chunks(
     Returns:
         numpy array of shape (n_chunks, embedding_dim) or None on failure
     """
+    import torch
+
+
     if not chunks:
         darwin.log("No chunks found to embed", LogType.WARNING)
         return np.array([], dtype=np.float32)
@@ -98,7 +100,7 @@ def embed_chunks(
     # ── Resolve preset ──
     preset = get_preset()
 
-    loader = get_loader()
+    loader = ModelManager.get_loader()
     
     embedder = loader.get(ModelCategory.EMBEDDING)
   
@@ -202,7 +204,7 @@ def embed_query(
     """
     preset = get_preset()
 
-    loader = get_loader()
+    loader = ModelManager.get_loader()
     
     model = loader.get(ModelCategory.EMBEDDING)
     

@@ -2,30 +2,88 @@
 
 import sys
 from pathlib import Path
-from typing import Optional as Opt, Dict, List, Any
+from typing import Optional as Opt
 
 from src.core.Models.ModelStore import ModelStore
 from src.core.Models.ModelLoader import ModelLoader
-from src.core.Models.SystemDetector import detect_system, recommend_defaults, SystemInfo
+from src.core.Hardware.SystemDetector import detect_system, recommend_defaults, SystemInfo
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Models.ModelRegistry import get_spec, REGISTRY, ModelCategory
 from src.core.Logger.DarwinLogger import darwin, LogType
+
+
+_LOADER_INSTANCE = None
+_PREFERENCES_CACHE = None
+_SYSTEM_CACHE = None
 
 
 class ModelManager:
     """User-facing orchestration for model management."""
     
     def __init__(self, darwin_store: Opt[DarwinStore] = None):
-        self.store = ModelStore()
-        self.system = detect_system()
+        global _SYSTEM_CACHE
+        
+        self.model_store = ModelStore()
+        
+        # Use cached system info if available, otherwise detect
+        if _SYSTEM_CACHE is None:
+            _SYSTEM_CACHE = detect_system()
+        self.system = _SYSTEM_CACHE
+        
         self._darwin_store = darwin_store
         self._loader: Opt[ModelLoader] = None
+
+    @staticmethod
+    def get_loader() -> ModelLoader:
+        """Global ModelLoader singleton."""
+        global _LOADER_INSTANCE, _PREFERENCES_CACHE, _SYSTEM_CACHE
+        
+        if _LOADER_INSTANCE is None:
+            mode_store = ModelStore()
+            
+            if _SYSTEM_CACHE is None:
+                _SYSTEM_CACHE = detect_system()
+            
+            if _PREFERENCES_CACHE is None:
+                _PREFERENCES_CACHE = recommend_defaults(_SYSTEM_CACHE)
+            
+            _LOADER_INSTANCE = ModelLoader(mode_store, _PREFERENCES_CACHE)
+        
+        return _LOADER_INSTANCE
+
+
+
+    @staticmethod
+    def setup(preferences: dict = None, skip_download: bool = False) -> ModelLoader:
+        """Initialize the singleton loader with optional preferences and model downloads."""
+        global _LOADER_INSTANCE, _PREFERENCES_CACHE, _SYSTEM_CACHE
+
+        if _SYSTEM_CACHE is None:
+            _SYSTEM_CACHE = detect_system()
+
+        from src.core.Hardware.DeviceManager import DeviceManager
+        if DeviceManager._config is None:
+            DeviceManager.init(_SYSTEM_CACHE)
+
+        if preferences is not None:
+            _PREFERENCES_CACHE = preferences
+
+        if _PREFERENCES_CACHE is None:
+            _PREFERENCES_CACHE = recommend_defaults(_SYSTEM_CACHE)
+
+        if not skip_download:
+            from src.core.Models.ModelStartup import download_required
+            download_required(ModelStore(), _PREFERENCES_CACHE, _SYSTEM_CACHE)
+
+        if _LOADER_INSTANCE is None:
+            _LOADER_INSTANCE = ModelLoader(ModelStore(), _PREFERENCES_CACHE)
+
+        return _LOADER_INSTANCE
 
     @property
     def loader(self) -> ModelLoader:
         if self._loader is None:
-            from src.core.Models import get_loader
-            self._loader = get_loader()
+            self._loader = self.get_loader()
         return self._loader
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -42,10 +100,10 @@ class ModelManager:
         
         key, spec = resolved
         
-        if not self.store.is_downloaded(key):
+        if not self.model_store.is_downloaded(key):
             darwin.log(f"Downloading {new_key} first...", LogType.INFO)
             try:
-                self.store.download(key)
+                self.model_store.download(key)
             except Exception as e:
                 darwin.log(f"Download failed: {e}", LogType.ERROR)
                 return
@@ -57,15 +115,15 @@ class ModelManager:
         
         darwin.log(f"Switched embedding → {new_key}", LogType.SUCCESS)
 
-        if migrate and self._darwin_store:
+        if self._darwin_store:
             health = self._darwin_store.get_embedding_health()
             stale = health.get("needs_reembed", [])
             
             if stale:
-                if file:
-                    darwin.log(f"Migrating {file} to new embedding model...", LogType.INFO)
+                if migrate:
+                    darwin.log(f"{len(stale)} file(s) need re-embedding. Migrating...", LogType.INFO)
                     self.migrate_embedding(file=file)
-                elif not migrate:
+                else:
                     darwin.log(f"{len(stale)} file(s) need re-embedding. Run migrate_embedding().", LogType.WARNING)
 
     def switch_reranker(self, new_key: str) -> None:
@@ -88,10 +146,10 @@ class ModelManager:
         
         key, spec = resolved
         
-        if not self.store.is_downloaded(key):
+        if not self.model_store.is_downloaded(key):
             darwin.log(f"Downloading {new_key} first...", LogType.INFO)
             try:
-                self.store.download(key)
+                self.model_store.download(key)
             except Exception as e:
                 darwin.log(f"Download failed: {e}", LogType.ERROR)
                 return
@@ -103,7 +161,7 @@ class ModelManager:
         
         darwin.log(f"Switched {category} → {new_key}", LogType.SUCCESS)
 
-    def _resolve_key(self, key: str, expected_category: str) -> Opt[tuple[str, Any]]:
+    def _resolve_key(self, key: str, expected_category: str) -> Opt[tuple]:
         """Resolve model identifier to (registry_key, spec). Returns None on failure."""
         from src.core.Models.ModelRegistry import REGISTRY as registry, get_spec
         
@@ -128,7 +186,7 @@ class ModelManager:
     # Migration methods
     # ═══════════════════════════════════════════════════════════════════════
 
-    def migrate_embedding(self, file: Opt[str] = None, force: bool = False) -> Dict[str, int]:
+    def migrate_embedding(self, file: Opt[str] = None, force: bool = False) -> dict:
         """Re-embed files with current embedding model."""
         if not self._darwin_store:
             darwin.log("No DarwinStore available for migration", LogType.ERROR)
@@ -139,15 +197,6 @@ class ModelManager:
             force=force,
         )
 
-    def migrate_reranker(self) -> None:
-        darwin.log("Reranker swaps are instant — no migration needed.", LogType.INFO)
-
-    def migrate_vision(self) -> None:
-        darwin.log("Vision model swaps are instant — no migration needed (captions are cached).", LogType.INFO)
-
-    def migrate_tokenizer(self) -> None:
-        darwin.log("Tokenizer swaps are instant — no migration needed.", LogType.INFO)
-
     # ═══════════════════════════════════════════════════════════════════════
     # User commands
     # ═══════════════════════════════════════════════════════════════════════
@@ -157,8 +206,8 @@ class ModelManager:
         print("\n📊 Model Status\n")
         for key in REGISTRY:
             spec = REGISTRY[key]
-            installed = self.store.is_downloaded(key)
-            size = self.store.installed_size(key) if installed else "N/A"
+            installed = self.model_store.is_downloaded(key)
+            size = self.model_store.installed_size(key) if installed else "N/A"
             status = "✅" if installed else "⬜"
             print(f"   {key:<25} {spec.model_id:<45} {status} {size}")
 
@@ -184,21 +233,21 @@ class ModelManager:
             return
             
         for key in models:
-            if not self.store.is_downloaded(key):
+            if not self.model_store.is_downloaded(key):
                 self.install(key)
 
     def setup_required(self) -> None:
         """Install all required models."""
         required = {k: v for k, v in REGISTRY.items() if v.required}
         for key in required:
-            if not self.store.is_downloaded(key):
+            if not self.model_store.is_downloaded(key):
                 self.install(key)
 
     def setup_recommended(self) -> None:
         """Install recommended models based on system."""
         recommended = recommend_defaults(self.system)
         for category, key in recommended.items():
-            if key and not self.store.is_downloaded(key):
+            if key and not self.model_store.is_downloaded(key):
                 self.install(key)
 
     def upgrade(self, key: str) -> None:
@@ -207,7 +256,7 @@ class ModelManager:
             darwin.log(f"Unknown model: {key}", LogType.ERROR)
             return
             
-        if not self.store.is_downloaded(key):
+        if not self.model_store.is_downloaded(key):
             darwin.log(f"{key} is not installed. Use install instead.", LogType.WARNING)
             return
             
@@ -235,7 +284,7 @@ class ModelManager:
                 return
 
         darwin.log(f"Installing {key} ({spec.disk_mb}MB)...", LogType.INFO)
-        self.store.download(key, force=force)
+        self.model_store.download(key, force=force)
         darwin.log(f"{key} installed. Run switch to activate it.", LogType.SUCCESS)
 
     def uninstall(self, key: str) -> None:
@@ -244,7 +293,7 @@ class ModelManager:
             darwin.log(f"Unknown model: {key}", LogType.ERROR)
             return
 
-        if not self.store.is_downloaded(key):
+        if not self.model_store.is_downloaded(key):
             darwin.log(f"{key} is not installed", LogType.WARNING)
             return
 
@@ -271,7 +320,7 @@ class ModelManager:
                 if response != 'y':
                     return
 
-        self.store.delete(key)
+        self.model_store.delete(key)
         darwin.log(f"{key} removed.", LogType.SUCCESS)
 
     def switch(self, category: str, model: str) -> None:
@@ -286,3 +335,9 @@ class ModelManager:
             self.switch_tokenizer(model)
         else:
             darwin.log(f"Unknown category: {category}", LogType.ERROR)
+
+
+def set_preferences(preferences: dict) -> None:
+    """Set model preferences before loader creation."""
+    global _PREFERENCES_CACHE
+    _PREFERENCES_CACHE = preferences

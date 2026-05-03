@@ -65,8 +65,8 @@ def _normalize_model_name(name: str) -> str:
 def _get_current_model_dimensions() -> int:
     """Expected embedding dimensions for the active model. Safe fallback."""
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
+        from src.core.Models import ModelManager, ModelCategory
+        loader = ModelManager.get_loader()
         key = loader.get_model_key(ModelCategory.EMBEDDING)
         dims = {
             "intfloat/e5-small-v2": 384,

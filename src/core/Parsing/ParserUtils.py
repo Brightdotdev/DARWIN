@@ -37,7 +37,7 @@ from src.core.Parsing.lib import (
     )
 from src.core.Parsing.Extractors import fitz_extract, pymupdf4llm_extract
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Models import get_loader, ModelCategory
+from src.core.Models import ModelManager, ModelCategory
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -156,7 +156,7 @@ def _run_captioning(
 
     if should_caption:
         try:
-            loader = get_loader()
+            loader = ModelManager.get_loader()
 
             try:
                 vision_key = loader.get_model_key(ModelCategory.VISION)
@@ -318,7 +318,7 @@ def _parse_pdf_single(
 
         if caption:
             try:
-                get_loader().unload(ModelCategory.VISION)
+                ModelManager.get_loader().unload(ModelCategory.VISION)
                 darwin.log("Vision model unloaded from memory", LogType.INFO)
             except Exception:
                 pass
@@ -431,7 +431,7 @@ def _parse_pdf_chunked(
 
     if caption:
         try:
-            get_loader().unload(ModelCategory.VISION)
+            ModelManager.get_loader().unload(ModelCategory.VISION)
             darwin.log("Vision model unloaded from memory", LogType.INFO)
         except Exception:
             pass

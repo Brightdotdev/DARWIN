@@ -1,7 +1,7 @@
 
 
 from pathlib import Path
-from src.core.Models.SystemDetector import  default_models_dir
+from src.core.Hardware.SystemDetector import  default_models_dir
 from src.core.Models.ModelRegistry import get_spec
 
 

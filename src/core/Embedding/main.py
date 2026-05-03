@@ -32,7 +32,7 @@ if __name__ == "__main__":
 from src.core.Embedding.Embedder import run_embedding_pipeline
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Embedding.lib import EmbeddingArgs
-from src.core.Models import get_loader, ModelCategory
+from src.core.Models import ModelLoader, ModelCategory
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -108,7 +108,7 @@ def handle_embedding(args: EmbeddingArgs) -> None:
     store = DarwinStore()
     
     
-    loader = get_loader()
+    loader = ModelLoader.get_loader()
         
     
     

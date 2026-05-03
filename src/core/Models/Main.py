@@ -4,53 +4,18 @@ import argparse
 import sys
 from typing import Optional
 
-from src.core.Models.SystemDetector import detect_system, recommend_defaults
+from src.core.Hardware.SystemDetector import detect_system, recommend_defaults
+from src.core.Hardware.DeviceManager import DeviceManager
 from src.core.Models.ModelRegistry import ModelCategory, by_category
 from src.core.Models.ModelManager import ModelManager
 from src.core.Models.ModelSetup import handle_download_error
 from src.core.Storage.DarwinStore import DarwinStore
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CLI dispatch
-# ═══════════════════════════════════════════════════════════════════════════
-
 def handle_models(args):
     """Main CLI handler for model management commands."""
     store = DarwinStore()
     manager = ModelManager(darwin_store=store)
-
-    if hasattr(args, 'command') and args.command == "install":
-        if hasattr(args, 'tokenizer') and args.tokenizer:
-            if not args.model:
-                system = detect_system()
-                recommended = recommend_defaults(system)
-                default_key = recommended.get("tokenizer", "en_core_web_md")
-                args.model = [default_key]
-                print(f"\n📝 Installing recommended tokenizer: {default_key}")
-                print(f"   (Use --category tokenizer to install all options)\n")
-
-        elif hasattr(args, 'embedding') and args.embedding:
-            if not args.model:
-                system = detect_system()
-                recommended = recommend_defaults(system)
-                default_key = recommended.get("embedding", "BAAI/bge-m3")
-                args.model = [default_key]
-                print(f"\n📝 Installing recommended embedding: {default_key}")
-                print(f"   (Use --category embedding to see all options)\n")
-
-        elif hasattr(args, 'caption') and args.caption:
-            if not args.model:
-                system = detect_system()
-                recommended = recommend_defaults(system)
-                default_key = recommended.get("vision")
-                if default_key:
-                    args.model = [default_key]
-                    print(f"\n📝 Installing recommended vision model: {default_key}")
-                else:
-                    args.model = ["HuggingFaceTB/SmolVLM-256M-Instruct"]
-                    print(f"\n📝 Installing lightweight vision model: HuggingFaceTB/SmolVLM-256M-Instruct")
-                print(f"   (Use --category vision to see all options)\n")
 
     if args.command == "status":
         manager.status()
@@ -65,7 +30,13 @@ def handle_models(args):
         elif args.category:
             manager.install_category(args.category, tier=getattr(args, 'tier', 'all') or 'all')
         else:
-            print("❌ Specify --model or --category")
+            # No model or category specified — run smart setup with defaults
+            ModelManager.setup()
+            loader = ModelManager.get_loader()
+            prefs = loader.get_preferences()
+            print("\n✅ Installed recommended models:")
+            for category, model_id in prefs.items():
+                print(f"   {category}: {model_id}")
 
     elif args.command == "setup":
         if args.profile == "required":
@@ -89,7 +60,7 @@ def handle_models(args):
         elif args.category:
             cat_models = by_category(args.category)
             for key in cat_models:
-                if manager.store.is_downloaded(key):
+                if manager.model_store.is_downloaded(key):
                     manager.upgrade(key)
             print(f"✅ Upgraded all {args.category} models.")
         else:
@@ -113,13 +84,13 @@ def handle_models(args):
         
         if args.model:
             for key in args.model:
-                result = validate_model(key, system, manager.store)
+                result = validate_model(key, system, manager.model_store)
                 if result.can_run:
                     print(f"✅ {key} — OK")
                 else:
                     print(f"❌ {key}: {', '.join(result.warnings)}")
         elif args.category:
-            results = validate_category(args.category, system, manager.store)
+            results = validate_category(args.category, system, manager.model_store)
             for r in results:
                 if r.can_run:
                     print(f"✅ {r.model_key} — OK")
@@ -162,9 +133,6 @@ Examples:
     install_parser.add_argument("--tier", "-t", choices=["light", "medium", "large", "overkill"],
                                help="Filter category install by tier")
     install_parser.add_argument("--force", "-f", action="store_true", help="Force re-download")
-    install_parser.add_argument("--caption", action="store_true", help="Install vision models")
-    install_parser.add_argument("--tokenizer", action="store_true", help="Install spaCy NLP model")
-    install_parser.add_argument("--embedding", action="store_true", help="Install embedding model")
 
     # uninstall
     uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall models")

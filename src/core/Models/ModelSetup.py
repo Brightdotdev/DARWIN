@@ -7,8 +7,8 @@ Checks RAM, disk space, and inference viability before downloading.
 
 from dataclasses import dataclass
 from typing import Optional, List
-from src.core.Models.ModelRegistry import REGISTRY, get_spec, ModelCategory
-from src.core.Models.SystemDetector import SystemInfo
+from src.core.Models.ModelRegistry import REGISTRY, get_spec
+from src.core.Hardware.SystemDetector import SystemInfo
 from src.core.Models.ModelStore import ModelStore
 
 

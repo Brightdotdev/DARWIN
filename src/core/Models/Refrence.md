@@ -5,7 +5,7 @@ store = DarwinStore()
 manager = ModelManager(darwin_store=store)
 
 # ── ModelLoader (lazy-loading, caching) ───────────────────────────────────
-loader = get_loader()
+loader = ModelManager.get_loader()
 
 # Get models (auto-downloads if missing)
 loader.get(ModelCategory.EMBEDDING)    # SentenceTransformer | HF wrapper
@@ -67,3 +67,13 @@ validate_category("embedding", system, store)
 # python -m src.core.Models.cli install --category embedding --tier light
 # python -m src.core.Models.cli switch --category embedding --model BAAI/bge-m3
 # python -m src.core.Models.cli setup-custom  # Interactive onboarding
+
+
+
+STEP 1: startup (ONCE)
+system = detect_system()
+DeviceManager.init(system)
+
+Now global state exists:
+
+DeviceManager.get() → {

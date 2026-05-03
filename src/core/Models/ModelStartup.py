@@ -9,7 +9,7 @@ from typing import Optional
 from src.core.Models.ModelStore import ModelStore
 from src.core.Models.ModelLoader import ModelLoader
 from src.core.Models.ModelRegistry import REGISTRY, TIER_LABELS, get_spec
-from src.core.Models.SystemDetector import detect_system, recommend_defaults, SystemInfo
+from src.core.Hardware.SystemDetector import detect_system, recommend_defaults, SystemInfo
 from src.core.Models.ModelSetup import (
     validate_model, calculate_download_size, validate_all_selections,
 )

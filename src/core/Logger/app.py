@@ -7,7 +7,7 @@ import asyncio
 import sys
 
 from src.core.Logger.DarwinLogger import darwin, LogType, OutputMode
-from actions import ACTION_REGISTRY
+from src.core.Logger.actions import ACTION_REGISTRY
 
 
 def register_all_actions():

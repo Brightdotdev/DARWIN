@@ -116,7 +116,7 @@ def rerank_results(
 ) -> List[RerankedResult]:
     """Re-score candidate chunks with a cross-encoder."""
     from src.core.Logger.DarwinLogger import darwin, LogType
-    from src.core.Models import get_loader, ModelCategory
+    from src.core.Models import ModelManager, ModelCategory
     
     if not candidates:
         darwin.log("no candidates to rerank", LogType.WARNING)
@@ -124,8 +124,8 @@ def rerank_results(
 
     darwin.log(f"reranking {len(candidates)} candidates...")
 
-    # Use ModelLoader to get cross-encoder
-    loader = get_loader()
+    # Use ModelManager to get cross-encoder
+    loader = ModelManager.get_loader()
     model = loader.get(ModelCategory.RERANKER)
 
     # Truncate chunks to 512 tokens (approx 1500 chars)

@@ -116,16 +116,14 @@ class ModelLoader:
 
     def _load_vision_model(self, path: str, key: str) -> Tuple[Any, Any, str]:
         """Load vision model (processor, model, device)."""
+        from src.core.Hardware.DeviceManager import DeviceManager
         import torch
 
-        if torch.cuda.is_available():
-            device, dtype = "cuda", torch.float16
-        elif torch.backends.mps.is_available():
-            device, dtype = "mps", torch.float16
-        else:
-            device, dtype = "cpu", torch.float32
-
+        cfg = DeviceManager.get()
+        device = cfg.device
+        dtype = torch.float16 if cfg.use_gpu else torch.float32
         config_path = Path(path) / "config.json"
+
         with open(config_path) as f:
             config = json.load(f)
 
@@ -137,29 +135,33 @@ class ModelLoader:
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = Idefics3ForConditionalGeneration.from_pretrained(
                     path, dtype=dtype, low_cpu_mem_usage=True,
-                    device_map="auto", trust_remote_code=True
+                    device_map=None, trust_remote_code=True
                 )
+                model.to(cfg.device)
             elif "llava" in model_type:
                 from transformers import LlavaForConditionalGeneration, AutoProcessor
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = LlavaForConditionalGeneration.from_pretrained(
                     path, dtype=dtype, low_cpu_mem_usage=True,
-                    device_map="auto", trust_remote_code=True
+                    device_map=None, trust_remote_code=True
                 )
+                model.to(cfg.device)
             elif "moondream" in model_type:
                 from transformers import AutoModelForCausalLM, AutoProcessor
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = AutoModelForCausalLM.from_pretrained(
                     path, dtype=dtype, low_cpu_mem_usage=True,
-                    device_map="auto", trust_remote_code=True
+                    device_map=None, trust_remote_code=True
                 )
+                model.to(cfg.device)
             else:
                 from transformers import AutoModelForImageTextToText, AutoProcessor
                 processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
                 model = AutoModelForImageTextToText.from_pretrained(
                     path, dtype=dtype, low_cpu_mem_usage=True,
-                    device_map="auto", trust_remote_code=True
+                    device_map=None, trust_remote_code=True
                 )
+                model.to(cfg.device)
 
             darwin.log(f"Vision model loaded on {device}", LogType.INFO)
             return processor, model, device
@@ -211,6 +213,8 @@ class ModelLoader:
 
     def unload(self, category: ModelCategory) -> None:
         """Unload model from memory to free RAM."""
+        from src.core.Hardware.DeviceManager import DeviceManager
+
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str)
 
@@ -228,10 +232,18 @@ class ModelLoader:
 
                     del obj, cached
 
-                    if torch.cuda.is_available():
+
+                    cfg = DeviceManager.get()
+
+                    if cfg.use_gpu:
                         torch.cuda.empty_cache()
+
+
                 except Exception:
                     pass
+
+
+
 
     @property
     def preferences(self) -> dict[str, str]:
@@ -270,6 +282,10 @@ class ModelLoader:
         except (FileNotFoundError, OSError, ValueError) as e:
             darwin.log(f"Model {category.value} not ready: {e}", LogType.ERROR)
             return False
+   
+    
+
+
     # ═══════════════════════════════════════════════════════════════════════
     # Embedding Migration
     # ═══════════════════════════════════════════════════════════════════════
@@ -303,35 +319,22 @@ class ModelLoader:
 
         for fname in files_to_process:
             try:
-                chunks = store.load_chunks(fname)
+                md = store.load_markdown(fname)
 
-                if not chunks:
-                    darwin.log(f"{fname} — no chunks found, skipping", LogType.WARNING)
+                if not md:
+                    darwin.log(f"{fname} — no markdown found, skipping", LogType.WARNING)
                     stats["failed"] += 1
                     continue
 
-                from src.core.Embedding.Embedder import embed_chunks
+                from src.core.Chunking.main import handle_chunking
+                from src.core.Chunking.lib import  ChunkingArgs
 
-                vectors = embed_chunks(
-                    chunks=chunks,
-                    file_name=fname,
-                    unload_after=False,
-                )
+                chunks = handle_chunking(ChunkingArgs(file=fname, inspect=False, rerun=True))
 
-                if vectors is None:
-                    darwin.log(f"{fname} — embedding failed", LogType.ERROR)
-                    stats["failed"] += 1
-                    continue
+                from src.core.Embedding.lib import EmbeddingArgs
+                from src.core.Embedding.main import handle_embedding
 
-                store.save_embeddings(
-                    fname,
-                    vectors,
-                    chunks,
-                    model_name=current_model,
-                )
-
-                chunk_ids = [str(c.index) for c in chunks]
-                store.save_vector(fname, current_model, vectors, chunk_ids)
+                handle_embedding(EmbeddingArgs(file=fname, inspect=False, rerun=True))
 
                 stats["reembedded"] += 1
                 darwin.log(f"{fname} — migrated ({len(chunks)} chunks)", LogType.SUCCESS)

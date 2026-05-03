@@ -43,8 +43,8 @@ def _get_tokenizer():
     if _tokenizer_cache is not None:
         return _tokenizer_cache
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
+        from src.core.Models import ModelManager, ModelCategory
+        loader = ModelManager.get_loader()
         _tokenizer_cache = loader.get(ModelCategory.TOKENIZER)
         return _tokenizer_cache
     except Exception:
@@ -57,8 +57,8 @@ def _get_embedder():
     if _embedder_cache is not None:
         return _embedder_cache
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
+        from src.core.Models import ModelManager, ModelCategory
+        loader = ModelManager.get_loader()
         _embedder_cache = loader.get(ModelCategory.EMBEDDING)
         return _embedder_cache
     except Exception:

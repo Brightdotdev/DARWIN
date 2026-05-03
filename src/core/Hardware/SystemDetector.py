@@ -1,4 +1,4 @@
-# src/core/Models/SystemDetector.py
+# src/core/Hardware/SystemDetector.py
 
 import os
 import platform
@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from src.core.Models.ModelRegistry import REGISTRY
 
+
 @dataclass
 class SystemInfo:
     ram_gb: int
@@ -14,6 +15,8 @@ class SystemInfo:
     has_gpu: bool
     gpu_name: str = ""
     disk_free_gb: float = 0.0
+    device: str = "cpu"
+    dtype: str = "float32"
 
     @property
     def tier(self) -> str:
@@ -42,30 +45,41 @@ class SystemInfo:
 
 
 def detect_system() -> SystemInfo:
-    """Read actual hardware specs. Works on Linux, macOS, Windows."""
+    """Detect system hardware including GPU availability."""
     ram = psutil.virtual_memory()
-    ram_gb = int(ram.total / (1024**3))
     disk = psutil.disk_usage(str(Path.home()))
-    disk_free_gb = disk.free / (1024**3)
 
-    cpu_cores = psutil.cpu_count(logical=True)
-
+    # GPU detection
     has_gpu = False
     gpu_name = ""
+    device = "cpu"
+    dtype = "float32"
+
     try:
         import torch
+        
         if torch.cuda.is_available():
             has_gpu = True
             gpu_name = torch.cuda.get_device_name(0)
+            device = "cuda"
+            dtype = "float16"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            has_gpu = True
+            gpu_name = "Apple GPU (MPS)"
+            device = "mps"
+            dtype = "float16"
     except ImportError:
+        # PyTorch not installed, CPU only
         pass
 
     return SystemInfo(
-        ram_gb=ram_gb,
-        cpu_cores=cpu_cores,
+        ram_gb=int(ram.total / (1024**3)),
+        cpu_cores=psutil.cpu_count(logical=True),
         has_gpu=has_gpu,
         gpu_name=gpu_name,
-        disk_free_gb=disk_free_gb,
+        disk_free_gb=disk.free / (1024**3),
+        device=device,
+        dtype=dtype,
     )
 
 
@@ -73,16 +87,13 @@ def recommend_defaults(system: SystemInfo) -> dict[str, str]:
     """
     Recommend best models based on system capabilities.
     Returns a dict of category -> canonical model_id (registry key).
-    
-    Uses full canonical model_id strings that match REGISTRY keys
-    (e.g., 'BAAI/bge-m3' not 'bge-m3').
     """
     recommendations = {}
     
     # Reranker — always the same tiny cross-encoder
     recommendations["reranker"] = "cross-encoder/ms-marco-MiniLM-L-12-v2"
     
-    # Embedding based on RAM
+    # Embedding based on RAM and GPU
     if system.ram_gb >= 32 and system.has_gpu:
         recommendations["embedding"] = "GritLM/GritLM-7B"
     elif system.ram_gb >= 16:
@@ -93,12 +104,12 @@ def recommend_defaults(system: SystemInfo) -> dict[str, str]:
     # Vision based on RAM
     if system.ram_gb >= 16:
         recommendations["vision"] = "vikhyatk/moondream2"
-    elif system.ram_gb >= 4:
+    elif system.ram_gb >= 8:
         recommendations["vision"] = "HuggingFaceTB/SmolVLM-256M-Instruct"
     else:
-        recommendations["vision"] = None  # Skip vision for very low RAM
+        recommendations["vision"] = None
     
-    # Tokenizer (spaCy) — medium is the best default balance
+    # Tokenizer (spaCy)
     if system.ram_gb >= 16 and system.disk_free_gb > 2:
         recommendations["tokenizer"] = "en_core_web_lg"
     else:

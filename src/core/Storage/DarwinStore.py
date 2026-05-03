@@ -58,10 +58,10 @@ class DarwinStore(
         if self.paths.config_path.exists():
             return
 
-        from src.core.Models import setup, get_loader, ModelCategory
+        from src.core.Models import ModelManager, ModelCategory
 
-        setup()
-        loader = get_loader()
+        ModelManager.setup()
+        loader = ModelManager.get_loader()
 
         if loader is None:
             TerminalUI.warn("ModelLoader not available during config init")

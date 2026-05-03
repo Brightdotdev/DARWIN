@@ -86,8 +86,8 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
         return PRESETS.get(model_key, DEFAULT_PRESET)
     
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
+        from src.core.Models import ModelManager, ModelCategory
+        loader = ModelManager.get_loader()
         # get_model_key() now returns canonical model_id via _resolve_key()
         model_key = loader.get_model_key(ModelCategory.EMBEDDING)
         return PRESETS.get(model_key, DEFAULT_PRESET)
@@ -99,26 +99,33 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
 # Hardware-aware batch sizing
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def get_optimal_batch_size(requested_size: int = 32) -> int:
     """
-    Detects LIVE hardware availability to set a safe batch size.
-    
-    Checks CUDA VRAM first, then falls back to system RAM and CPU usage.
-    Returns a batch size that won't OOM on the current hardware.
+    Batch size tuned using pre-detected device config.
+    No torch.cuda checks here anymore.
     """
+    from src.core.Hardware.DeviceManager import DeviceManager
     import psutil
-    import torch
 
-    if torch.cuda.is_available():
+    cfg = DeviceManager.get()
+
+    # GPU path
+    if cfg.use_gpu:
         try:
+            import torch
             vram_free = torch.cuda.mem_get_info()[0] / (1024 ** 3)
-            if vram_free > 4:
+
+            if vram_free > 8:
                 return 128
-            return 64
+            elif vram_free > 4:
+                return 64
+            else:
+                return 32
         except Exception:
-            # GPU detection succeeded but memory query failed — conservative
             return 32
 
+    # CPU path
     mem = psutil.virtual_memory()
     available_gb = mem.available / (1024 ** 3)
     cpu_usage = psutil.cpu_percent(interval=0.1)
@@ -130,7 +137,6 @@ def get_optimal_batch_size(requested_size: int = 32) -> int:
         return 64
 
     return requested_size
-
 
 def get_model_batch_size(preset: Optional[ModelPreset] = None, requested_size: int = 32) -> int:
     """

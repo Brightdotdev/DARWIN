@@ -394,8 +394,8 @@ def run_wiki_pipeline(
     # ── Get spaCy extractor for keyword extraction ──
     spacy_extractor = None
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
+        from src.core.Models import ModelManager, ModelCategory
+        loader = ModelManager.get_loader()
         spacy_extractor = loader.get(ModelCategory.TOKENIZER)
     except Exception:
         pass

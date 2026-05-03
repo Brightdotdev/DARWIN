@@ -48,8 +48,8 @@ def get_current_model_name() -> str:
     if _model_name_cache is not None:
         return _model_name_cache
     try:
-        from src.core.Models import get_loader, ModelCategory
-        loader = get_loader()
+        from src.core.Models import ModelManager, ModelCategory
+        loader = ModelManager.get_loader()
         _model_name_cache = loader.get_model_key(ModelCategory.EMBEDDING)
         return _model_name_cache
     except Exception as e:
