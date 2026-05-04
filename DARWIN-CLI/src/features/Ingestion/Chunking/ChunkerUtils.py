@@ -1,9 +1,9 @@
 import re
 import functools
 from typing import List, Optional, Tuple
-from src.features.Chunking.ChunkConfig import get_chunk_config
-from src.features.Chunking.ChunkCleaners import prepare_embedding_text
-from src.features.Chunking.lib import (OverlapDirection, ChunkLink, Chunk,count_page_seps, TABLE_OPEN_TOKEN, TABLE_EMB_TOKEN, CAPTION_TOKEN)
+from src.features.Ingestion.Chunking.ChunkConfig import get_chunk_config
+from src.features.Ingestion.Chunking.ChunkCleaners import prepare_embedding_text
+from src.features.Ingestion.Chunking.lib import (OverlapDirection, ChunkLink, Chunk,count_page_seps, TABLE_OPEN_TOKEN, TABLE_EMB_TOKEN, CAPTION_TOKEN)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Link extraction

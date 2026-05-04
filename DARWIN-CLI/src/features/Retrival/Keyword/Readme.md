@@ -1,214 +1,114 @@
-# Darwin — Keyword Search Module
+## `src/core/KeywordSearch/README.md`
 
-The keyword search module performs pure BM25 sparse retrieval over indexed document chunks. It loads `.pkl` bundles from DarwinStore and returns exact keyword matches ranked by term frequency and inverse document frequency.
+```markdown
+# Keyword Search Module
 
----
+BM25-based keyword search over indexed documents using sparse retrieval.
 
-## How to run it
+## Overview
 
+This module provides pure BM25 keyword search functionality, allowing you to search through indexed documents using traditional term-frequency based retrieval. It's ideal for finding exact term matches and works well with technical documents, legal texts, and other domain-specific content.
+
+## Features
+
+- **BM25 Retrieval**: Industry-standard probabilistic relevance scoring
+- **Tunable Parameters**: Adjust k1 and b parameters for fine-tuned relevance
+- **Multiple Search Scopes**: Search all documents, single files, or clusters
+- **Detailed Inspection**: View full chunk content with metadata
+- **JSON Export**: Output results in machine-readable format
+
+## Usage
+
+### Basic Search
 ```bash
-# search all documents in current project
-uv run src/core/Search/Keyword/main.py "photosynthesis"
+# Search all indexed documents
+uv run src/core/KeywordSearch/main.py "photosynthesis"
 
-# search a specific document
-uv run src/core/Search/Keyword/main.py "cell division" --file biology.pdf
-
-# get more results
-uv run src/core/Search/Keyword/main.py "mitochondria" --top-k 10
-
-# tune BM25 parameters (k1 controls term frequency saturation, b controls length normalization)
-uv run src/core/Search/Keyword/main.py "ATP synthesis" --k1 1.2 --b 0.5
-
-# inspect — show full chunks with metadata and query tokens
-uv run src/core/Search/Keyword/main.py "DNA replication" --inspect
-
-# export as JSON for scripting
-uv run src/core/Search/Keyword/main.py "enzymes" --json
+# Alternative query syntax
+uv run src/core/KeywordSearch/main.py --query "cell division"
 ```
 
-All flags can be combined. Example — search specific file with custom BM25 parameters and inspection:
-
+### Search Specific Documents
 ```bash
-uv run src/core/Search/Keyword/main.py "david covenant" --file bible.pdf --k1 1.2 --top-k 10 --inspect
+# Search a single document
+uv run src/core/KeywordSearch/main.py "mitochondria" --file biology.pdf
+
+# Search a cluster of documents
+uv run src/core/KeywordSearch/main.py "DNA replication" --cluster genetics.pdf biology.pdf cell_bio.pdf
 ```
 
----
+### Advanced Options
+```bash
+# Get more results
+uv run src/core/KeywordSearch/main.py "enzymes" --top-k 10
 
-## How it works
+# Tune BM25 parameters
+uv run src/core/KeywordSearch/main.py "ATP synthesis" --k1 1.2 --b 0.5
 
-```
-query → tokenize → BM25 scoring → top-k chunks
-```
+# Inspect detailed results
+uv run src/core/KeywordSearch/main.py "photosynthesis" --inspect
 
-1. **Query tokenization**: User query is tokenized using BlingFire `text_to_words()` — same tokenizer used during BM25 indexing
-2. **Standard stopword removal**: Common English words (the, and, of) are filtered out
-3. **BM25 scoring**: Each chunk receives a score based on term frequency, inverse document frequency, and chunk length
-4. **Ranking**: Results sorted by descending BM25 score, capped at `top_k`
-
-**Why same tokenizer?** The query must use identical tokenization to the index — otherwise terms won't match the vocabulary and search returns nothing.
-
----
-
-## BM25 formula
-
-```
-score(D, Q) = Σ IDF(qi) × TF(qi, D)
-
-Where:
-    IDF(qi) = log((N - df + 0.5) / (df + 0.5) + 1)
-    TF(qi, D) = (freq × (k1 + 1)) / (freq + k1 × (1 - b + b × len/avgdl))
+# Export as JSON
+uv run src/core/KeywordSearch/main.py "cell biology" --json
 ```
 
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `k1` | 1.5 | Term frequency saturation — higher values weight repeated terms more heavily |
-| `b` | 0.75 | Length normalization — higher values penalize long chunks more |
+## Parameters
 
----
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--top-k` | 5 | Number of results to return |
+| `--k1` | 1.5 | BM25 term frequency saturation parameter |
+| `--b` | 0.75 | BM25 length normalization parameter |
+| `--file` | None | Search specific file |
+| `--cluster` | None | Search cluster of files (space-separated) |
+| `--inspect` | False | Show detailed chunk information |
+| `--json` | False | Output results as JSON |
 
-## Core functions
+## BM25 Parameters Explained
 
-| Function | Purpose |
-|----------|---------|
-| `keyword_search()` | Search within pre-loaded index data + chunks |
-| `search_single_document_keyword()` | Search one file from DarwinStore |
-| `search_across_documents_keyword()` | Search all indexed docs, merge and re-rank results |
+- **k1**: Controls term frequency saturation. Higher values give more weight to term frequency.
+  - k1 = 0: No term frequency component (binary model)
+  - k1 = 1.2-1.5: Standard settings for most collections
+  - k1 = 2.0+: Stronger emphasis on frequent terms
 
-All three return `List[KeywordSearchResult]` sorted by descending BM25 score.
+- **b**: Controls document length normalization. Range is 0 to 1.
+  - b = 0: No length normalization (longer docs favored)
+  - b = 0.75: Standard setting (moderate normalization)
+  - b = 1: Full length normalization (shorter docs favored)
 
----
+## Output Format
 
-## Output data model
-
-```python
-@dataclass
-class KeywordSearchResult:
-    text: str           # Original content → LLM context
-    clean: str          # What was indexed
-    score: float        # BM25 score (not normalized to 0-1)
-    source: str         # Document filename
-    page: int           # Page number
-    heading: str        # Section title (empty if none)
-    chunk_index: int    # Original position in document
+### Standard Output
+```
+  #    Score       Source                  Page  Preview
+  ───  ──────────  ──────────────────────  ────  ───────
+  1    12.345      biology.pdf             5     Photosynthesis is the process by which...
+  2    8.921       botany.pdf              12    Light-dependent reactions occur in...
 ```
 
-**Note on scores:** BM25 scores are not bounded to 0-1 like cosine similarity. A score of 5.2 is better than 3.1, but there's no absolute "good" threshold. Scores are only comparable within the same search.
-
----
-
-## Integration with RAG
-
-```python
-from src.features.KeywordSearch import search_across_documents_keyword, to_llm_context
-
-# Search across all indexed documents
-results = search_across_documents_keyword(
-    query="photosynthesis light reactions",
-    store=store,
-    top_k=5
-)
-
-# Format for LLM consumption
-context = to_llm_context(results)
-
-# Send to LLM
-response = llm.generate(f"{context}\n\nQuestion: {query}")
+### JSON Output
+```json
+[
+  {
+    "score": 12.345,
+    "source": "biology.pdf",
+    "page": 5,
+    "text": "Photosynthesis is the process by which...",
+    "heading": "Chapter 4: Photosynthesis",
+    "matched_terms": ["photosynthesis", "chlorophyll"]
+  }
+]
 ```
 
-The `to_llm_context()` helper formats results identically to semantic search:
+## Prerequisites
 
+- Documents must be indexed using the BM25 indexing pipeline
+- Check searchable status with: `uv run src/core/Status/main.py`
+
+## Notes
+
+- Keyword search excels at exact term matching
+- Best for technical/scientific documents with specific terminology
+- Combine with semantic search for better recall on conceptual queries
+- Cluster search allows focused retrieval across related documents
 ```
-[Document: biology.pdf, Page: 42]
-Heading: Light-Dependent Reactions
-Content: The light-dependent reactions take place in the thylakoid membrane...
----
-```
-
----
-
-## Query tokenization
-
-Queries undergo the same tokenization as chunks during indexing:
-
-```python
-# Input: "David, king of Israel, said to Nathan..."
-# Output: ["david", "king", "israel", "said", "nathan"]
-```
-
-Filters applied:
-- Minimum token length: 2 characters
-- Removes standard English stopwords (the, and, of, etc.)
-- Strips punctuation and numbers
-- Lowercases all tokens
-
-No lemmatization or stemming — exact token matching only.
-
----
-
-## Performance characteristics
-
-| Metric | Value |
-|--------|-------|
-| Search complexity | O(|Q| × N) where \|Q\| = query terms, N = chunks |
-| 1k chunks, 3-term query | <5ms on CPU |
-| Memory footprint | Index loaded from `.pkl` (~2-3MB per 1k chunks) |
-
-BM25 search is extremely fast — scoring is simple arithmetic on pre-computed frequencies.
-
----
-
-## File structure
-
-```
-src/core/KeywordSearch/
-├── __init__.py           Module exports
-├── KeywordSearcher.py    Core BM25 scoring, multi-document orchestration
-├── KeywordUtils.py       Query tokenization, result formatting, args
-└── main.py               CLI entry point, inspection, JSON export
-```
-
-### Data flow
-
-```
-CLI args
-  → handle_keyword_search()                  main.py
-    → search_single_document_keyword()       if --file passed
-    → search_across_documents_keyword()      otherwise (all docs)
-      → DarwinStore.load_bm25()              load index data (.pkl)
-      → DarwinStore.load_chunks()            load chunks for metadata
-      → keyword_search()                     KeywordSearcher.py
-        → tokenize_query()                   BlingFire + stopword filtering
-        → _compute_bm25_scores()             BM25 formula over all chunks
-        → top-k indices                      argsort / argpartition
-    → format_keyword_results()               terminal table or JSON
-    → to_llm_context()                       preview for inspection
-```
-
----
-
-## Constants
-
-| Constant | Default | Effect |
-|----------|---------|--------|
-| `DEFAULT_TOP_K` | 5 | Number of results returned |
-| `DEFAULT_K1` | 1.5 | Term frequency saturation |
-| `DEFAULT_B` | 0.75 | Length normalization |
-| `STANDARD_STOPS` | ~50 words | Hardcoded English stopwords |
-| `MIN_TOKEN_LENGTH` | 2 | Skip single characters |
-
----
-
-## Comparison: Semantic vs Keyword Search
-
-| Aspect | Semantic Search | Keyword Search |
-|--------|-----------------|----------------|
-| Matching | Conceptual similarity | Exact term matching |
-| Query "car" finds | "automobile", "vehicle" | Only "car" |
-| Query "photosynthesis" | All biology content | Chunks containing "photosynthesis" |
-| Score range | 0-1 (cosine similarity) | Unbounded (BM25) |
-| Speed | ~10ms per 10k chunks | ~5ms per 10k chunks |
-| Best for | Broad topics, paraphrased content | Specific terms, proper nouns |
-
-
-key note : when you want to search for a specific concpet or sometinhh....you can always single it out or specify it with "" marks e.g instead of searching "what are the core neurual network practices" search "what are the core "neural network practicees" "
----

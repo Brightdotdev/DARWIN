@@ -14,8 +14,8 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.features.Parsing.Parser import parse as _parse, scan_directory
-from src.features.Parsing.lib import (
+from src.features.Ingestion.Parsing.Parser import parse as _parse, scan_directory
+from src.features.Ingestion.Parsing.lib import (
     ParsedDocument,
     FileWithImages,
     CPU_COUNT,
@@ -142,7 +142,25 @@ def parse_documents(
 def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
     target_paths: list[Path] = []
 
-    if args.file:
+    if args.cluster:
+        for raw in args.cluster:
+            p = Path(raw).resolve()
+            if not p.exists():
+                darwin.log(f"Cluster file not found: {raw}", LogType.ERROR)
+                continue
+            if not p.is_file():
+                darwin.log(f"Cluster entry is not a file: {raw}", LogType.ERROR)
+                continue
+            if detect_type(p) is None:
+                darwin.log(f"Unsupported file type in cluster: {p.suffix} ({p.name})", LogType.ERROR)
+                continue
+            target_paths.append(p)
+
+        if not target_paths:
+            darwin.log("No valid supported files found in cluster.", LogType.ERROR)
+            return []
+
+    elif args.file:
         file_path = Path(args.file).resolve()
         if not file_path.exists():
             darwin.log(f"File not found: {args.file}", LogType.ERROR)
@@ -155,6 +173,7 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
             darwin.log(f"Unsupported file type: {file_path.suffix}", LogType.ERROR)
             return []
         target_paths = [file_path]
+
     else:
         target_dir = Path(args.target).resolve()
         if not target_dir.exists():
@@ -164,11 +183,17 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
 
     if not target_paths:
         darwin.log(f"No supported files found in {args.target}", LogType.ERROR)
-        darwin.log("Supported types: .pdf, .docx, .txt, .md, .html, .csv, .json", LogType.INFO)
+        darwin.log("Supported types: .pdf, .docx, .pptx, .txt, .md", LogType.INFO)
         return []
 
     darwin.log("")
-    darwin.log(f"Parsing: {target_paths[0].name}" if args.file else f"Parsing directory: {args.target}", LogType.INFO)
+    if args.cluster:
+        darwin.log(f"Parsing cluster: {len(target_paths)} selected file(s)", LogType.INFO)
+    elif args.file:
+        darwin.log(f"Parsing: {target_paths[0].name}", LogType.INFO)
+    else:
+        darwin.log(f"Parsing directory: {args.target}", LogType.INFO)
+
     darwin.log(f"Settings: Images={args.images} | Caption={args.caption} | Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}", LogType.INFO)
     darwin.log("")
 
@@ -227,7 +252,6 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
 
     return docs
 
-
 # ── CLI entry point ────────────────────────────────────────────────────────────
 
 async def main() -> int:
@@ -244,8 +268,19 @@ async def main() -> int:
     parser.add_argument("--no-save", action="store_true", help="Don't save markdown files (preview only)")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
-
+    parser.add_argument(
+    "--cluster", "-cl",
+    nargs="+",
+    default=None,
+    metavar="FILE",
+    help="Parse a specific set of files (space-separated paths)",
+)
     args = parser.parse_args()
+    
+    if args.cluster and args.file:
+        darwin.log("--cluster and --file are mutually exclusive", LogType.ERROR)
+        return 1
+
 
     # Use shared WebSocket setup — only ONE server starts
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
@@ -259,8 +294,9 @@ async def main() -> int:
             rerun=args.rerun,
             file=args.file,
             precise=args.precise,
-            save=not args.no_save,
-        )
+            cluster=args.cluster, 
+        save=not args.no_save,
+    )
 
 
         handle_parsing(parsing_args)

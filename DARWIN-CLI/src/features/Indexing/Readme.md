@@ -1,229 +1,250 @@
-# 📄 README — Indexing Module
+# Indexing Pipeline
 
-Here’s a clean, real-world README you can drop in.
+Builds searchable indexes from chunked documents.
+
+This runs:
+- **BM25 (sparse keyword index)**
+- **Embeddings (dense vector index)**
 
 ---
-
-# 📦 Indexing Pipeline (BM25 + Embeddings)
 
 ## Overview
 
-This module builds **search indexes** from already parsed and chunked documents.
+The indexing pipeline takes chunked documents from `.darwin` and produces:
 
-It runs two systems:
-
-1. **BM25 Indexing**
-
-   * keyword-based retrieval
-   * lexical scoring
-
-2. **Embedding Indexing**
-
-   * semantic search
-   * vector-based similarity
-
-Both run sequentially on the same dataset.
+- BM25 index → keyword search
+- Embeddings → semantic search
 
 ---
 
-## 🚀 How to Run
+## Pipeline Flow
 
-```bash id="k8d1qz"
-python main.py [path] [options]
+```
+
+Chunked Documents (.darwin/chunks)
+│
+▼
+┌──────────────┐
+│    BM25      │  → keyword index
+└──────┬───────┘
+▼
+┌──────────────┐
+│  Embeddings  │  → vector index
+└──────────────┘
+
+````
+
+---
+
+## Usage
+
+### Basic
+
+```bash
+uv run src/core/Indexing/main.py
+````
+
+Indexes all eligible files in the store.
+
+---
+
+### Single File
+
+```bash
+uv run src/core/Indexing/main.py --file biology.pdf
 ```
 
 ---
 
-## 📥 Input Requirements
+### Multiple Files (Cluster)
 
-This module expects:
-
-* Parsed documents exist in `DarwinStore`
-* Chunking has already been completed
-
-If not, indexing will fail or produce empty results.
+```bash
+uv run src/core/Indexing/main.py --cluster bio.pdf chem.pdf physics.pdf
+```
 
 ---
 
-## ⚙️ CLI Arguments
+## Parameters
 
 ### Core
 
-| Argument       | Description                                    |
-| -------------- | ---------------------------------------------- |
-| `path`         | Project directory (default: current directory) |
-| `--file`, `-f` | Index a single file                            |
+| Flag        | Description                        |
+| ----------- | ---------------------------------- |
+| `path`      | Target project directory           |
+| `--file`    | Index a single file                |
+| `--cluster` | Index multiple specific files      |
+| `--rerun`   | Rebuild indexes even if they exist |
 
 ---
 
-### BM25 Configuration
+### BM25 Options
 
-| Argument                | Description               |
-| ----------------------- | ------------------------- |
-| `--threshold`, `-t`     | Domain stopword threshold |
-| `--idf-smoothing`, `-s` | IDF smoothing factor      |
-
----
-
-### Behavior Flags
-
-| Argument          | Description                    |
-| ----------------- | ------------------------------ |
-| `--rerun`, `-R`   | Rebuild indexes even if cached |
-| `--inspect`, `-i` | Show index stats and samples   |
+| Flag              | Default                 | Description               |
+| ----------------- | ----------------------- | ------------------------- |
+| `--threshold`     | `DOMAIN_STOP_THRESHOLD` | Domain stopword filtering |
+| `--idf-smoothing` | `DEFAULT_IDF_SMOOTHING` | IDF smoothing strength    |
 
 ---
 
-### WebSocket
+### General
 
-| Argument    | Description                    |
-| ----------- | ------------------------------ |
-| `--ws-port` | WebSocket port (default: 8765) |
-| `--no-ws`   | Disable WebSocket server       |
-
----
-
-## 🧠 What Happens During Execution
-
-### 1. Input Validation
-
-* checks file exists (if provided)
-* ensures path exists
-* aborts early if invalid
+| Flag        | Description                  |
+| ----------- | ---------------------------- |
+| `--inspect` | Show index stats and samples |
+| `--ws-port` | WebSocket port               |
+| `--no-ws`   | Disable WebSocket            |
 
 ---
 
-### 2. BM25 Indexing
+## Behavior
 
-```text id="q3p8jd"
-[1/2] BM25 indexing
+### Execution Modes
+
+**1. Full Store Mode**
+
+```bash
+uv run src/core/Indexing/main.py
 ```
 
-Builds:
-
-* term frequency index
-* document frequency stats
-* inverted index structure
-
-Used for:
-
-* keyword search
-* exact matching queries
+* Finds all chunked files
+* Indexes everything
 
 ---
 
-### 3. Embedding Indexing
+**2. File Mode**
 
-```text id="k1n9sa"
-[2/2] Embedding indexing
+```bash
+--file document.pdf
 ```
 
-Builds:
-
-* vector representations
-* semantic search index
-
-Used for:
-
-* meaning-based retrieval
-* fuzzy queries
+* Only indexes that file
 
 ---
 
-## 📊 Logging Output
+**3. Cluster Mode**
+
+```bash
+--cluster file1.pdf file2.pdf
+```
+
+* Processes files sequentially
+* Each file runs:
+
+  * BM25 → Embedding
+
+---
+
+## Output
+
+Stored in `.darwin/`:
+
+```
+.darwin/
+├── bm25/          # sparse indexes
+├── embeddings/    # vector indexes
+├── registry.json
+```
+
+---
+
+## Execution Order
+
+For each file:
+
+```
+1. BM25 indexing
+2. Embedding generation
+```
+
+If no file/cluster is provided:
+
+```
+1. BM25 (all files)
+2. Embeddings (all files)
+```
+
+---
+
+## Requirements
+
+* Files must already be:
+
+  * parsed
+  * chunked
+
+If not:
+
+```
+No chunked files found. Run chunking first.
+```
+
+---
+
+## Examples
+
+### Full indexing
+
+```bash
+uv run src/core/Indexing/main.py
+```
+
+---
+
+### Force rebuild
+
+```bash
+uv run src/core/Indexing/main.py --rerun
+```
+
+---
+
+### Tuned BM25
+
+```bash
+uv run src/core/Indexing/main.py --threshold 0.25 --idf-smoothing 1.0
+```
+
+---
+
+### Debug / inspection
+
+```bash
+uv run src/core/Indexing/main.py --inspect
+```
+
+---
+
+## Failure Handling
+
+* Errors are isolated per file
+* Batch continues even if one fails
 
 Example:
 
-```text id="m9zq1p"
-Indexing
-test.pdf | Threshold: 0.6 | IDF smoothing: 1.2 | Inspect: True | Rerun: False
+```
+bio.pdf ✓ indexed
+chem.pdf ✗ failed
+physics.pdf ✓ indexed
 
-[1/2] BM25 indexing
-[2/2] Embedding indexing
-Indexing complete
+Indexing complete — 2 indexed · 1 failed
 ```
 
 ---
 
-## ⚠️ Common Issues
+## Notes
 
-### ❌ File not found
+* `--cluster` and `--file` cannot be used together
+* Cached indexes are reused unless `--rerun` is set
+* Embedding model is managed internally
+
+---
+
+## Summary
 
 ```
-File not found: document.pdf
+indexing = BM25 + embeddings
 ```
 
-Fix:
+Run this after ingestion, before search.
 
-* check path spelling
-* ensure correct working directory
-
----
-
-### ❌ Empty index output
-
-Usually means:
-
-* parsing not run
-* chunking missing
-* store not populated
-
----
-
-### ❌ Slow indexing
-
-Causes:
-
-* large corpus
-* embedding model latency
-* rerun without cache
-
----
-
-## 🧯 Design Notes
-
-* BM25 and embeddings are independent
-* They run sequentially, not parallel
-* Both depend on chunked data
-* Storage layer is the source of truth
-
----
-
-## 🧩 Architecture Flow
-
-```text id="v3x8qp"
-Parsing → Chunking → Storage → Indexing
-                                ├── BM25
-                                └── Embeddings
 ```
-
----
-
-## ⚡ Performance
-
-* BM25: fast, CPU-based
-* Embeddings: slower, model-dependent
-* Scaling depends on corpus size
-
----
-
-## 🧠 Key Insight
-
-BM25 = precision keyword search
-Embeddings = semantic understanding
-Together = hybrid retrieval system
-
----
-
-## ✅ Summary
-
-This module:
-
-* validates input paths
-* builds two complementary search indexes
-* depends entirely on prior parsing + chunking
-* is safe to rerun (`--rerun`) for updates
-
----
-
-

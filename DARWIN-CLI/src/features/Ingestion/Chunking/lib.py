@@ -88,15 +88,12 @@ class Chunk:
 
 @dataclass
 class ChunkingArgs:
-    target:         str
-    file:           Optional[str] = None
-    project:        Optional[str] = None
-    inspect:        bool = False
-    rerun:          bool = False
-
-
-
-
+    target:    str
+    file:      Optional[str] = None
+    cluster:   Optional[List[str]] = None
+    project:   Optional[str] = None
+    inspect:   bool = False
+    rerun:     bool = False
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Page tracking

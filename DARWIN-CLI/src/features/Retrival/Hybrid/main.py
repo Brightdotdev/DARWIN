@@ -11,6 +11,9 @@ uv run src/core/HybridSearch/main.py "photosynthesis"
 # Search specific document
 uv run src/core/HybridSearch/main.py "david covenant" --file bible.pdf
 
+# Search a cluster of documents
+uv run src/core/HybridSearch/main.py "mitochondria" --cluster file1.pdf file2.pdf file3.pdf
+
 # Use query flag
 uv run src/core/HybridSearch/main.py --query "cell division" --file bio.pdf
 
@@ -51,8 +54,7 @@ from src.features.Retrival.Hybrid.HybridSearchUtils import (
     DEFAULT_ALPHA,
     DEFAULT_BETA,
     OverlapDirection,
-    format_hybrid_results,
-    to_llm_context,
+    format_hybrid_results
 )
 from src.features.Storage.DarwinStore import DarwinStore
 from src.lib.Utils import scan_folder
@@ -104,7 +106,6 @@ def _print_inspection(results: List[HybridSearchResult], query: str) -> None:
     darwin.log(f"{'='*60}", LogType.INFO)
 
 
-
 def _is_hybrid_searchable(filename: str | None, status: dict) -> bool:
     """Determine which files to search based on args and registry status."""
     if filename is None:
@@ -117,17 +118,52 @@ def _is_hybrid_searchable(filename: str | None, status: dict) -> bool:
     return file_data.get("is_hybrid_searchable", False)
 
 
+def _validate_cluster_files(
+    cluster_files: List[str], 
+    store: DarwinStore
+) -> List[str]:
+    """Validate cluster files exist and are searchable, returning valid filenames."""
+    status = store.status()
+    valid_files = []
+    invalid_files = []
+    
+    for filename in cluster_files:
+        if _is_hybrid_searchable(filename, status):
+            valid_files.append(filename)
+        else:
+            invalid_files.append(filename)
+    
+    if invalid_files:
+        darwin.log(f"Warning: {len(invalid_files)} files in cluster are not hybrid-searchable:", LogType.WARNING)
+        for f in invalid_files:
+            darwin.log(f"  • {f}", LogType.WARNING)
+        darwin.log("These files will be skipped. Run both indexing pipelines first if needed.", LogType.INFO)
+    
+    return valid_files
+
+
 # ============================================================================
 # Core handler
 # ============================================================================
 
-def handle_hybrid_search(args: HybridSearchArgs) -> None:
+def handle_hybrid_search(args: HybridSearchArgs) -> List[HybridSearchResult] | None:
     """Main handler for hybrid search CLI."""
     store = DarwinStore()
     status = store.status()
     tobe_searched = []
 
-    if args.file:
+    # Cluster search takes priority over single file search
+    if args.cluster_files:
+        darwin.log(f"Cluster search mode: {len(args.cluster_files)} specified files", LogType.INFO)
+        tobe_searched = _validate_cluster_files(args.cluster_files, store)
+        
+        if not tobe_searched:
+            darwin.log("No valid files in cluster. Search aborted.", LogType.ERROR)
+            return
+        
+        darwin.log(f"Searching {len(tobe_searched)} valid files in cluster for '{args.query}'", LogType.INFO)
+    
+    elif args.file:
         if not _is_hybrid_searchable(args.file, status):
             darwin.log(f"Cannot search {args.file} — file is not searchable", LogType.WARNING)
             return
@@ -135,18 +171,30 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
         tobe_searched = [args.file]
         darwin.log(f"Searching {args.file} for '{args.query}'", LogType.INFO)
     else:
-        raw_files = [str(f) for f in scan_folder()]
-        darwin.log(f"Found {len(raw_files)} supported files in {Path.cwd()}", LogType.INFO)
         tobe_searched = [
-            r.original_name
-            for r in store.registry.list_kw_searchable()
+            fname for fname, info in status.get("files", {}).items()
+             if info.get("is_hybrid_searchable", False)
         ]
         darwin.log(f"Searching {len(tobe_searched)} files for '{args.query}'", LogType.INFO)
+
+    if not tobe_searched:
+        darwin.log("No hybrid-searchable files found. Run both keyword and embedding indexing pipelines first.", LogType.WARNING)
+        return
 
     darwin.log(f"\n{'='*50}", LogType.INFO)
     darwin.log(f"Hybrid Search: '{args.query}'", LogType.INFO)
     darwin.log(f"RRF k={args.rrf_k} | Semantic weight={args.semantic_weight} | Keyword weight={args.keyword_weight}", LogType.INFO)
     darwin.log(f"Pool size={args.pool_size} | Top-K={args.top_k}", LogType.INFO)
+    
+    if args.cluster_files:
+        darwin.log(f"Scope: cluster ({len(tobe_searched)} files)", LogType.INFO)
+        for filename in tobe_searched[:3]:  # Show first 3 files
+            darwin.log(f"  • {filename}", LogType.INFO)
+        if len(tobe_searched) > 3:
+            darwin.log(f"  ... and {len(tobe_searched) - 3} more", LogType.INFO)
+    else:
+        darwin.log(f"Scope: {args.file if args.file else 'all documents'}", LogType.INFO)
+    
     darwin.log(f"{'='*50}", LogType.INFO)
 
     if args.top_k == 0:
@@ -154,10 +202,10 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
         args.top_k = DEFAULT_TOP_K
 
     results = []
-    if args.file:
+    if len(tobe_searched) == 1:
         results = search_single_document_hybrid(
             query=args.query,
-            filename=args.file,
+            filename=tobe_searched[0],
             store=store,
             top_k=args.top_k,
             rrf_k=args.rrf_k,
@@ -185,6 +233,13 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
 
     if not results:
         darwin.log("No results found", LogType.WARNING)
+        darwin.log("")
+        darwin.log("Try:", LogType.INFO)
+        darwin.log("  • Using different or more specific keywords", LogType.INFO)
+        darwin.log("  • Adjusting RRF parameters (--rrf-k, --semantic-weight, --keyword-weight)", LogType.INFO)
+        darwin.log("  • Increasing pool size (--pool-size)", LogType.INFO)
+        darwin.log("  • Searching a specific file with --file", LogType.INFO)
+        darwin.log("  • Searching a cluster with --cluster", LogType.INFO)
         return
 
     # Output results
@@ -211,15 +266,16 @@ def handle_hybrid_search(args: HybridSearchArgs) -> None:
                 details.append(f"KW: {r.keyword_score:.3f}")
             if details:
                 darwin.log(f"    ({' | '.join(details)})", LogType.INFO)
-
-    # LLM context preview
-    if results:
-        darwin.log(f"\n--- LLM Context Preview (first 3 chunks) ---", LogType.INFO)
-        context = to_llm_context(results, max_chunks=3)
-        darwin.log(context, LogType.INFO)
+        
+        # Summary stats
+        darwin.log(f"\n{'='*50}", LogType.INFO)
+        darwin.log(f"Sources: {len(set(r.source for r in results))} files", LogType.INFO)
+        darwin.log(f"Top RRF score: {results[0].rrf_score:.4f}" if results else "N/A", LogType.INFO)
+        darwin.log(f"Top final score: {results[0].final_score:.4f}" if results else "N/A", LogType.INFO)
 
     if args.inspect:
         _print_inspection(results, args.query)
+    return results
 
 
 # ============================================================================
@@ -245,6 +301,8 @@ def create_hybrid_search_parser():
         help="Search query string (flag alternative)"
     )
     parser.add_argument("--file", "-f", default=None, help="Search specific file")
+    parser.add_argument("--cluster", "-c", nargs="+", default=None, 
+                       help="Search cluster of files (space-separated list)")
     parser.add_argument("--project", "-p", default=None, help="Project directory")
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K, help="Final results to return")
     parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K, help="RRF dampening constant")
@@ -275,6 +333,10 @@ async def main() -> int:
         darwin.log(f"Both positional and --query provided. Using positional: '{args.query}'", LogType.WARNING)
         query = args.query
 
+    # Validate cluster and file are not both specified
+    if args.cluster and args.file:
+        parser.error("Cannot specify both --cluster and --file. Use one or the other.")
+
     # Setup WebSocket
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
 
@@ -282,6 +344,7 @@ async def main() -> int:
         search_args = HybridSearchArgs(
             query=query,
             file=args.file,
+            cluster_files=args.cluster,
             project=args.project,
             top_k=args.top_k,
             rrf_k=args.rrf_k,

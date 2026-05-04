@@ -6,7 +6,8 @@ Utilities and argument handling for semantic search.
 
 from dataclasses import dataclass, field
 from typing import List, Optional
-from src.features.Retrival.lib import (SematicSearchResult)
+from src.features.Retrival.lib import (SemanticSearchResult)
+
 
 
 # ============================================================================
@@ -20,21 +21,21 @@ DEFAULT_MIN_SCORE = 0.0
 # ============================================================================
 
 @dataclass
-class SearchArgs:
+class SemanticSearchArgs:
     query: str
     file: Optional[str] = None
+    cluster_files: Optional[List[str]] = None 
     project: Optional[str] = None
     top_k: int = DEFAULT_TOP_K
     min_score: float = DEFAULT_MIN_SCORE
     inspect: bool = False
     json_output: bool = False
-
-
+    
 # ============================================================================
 # Result formatting
 # ============================================================================
 
-def format_results(results: list[SematicSearchResult], json_output: bool = False) -> str:
+def format_results(results: list[SemanticSearchResult], json_output: bool = False) -> str:
     """Format search results for display or JSON export."""
     import json
     
@@ -63,27 +64,3 @@ def format_results(results: list[SematicSearchResult], json_output: bool = False
     return "\n".join(lines)
 
 
-# ============================================================================
-# Export for LLM context
-# ============================================================================
-
-def to_llm_context(results: List[SematicSearchResult], max_chunks: int = 5) -> str:
-    """
-    Convert search results to LLM-ready context string.
-    
-    Format:
-        [Document: filename, Page: X]
-        Heading: section title
-        Content: chunk text
-        ---
-    """
-    context_parts = []
-    
-    for r in results[:max_chunks]:
-        part = f"[Document: {r.source}, Page: {r.page}]"
-        if r.heading:
-            part += f"\nHeading: {r.heading}"
-        part += f"\nContent: {r.text}\n---"
-        context_parts.append(part)
-    
-    return "\n".join(context_parts)

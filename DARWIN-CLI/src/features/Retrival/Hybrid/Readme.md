@@ -1,216 +1,157 @@
-# Darwin — Hybrid Search Module
 
-The hybrid search module combines semantic (dense) and keyword (sparse) retrieval via Reciprocal Rank Fusion (RRF). It fuses results from both methods into a single ranked list, leveraging the strengths of each: semantic understanding from embeddings and exact term matching from BM25.
+## `src/features/Retrival/HybridSearch/README.md`
 
----
+```markdown
+# Hybrid Search Module
 
-## How to run it
+Combined semantic and keyword retrieval using Reciprocal Rank Fusion (RRF).
 
+## Overview
+
+This module merges the strengths of both semantic (dense) and keyword (sparse) search using Reciprocal Rank Fusion. By combining exact term matching with conceptual understanding, it provides more robust and relevant results across diverse query types.
+
+## Features
+
+- **Reciprocal Rank Fusion**: Sophisticated algorithm combining multiple retrieval signals
+- **Weighted Combination**: Adjustable weights for semantic vs keyword importance
+- **Configurable Pool**: Control how many candidates each retriever contributes
+- **Overlap Detection**: Identifies potentially duplicated content across retrievers
+- **Multiple Search Scopes**: Search all documents, single files, or clusters
+- **Detailed Scoring**: See RRF, semantic, and keyword scores individually
+- **JSON Export**: Output results in machine-readable format
+
+## Usage
+
+### Basic Search
 ```bash
-# search all documents in current project
-uv run src/core/Search/Hybrid/HybridSearch/main.py "photosynthesis"
+# Search all documents with hybrid retrieval
+uv run src/features/Retrival/HybridSearch/main.py "photosynthesis"
 
-# search a specific document
-uv run src/core/Search/Hybrid/HybridSearch/main.py "cell division" --file biology.pdf
-
-# get more final results
-uv run src/core/Search/Hybrid/HybridSearch/main.py "mitochondria" --top-k 10
-
-# tune RRF dampening constant (lower = more weight on top ranks)
-uv run src/core/Search/Hybrid/HybridSearch/main.py "ATP synthesis" --rrf-k 30
-
-# adjust retriever weights (favor semantic over keyword)
-uv run src/core/Search/Hybrid/HybridSearch/main.py "enzyme function" --semantic-weight 1.5 --keyword-weight 0.8
-
-# fetch more candidates from each retriever before fusion
-uv run src/core/Search/Hybrid/HybridSearch/main.py "cell metabolism" --pool-size 100
-
-# inspect — show individual retriever scores and RRF calculation
-uv run src/core/Search/Hybrid/HybridSearch/main.py "DNA replication" --inspect
-
-# export as JSON for scripting
-uv run src/core/Search/Hybrid/HybridSearch/main.py "proteins" --json
+# Alternative query syntax
+uv run src/features/Retrival/HybridSearch/main.py --query "cell division mechanism"
 ```
 
-All flags can be combined. Example — search specific file with custom weights and inspection:
-
+### Search Specific Documents
 ```bash
-uv run src/core/Search/Hybrid/HybridSearch/main.py "david covenant" --file bible.pdf --semantic-weight 1.2 --pool-size 75 --inspect
+# Search a single document
+uv run src/features/Retrival/HybridSearch/main.py "david covenant" --file bible.pdf
+
+# Search a cluster of documents
+uv run src/features/Retrival/HybridSearch/main.py "quantum mechanics" --cluster physics.pdf modern_physics.pdf
 ```
 
----
+### Advanced Options
+```bash
+# Tune RRF parameters
+uv run src/features/Retrival/HybridSearch/main.py "cell division" --rrf-k 30 --semantic-weight 1.5
 
-## How it works
+# More candidates from each retriever
+uv run src/features/Retrival/HybridSearch/main.py "mitochondria" --pool-size 100 --top-k 10
 
-```
-query
-   │
-   ├─→ Semantic Search (dense)  → Top N candidates
-   │                                      ↘
-   └─→ Keyword Search (sparse)  → Top N candidates → RRF Fusion → Top K results
-```
+# Inspect detailed scoring
+uv run src/features/Retrival/HybridSearch/main.py "ATP synthesis" --inspect
 
-1. **Candidate retrieval**: Each retriever independently fetches `pool_size` results
-2. **RRF scoring**: Each unique chunk receives an RRF score based on its rank in each retriever's list
-3. **Fusion**: Results are sorted by RRF score descending
-4. **Truncation**: Top `top_k` results are returned
-
-**Why RRF?** Semantic scores (cosine similarity 0-1) and keyword scores (unbounded BM25) cannot be directly compared. RRF solves this by using only rank position, making score normalization unnecessary.
-
----
-
-## Reciprocal Rank Fusion formula
-
-```
-RRF_score(d) = Σ w_i / (k + rank_i(d))
+# Export as JSON
+uv run src/features/Retrival/HybridSearch/main.py "enzyme mechanisms" --json
 ```
 
-Where:
-- `w_i` = weight for retriever i (semantic_weight, keyword_weight)
-- `k` = dampening constant (default 60)
-- `rank_i(d)` = position of document d in retriever i's results (1-indexed)
+## Parameters
 
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `rrf_k` | 60 | Higher values reduce impact of rank differences |
-| `semantic_weight` | 1.0 | Weight multiplier for semantic results |
-| `keyword_weight` | 1.0 | Weight multiplier for keyword results |
-| `pool_size` | 50 | Candidates fetched from each retriever |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--top-k` | 5 | Final number of results to return |
+| `--rrf-k` | 60 | RRF dampening constant |
+| `--semantic-weight` | 1.0 | Weight multiplier for semantic results |
+| `--keyword-weight` | 1.0 | Weight multiplier for keyword results |
+| `--pool-size` | 50 | Candidates per retriever before fusion |
+| `--alpha` | 0.5 | Alpha parameter for hybrid scoring |
+| `--beta` | 0.5 | Beta parameter for hybrid scoring |
+| `--file` | None | Search specific file |
+| `--cluster` | None | Search cluster of files (space-separated) |
+| `--inspect` | False | Show detailed chunk information |
+| `--json` | False | Output results as JSON |
 
----
+## Parameter Tuning Guide
 
-## Core functions
+### RRF Parameters
+- **rrf-k (60)**: Higher values reduce the impact of rank differences
+  - k=0: Only first rank matters
+  - k=60: Standard setting for most use cases
+  - k=100+: Ranks become more uniformly weighted
 
-| Function | Purpose |
-|----------|---------|
-| `hybrid_search()` | Fuse pre-retrieved semantic and keyword results |
-| `search_single_document_hybrid()` | Hybrid search within one file |
-| `search_across_documents_hybrid()` | Hybrid search across all indexed documents |
+### Weights
+- **semantic-weight (1.0)**: Increase for conceptual/natural language queries
+- **keyword-weight (1.0)**: Increase for exact term matching queries
 
-All three return `List[HybridSearchResult]` sorted by descending RRF score.
+Example weight combinations:
+- Conceptual queries: `--semantic-weight 1.5 --keyword-weight 0.5`
+- Technical queries: `--semantic-weight 0.5 --keyword-weight 1.5`
+- Balanced: `--semantic-weight 1.0 --keyword-weight 1.0` (default)
 
----
+### Pool Size
+- **pool-size (50)**: Larger pools increase recall but decrease speed
+  - 20-30: Fast, suitable for simple queries
+  - 50-100: Balanced performance for most use cases
+  - 100-200: High recall for complex queries
 
-## Output data model
+## Output Format
 
-```python
-@dataclass
-class HybridSearchResult:
-    text: str                     # Original content → LLM context
-    clean: str                    # Cleaned text (what was indexed)
-    rrf_score: float              # Combined RRF score
-    semantic_score: Optional[float]  # Original semantic score (if present)
-    keyword_score: Optional[float]   # Original BM25 score (if present)
-    source: str                   # Document filename
-    page: int                     # Page number
-    heading: str                  # Section title
-    chunk_index: int              # Original position in document
+### Standard Output
+```
+[1] Score: 0.892 | Source: biology.pdf (p5)
+    Photosynthesis is the process by which...
+    (RRF: 0.891 | Sem: 0.823 | KW: 12.345)
+
+[2] Score: 0.756 | Source: botany.pdf (p12)
+    Light-dependent reactions occur in...
+    (RRF: 0.754 | Sem: 0.712 | KW: 8.921)
 ```
 
-**Note on scores:** `rrf_score` is the fused ranking metric. Individual retriever scores are preserved for inspection but not used for final ranking.
-
----
-
-## Integration with RAG
-
-```python
-from src.features.HybridSearch import search_across_documents_hybrid, to_llm_context
-
-# Hybrid search across all documents
-results = search_across_documents_hybrid(
-    query="photosynthesis light reactions",
-    store=store,
-    top_k=5,
-    semantic_weight=1.2,  # Favor semantic understanding
-)
-
-# Format for LLM
-context = to_llm_context(results)
-
-# Generate response
-response = llm.generate(f"{context}\n\nQuestion: {query}")
+### JSON Output
+```json
+[
+  {
+    "final_score": 0.892,
+    "rrf_score": 0.891,
+    "semantic_score": 0.823,
+    "keyword_score": 12.345,
+    "source": "biology.pdf",
+    "page": 5,
+    "text": "Photosynthesis is the process by which...",
+    "heading": "Chapter 4: Photosynthesis",
+    "matched_terms": ["photosynthesis", "chlorophyll"],
+    "overlap_direction": "none"
+  }
+]
 ```
 
-The `to_llm_context()` helper formats results identically to other search modules:
+## How RRF Works
 
+Reciprocal Rank Fusion combines rankings from multiple retrievers:
+
+1. **Semantic Retriever**: Returns top `pool_size` results by embedding similarity
+2. **Keyword Retriever**: Returns top `pool_size` results by BM25 score
+3. **Fusion**: Each result gets an RRF score: `∑ 1/(k + rank_i)` for each retriever
+4. **Weighting**: Weights are applied to bias semantic vs keyword importance
+5. **Final Ranking**: Results are sorted by final RRF score
+
+## Overlap Detection
+
+The system detects when the same chunk appears in both semantic and keyword results, marking it with the overlap direction. This helps identify:
+- Chunks that are conceptually AND terminologically relevant
+- Potential duplicate content in the result set
+
+## Prerequisites
+
+- Documents must be indexed with both BM25 and embedding pipelines
+- Both keyword and embedding search must be operational
+- Check hybrid search status with: `uv run src/features/Retrival/Status/main.py`
+
+## Notes
+
+- Hybrid search provides the best overall retrieval quality
+- Slightly slower than single-method search due to dual retrieval
+- Ideal for production systems requiring robust search
+- Cluster search with hybrid retrieval is particularly powerful for focused research
+- Monitor overlap rates to understand your document structure
 ```
-[Document: biology.pdf, Page: 42]
-Heading: Light-Dependent Reactions
-Content: The light-dependent reactions take place in the thylakoid membrane...
----
-```
-
----
-
-## Performance characteristics
-
-| Metric | Value |
-|--------|-------|
-| Semantic retrieval | ~10ms per 10k chunks |
-| Keyword retrieval | ~5ms per 10k chunks |
-| RRF fusion | <1ms for 100 candidates |
-| **Total hybrid search** | **~15-20ms** |
-
-Both retrievers run independently, so total time is roughly the slower of the two plus fusion overhead.
-
----
-
-
-### Data flow
-
-```
-CLI args
-  → handle_hybrid_search()                    main.py
-    → search_single_document_hybrid()         if --file passed
-    → search_across_documents_hybrid()        otherwise (all docs)
-      → semantic_search()                     Searcher.py (dense)
-      → search_keyword()                      KeywordSearcher.py (sparse)
-      → hybrid_search()                       HybridSearcher.py
-        → reciprocal_rank_fusion()            HybridUtils.py — RRF algorithm
-        → deduplication                       Track by (source, chunk_index)
-        → RRF scoring                         Weighted rank fusion
-    → format_hybrid_results()                 Terminal table or JSON
-    → to_llm_context()                        Preview for inspection
-```
-
----
-
-## Constants
-
-| Constant | Default | Effect |
-|----------|---------|--------|
-| `DEFAULT_TOP_K` | 5 | Final results returned |
-| `DEFAULT_RRF_K` | 60 | RRF dampening constant |
-| `DEFAULT_SEMANTIC_WEIGHT` | 1.0 | Weight for semantic retriever |
-| `DEFAULT_KEYWORD_WEIGHT` | 1.0 | Weight for keyword retriever |
-| `DEFAULT_POOL_SIZE` | 50 | Candidates per retriever |
-
----
-
-## Comparison: Single vs Hybrid Retrieval
-
-| Method | Strengths | Weaknesses | Best For |
-|--------|-----------|------------|----------|
-| **Semantic** | Conceptual similarity, paraphrasing | Misses exact terms, proper nouns | Broad topics |
-| **Keyword** | Exact term matching, proper nouns | Misses synonyms, context | Specific terminology |
-| **Hybrid** | Combines both strengths | Slightly slower | General purpose |
-
-**Example:** Query "cell death"
-- Semantic finds "apoptosis", "necrosis", "programmed cell death"
-- Keyword finds exact phrase "cell death"
-- Hybrid surfaces both, with RRF ranking the most relevant across both sets
-
----
-
-## Tuning recommendations
-
-| Scenario | Recommended Settings |
-|----------|---------------------|
-| Academic papers (dense terminology) | `--semantic-weight 1.2 --keyword-weight 1.0` |
-| Legal documents (exact phrasing matters) | `--semantic-weight 0.8 --keyword-weight 1.5` |
-| General purpose | Defaults (1.0, 1.0) |
-| Speed critical | `--pool-size 25` |
-| Recall critical | `--pool-size 100 --top-k 20` |
-
----
-

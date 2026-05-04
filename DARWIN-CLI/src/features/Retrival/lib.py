@@ -42,7 +42,7 @@ class ChunkLink:
 
 
 @dataclass
-class SematicSearchResult:
+class SemanticSearchResult:
     """Single search result with all metadata needed for RAG."""
     text: str           # Original text (for LLM context)
     clean: str          # Cleaned text (what was embedded)
@@ -56,7 +56,7 @@ class SematicSearchResult:
     links: List[tuple[str, str]] = field(default_factory=list)
     
     def __repr__(self) -> str:
-        return f"SematicSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
+        return f"SemanticSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
 
 @dataclass
 class KeywordSearchResult:

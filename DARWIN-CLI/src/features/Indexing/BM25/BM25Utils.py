@@ -41,8 +41,8 @@ import numpy as np
 from collections import Counter
 from typing import Iterator, List, Set, Tuple
 
-from src.features.Chunking.lib import Chunk
-from src.core.Logger import darwin, LogType
+from src.features.Ingestion.Chunking.lib import Chunk
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 from src.features.Indexing.BM25.lib import ( MIN_TOKEN_LENGTH, STANDARD_STOPS,DOMAIN_STOP_THRESHOLD)
 

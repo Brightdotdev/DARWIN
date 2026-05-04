@@ -11,6 +11,9 @@ uv run src/core/Search/Sematic/main.py "photosynthesis"
 # Search a specific document
 uv run src/core/Search/Sematic/main.py "cell division" --file biology.pdf
 
+# Search a cluster of documents
+uv run src/core/Search/Sematic/main.py "mitochondria" --cluster file1.pdf file2.pdf file3.pdf
+
 # Get more results
 uv run src/core/Search/Sematic/main.py "mitochondria" --top-k 10
 
@@ -28,24 +31,23 @@ import sys
 import argparse
 import asyncio
 from pathlib import Path
+from typing import List
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.features.Retrival.Sematic.SematicSearch import (
+from src.features.Retrival.Semantic.SematicSearch import (
     search_single_document,
     search_across_documents,
 )
-from src.features.Retrival.Sematic.SematicSearchUtils import (
-    SearchArgs,
+from src.features.Retrival.Semantic.SematicSearchUtils import (
+    SemanticSearchArgs,
     DEFAULT_TOP_K,
     DEFAULT_MIN_SCORE,
-    format_results,
-    SematicSearchResult,
-    to_llm_context,
-)
+    format_results)
+
+from src.features.Retrival.lib import SemanticSearchResult
 from src.features.Storage.DarwinStore import DarwinStore
-from src.lib.Utils import scan_folder
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -54,7 +56,7 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 # Inspect — detailed view of results
 # ============================================================================
 
-def _print_inspection(results: list[SematicSearchResult], query: str) -> None:
+def _print_inspection(results: list[SemanticSearchResult,], query: str) -> None:
     """Print detailed inspection of search results."""
     darwin.log("")
     darwin.log(f"── search inspection — '{query}' ──", LogType.INFO)
@@ -103,11 +105,39 @@ def _is_embedding_searchable(filename: str | None, status: dict) -> bool:
     return file_data.get("is_embedding_searchable", False)
 
 
+def _validate_cluster_files(
+    cluster_files: List[str], 
+    store: DarwinStore
+) -> List[str]:
+    """Validate cluster files exist and are searchable, returning valid filenames."""
+    status = store.status()
+    valid_files = []
+    invalid_files = []
+    
+    for filename in cluster_files:
+        if _is_embedding_searchable(filename, status):
+            valid_files.append(filename)
+        else:
+            invalid_files.append(filename)
+    
+    if invalid_files:
+        darwin.log(f"Warning: {len(invalid_files)} files in cluster are not embedding-searchable:", LogType.WARNING)
+        for f in invalid_files:
+            darwin.log(f"  • {f}", LogType.WARNING)
+        darwin.log("These files will be skipped. Run the embedding pipeline first if needed.", LogType.INFO)
+    
+    if valid_files is None:
+        darwin.log("No valid files in cluster. Search aborted.", LogType.ERROR)
+        return []
+    
+    return valid_files
+
+
 # ============================================================================
 # Core handler
 # ============================================================================
 
-def handle_search(args: SearchArgs) -> None:
+def handle_semantic_search(args: SemanticSearchArgs) -> List[SemanticSearchResult] | None:
     store = DarwinStore()
     config = store.load_config()
     model_name = config.get("embedding_model", "unknown")
@@ -115,28 +145,43 @@ def handle_search(args: SearchArgs) -> None:
     darwin.log("")
     darwin.log("Semantic Search", LogType.INFO)
     darwin.log(f"Query: '{args.query}'", LogType.INFO)
-    darwin.log(f"File: {args.file if args.file else 'all files'} | Top-K: {args.top_k}", LogType.INFO)
     darwin.log(f"Model: {model_name}", LogType.INFO)
-    darwin.log("")
-
+    
     status = store.status()
     tobe_searched = []
     
-    if args.file:
+    # Cluster search takes priority over single file search
+    if args.cluster_files:
+        darwin.log(f"Cluster search mode: {len(args.cluster_files)} specified files", LogType.INFO)
+        darwin.log(f"Top-K: {args.top_k} | Min-Score: {args.min_score}", LogType.INFO)
+        
+        tobe_searched = _validate_cluster_files(args.cluster_files, store)
+        
+        if not tobe_searched:
+            darwin.log("No valid files in cluster. Search aborted.", LogType.ERROR)
+            return
+        
+        darwin.log(f"Searching {len(tobe_searched)} valid files in cluster for '{args.query}'", LogType.INFO)
+    
+    elif args.file:
+        darwin.log(f"File: {args.file} | Top-K: {args.top_k} | Min-Score: {args.min_score}", LogType.INFO)
+        
         if not _is_embedding_searchable(args.file, status):
             darwin.log(f"Cannot search {args.file} — the file is not embedding-searchable", LogType.ERROR)
             return
+        
         tobe_searched = [args.file]
         darwin.log(f"Searching {args.file} for '{args.query}'", LogType.INFO)
     else:
-        raw_files = [str(f) for f in scan_folder()]
-        darwin.log(f"Found {len(raw_files)} supported files in {Path.cwd()}", LogType.INFO)
+        darwin.log(f"File: all files | Top-K: {args.top_k} | Min-Score: {args.min_score}", LogType.INFO)
         tobe_searched = [
-            r.original_name
-            for r in store.registry.list_all()
-            if _is_embedding_searchable(r.original_name, status)
+            fname for fname, info in status.get("files", {}).items()
+             if info.get("is_embedding_searchable", False)
         ]
+        
         darwin.log(f"Searching {len(tobe_searched)} embedding-searchable files for '{args.query}'", LogType.INFO)
+    
+    darwin.log("")
     
     if not tobe_searched:
         darwin.log("No embedding-searchable files found. Run the embedding pipeline first.", LogType.WARNING)
@@ -161,7 +206,13 @@ def handle_search(args: SearchArgs) -> None:
         )
 
     if not results:
-        darwin.log("No results found", LogType.WARNING)
+        darwin.log(f"No results found for '{args.query}'", LogType.WARNING)
+        darwin.log("")
+        darwin.log("Try:", LogType.INFO)
+        darwin.log("  • Using different or more specific keywords", LogType.INFO)
+        darwin.log("  • Lowering the minimum score threshold (--min-score)", LogType.INFO)
+        darwin.log("  • Searching a specific file with --file", LogType.INFO)
+        darwin.log("  • Searching a cluster with --cluster", LogType.INFO)
         return
     
     darwin.log(f"Found {len(results)} results", LogType.SUCCESS)
@@ -175,18 +226,20 @@ def handle_search(args: SearchArgs) -> None:
         preview = r.text[:60].replace('\n', ' ')
         darwin.log(f"  {i:<4} {r.score:.3f}      {r.source[:20]:<20}  {r.page:<4}  {preview}...", LogType.INFO)
     
-    # LLM context preview
+    # Search stats
     darwin.log("")
-    darwin.log("── LLM context preview (first 3 chunks) ──", LogType.INFO)
+    darwin.log(f"  Min score threshold: {args.min_score}", LogType.INFO)
+    darwin.log(f"  Top score: {results[0].score:.3f}", LogType.INFO)
+    darwin.log(f"  Sources: {len(set(r.source for r in results))} files", LogType.INFO)
     darwin.log("")
-    context = to_llm_context(results, max_chunks=3)
-    darwin.log(context, LogType.INFO)
     
     if args.inspect:
         _print_inspection(results, args.query)
     
     if args.json_output:
         print(format_results(results, json_output=True))
+
+    return results
 
 
 # ============================================================================
@@ -202,6 +255,8 @@ async def main() -> int:
     parser.add_argument("query", nargs="?", default=None, help="Search query string (positional)")
     parser.add_argument("--query", "-q", dest="query_flag", help="Search query string (flag alternative)")
     parser.add_argument("--file", "-f", default=None, help="Search specific file")
+    parser.add_argument("--cluster", "-c", nargs="+", default=None, 
+                       help="Search cluster of files (space-separated list)")
     parser.add_argument("--project", "-p", default=None, help="Project directory")
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K, help="Number of results")
     parser.add_argument("--min-score", "-s", type=float, default=DEFAULT_MIN_SCORE, help="Minimum score threshold (0-1)")
@@ -217,12 +272,17 @@ async def main() -> int:
     if not query:
         parser.error("Query required (either as positional argument or --query flag)")
     
+    # Validate cluster and file are not both specified
+    if args.cluster and args.file:
+        parser.error("Cannot specify both --cluster and --file. Use one or the other.")
+    
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
 
     try:
-        search_args = SearchArgs(
+        search_args = SemanticSearchArgs(
             query=query,
             file=args.file,
+            cluster_files=args.cluster,
             project=args.project,
             top_k=args.top_k,
             min_score=args.min_score,
@@ -230,7 +290,7 @@ async def main() -> int:
             json_output=args.json,
         )
         
-        handle_search(search_args)
+        handle_semantic_search(search_args)
         return 0
 
     except KeyboardInterrupt:

@@ -55,49 +55,81 @@ def handle_indexing(args: IndexingArgs) -> None:
     from src.features.Indexing.Embedding.main import handle_embedding
     from src.features.Indexing.BM25.main import handle_bm25_indexing
 
-
-
     target = _validate_inputs(args)
     if target is None:
         return
- 
-    if args.file:
-        file_path = Path(args.file).resolve()
-        if not file_path.exists():
-            darwin.log(f"File not found: {args.file}", LogType.ERROR)
-            return []
-        if not file_path.is_file():
-            darwin.log(f"Not a file: {args.file}", LogType.ERROR)
-            return []
-    
-    bm25_args = BM25IndexingArgs(
+
+    if args.cluster:
+        files = args.cluster
+    elif args.file:
+        files = [args.file]
+    else:
+        files = None  # both handlers resolve from store internally
+
+    darwin.log("Indexing", LogType.INFO)
+    darwin.log(
+        f"Threshold: {args.threshold} | IDF smoothing: {args.idf_smoothing} | "
+        f"Inspect: {args.inspect} | Rerun: {args.rerun}",
+        LogType.INFO
+    )
+
+    if files:
+        darwin.log(f"Cluster: {len(files)} file(s)", LogType.INFO)
+
+    darwin.log("")
+
+    if files:
+        succeeded = failed = 0
+
+        for fname in files:
+            try:
+                darwin.log(f"[1/2] BM25 — {fname}", LogType.INFO)
+                handle_bm25_indexing(BM25IndexingArgs(
+                    target=args.path,
+                    file=fname,
+                    threshold=args.threshold,
+                    idf_smoothing=args.idf_smoothing,
+                    inspect=args.inspect,
+                    rerun=args.rerun,
+                ))
+
+                darwin.log(f"[2/2] Embedding — {fname}", LogType.INFO)
+                handle_embedding(EmbeddingArgs(
+                    target=args.path,
+                    file=fname,
+                    inspect=args.inspect,
+                    rerun=args.rerun,
+                ))
+
+                succeeded += 1
+
+            except Exception as e:
+                darwin.log(f"{fname} — {type(e).__name__}: {e}", LogType.ERROR)
+                failed += 1
+
+        darwin.log("")
+        darwin.log(f"Indexing complete — {succeeded} indexed · {failed} failed", LogType.SUCCESS)
+
+    else:
+        darwin.log("[1/2] BM25 indexing", LogType.INFO)
+        handle_bm25_indexing(BM25IndexingArgs(
             target=args.path,
             file=args.file,
             threshold=args.threshold,
             idf_smoothing=args.idf_smoothing,
             inspect=args.inspect,
             rerun=args.rerun,
-        )
-    
-    embedding_args = EmbeddingArgs(
+        ))
+
+        darwin.log("[2/2] Embedding indexing", LogType.INFO)
+        handle_embedding(EmbeddingArgs(
             target=args.path,
             file=args.file,
             inspect=args.inspect,
             rerun=args.rerun,
-        )
-        
-    darwin.log("Indexing")
-    darwin.log(f"{args.file} | Threshold: {args.threshold} | IDF smoothing: {args.idf_smoothing} | Inspect: {args.inspect} | Rerun: {args.rerun}", LogType.INFO)
+        ))
 
-    darwin.log("[1/2] BM25 indexing", LogType.INFO)
-    handle_bm25_indexing(bm25_args)
-    
-    darwin.log("[2/2] Embedding indexing", LogType.INFO)
-    handle_embedding(embedding_args)
-    
-    darwin.log("Indexing complete", LogType.SUCCESS)
-    
-
+        darwin.log("Indexing complete", LogType.SUCCESS)
 # ── CLI entry point ────────────────────────────────────────────────────────────
 
 async def main() -> int:
@@ -116,22 +148,34 @@ async def main() -> int:
     parser.add_argument("--inspect",  "-i",  action="store_true", help="Print index stats and samples")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+    parser.add_argument(
+    "--cluster", "-cl",
+    nargs="+",
+    default=None,
+    metavar="FILE",
+    help="Index a specific set of files (space-separated filenames)",
+)
 
     args = parser.parse_args()
+    
+    if args.cluster and args.file:
+        darwin.log("--cluster and --file are mutually exclusive", LogType.ERROR)
+        return 1
 
     # Use shared WebSocket setup — only ONE server starts
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
 
     try:
-        indexing_args = IndexingArgs(
-            path=args.path,
-            rerun=args.rerun,
-            file=args.file,
-            inspect=args.inspect,
-            threshold=args.threshold,
-            idf_smoothing=args.idf_smoothing,
-        )
 
+        indexing_args = IndexingArgs(
+    path=args.path,
+    rerun=args.rerun,
+    file=args.file,
+    cluster=args.cluster,        # ← add this
+    inspect=args.inspect,
+    threshold=args.threshold,
+    idf_smoothing=args.idf_smoothing,
+)
 
         handle_indexing(indexing_args)
         return 0

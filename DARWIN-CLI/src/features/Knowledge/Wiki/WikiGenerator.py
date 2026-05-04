@@ -23,7 +23,7 @@ GraphData + centroids
 import numpy as np
 from typing import List, Dict, Optional
 
-from src.features.Chunking.lib import Chunk
+from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Knowledge.Graph.GraphUtils import GraphData, ConceptNode, Relationship
 from src.features.Knowledge.Wiki.WikiUtils import (
     WikiPage,

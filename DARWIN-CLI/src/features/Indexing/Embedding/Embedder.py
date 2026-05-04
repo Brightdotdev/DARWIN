@@ -21,7 +21,7 @@ from src.Models.EmbeddingConfig import (
     get_preset,
     get_model_batch_size,
 )
-from src.features.Chunking.lib import Chunk
+from src.features.Ingestion.Chunking.lib import Chunk
 from src.Models import ModelCategory, ModelManager
 from src.core.Logger.DarwinLogger import darwin, LogType
 

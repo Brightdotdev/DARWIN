@@ -88,16 +88,17 @@ class ExtractedImage:
 
 @dataclass
 class ParsingArgs:
-    target:      str
-    images:      bool = False
-    caption:     bool = False
-    recursive:   bool = False
-    rerun:       bool = False
-    file:        Optional[str] = None
-    precise:     bool = False
-    save:        bool = True
-    cleanup:     bool = True
-
+    target:            str
+    file:              Optional[str] = None
+    cluster:           Optional[List[str]] = None
+    images:            bool = False
+    caption:           bool = False
+    recursive:         bool = False
+    rerun:             bool = False
+    precise:           bool = False
+    save:              bool = True
+    cleanup:           bool = True
+    skip_if_markdown:  bool = False  
 
 @dataclass
 class ParsedDocument:

@@ -19,8 +19,8 @@ from typing import Any, Optional
 from pathlib import Path
 import numpy as np
 
-from src.features.Chunking.lib import Chunk
-from src.features.Parsing.lib import ParsedDocument
+from src.features.Ingestion.Chunking.lib import Chunk
+from src.features.Ingestion.Parsing.lib import ParsedDocument
 from src.features.Storage.StoreUtils import (
     file_hash,
     now,
@@ -238,7 +238,7 @@ class MarkdownMixin(_PathResolverMixin):
         md_path = d / "markdown.md"
 
         try:
-            md_path.write_text(doc.embedding_text, encoding="utf-8")
+            md_path.write_text(doc.display_text, encoding="utf-8")
 
             skip_fields = {"text", "error", "filename", "images", "embedding_text", "display_text"}
             extras = {k: v for k, v in dataclasses.asdict(doc).items() if k not in skip_fields}
@@ -582,7 +582,7 @@ class EmbeddingsMixin(_PathResolverMixin):
     def load_embeddings(self, filename: str) -> tuple[np.ndarray, list]:
         """Load embeddings and return (vectors, chunks)."""
         import json
-        from src.features.Chunking.ChunkerUtils import Chunk, ChunkLink, OverlapDirection
+        from src.features.Ingestion.Chunking.ChunkerUtils import Chunk, ChunkLink, OverlapDirection
 
         cache_key = f"embeddings:{filename}"
         if hasattr(self, '_artifact_cache') and cache_key in self._artifact_cache:

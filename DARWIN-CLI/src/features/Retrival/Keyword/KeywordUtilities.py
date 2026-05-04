@@ -18,10 +18,9 @@ This ensures query tokens match the BM25 index vocabulary.
 
 from dataclasses import dataclass
 from typing import List, Optional
-from src.features.BM25.lib import (
-    BM25Data,compute_idf
-    
-)
+from src.features.Indexing.BM25.lib import BM25Data,compute_idf
+        
+
 
 # ============================================================================
 # Constants
@@ -41,14 +40,13 @@ DEFAULT_B = 0.75      # BM25 length normalization
 class KeywordSearchArgs:
     query: str
     file: Optional[str] = None
+    cluster_files: Optional[List[str]] = None  
     project: Optional[str] = None
     top_k: int = DEFAULT_TOP_K
     k1: float = DEFAULT_K1
     b: float = DEFAULT_B
     inspect: bool = False
     json_output: bool = False
-
-
 
 
 def calculate_bm25(
@@ -132,29 +130,5 @@ def format_keyword_results(results: list, json_output: bool = False) -> str:
         lines.append("")
     
     return "\n".join(lines)
-
-
-def to_llm_context(results: list, max_chunks: int = 5) -> str:
-    """
-    Convert BM25 results to LLM-ready context string.
-    
-    Format:
-        [Document: filename, Page: X]
-        Heading: section title
-        Content: chunk text
-        ---
-    """
-    context_parts = []
-    
-    for r in results[:max_chunks]:
-        part = f"[Document: {r.source}, Page: {r.page}]"
-        if r.heading:
-            part += f"\nHeading: {r.heading}"
-        part += f"\nContent: {r.text}\n---"
-        context_parts.append(part)
-    
-    return "\n".join(context_parts)
-
-
 
 

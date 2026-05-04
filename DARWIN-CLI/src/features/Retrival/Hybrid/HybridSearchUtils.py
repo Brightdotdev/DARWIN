@@ -6,7 +6,7 @@ Utilities for hybrid search: RRF fusion, result merging, and formatting.
 
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Any
-from src.features.Retrival.Sematic.SematicSearchUtils import SematicSearchResult
+from src.features.Retrival.Semantic.SematicSearchUtils import SematicSearchResult
 from src.features.Retrival.Keyword.KeywordSearch import KeywordSearchResult
 import copy
 from src.features.Retrival.lib import HybridSearchResult,OverlapDirection,ChunkLink
@@ -44,21 +44,22 @@ HYBBRID_SEARCH_PARAMS = {
 # Args
 # ============================================================================
 
+
 @dataclass
 class HybridSearchArgs:
-    query:            str
-    file:             Optional[str]   = None
-    project:          Optional[str]   = None
-    top_k:            int             = DEFAULT_TOP_K
-    rrf_k:            int             = DEFAULT_RRF_K
-    semantic_weight:  float           = DEFAULT_SEMANTIC_WEIGHT
-    alpha:            float           = DEFAULT_ALPHA
-    beta:             float           = DEFAULT_BETA
-    keyword_weight:   float           = DEFAULT_KEYWORD_WEIGHT
-    pool_size:        int             = DEFAULT_POOL_SIZE
-    inspect:          bool            = False
-    json_output:      bool            = False
-
+    query: str
+    file: Optional[str] = None
+    cluster_files: Optional[List[str]] = None  
+    project: Optional[str] = None
+    top_k: int = DEFAULT_TOP_K
+    rrf_k: int = DEFAULT_RRF_K
+    semantic_weight: float = DEFAULT_SEMANTIC_WEIGHT
+    keyword_weight: float = DEFAULT_KEYWORD_WEIGHT
+    pool_size: int = DEFAULT_POOL_SIZE
+    alpha: float = DEFAULT_ALPHA
+    beta: float = DEFAULT_BETA
+    inspect: bool = False
+    json_output: bool = False
 
 # ============================================================================
 # Result building and merging
@@ -294,30 +295,3 @@ def format_hybrid_results(
     return "\n".join(lines)
 
 
-def to_llm_context(results: List[HybridSearchResult], max_chunks: int = 5) -> str:
-    """Convert hybrid results to an LLM-ready context string."""
-    parts = []
-    for r in results[:max_chunks]:
-        part = f"[Document: {r.source}, Page: {r.page}]"
-        if r.heading:
-            part += f"\nHeading: {r.heading}"
-        part += f"\nContent: {r.text}"
-        if r.links:
-            part += "\nReferences:"
-
-            for link in r.links:
-                if hasattr(link, "text") and hasattr(link, "url"):
-                    label = link.text if link.text else link.url
-                    url = link.url
-                elif isinstance(link, dict):
-                    url = link.get("url", "")
-                    label = link.get("text") or url
-                else:
-                    # last-resort fallback
-                    url = str(link)
-                    label = url
-
-                part += f"\n  - {label}: {url}"
-        part += "\n---"
-        parts.append(part)
-    return "\n".join(parts)

@@ -5,12 +5,12 @@
 import logging
 from pathlib import Path
 
-from src.features.Parsing.lib import (ParsedDocument,
+from src.features.Ingestion.Parsing.lib import (ParsedDocument,
     SUPPORTED_TYPES,
     detect_type,
     is_supported)
 
-from src.features.Parsing.ParserUtils import (
+from src.features.Ingestion.Parsing.ParserUtils import (
     check_file_size,
     parse_markitdown,
     parse_pdf,

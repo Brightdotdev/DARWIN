@@ -10,7 +10,7 @@ embedding model via ChunkConfig. No model names passed anywhere.
 
 from typing import List, Tuple
 
-from src.features.Chunking.ChunkerUtils import (
+from src.features.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     split_into_sections,
     count_page_seps,
@@ -18,7 +18,7 @@ from src.features.Chunking.ChunkerUtils import (
     section_to_chunks,
     get_dynamic_chunk_params_for_text,
 )
-from src.features.Chunking.ChunkConfig import get_chunk_config
+from src.features.Ingestion.Chunking.ChunkConfig import get_chunk_config
 
 
 def chunk_document(

@@ -17,7 +17,7 @@ from collections import Counter
 from typing import List, Dict, Optional, Tuple
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Chunking.lib import Chunk
+from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Knowledge.Graph.ConceptClustering import cluster_chunks
 from src.features.Knowledge.Graph.GraphUtils import (
     GraphData,

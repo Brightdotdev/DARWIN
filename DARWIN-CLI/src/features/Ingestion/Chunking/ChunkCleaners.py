@@ -17,7 +17,7 @@ PyMuPDF4LLM injection tokens before any model-specific logic runs.
 import re
 import unicodedata
 
-from src.features.Chunking.ChunkConfig import get_chunk_config
+from src.features.Ingestion.Chunking.ChunkConfig import get_chunk_config
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Compiled regex library

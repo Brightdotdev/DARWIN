@@ -16,12 +16,12 @@ from typing import Optional, List, Tuple, Dict, Any
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.Models import ModelManager, ModelCategory
 
-from src.features.Parsing.Captioning import (
+from src.features.Ingestion.Parsing.Captioning import (
     caption_image,
     load_caption_cache,
     save_caption_cache,
 )
-from src.features.Parsing.lib import (
+from src.features.Ingestion.Parsing.lib import (
     should_caption_image,
     MAX_NEW_TOKENS,
     ExtractedImage,
@@ -37,7 +37,7 @@ from src.features.Parsing.lib import (
     PARSE_TIMEOUT_SECONDS,
 
     )
-from src.features.Parsing.Extractors import fitz_extract, pymupdf4llm_extract
+from src.features.Ingestion.Parsing.Extractors import fitz_extract, pymupdf4llm_extract
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

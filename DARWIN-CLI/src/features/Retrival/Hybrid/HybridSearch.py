@@ -10,11 +10,11 @@ from typing import List, Optional
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.features.Retrival.Sematic.SematicSearch import (
+from src.features.Retrival.Semantic.SematicSearch import (
     search_single_document as semantic_search_single,
     search_across_documents as semantic_search_all,
 )
-from src.features.Retrival.Sematic.SematicSearchUtils import SematicSearchResult
+from src.features.Retrival.Semantic.SematicSearchUtils import SematicSearchResult
 
 from src.features.Retrival.Keyword.KeywordSearch import (
     search_single_document_keyword as keyword_search_single,

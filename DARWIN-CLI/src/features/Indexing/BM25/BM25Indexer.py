@@ -17,7 +17,7 @@ chunks
 
 from collections import Counter
 from typing import  List, Optional
-from src.features.Chunking.lib import Chunk
+from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Indexing.BM25.lib import (BM25Data, DEFAULT_IDF_SMOOTHING,DOMAIN_STOP_THRESHOLD)
 from src.features.Indexing.BM25.BM25Utils import (
 

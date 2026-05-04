@@ -19,7 +19,7 @@ pull in:
 Usage
 -----
     from src.features.Storage import DarwinStore
-    from src.features.Chunking.ContextResolver import get_full_context
+    from src.features.Ingestion.Chunking.ContextResolver import get_full_context
 
     store  = DarwinStore(project_dir)
     chunk  = ...   # whatever chunk came back from retrieval
@@ -36,7 +36,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional, TYPE_CHECKING
 
-from src.features.Chunking.ChunkerUtils import (
+from src.features.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     OverlapDirection,
     _split_sentences,

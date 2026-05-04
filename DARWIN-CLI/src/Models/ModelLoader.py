@@ -2,13 +2,12 @@
 
 import json
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Any, Tuple
 
 from src.Models.ModelStore import ModelStore
 from src.Models.ModelRegistry import get_spec, ModelCategory, REGISTRY
 from src.Models.SpacyConceptExtractor import SpacyConceptExtractor
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Storage.DarwinStore import DarwinStore
 
 
 class ModelLoader:
@@ -476,69 +475,85 @@ class ModelLoader:
     # Embedding Migration
     # ═══════════════════════════════════════════════════════════════════════
 
-    def migrate_embeddings(
-        self,
-        filename: Optional[str] = None,
-        force: bool = False,
-    ) -> dict:
-        """Migrate embeddings to current model."""
-        from src.features.Storage.DarwinStore import DarwinStore
-        store = DarwinStore()
+def migrate_embeddings(
+    self,
+    filename: Optional[str] = None,
+    force: bool = False,
+) -> dict:
+    """Migrate embeddings to current model."""
+    from src.features.Storage.DarwinStore import DarwinStore
+    from src.features.Ingestion.main import handle_ingestion
+    from src.features.Ingestion.Parsing.lib import ParsingArgs
+    from src.features.Ingestion.Chunking.lib import ChunkingArgs
+    from src.features.Indexing.lib import IndexingArgs
+    from src.features.Indexing.main import handle_indexing
 
-        current_model = self.get_model_key(ModelCategory.EMBEDDING)
-        stats = {"reembedded": 0, "skipped": 0, "term_banks_updated": 0, "failed": 0}
+    store = DarwinStore()
+    current_model = self.get_model_key(ModelCategory.EMBEDDING)
+    stats = {"reembedded": 0, "skipped": 0, "term_banks_updated": 0, "failed": 0}
 
-        if filename:
-            files_to_process = [filename]
-        else:
-            health = store.get_embedding_health()
-            files_to_process = health.get("needs_reembed", [])
+    # ── Resolve files to migrate ──
+    if filename:
+        files_to_process = [filename]
+    else:
+        health = store.get_embedding_health()
+        files_to_process = health.get("needs_reembed", [])
+        if force:
+            files_to_process.extend(health.get("up_to_date", []))
 
-            if force:
-                files_to_process.extend(health.get("up_to_date", []))
-
-        if not files_to_process:
-            darwin.log("All files are up-to-date with current embedding model", LogType.SUCCESS)
-            return stats
-
-        darwin.log(f"Migrating {len(files_to_process)} file(s) to {current_model}", LogType.INFO)
-
-        for fname in files_to_process:
-            try:
-                md = store.load_markdown(fname)
-
-                if not md:
-                    darwin.log(f"{fname} — no markdown found, skipping", LogType.WARNING)
-                    stats["failed"] += 1
-                    continue
-
-                from src.features.Chunking.lib import handle_chunking, ChunkingArgs
-                
-
-                chunks = handle_chunking(ChunkingArgs(file=fname, inspect=False, rerun=True))
-
-                from src.features.Indexing.Embedding.lib import EmbeddingArgs
-                from src.features.Indexing.Embedding.main import handle_embedding
-
-                handle_embedding(EmbeddingArgs(file=fname, inspect=False, rerun=True))
-
-                stats["reembedded"] += 1
-                darwin.log(f"{fname} — migrated ({len(chunks)} chunks)", LogType.SUCCESS)
-                
-            except Exception as e:
-                darwin.log(f"{fname} — {type(e).__name__}: {e}", LogType.ERROR)
-                stats["failed"] += 1
-
-        try:
-            self.unload(ModelCategory.EMBEDDING)
-        except Exception:
-            pass
-
-        darwin.log(
-            f"Migration complete: {stats['reembedded']} migrated · "
-            f"{stats['term_banks_updated']} term banks updated · "
-            f"{stats['failed']} failed",
-            LogType.SUCCESS,
-        )
-
+    if not files_to_process:
+        darwin.log("All files are up-to-date with current embedding model", LogType.SUCCESS)
         return stats
+
+    darwin.log(f"Migrating {len(files_to_process)} file(s) to {current_model}", LogType.INFO)
+
+    # ── Phase 1 & 2: Ingest (parse if needed + rechunk) ──
+    try:
+        handle_ingestion(
+            ParsingArgs(
+                target=".",
+                cluster=files_to_process,
+                save=True,
+                skip_if_markdown=True,
+            ),
+            ChunkingArgs(
+                rerun=True,
+                inspect=False,
+            ),
+        )
+    except Exception as e:
+        darwin.log(f"Ingestion phase failed — {type(e).__name__}: {e}", LogType.ERROR)
+        stats["failed"] += len(files_to_process)
+        return stats
+
+    # ── Phase 3: Re-index each file ──
+    for fname in files_to_process:
+        try:
+            handle_indexing(IndexingArgs(
+                path=".",
+                file=fname,
+                rerun=True,
+                inspect=False,
+            ))
+
+            stats["reembedded"] += 1
+            darwin.log(f"{fname} — migrated", LogType.SUCCESS)
+
+        except Exception as e:
+            darwin.log(f"{fname} — {type(e).__name__}: {e}", LogType.ERROR)
+            stats["failed"] += 1
+
+    # ── Cleanup ──
+    try:
+        self.unload(ModelCategory.EMBEDDING)
+    except Exception:
+        pass
+
+    darwin.log(
+        f"Migration complete: {stats['reembedded']} migrated · "
+        f"{stats['term_banks_updated']} term banks updated · "
+        f"{stats['failed']} failed",
+        LogType.SUCCESS,
+    )
+
+    return stats

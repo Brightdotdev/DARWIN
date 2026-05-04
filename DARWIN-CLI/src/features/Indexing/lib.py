@@ -1,14 +1,15 @@
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
+
 
 
 @dataclass
 class IndexingArgs:
-    path : str
-    idf_smoothing : float         
-    threshold     : float      
+    path:          str
+    threshold:     float 
+    idf_smoothing: float 
     file:          Optional[str] = None
-    inspect:       bool          = False
-    rerun:         bool          = False
-
+    cluster:       Optional[List[str]] = None
+    inspect:       bool = False
+    rerun:         bool = False
