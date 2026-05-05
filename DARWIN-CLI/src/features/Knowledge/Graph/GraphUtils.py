@@ -26,6 +26,7 @@ class ConceptNode:
     chunk_indices: List[int]     # which chunks contain this entity
     first_mention_chunk: int     # earliest chunk index (structural ordering)
     mention_forms: List[str]     # all surface forms seen (e.g., ["Steve Jobs", "Jobs"])
+    centroid: List[float] = field(default_factory=list)  # mean chunk embedding for search
 
 
 @dataclass
@@ -80,6 +81,7 @@ class GraphData:
                     "first_mention_chunk": n.first_mention_chunk,
                     "chunks": n.chunk_indices,
                     "mention_forms": n.mention_forms,
+                    "centroid": n.centroid,
                 }
                 for n in self.nodes
             ],

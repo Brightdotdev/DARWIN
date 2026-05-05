@@ -737,6 +737,15 @@ def extract_graph_from_chunks(
         LogType.SUCCESS,
     )
 
+    # Compute centroids from chunk vectors
+    if chunk_vectors is not None and len(chunk_vectors) > 0:
+        for node in pruned_nodes:
+            valid_indices = [i for i in node.chunk_indices if i < len(chunk_vectors)]
+            if valid_indices:
+                node.centroid = chunk_vectors[valid_indices].mean(axis=0).tolist()
+            else:
+                node.centroid = []
+
     cluster_map = {}
     for node in pruned_nodes:
         cluster_map[node.label] = node.chunk_indices
@@ -752,11 +761,13 @@ def extract_graph_from_chunks(
         config_snapshot=config.to_dict(),
         processing_mode=config.processing_mode,
     )
+
     darwin.log(
     f"Graph complete: {len(graph.nodes)} nodes, {len(graph.edges)} edges "
     f"({len([e for e in graph.edges if e.relation_type != 'co_occurrence'])} semantic)",
     LogType.SUCCESS,
 )
+
     if graph.nodes:
         preview = ", ".join(n.label for n in graph.nodes[:5])
         darwin.log(f"Top entities: {preview}{'...' if len(graph.nodes) > 5 else ''}", LogType.INFO)
