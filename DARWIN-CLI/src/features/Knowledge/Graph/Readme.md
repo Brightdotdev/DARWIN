@@ -46,13 +46,13 @@ Document → Chunks → spaCy nlp.pipe() → [Doc per chunk]
 
 ```bash
 # Use document-type preset (recommended)
-uv run src/core/Knowledge/Graph/main.py --file paper.pdf --preset academic --rerun
+uv run src/features/Knowledge/Graph/main.py --file paper.pdf --preset academic --rerun
 
 # Override preset settings
-uv run src/core/Knowledge/Graph/main.py --file paper.pdf --preset academic --max-concepts 30
+uv run src/features/Knowledge/Graph/main.py --file paper.pdf --preset academic --max-concepts 30
 
 # Full manual control
-uv run src/core/Knowledge/Graph/main.py --file book.txt --processing-mode sliding_window --chunk-overlap 0.5 --relation-threshold 0.0
+uv run src/features/Knowledge/Graph/main.py --file book.txt --processing-mode sliding_window --chunk-overlap 0.5 --relation-threshold 0.0
 ```
 
 ### Document-Type Presets
@@ -284,7 +284,7 @@ Or via your `ModelStore` download system (ensure all components present in `nlp.
 ## Visualization
 
 ```bash
-uv run src/core/Knowledge/Graph/main.py --file paper.pdf --preset academic --visualize
+uv run src/features/Knowledge/Graph/main.py --file paper.pdf --preset academic --visualize
 ```
 
 Generates `graph.html` with:
@@ -344,7 +344,7 @@ Old cached graphs (cluster-based) are still loadable via `store.load_graph()`. N
 
 To force re-extraction:
 ```bash
-uv run src/core/Knowledge/Graph/main.py --file old_doc.pdf --rerun
+uv run src/features/Knowledge/Graph/main.py --file old_doc.pdf --rerun
 ```
 
 Key differences:

@@ -227,7 +227,11 @@ class ConfigMixin:
 class MarkdownMixin(_PathResolverMixin):
 
     def has_markdown(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "markdown.md").exists()
+                dir_path = self._dir_for(filename)
+                if dir_path is None:
+                    return False
+                return (dir_path / "vector.usearch").exists()
+
 
     def save_markdown(self, filename: str, doc: ParsedDocument) -> None:
         if doc.error:
@@ -277,7 +281,11 @@ class MarkdownMixin(_PathResolverMixin):
 class ChunksMixin(_PathResolverMixin):
 
     def has_chunks(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "chunks.json").exists()
+
+        dir_path = self._dir_for(filename)
+        if dir_path is None:
+            return False
+        return (dir_path / "chunks.json").exists()
 
     def save_chunks(
         self,
@@ -327,7 +335,10 @@ class ChunksMixin(_PathResolverMixin):
 class VectorMixin(_PathResolverMixin):
 
     def has_vector(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "vector.usearch").exists()
+                dir_path = self._dir_for(filename)
+                if dir_path is None:
+                    return False
+                return (dir_path / "vector.usearch").exists()
 
     def save_vector(
         self,
@@ -710,7 +721,11 @@ class BM25Mixin(_PathResolverMixin):
     from src.features.Indexing.BM25.lib import BM25Data
 
     def has_bm25(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "bm25.npz").exists()
+                dir_path = self._dir_for(filename)
+                if dir_path is None:
+                    return False
+                return (dir_path / "bm25.npz").exists()
+
 
     def save_bm25(self, filename: str, data) -> None:
         if not data.tokens or not data.doc_lengths:
@@ -796,7 +811,11 @@ class BM25Mixin(_PathResolverMixin):
 class StopwordsMixin(_PathResolverMixin):
 
     def has_stopwords(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "stopwords.json").exists()
+                dir_path = self._dir_for(filename)
+                if dir_path is None:
+                    return False
+                return (dir_path / "stopwords.json").exists()
+
 
     def save_stopwords(self, filename: str, stopwords: set[str]) -> None:
         if not stopwords:
@@ -824,7 +843,12 @@ class StopwordsMixin(_PathResolverMixin):
 class GraphMixin(_PathResolverMixin):
 
     def has_graph(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "graph" / "graph.json").exists()
+        
+                dir_path = self._dir_for(filename)
+                if dir_path is None:
+                    return False
+                return (dir_path / "graph" / "graph.json").exists()
+
 
     def has_graph_html(self, filename: str) -> bool:
         return (self._dir_for(filename) / "graph" / "graph.html").exists()
@@ -911,7 +935,12 @@ class GraphMixin(_PathResolverMixin):
 class WikiMixin(_PathResolverMixin):
 
     def has_wiki(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "wiki" / "wiki.json").exists()
+                
+        
+                dir_path = self._dir_for(filename)
+                if dir_path is None:
+                    return False
+                return (dir_path / "wiki" / "wiki.json").exists()
 
     def save_wiki(self, filename: str, wiki: Any) -> None:
         if wiki is None:

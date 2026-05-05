@@ -22,11 +22,7 @@ if __name__ == "__main__":
 from src.features.Knowledge.lib import KnowledgePipelineArgs
 from src.features.Knowledge.Graph.main import handle_graph_extraction
 from src.features.Knowledge.Wiki.main import handle_wiki
-from src.features.Knowledge.Graph.GraphUtils import (
-    GraphExtractionArgs,
-    DEFAULT_MIN_CONCEPT_FREQ,
-    DEFAULT_MAX_CONCEPTS as GRAPH_MAX_CONCEPTS,
-)
+from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig, PRESETS
 from src.features.Knowledge.Wiki.WikiUtils import (
     WikiGenerationArgs,
     DEFAULT_CHUNKS_PER_CONCEPT,
@@ -73,7 +69,7 @@ def _run_graphs(args : KnowledgePipelineArgs) -> list[str]  | None:
     """
    
         
-    graph_args = GraphExtractionArgs(
+    graph_args = GraphExtractionConfig(
             files=args.files or [], 
             min_freq=args.min_freq,
             max_concepts=args.graph_max_concepts,
@@ -122,7 +118,7 @@ def handle_knowledge(args : KnowledgePipelineArgs) -> None:
     darwin.log(
         f"graph={not args.wiki_only} | "
         f"wiki={not args.graph_only} | "
-        f"elevation={args.elevation} | "
+        f"preset={args.preset or 'none'} | "
         f"wiki_mode={args.wiki_mode}"
     )
 
@@ -154,12 +150,21 @@ async def main() -> int:
     parser.add_argument("--wiki-only", action="store_true",
                         help="Run wiki generation only (graphs must already exist)")
 
-
-    parser.add_argument("--elevation", "-e", default="none",
-                        choices=["spacy", "llm", "none"])
+    # graph config
+    parser.add_argument("--preset", "-p", default=None,
+                        choices=list(PRESETS.keys()),
+                        help="Document-type preset: academic|research|legal|narrative|technical")
+    parser.add_argument("--processing-mode", "-m", default="auto",
+                        choices=["auto", "full", "chunked", "sliding_window"])
+    parser.add_argument("--chunk-size", type=int, default=512)
+    parser.add_argument("--chunk-overlap", type=float, default=0.2)
+    parser.add_argument("--relation-threshold", type=float, default=0.0)
+    parser.add_argument("--dedup-strategy", default="svo_canonical",
+                        choices=["svo_canonical", "strict", "none"])
+    parser.add_argument("--max-cooccurrence-edges", type=int, default=500)
     parser.add_argument("--threshold", "-t", type=float, default=None)
-    parser.add_argument("--min-freq", type=int, default=DEFAULT_MIN_CONCEPT_FREQ)
-    parser.add_argument("--graph-max-concepts", type=int, default=GRAPH_MAX_CONCEPTS)
+    parser.add_argument("--min-freq", type=int, default=2)
+    parser.add_argument("--graph-max-concepts", type=int, default=75)
     parser.add_argument("--visualize", "-v", action="store_true")
 
     # wiki args
@@ -187,7 +192,13 @@ async def main() -> int:
             files=args.file,
             graph_only=args.graph_only,
             wiki_only=args.wiki_only,
-            elevation=args.elevation,
+            preset=args.preset,
+            processing_mode=args.processing_mode,
+            chunk_size=args.chunk_size,
+            chunk_overlap=args.chunk_overlap,
+            relation_threshold=args.relation_threshold,
+            dedup_strategy=args.dedup_strategy,
+            max_cooccurrence_edges=args.max_cooccurrence_edges,
             threshold=args.threshold,
             min_freq=args.min_freq,
             graph_max_concepts=args.graph_max_concepts,
@@ -199,6 +210,7 @@ async def main() -> int:
             rerun=args.rerun,
             ws_port=args.ws_port,
             no_ws=args.no_ws,
+            json_output=getattr(args, 'json_output', False),
         )
         handle_knowledge(args)
         return 0
