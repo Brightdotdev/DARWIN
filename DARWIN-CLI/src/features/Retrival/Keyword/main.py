@@ -1,32 +1,3 @@
-"""
-src/core/KeywordSearch/main.py - BM25 keyword search CLI
-
-Search indexed documents using pure BM25 (sparse) retrieval.
-
-Usage examples
---------------
-# Search all documents in current project
-uv run src/core/KeywordSearch/main.py "photosynthesis"
-
-# Search a specific document
-uv run src/core/KeywordSearch/main.py "cell division" --file biology.pdf
-
-# Search a cluster of documents
-uv run src/core/KeywordSearch/main.py "mitochondria" --cluster file1.pdf file2.pdf file3.pdf
-
-# Get more results
-uv run src/core/KeywordSearch/main.py "mitochondria" --top-k 10
-
-# Tune BM25 parameters
-uv run src/core/KeywordSearch/main.py "ATP synthesis" --k1 1.2 --b 0.5
-
-# Export as JSON for scripting
-uv run src/core/KeywordSearch/main.py "enzymes" --json
-
-# Inspect — show full chunks with metadata
-uv run src/core/KeywordSearch/main.py "DNA replication" --inspect
-"""
-
 import sys
 import argparse
 import time
@@ -111,27 +82,25 @@ def _is_kw_searchable(filename: str | None, status: dict) -> bool:
     return file_data.get("is_kw_searchable", False)
 
 
-def _validate_cluster_files(
-    cluster_files: List[str], 
+def _validate_files(
+    files: List[str], 
     store: DarwinStore
 ) -> List[str]:
-    """Validate cluster files exist and are searchable, returning valid filenames."""
+    """Validate  files exist and are searchable, returning valid filenames."""
     status = store.status()
     valid_files = []
     invalid_files = []
     
-    for filename in cluster_files:
+    for filename in files:
         if _is_kw_searchable(filename, status):
             valid_files.append(filename)
         else:
             invalid_files.append(filename)
     
     if invalid_files:
-        darwin.log(f"Warning: {len(invalid_files)} files in cluster are not searchable:", LogType.WARNING)
         for f in invalid_files:
-            darwin.log(f"  • {f}", LogType.WARNING)
-        darwin.log("These files will be skipped. Run BM25 indexing first if needed.", LogType.INFO)
-    
+            darwin.log(f"{f} is not searchable", LogType.WARNING)
+
     return valid_files
 
 
@@ -147,24 +116,16 @@ def _search_wrapper(
     status = store.status()
     tobe_searched = []
     
-    # Cluster search takes priority over single file search
-    if args.cluster_files:
-        darwin.log(f"Cluster search mode: {len(args.cluster_files)} specified files", LogType.INFO)
-        tobe_searched = _validate_cluster_files(args.cluster_files, store)
+    if args.files:
+        darwin.log(f"Searching across {" ".join(args.files)}", LogType.INFO)
+        tobe_searched = _validate_files(args.files, store)
         
         if not tobe_searched:
-            darwin.log("No valid files in cluster. Search aborted.", LogType.ERROR)
+            darwin.log("No valid files provided Search aborted.", LogType.ERROR)
             return []
         
-        darwin.log(f"Searching {len(tobe_searched)} valid files in cluster for '{args.query}'", LogType.INFO)
-    
-    elif args.file:
-        if not _is_kw_searchable(args.file, status):
-            darwin.log(f"Cannot search {args.file} — the file is not searchable", LogType.ERROR)
-            return []
-        
-        tobe_searched = [args.file]
-        darwin.log(f"Searching {args.file} for '{args.query}'", LogType.INFO)
+        darwin.log(f"Searching {len(tobe_searched)} valid files for '{args.query}'", LogType.INFO)
+
     else:
         tobe_searched = [
             fname for fname, info in status.get("files", {}).items()
@@ -173,7 +134,7 @@ def _search_wrapper(
         darwin.log(f"Searching {len(tobe_searched)} files for '{args.query}'", LogType.INFO)
     
     if not tobe_searched:
-        darwin.log("No searchable files found. Run BM25 indexing first.", LogType.WARNING)
+        darwin.log("No searchable files found. Run indexing first.", LogType.WARNING)
         return []
     
     start_time = time.perf_counter()
@@ -212,7 +173,6 @@ def _display_search_results(results: List[KeywordSearchResult], args: KeywordSea
         darwin.log("  • Using fewer or different keywords", LogType.INFO)
         darwin.log("  • Checking spelling", LogType.INFO)
         darwin.log("  • Searching a specific file with --file", LogType.INFO)
-        darwin.log("  • Searching a cluster with --cluster", LogType.INFO)
         return
     
     darwin.log("")
@@ -253,16 +213,9 @@ def handle_keyword_search(args: KeywordSearchArgs) -> List[KeywordSearchResult] 
     darwin.log(f"Query: {args.query}", LogType.INFO)
     darwin.log(f"BM25: k1={args.k1}, b={args.b}", LogType.INFO)
     darwin.log(f"Top-K: {args.top_k}", LogType.INFO)
-    
-    if args.cluster_files:
-        darwin.log(f"Scope: cluster ({len(args.cluster_files)} files)", LogType.INFO)
-        for filename in args.cluster_files[:5]:  # Show first 5 files
-            darwin.log(f"  • {filename}", LogType.INFO)
-        if len(args.cluster_files) > 5:
-            darwin.log(f"  ... and {len(args.cluster_files) - 5} more", LogType.INFO)
-    else:
-        darwin.log(f"Scope: {args.file if args.file else 'all documents'}", LogType.INFO)
-    
+    darwin.log(f"Scope: {" •".join(args.files) if args.files else 'all documents'}", LogType.INFO)
+
+
     darwin.log("")
     
     results = _search_wrapper(store, args)
@@ -291,10 +244,8 @@ async def main() -> int:
     )
     parser.add_argument("query", nargs="?", default=None, help="Search query string")
     parser.add_argument("--query", "-q", dest="query_flag", help="Search query (alternative)")
-    parser.add_argument("--file", "-f", default=None, help="Search specific file")
-    parser.add_argument("--cluster", "-c", nargs="+", default=None, 
-                       help="Search cluster of files (space-separated list)")
-    parser.add_argument("--project", "-p", default=None, help="Project directory")
+    
+    parser.add_argument("--file", "-f", nargs="+", default=None, help="One or more files to index")
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K)
     parser.add_argument("--k1", type=float, default=DEFAULT_K1)
     parser.add_argument("--b", type=float, default=DEFAULT_B)
@@ -309,10 +260,7 @@ async def main() -> int:
     
     if not query:
         parser.error("Query required (either as positional or --query)")
-    
-    # Validate cluster and file are not both specified
-    if args.cluster and args.file:
-        parser.error("Cannot specify both --cluster and --file. Use one or the other.")
+        
 
     # Setup WebSocket
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
@@ -320,9 +268,7 @@ async def main() -> int:
     try:
         search_args = KeywordSearchArgs(
             query=query,
-            file=args.file,
-            cluster_files=args.cluster,
-            project=args.project,
+            files=args.file,
             top_k=args.top_k,
             k1=args.k1,
             b=args.b,

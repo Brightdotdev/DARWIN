@@ -52,7 +52,7 @@ Parsed Documents (.darwin markdown)
 - **Heading Awareness**: Preserves document structure
 - **Link Extraction**: Captures hyperlinks inside chunks
 - **Inspection Mode**: View chunk stats and samples
-- **Cluster Support**: Chunk selected files only
+
 - **Smart Caching**: Skip already chunked files
 
 ## Usage
@@ -61,35 +61,35 @@ Parsed Documents (.darwin markdown)
 
 ```bash
 # Chunk everything parsed in current directory
-uv run src/core/Ingestion/Chunking/main.py
+uv run src/features/Ingestion/Chunking/main.py
 ````
 
 ### Single File
 
 ```bash id="c1"
-uv run src/core/Ingestion/Chunking/main.py --file biology.pdf
+uv run src/features/Ingestion/Chunking/main.py --file biology.pdf
 ```
 
-### Cluster (multiple files)
+###  (multiple files)
 
 ```bash id="c2"
-uv run src/core/Ingestion/Chunking/main.py --cluster bio.pdf chem.pdf physics.pdf
+uv run src/features/Ingestion/Chunking/main.py --file bio.pdf chem.pdf physics.pdf
 ```
 
 ### Inspection
 
 ```bash id="c3"
-uv run src/core/Ingestion/Chunking/main.py --file biology.pdf --inspect
+uv run src/features/Ingestion/Chunking/main.py --file biology.pdf --inspect
 ```
 
 ### Cache Control
 
 ```bash id="c4"
 # Skip already chunked (default)
-uv run src/core/Ingestion/Chunking/main.py
+uv run src/features/Ingestion/Chunking/main.py
 
 # Force rechunk
-uv run src/core/Ingestion/Chunking/main.py --rerun
+uv run src/features/Ingestion/Chunking/main.py --rerun
 ```
 
 ## Parameters
@@ -99,8 +99,7 @@ uv run src/core/Ingestion/Chunking/main.py --rerun
 | Parameter   | Description                            |
 | ----------- | -------------------------------------- |
 | `path`      | Project directory                      |
-| `--file`    | Chunk a single file                    |
-| `--cluster` | Chunk specific files (space-separated) |
+| `--file`    | Chunk a single file or multiple files  |
 
 ### Processing
 
@@ -118,7 +117,6 @@ uv run src/core/Ingestion/Chunking/main.py --rerun
 
 ## Rules
 
-* `--file` and `--cluster` cannot be used together
 * Files must already be parsed before chunking
 * Uses `.darwin` store as source of truth
 
@@ -187,7 +185,7 @@ done — 2 chunked · 1 failed
 ### CLI Pipeline
 
 ```bash id="c7"
-uv run src/core/Ingestion/main.py --file document.pdf
+uv run src/features/Ingestion/main.py --file document.pdf
 ```
 
 ### Programmatic
@@ -197,9 +195,7 @@ from src.features.Ingestion.Chunking.main import handle_chunking
 from src.features.Ingestion.Chunking.lib import ChunkingArgs
 
 args = ChunkingArgs(
-    target=".",
     file=None,
-    cluster=None,
     inspect=False,
     rerun=False,
 )
@@ -210,7 +206,7 @@ handle_chunking(args)
 ## Structure
 
 ```
-src/core/Ingestion/Chunking/
+src/features/Ingestion/Chunking/
 ├── main.py
 ├── README.md
 
@@ -226,7 +222,7 @@ src/features/Ingestion/Chunking/
 Run parsing first:
 
 ```bash id="c9"
-uv run src/core/Ingestion/Parsing/main.py
+uv run src/features/Ingestion/Parsing/main.py
 ```
 
 ### "Unexpected markdown type"
@@ -234,7 +230,7 @@ uv run src/core/Ingestion/Parsing/main.py
 Indicates corrupted or invalid stored data. Re-run parsing:
 
 ```bash id="c10"
-uv run src/core/Ingestion/Parsing/main.py --rerun
+uv run src/features/Ingestion/Parsing/main.py --rerun
 ```
 
 ### "Already chunked"
@@ -242,7 +238,7 @@ uv run src/core/Ingestion/Parsing/main.py --rerun
 Use:
 
 ```bash id="c11"
-uv run src/core/Ingestion/Chunking/main.py --rerun
+uv run src/features/Ingestion/Chunking/main.py --rerun
 ```
 
 ## Notes

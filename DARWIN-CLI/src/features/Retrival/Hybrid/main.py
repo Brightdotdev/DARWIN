@@ -1,33 +1,5 @@
 """
-src/core/HybridSearch/main.py - Hybrid search CLI
-
-Combine semantic and keyword retrieval via Reciprocal Rank Fusion.
-
-Usage examples
---------------
-# Search all documents
-uv run src/core/HybridSearch/main.py "photosynthesis"
-
-# Search specific document
-uv run src/core/HybridSearch/main.py "david covenant" --file bible.pdf
-
-# Search a cluster of documents
-uv run src/core/HybridSearch/main.py "mitochondria" --cluster file1.pdf file2.pdf file3.pdf
-
-# Use query flag
-uv run src/core/HybridSearch/main.py --query "cell division" --file bio.pdf
-
-# Adjust RRF parameters
-uv run src/core/HybridSearch/main.py "cell division" --rrf-k 30 --semantic-weight 1.5
-
-# More candidates from each retriever
-uv run src/core/HybridSearch/main.py "mitochondria" --pool-size 100 --top-k 10
-
-# Inspect results
-uv run src/core/HybridSearch/main.py "ATP" --inspect
-
-# JSON export
-uv run src/core/HybridSearch/main.py "enzymes" --json
+src/core/HybridSearch/main.py - Hybrid search
 """
 
 import sys
@@ -118,27 +90,24 @@ def _is_hybrid_searchable(filename: str | None, status: dict) -> bool:
     return file_data.get("is_hybrid_searchable", False)
 
 
-def _validate_cluster_files(
-    cluster_files: List[str], 
+def _validate_files(
+    files: List[str], 
     store: DarwinStore
 ) -> List[str]:
-    """Validate cluster files exist and are searchable, returning valid filenames."""
+    """Validate files exist and are searchable, returning valid filenames."""
     status = store.status()
     valid_files = []
     invalid_files = []
     
-    for filename in cluster_files:
+    for filename in files:
         if _is_hybrid_searchable(filename, status):
             valid_files.append(filename)
         else:
             invalid_files.append(filename)
     
     if invalid_files:
-        darwin.log(f"Warning: {len(invalid_files)} files in cluster are not hybrid-searchable:", LogType.WARNING)
         for f in invalid_files:
-            darwin.log(f"  • {f}", LogType.WARNING)
-        darwin.log("These files will be skipped. Run both indexing pipelines first if needed.", LogType.INFO)
-    
+            darwin.log(f"{f} is not searchable", LogType.WARNING)
     return valid_files
 
 
@@ -152,24 +121,16 @@ def handle_hybrid_search(args: HybridSearchArgs) -> List[HybridSearchResult] | N
     status = store.status()
     tobe_searched = []
 
-    # Cluster search takes priority over single file search
-    if args.cluster_files:
-        darwin.log(f"Cluster search mode: {len(args.cluster_files)} specified files", LogType.INFO)
-        tobe_searched = _validate_cluster_files(args.cluster_files, store)
+
+    if args.files:
+        tobe_searched = _validate_files(args.files, store)
         
         if not tobe_searched:
-            darwin.log("No valid files in cluster. Search aborted.", LogType.ERROR)
+            darwin.log("No valid files provided for search. Search aborted.", LogType.ERROR)
             return
         
-        darwin.log(f"Searching {len(tobe_searched)} valid files in cluster for '{args.query}'", LogType.INFO)
+        darwin.log(f"Searching {len(tobe_searched)} valid file(s)  for '{args.query}'", LogType.INFO)
     
-    elif args.file:
-        if not _is_hybrid_searchable(args.file, status):
-            darwin.log(f"Cannot search {args.file} — file is not searchable", LogType.WARNING)
-            return
-
-        tobe_searched = [args.file]
-        darwin.log(f"Searching {args.file} for '{args.query}'", LogType.INFO)
     else:
         tobe_searched = [
             fname for fname, info in status.get("files", {}).items()
@@ -186,14 +147,6 @@ def handle_hybrid_search(args: HybridSearchArgs) -> List[HybridSearchResult] | N
     darwin.log(f"RRF k={args.rrf_k} | Semantic weight={args.semantic_weight} | Keyword weight={args.keyword_weight}", LogType.INFO)
     darwin.log(f"Pool size={args.pool_size} | Top-K={args.top_k}", LogType.INFO)
     
-    if args.cluster_files:
-        darwin.log(f"Scope: cluster ({len(tobe_searched)} files)", LogType.INFO)
-        for filename in tobe_searched[:3]:  # Show first 3 files
-            darwin.log(f"  • {filename}", LogType.INFO)
-        if len(tobe_searched) > 3:
-            darwin.log(f"  ... and {len(tobe_searched) - 3} more", LogType.INFO)
-    else:
-        darwin.log(f"Scope: {args.file if args.file else 'all documents'}", LogType.INFO)
     
     darwin.log(f"{'='*50}", LogType.INFO)
 
@@ -239,7 +192,6 @@ def handle_hybrid_search(args: HybridSearchArgs) -> List[HybridSearchResult] | N
         darwin.log("  • Adjusting RRF parameters (--rrf-k, --semantic-weight, --keyword-weight)", LogType.INFO)
         darwin.log("  • Increasing pool size (--pool-size)", LogType.INFO)
         darwin.log("  • Searching a specific file with --file", LogType.INFO)
-        darwin.log("  • Searching a cluster with --cluster", LogType.INFO)
         return
 
     # Output results
@@ -300,10 +252,8 @@ def create_hybrid_search_parser():
         dest="query_flag",
         help="Search query string (flag alternative)"
     )
-    parser.add_argument("--file", "-f", default=None, help="Search specific file")
-    parser.add_argument("--cluster", "-c", nargs="+", default=None, 
-                       help="Search cluster of files (space-separated list)")
-    parser.add_argument("--project", "-p", default=None, help="Project directory")
+    
+    parser.add_argument("--file", "-f", nargs="+", default=None, help="One or more files to index")
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K, help="Final results to return")
     parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K, help="RRF dampening constant")
     parser.add_argument("--semantic-weight", type=float, default=DEFAULT_SEMANTIC_WEIGHT, help="Weight for semantic results")
@@ -333,9 +283,6 @@ async def main() -> int:
         darwin.log(f"Both positional and --query provided. Using positional: '{args.query}'", LogType.WARNING)
         query = args.query
 
-    # Validate cluster and file are not both specified
-    if args.cluster and args.file:
-        parser.error("Cannot specify both --cluster and --file. Use one or the other.")
 
     # Setup WebSocket
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
@@ -343,9 +290,7 @@ async def main() -> int:
     try:
         search_args = HybridSearchArgs(
             query=query,
-            file=args.file,
-            cluster_files=args.cluster,
-            project=args.project,
+            files=args.file,
             top_k=args.top_k,
             rrf_k=args.rrf_k,
             semantic_weight=args.semantic_weight,

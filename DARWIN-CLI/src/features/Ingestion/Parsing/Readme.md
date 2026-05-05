@@ -26,7 +26,7 @@ It is the first stage of the ingestion pipeline and produces clean text for down
 - **Image Extraction**: Optional image extraction and captioning
 - **Smart Caching**: Skips already parsed files
 - **Progress Tracking**: Real-time logging per file
-- **Cluster Support**: Parse selected files only
+- **multiple file Support**: Parse selected files only
 - **Error Recovery**: Continues even if some files fail
 
 ## Pipeline Context
@@ -73,47 +73,47 @@ Files (.pdf, .docx, .pptx, .txt, .md, .json)
 
 ```bash
 # Parse everything in current directory
-uv run src/core/Ingestion/Parsing/main.py
+uv run src/features/Ingestion/Parsing/main.py
 
 # Parse a directory
-uv run src/core/Ingestion/Parsing/main.py ~/documents/
+uv run src/features/Ingestion/Parsing/main.py ~/documents/
 
 # Parse recursively
-uv run src/core/Ingestion/Parsing/main.py ~/documents/ --recursive
+uv run src/features/Ingestion/Parsing/main.py ~/documents/ --recursive
 ````
 
 ### Single File
 
 ```bash
-uv run src/core/Ingestion/Parsing/main.py --file biology.pdf
+uv run src/features/Ingestion/Parsing/main.py --file biology.pdf
 
 # With images
-uv run src/core/Ingestion/Parsing/main.py --file report.pdf --images
+uv run src/features/Ingestion/Parsing/main.py --file report.pdf --images
 
 # With captions
-uv run src/core/Ingestion/Parsing/main.py --file textbook.pdf --images --caption
+uv run src/features/Ingestion/Parsing/main.py --file textbook.pdf --images --caption
 
 # Precise mode
-uv run src/core/Ingestion/Parsing/main.py --file complex.pdf --precise
+uv run src/features/Ingestion/Parsing/main.py --file complex.pdf --precise
 ```
 
 ### File Cluster
 
 ```bash
-uv run src/core/Ingestion/Parsing/main.py --cluster bio.pdf chem.pdf physics.pdf
+uv run src/features/Ingestion/Parsing/main.py --file bio.pdf chem.pdf physics.pdf
 ```
 
 ### Cache Control
 
 ```bash
 # Default skips cached
-uv run src/core/Ingestion/Parsing/main.py
+uv run src/features/Ingestion/Parsing/main.py
 
 # Force re-run
-uv run src/core/Ingestion/Parsing/main.py --rerun
+uv run src/features/Ingestion/Parsing/main.py --rerun
 
 # Preview only
-uv run src/core/Ingestion/Parsing/main.py --file doc.pdf --no-save
+uv run src/features/Ingestion/Parsing/main.py --file doc.pdf --no-save
 ```
 
 ## Parameters
@@ -123,8 +123,7 @@ uv run src/core/Ingestion/Parsing/main.py --file doc.pdf --no-save
 | Parameter   | Description          |
 | ----------- | -------------------- |
 | `path`      | Directory to scan    |
-| `--file`    | Parse a single file  |
-| `--cluster` | Parse specific files |
+| `--file`    | Parse   files        |
 
 ### Processing
 
@@ -184,7 +183,7 @@ class ParsedDocument:
 ## Image Extraction
 
 ```bash
-uv run src/core/Ingestion/Parsing/main.py --file doc.pdf --images
+uv run src/features/Ingestion/Parsing/main.py --file doc.pdf --images
 ```
 
 Output:
@@ -220,7 +219,7 @@ Failed: 1
 ### CLI
 
 ```bash
-uv run src/core/Ingestion/main.py --file document.pdf
+uv run src/features/Ingestion/main.py --file document.pdf
 ```
 
 ### Programmatic
@@ -247,12 +246,12 @@ docs = handle_parsing(args)
 ## Structure
 
 ```
-src/core/Ingestion/Parsing/
+src/features/Ingestion/Parsing/
 ├── main.py
 ├── README.md
 └── lib.py
 
-src/features/Ingestion/Parsing/
+src/featuress/Ingestion/Parsing/
 ├── Parser.py
 ├── lib.py
 ```
@@ -280,7 +279,7 @@ Avoid `--precise` for very large PDFs.
 Disable images if not needed.
 
 ```
-uv run src/core/Ingestion/Parsing/main.py --file doc.pdf
+uv run src/features/Ingestion/Parsing/main.py --file doc.pdf
 ```
 
 

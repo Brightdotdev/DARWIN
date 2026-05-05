@@ -146,12 +146,12 @@ class FileRegistry:
         record = registry.get("C:/docs/bio.pdf")
         print(record.status_summary())
     """
-
     def __init__(self, paths: "StorePaths"):
         self.paths = paths
         self._cache: dict[str, FileRecord] | None = None
-        self._name_index: dict[str, FileRecord] | None = None
-        self._hash_cache: dict[str, str] = {}  # file_path -> file_hash
+        self._name_index: dict[str, list[FileRecord]] | None = None
+        self._hash_cache: dict[str, str] = {}
+        self._all_data: dict | None = None
 
     @property
     def path(self) -> Path:
@@ -159,22 +159,28 @@ class FileRegistry:
 
     # ── Internal ──────────────────────────────────────────────────────────
 
+
     def _load(self) -> dict:
-        """Load the raw registry JSON, using cache when valid."""
+
         if self._cache is not None and self._all_data is not None:
             return self._all_data
+
         self._all_data = read_json(self.path) or {"version": "1.0", "files": {}}
         self._cache = {
             fh: FileRecord(rec)
             for fh, rec in self._all_data.get("files", {}).items()
         }
+
         self._name_index = {}
         for fh, rec in self._all_data.get("files", {}).items():
             name = rec.get("original_name", "")
-            if name and name not in self._name_index:
-                self._name_index[name] = FileRecord(rec)
-        return self._all_data
+            if name:
+                if name not in self._name_index:
+                    self._name_index[name] = []
+                self._name_index[name].append(FileRecord(rec))
 
+        return self._all_data
+    
     def _save(self, data: dict) -> None:
         data["updated_at"] = now()
         write_json(self.path, data)
@@ -183,12 +189,15 @@ class FileRegistry:
             fh: FileRecord(rec)
             for fh, rec in data.get("files", {}).items()
         }
+
         self._name_index = {}
         for fh, rec in data.get("files", {}).items():
             name = rec.get("original_name", "")
-            if name and name not in self._name_index:
-                self._name_index[name] = FileRecord(rec)
-
+            if name:
+                if name not in self._name_index:
+                    self._name_index[name] = []
+                self._name_index[name].append(FileRecord(rec))
+        
     def _all_raw(self) -> dict:
         return self._load()
 
@@ -309,10 +318,20 @@ class FileRegistry:
         raw = data.get("files", {}).get(file_hash)
         return FileRecord(raw) if raw else None
 
-    def _find_by_name(self, filename: str) -> "FileRecord | None":
-        """O(1) lookup by original name."""
-        self._load()  # Ensure name index is built
-        return self._name_index.get(filename)
+    def _find_by_name(self, filename: str) -> "FileRecord  | None":
+
+        """
+        Lookup by original filename.
+        - No match      → None
+        - One match     → FileRecord
+        - Many matches  → list[FileRecord]  (caller must disambiguate)
+        """
+        self._load()
+        matches = self._name_index.get(filename, [])
+        if not matches:
+            return None
+        
+        return matches[0]
 
     def get_or_register(self, file_path: str | Path) -> "FileRecord":
         """Get existing record or create a new one."""

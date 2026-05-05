@@ -1,3 +1,15 @@
+"""
+src/core/Knowledge/Graph/ConceptClustering.py
+----------------------------------------------
+LEGACY: Chunk clustering via HDBSCAN/KMeans.
+
+DEPRECATED: The new spaCy-based pipeline (GraphExtractor.py) does not
+use chunk clustering. This module is retained for backward compatibility
+with existing cached graphs only.
+
+New pipeline uses spaCy NER + dependency parsing instead.
+"""
+
 import numpy as np
 from typing import List, Dict, Tuple
 from collections import defaultdict
@@ -9,7 +21,6 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / ((np.linalg.norm(a) * np.linalg.norm(b)) + 1e-9))
 
 
-
 def cluster_chunks(
     chunk_vectors: np.ndarray,
     use_umap: bool = False,
@@ -17,6 +28,11 @@ def cluster_chunks(
     min_cluster_size: int = None,
     min_samples: int = 1,
 ) -> Tuple[np.ndarray, Dict[int, List[int]]]:
+    """
+    LEGACY: Cluster chunks in embedding space.
+
+    Kept for backward compatibility. New pipeline uses spaCy directly.
+    """
     n_chunks, dim = chunk_vectors.shape
 
     if min_cluster_size is None:
@@ -34,16 +50,16 @@ def cluster_chunks(
             n_components = min(
                 umap_n_components if n_chunks < 2000 else 15,
                 dim,
-                n_chunks - 2,          # UMAP hard requirement: n_components < n_samples
+                n_chunks - 2,
             )
-            n_neighbors = min(30, max(2, n_chunks // 10))  # must be < n_chunks
+            n_neighbors = min(30, max(2, n_chunks // 10))
             reducer = umap.UMAP(
                 n_components=n_components,
                 metric="cosine",
                 random_state=42,
                 min_dist=0.05,
                 n_neighbors=n_neighbors,
-                n_jobs=1,              # avoid threading issues inside executor
+                n_jobs=1,
             )
             vectors = reducer.fit_transform(vectors)
             darwin.log(f"UMAP reduced to {n_components}d for clustering", LogType.INFO)
@@ -57,8 +73,6 @@ def cluster_chunks(
     try:
         import hdbscan
 
-        # Progressive retry schedule: [base, base//2, base//4, min=2]
-        # Never jump straight to a tiny value — bleed down gradually
         base = min_cluster_size
         if n_chunks > 1000:
             base = max(min_cluster_size, n_chunks // 50)

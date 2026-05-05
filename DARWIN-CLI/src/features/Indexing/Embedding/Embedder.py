@@ -37,7 +37,9 @@ def prepare_passage_text(text: str, preset: ModelPreset | str | None = None) -> 
     Returns:
         Formatted text ready for the embedder
     """
-    preset = get_preset()
+        
+    if preset is None or isinstance(preset, str):
+        preset = get_preset(preset)  
 
     if preset.is_instruction_tuned and preset.instruction_template:
         return preset.instruction_template.format(text=text)
@@ -58,7 +60,9 @@ def prepare_query_text(query: str, preset: ModelPreset | str | None = None) -> s
     Returns:
         Formatted query ready for the embedder
     """
-    preset = get_preset()
+    
+    if preset is None or isinstance(preset, str):
+        preset = get_preset(preset)  
 
     if preset.is_instruction_tuned:
         return f"<|user|>\nGiven a query, retrieve relevant passages: {query}\n<|assistant|>\n"
@@ -99,10 +103,11 @@ def embed_chunks(
 
     # ── Resolve preset ──
     preset = get_preset()
-
+    darwin.log("Loading embedding model...")
     loader = ModelManager.get_loader()
     
     embedder = loader.get(ModelCategory.EMBEDDING)
+    darwin.log("Loaded embedding model...")
   
   
 

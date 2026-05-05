@@ -540,19 +540,20 @@ class ModelStore:
                 except Exception:
                     pass
 
+   
     def ensure(self, key: str, force: bool = False) -> Path:
-        """Ensure model is downloaded and valid."""
-        
+                 
         spec = get_spec(key)
-        
-        if spec.disk_mb == 0 and spec.loader.startswith("api_"):
-            return Path("__api__")  # Sentinel — never actually used as a path
-        
+
+        # API models have nothing to download or verify
+        if spec.loader.startswith("api_"):
+            return Path("__api__")
+
         if not self.is_downloaded(key) or force:
             self.download(key, force=force)
-        
+
         path = self.model_path(key)
-        
+
         if not self.is_downloaded(key):
             shutil.rmtree(path, ignore_errors=True)
             self.download(key, force=True)
@@ -561,7 +562,7 @@ class ModelStore:
                     f"Model '{key}' failed verification after forced re-download. "
                     f"Check disk space and try again, or inspect: {path}"
                 )
-        
+
         return path
 
     def delete(self, key: str) -> None:

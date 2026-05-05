@@ -1,17 +1,3 @@
-# src/core/Knowledge/Wiki/main.py - Fixed with WebSocket support
-
-"""
-src/core/Knowledge/Wiki/main.py
---------------------------------
-Wiki generation CLI.
-
-Usage:
-  uv run src/core/Knowledge/Wiki/main.py --file biology.pdf
-  uv run src/core/Knowledge/Wiki/main.py --file biology.pdf --inspect
-  uv run src/core/Knowledge/Wiki/main.py --file biology.pdf --mode summary --llm ollama/llama3.2
-  uv run src/core/Knowledge/Wiki/main.py --file biology.pdf --max-concepts 20
-"""
-
 import sys
 import argparse
 import asyncio
@@ -22,8 +8,9 @@ if __name__ == "__main__":
 
 from src.features.Knowledge.Wiki.WikiGenerator import run_wiki_pipeline
 from src.features.Knowledge.Wiki.WikiUtils import (
-    WikiGenerationArgs, DEFAULT_MAX_CONCEPTS, DEFAULT_CHUNKS_PER_CONCEPT,
+    WikiGenerationArgs, DEFAULT_CHUNKS_PER_CONCEPT,
 )
+from typing import List
 from src.features.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
@@ -59,12 +46,15 @@ def _print_inspection(wiki, filename: str) -> None:
 
     darwin.log(f"{'='*60}", LogType.INFO)
 
-def handle_wiki(args: WikiGenerationArgs) -> None:
-    """Main handler for wiki generation."""
+
+def handle_wiki(args: WikiGenerationArgs) -> List[str] | None:
     store = DarwinStore()
 
-    if args.file:
-        filenames = [args.file] if store.has_graph(args.file) else []
+    if args.files:
+        filenames = [f for f in args.files if store.has_graph(f)]
+        missing = [f for f in args.files if not store.has_graph(f)]
+        for f in missing:
+            darwin.log(f"'{f}' has no graph — skipping", LogType.WARNING)
     else:
         filenames = [
             record.original_name
@@ -77,24 +67,26 @@ def handle_wiki(args: WikiGenerationArgs) -> None:
         return
 
     darwin.log(f"Wiki generation — {len(filenames)} file(s)", LogType.INFO)
-    darwin.log(f"Mode: {args.mode} | Max concepts: {args.max_concepts}")
+    darwin.log(f"Mode: {args.mode}")
     if args.mode == "summary":
         darwin.log(f"LLM: {args.llm_model}")
 
     succeeded = failed = 0
+    processed_wikis = []
 
     for filename in filenames:
         try:
             wiki = run_wiki_pipeline(
                 filename=filename, store=store,
                 mode=args.mode, llm_model=args.llm_model,
-                max_concepts=args.max_concepts,
                 chunks_per_concept=args.chunks_per_concept,
                 rerun=args.rerun,
+                completed_files=processed_wikis
             )
             if wiki:
                 succeeded += 1
                 darwin.log(f"{filename} → {len(wiki.pages)} pages", LogType.SUCCESS)
+                processed_wikis.append(filename)
                 if args.inspect:
                     _print_inspection(wiki, filename)
             else:
@@ -106,16 +98,15 @@ def handle_wiki(args: WikiGenerationArgs) -> None:
             failed += 1
 
     darwin.log(f"Done — {succeeded} generated · {failed} failed", LogType.SUCCESS)
+    return processed_wikis if processed_wikis is not None else None
 
 
 async def main() -> int:
     """Async entry point with WebSocket support."""
     parser = argparse.ArgumentParser(description="Generate Wikipedia-style docs from concept graphs")
-    parser.add_argument("path", nargs="?", default=".")
-    parser.add_argument("--file", "-f", default=None)
+    parser.add_argument("--file", "-f", nargs="+", default=None)
     parser.add_argument("--mode", "-m", default="index", choices=["index", "summary"])
     parser.add_argument("--llm", default="ollama/llama3.2", help="LLM model for summary mode")
-    parser.add_argument("--max-concepts", "-n", type=int, default=DEFAULT_MAX_CONCEPTS)
     parser.add_argument("--chunks-per-concept", type=int, default=DEFAULT_CHUNKS_PER_CONCEPT)
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--rerun", "-R", action="store_true")
@@ -129,11 +120,9 @@ async def main() -> int:
 
     try:
         wiki_args = WikiGenerationArgs(
-            target=args.path,
-            file=args.file,
+            files=args.file or [],
             mode=args.mode,
             llm_model=args.llm,
-            max_concepts=args.max_concepts,
             chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,

@@ -23,9 +23,7 @@ DEFAULT_MIN_SCORE = 0.0
 @dataclass
 class SemanticSearchArgs:
     query: str
-    file: Optional[str] = None
-    cluster_files: Optional[List[str]] = None 
-    project: Optional[str] = None
+    files: list[str] = field(default_factory=list)
     top_k: int = DEFAULT_TOP_K
     min_score: float = DEFAULT_MIN_SCORE
     inspect: bool = False

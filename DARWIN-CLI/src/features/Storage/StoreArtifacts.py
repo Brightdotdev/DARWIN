@@ -893,13 +893,14 @@ class GraphMixin(_PathResolverMixin):
         return read_json(path) or []
 
     def load_graph(self, filename: str) -> dict:
+        
         cache_key = f"graph:{filename}"
         if hasattr(self, '_artifact_cache') and cache_key in self._artifact_cache:
             return self._artifact_cache[cache_key]
 
         path = self._dir_for(filename) / "graph" / "graph.json"
         if not path.exists():
-            raise FileNotFoundError(f"No graph found for '{filename}'.")
+            None
         result = read_json(path) or {}
 
         if hasattr(self, '_artifact_cache'):
@@ -949,6 +950,7 @@ class WikiMixin(_PathResolverMixin):
 
     def load_wiki(self, filename: str) -> dict:
         path = self._dir_for(filename) / "wiki" / "wiki.json"
+                
         if not path.exists():
-            raise FileNotFoundError(f"No wiki found for '{filename}'.")
+            return None
         return read_json(path) or {}

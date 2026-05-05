@@ -6,7 +6,7 @@ Single entry point for all search methods: Hybrid, Semantic, and Keyword with op
 
 - **Three Search Methods**: Hybrid (RRF fusion), Semantic (dense), Keyword (BM25)
 - **Optional Reranking**: Cross-encoder reranking for improved precision
-- **Multiple Scopes**: Search all documents, single files, or file clusters
+- **Multiple Scopes**: Search all documents, single files, or multiple files
 - **Smart Defaults**: Hybrid search by default with sensible parameters
 - **Unified Interface**: Consistent CLI across all search methods
 
@@ -14,14 +14,14 @@ Single entry point for all search methods: Hybrid, Semantic, and Keyword with op
 
 ```bash
 # Default hybrid search
-uv run src/core/Retrieval/main.py "photosynthesis"
+uv run src/features/Retrieval/main.py "photosynthesis"
 
 # With reranking
-uv run src/core/Retrieval/main.py "photosynthesis" --rerank
+uv run src/features/Retrieval/main.py "photosynthesis" --rerank
 
 # Specific method
-uv run src/core/Retrieval/main.py "cell division" --method keyword
-uv run src/core/Retrieval/main.py "mitochondria function" --method semantic
+uv run src/features/Retrieval/main.py "cell division" --method keyword
+uv run src/features/Retrieval/main.py "mitochondria function" --method semantic
 ```
 
 ## Pipeline Context
@@ -52,73 +52,73 @@ uv run src/core/Retrieval/main.py "mitochondria function" --method semantic
 ### Basic Usage
 ```bash
 # Default hybrid search (all documents)
-uv run src/core/Retrieval/main.py "photosynthesis process"
+uv run src/features/Retrieval/main.py "photosynthesis process"
 
 # Query with flag
-uv run src/core/Retrieval/main.py --query "DNA replication"
+uv run src/features/Retrieval/main.py --query "DNA replication"
 ```
 
 ### Method Selection
 ```bash
 # Hybrid (default) - combines semantic + keyword
-uv run src/core/Retrieval/main.py "photosynthesis" --method hybrid
+uv run src/features/Retrieval/main.py "photosynthesis" --method hybrid
 
 # Semantic - for conceptual queries
-uv run src/core/Retrieval/main.py "how do plants make energy" --method semantic
+uv run src/features/Retrieval/main.py "how do plants make energy" --method semantic
 
 # Keyword - for exact term matching
-uv run src/core/Retrieval/main.py "chlorophyll thylakoid" --method keyword
+uv run src/features/Retrieval/main.py "chlorophyll thylakoid" --method keyword
 ```
 
 ### Search Scope
 ```bash
 # Search specific file
-uv run src/core/Retrieval/main.py "ATP synthesis" --file biology.pdf
+uv run src/features/Retrieval/main.py "ATP synthesis" --file biology.pdf
 
 # Search cluster of files
-uv run src/core/Retrieval/main.py "protein folding" --cluster bio.pdf chem.pdf
+uv run src/features/Retrieval/main.py "protein folding" --file bio.pdf chem.pdf
 
 # Search all documents (default)
-uv run src/core/Retrieval/main.py "mitosis"
+uv run src/features/Retrieval/main.py "mitosis"
 ```
 
 ### Reranking
 ```bash
 # Enable reranking
-uv run src/core/Retrieval/main.py "photosynthesis" --rerank
+uv run src/features/Retrieval/main.py "photosynthesis" --rerank
 
 # Custom rerank weight
-uv run src/core/Retrieval/main.py "cell biology" --rerank --rerank-weight 0.2
+uv run src/features/Retrieval/main.py "cell biology" --rerank --rerank-weight 0.2
 
 # Semantic + reranking
-uv run src/core/Retrieval/main.py "mitochondria" --method semantic --rerank
+uv run src/features/Retrieval/main.py "mitochondria" --method semantic --rerank
 ```
 
 ### Method-Specific Parameters
 ```bash
 # Keyword with custom BM25 params
-uv run src/core/Retrieval/main.py "enzymes" --method keyword --k1 1.2 --b 0.5
+uv run src/features/Retrieval/main.py "enzymes" --method keyword --k1 1.2 --b 0.5
 
 # Semantic with score threshold
-uv run src/core/Retrieval/main.py "mitosis" --method semantic --min-score 0.5
+uv run src/features/Retrieval/main.py "mitosis" --method semantic --min-score 0.5
 
 # Hybrid with custom RRF
-uv run src/core/Retrieval/main.py "DNA" --method hybrid --rrf-k 30 --semantic-weight 1.5
+uv run src/features/Retrieval/main.py "DNA" --method hybrid --rrf-k 30 --semantic-weight 1.5
 ```
 
 ### Output Options
 ```bash
 # More results
-uv run src/core/Retrieval/main.py "ATP" --top-k 10
+uv run src/features/Retrieval/main.py "ATP" --top-k 10
 
 # Detailed inspection
-uv run src/core/Retrieval/main.py "enzymes" --inspect
+uv run src/features/Retrieval/main.py "enzymes" --inspect
 
 # JSON export
-uv run src/core/Retrieval/main.py "cell biology" --json
+uv run src/features/Retrieval/main.py "cell biology" --json
 
 # Full example
-uv run src/core/Retrieval/main.py "photosynthesis" --method hybrid --file bio.pdf --rerank --top-k 10 --inspect
+uv run src/features/Retrieval/main.py "photosynthesis" --method hybrid --file bio.pdf --rerank --top-k 10 --inspect
 ```
 
 ## Parameters
@@ -128,8 +128,7 @@ uv run src/core/Retrieval/main.py "photosynthesis" --method hybrid --file bio.pd
 |-----------|---------|-------------|
 | `query` | Required | Search query (positional or --query) |
 | `--method` | hybrid | Retrieval method: hybrid, semantic, keyword |
-| `--file` | None | Search specific file |
-| `--cluster` | None | Search cluster of files |
+| `--file` | None | Search specific file(s) |
 | `--top-k` | 5 | Number of final results |
 
 ### Hybrid Parameters

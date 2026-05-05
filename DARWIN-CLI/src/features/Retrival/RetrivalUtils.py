@@ -38,9 +38,7 @@ class RetrievalArgs:
     # Core
     query: str
     method: RetrievalMethod = RetrievalMethod.HYBRID
-    file: Optional[str] = None
-    cluster_files: Optional[List[str]] = None
-    project: Optional[str] = None
+    files: list[str] = field(default_factory=list)
     
     # Output
     top_k: int = DEFAULT_TOP_K

@@ -1,4 +1,4 @@
-## `src/core/KeywordSearch/README.md`
+## `src/Features/Retrival/KeywordSearch/README.md`
 
 ```markdown
 # Keyword Search Module
@@ -22,34 +22,34 @@ This module provides pure BM25 keyword search functionality, allowing you to sea
 ### Basic Search
 ```bash
 # Search all indexed documents
-uv run src/core/KeywordSearch/main.py "photosynthesis"
+uv run src/Features/Retrival/KeywordSearch/main.py "photosynthesis"
 
 # Alternative query syntax
-uv run src/core/KeywordSearch/main.py --query "cell division"
+uv run src/Features/Retrival/KeywordSearch/main.py --query "cell division"
 ```
 
 ### Search Specific Documents
 ```bash
 # Search a single document
-uv run src/core/KeywordSearch/main.py "mitochondria" --file biology.pdf
+uv run src/Features/Retrival/KeywordSearch/main.py "mitochondria" --file biology.pdf
 
 # Search a cluster of documents
-uv run src/core/KeywordSearch/main.py "DNA replication" --cluster genetics.pdf biology.pdf cell_bio.pdf
+uv run src/Features/Retrival/KeywordSearch/main.py "DNA replication" --file genetics.pdf biology.pdf cell_bio.pdf
 ```
 
 ### Advanced Options
 ```bash
 # Get more results
-uv run src/core/KeywordSearch/main.py "enzymes" --top-k 10
+uv run src/Features/Retrival/KeywordSearch/main.py "enzymes" --top-k 10
 
 # Tune BM25 parameters
-uv run src/core/KeywordSearch/main.py "ATP synthesis" --k1 1.2 --b 0.5
+uv run src/Features/Retrival/KeywordSearch/main.py "ATP synthesis" --k1 1.2 --b 0.5
 
 # Inspect detailed results
-uv run src/core/KeywordSearch/main.py "photosynthesis" --inspect
+uv run src/Features/Retrival/KeywordSearch/main.py "photosynthesis" --inspect
 
 # Export as JSON
-uv run src/core/KeywordSearch/main.py "cell biology" --json
+uv run src/Features/Retrival/KeywordSearch/main.py "cell biology" --json
 ```
 
 ## Parameters
@@ -59,8 +59,7 @@ uv run src/core/KeywordSearch/main.py "cell biology" --json
 | `--top-k` | 5 | Number of results to return |
 | `--k1` | 1.5 | BM25 term frequency saturation parameter |
 | `--b` | 0.75 | BM25 length normalization parameter |
-| `--file` | None | Search specific file |
-| `--cluster` | None | Search cluster of files (space-separated) |
+| `--file` | None | Search specific file(s) |
 | `--inspect` | False | Show detailed chunk information |
 | `--json` | False | Output results as JSON |
 
@@ -103,7 +102,7 @@ uv run src/core/KeywordSearch/main.py "cell biology" --json
 ## Prerequisites
 
 - Documents must be indexed using the BM25 indexing pipeline
-- Check searchable status with: `uv run src/core/Status/main.py`
+- Check searchable status with: `uv run src/Features/Retrival/Status/main.py`
 
 ## Notes
 

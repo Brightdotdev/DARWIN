@@ -1,25 +1,3 @@
-"""
-src/core/Knowledge/Wiki/WikiGenerator.py
------------------------------------------
-Wiki generation from concept graph clusters.
-
-Two stages:
-  - build_wiki_from_graph():     offline, always runs, no LLM
-  - generate_wiki_summaries():   optional LLM enrichment on top
-
-The base wiki is structured data — concept, chunk_indices, related,
-centroid, frequency, keywords. Summaries and manifest are None until
-the LLM stage fills them in. Both consumers (RAG context builder and
-user-facing wiki viewer) read from the same DocumentWiki object.
-
-Pipeline
---------
-GraphData + centroids
-    → build_wiki_from_graph()     → DocumentWiki (summaries=None)
-    → generate_wiki_summaries()   → DocumentWiki (summaries filled)
-    → store.save_wiki()
-"""
-
 import numpy as np
 from typing import List, Dict, Optional
 
@@ -28,7 +6,6 @@ from src.features.Knowledge.Graph.GraphUtils import GraphData, ConceptNode, Rela
 from src.features.Knowledge.Wiki.WikiUtils import (
     WikiPage,
     DocumentWiki,
-    DEFAULT_MAX_CONCEPTS,
     DEFAULT_CHUNKS_PER_CONCEPT,
 )
 from src.features.Storage.DarwinStore import DarwinStore
@@ -295,9 +272,9 @@ def run_wiki_pipeline(
     store: DarwinStore,
     mode: str = "index",
     llm_model: Optional[str] = None,
-    max_concepts: int = DEFAULT_MAX_CONCEPTS,
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
     rerun: bool = False,
+    completed_files : Optional[List[str]] = None,
 ) -> Optional[DocumentWiki]:
     """
     Full wiki generation pipeline for one document.
@@ -318,6 +295,8 @@ def run_wiki_pipeline(
     # ── Cache check ──
     if not rerun and store.has_wiki(filename):
         darwin.log(f"Skipping wiki: fresh exists for {filename}", LogType.INFO)
+        completed_files.append(filename)
+
         try:
             return DocumentWiki.from_dict(store.load_wiki(filename))
         except Exception:

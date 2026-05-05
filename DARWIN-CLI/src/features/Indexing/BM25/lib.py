@@ -43,8 +43,8 @@ def precompute_idfs(
 
 @dataclass
 class BM25IndexingArgs:
-    target:        str
-    file:          Optional[str] = None
+    files: list[str] = field(default_factory=list)
+    
     threshold:     float         = DOMAIN_STOP_THRESHOLD
     idf_smoothing: float         = DEFAULT_IDF_SMOOTHING
     inspect:       bool          = False

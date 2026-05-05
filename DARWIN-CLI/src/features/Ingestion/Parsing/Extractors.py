@@ -466,7 +466,7 @@ def pymupdf4llm_extract(
         image_path=str(img_dir) if do_images else None,
         image_format="png",
         page_chunks=False,
-        show_progress=True,
+        show_progress=False,
     )
 
     display_text   = _strip_pymupdf_markers(raw, keep_images=do_images)

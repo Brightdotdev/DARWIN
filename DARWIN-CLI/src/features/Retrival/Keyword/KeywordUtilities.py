@@ -1,23 +1,6 @@
-"""
-src/core/Search/KeywordUtils.py
--------------------------------
-Utilities for BM25 keyword search: query tokenization,
-result formatting, and argument handling.
 
-Query Tokenization
-------------------
-Uses BlingFire text_to_words() — same tokenizer as indexing.
-Query gets same treatment as chunks:
-    - Lowercase
-    - Remove standard English stopwords
-    - Minimum token length 2
-    - Strip punctuation and numbers
-
-This ensures query tokens match the BM25 index vocabulary.
-"""
-
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass,field
+from typing import List
 from src.features.Indexing.BM25.lib import BM25Data,compute_idf
         
 
@@ -39,9 +22,7 @@ DEFAULT_B = 0.75      # BM25 length normalization
 @dataclass
 class KeywordSearchArgs:
     query: str
-    file: Optional[str] = None
-    cluster_files: Optional[List[str]] = None  
-    project: Optional[str] = None
+    files: list[str] = field(default_factory=list)
     top_k: int = DEFAULT_TOP_K
     k1: float = DEFAULT_K1
     b: float = DEFAULT_B

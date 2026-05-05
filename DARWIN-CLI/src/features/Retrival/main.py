@@ -87,60 +87,7 @@ def _is_searchable(filename: str | None, status: dict, method: RetrievalMethod) 
     return False
 
 
-def _validate_cluster_files(
-    cluster_files: List[str],
-    store: DarwinStore,
-    method: RetrievalMethod
-) -> List[str]:
-    """Validate cluster files exist and are searchable."""
-    status = store.status()
-    valid_files = []
-    invalid_files = []
-    
-    for filename in cluster_files:
-        if _is_searchable(filename, status, method):
-            valid_files.append(filename)
-        else:
-            invalid_files.append(filename)
-    
-    if invalid_files:
-        method_name = method.value.capitalize()
-        darwin.log(
-            f"Warning: {len(invalid_files)} files not {method_name}-searchable:"
-            f"Try indexxing them first...we're going to skip those files for now",
-            LogType.WARNING
-        )
-        for f in invalid_files:
-            darwin.log(f"  • {f}", LogType.WARNING)
-        darwin.log("Run the appropriate indexing pipeline first.", LogType.INFO)
-    
-    return valid_files
 
-
-def _get_searchable_files(store: DarwinStore, method: RetrievalMethod) -> List[str]:
-    """Get all searchable files for the given method."""
-    status = store.status()
-    
-    if method == RetrievalMethod.KEYWORD:
-        return [
-            r.original_name
-            for r in store.registry.list_kw_searchable()
-        ]
-    elif method == RetrievalMethod.SEMANTIC:
-        return [
-            r.original_name
-            for r in store.registry.list_all()
-            if _is_searchable(r.original_name, status, RetrievalMethod.SEMANTIC)
-        ]
-    elif method == RetrievalMethod.HYBRID:
-        # Hybrid needs both - filter from all registered files
-        return [
-            r.original_name
-            for r in store.registry.list_all()
-            if (_is_searchable(r.original_name, status, RetrievalMethod.KEYWORD) and 
-                _is_searchable(r.original_name, status, RetrievalMethod.SEMANTIC))
-        ]
-    return []
 
 # ============================================================================
 # Reranking wrapper
@@ -193,9 +140,7 @@ def _execute_search(
 
         hybridSearchArgs =  HybridSearchArgs(
             query=args.query,
-            file=args.file,
-            cluster_files=args.cluster_files,
-            project=args.project,
+            files=args.files,
             top_k=args.top_k,
             rrf_k=args.rrf_k,
             semantic_weight=args.semantic_weight,
@@ -215,9 +160,7 @@ def _execute_search(
 
         semantic_search_args = SemanticSearchArgs(
             query=args.query,
-            file=args.file,
-            cluster_files=args.cluster_files,
-            project=args.project,
+            files=args.files,
             top_k=args.top_k,
             min_score=args.min_score,
             inspect=args.inspect,
@@ -230,9 +173,7 @@ def _execute_search(
         darwin.log(f"BM25 parameters: k1={args.k1}, b={args.b}", LogType.INFO)
         search_args = KeywordSearchArgs(
             query=args.query,
-            file=args.file,
-            cluster_files=args.cluster_files,
-            project=args.project,
+            files=args.files,
             top_k=args.top_k,
             k1=args.k1,
             b=args.b,
@@ -419,7 +360,6 @@ def handle_retrieval(args: RetrievalArgs) -> None:
         darwin.log("  • Using different keywords", LogType.INFO)
         darwin.log("  • Changing search method (--method)", LogType.INFO)
         darwin.log("  • Lowering thresholds (--min-score for semantic)", LogType.INFO)
-        darwin.log("  • Searching specific files with --file or --cluster", LogType.INFO)
         darwin.log("  • Increasing pool size with --pool-size", LogType.INFO)
         return
     
@@ -468,10 +408,7 @@ Examples:
     )
     
     # Scope
-    parser.add_argument("--file", "-f", default=None, help="Search specific file")
-    parser.add_argument("--cluster", "-c", nargs="+", default=None,
-                       help="Search cluster of files (space-separated)")
-    parser.add_argument("--project", "-p", default=None, help="Project directory")
+    parser.add_argument("--file", "-f", nargs="+", default=None, help="One or more files to index")
     
     # Output
     parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K,
@@ -536,10 +473,6 @@ async def main() -> int:
     if not query:
         parser.error("Query required (either as positional argument or --query flag)")
     
-    # Validate cluster and file are not both specified
-    if args.cluster and args.file:
-        parser.error("Cannot specify both --cluster and --file. Use one or the other.")
-    
     # Setup WebSocket
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
     
@@ -548,9 +481,7 @@ async def main() -> int:
         retrieval_args = RetrievalArgs(
             query=query,
             method=RetrievalMethod(args.method),
-            file=args.file,
-            cluster_files=args.cluster,
-            project=args.project,
+            files=args.file,
             top_k=args.top_k,
             inspect=args.inspect,
             json_output=args.json,

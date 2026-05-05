@@ -4,9 +4,9 @@ src/core/HybridSearch/HybridSearchUtils.py
 Utilities for hybrid search: RRF fusion, result merging, and formatting.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass,field
 from typing import List, Dict, Optional, Any
-from src.features.Retrival.Semantic.SematicSearchUtils import SematicSearchResult
+from src.features.Retrival.Semantic.SematicSearchUtils import SemanticSearchResult
 from src.features.Retrival.Keyword.KeywordSearch import KeywordSearchResult
 import copy
 from src.features.Retrival.lib import HybridSearchResult,OverlapDirection,ChunkLink
@@ -48,9 +48,7 @@ HYBBRID_SEARCH_PARAMS = {
 @dataclass
 class HybridSearchArgs:
     query: str
-    file: Optional[str] = None
-    cluster_files: Optional[List[str]] = None  
-    project: Optional[str] = None
+    files: list[str] = field(default_factory=list)
     top_k: int = DEFAULT_TOP_K
     rrf_k: int = DEFAULT_RRF_K
     semantic_weight: float = DEFAULT_SEMANTIC_WEIGHT
@@ -92,7 +90,7 @@ def build_unified_result(
     
 
 def merge_results(
-    semantic_results: List[SematicSearchResult],
+    semantic_results: List[SemanticSearchResult],
     keyword_results:  List[KeywordSearchResult],
 ) -> List[HybridSearchResult]:
     """

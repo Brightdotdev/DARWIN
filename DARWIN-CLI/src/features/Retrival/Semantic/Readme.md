@@ -1,5 +1,5 @@
 
-## `src/core/Search/Sematic/README.md`
+## `src/features/Retrival/Sematic/README.md`
 
 ```markdown
 # Semantic Search Module
@@ -23,34 +23,34 @@ This module provides neural semantic search using document embeddings and vector
 ### Basic Search
 ```bash
 # Search all embedded documents
-uv run src/core/Search/Sematic/main.py "photosynthesis process"
+uv run src/features/Retrival/Sematic/main.py "photosynthesis process"
 
 # Alternative query syntax
-uv run src/core/Search/Sematic/main.py --query "how do plants make energy"
+uv run src/features/Retrival/Sematic/main.py --query "how do plants make energy"
 ```
 
 ### Search Specific Documents
 ```bash
 # Search a single document
-uv run src/core/Search/Sematic/main.py "cell division" --file biology.pdf
+uv run src/features/Retrival/Sematic/main.py "cell division" --file biology.pdf
 
 # Search a cluster of documents
-uv run src/core/Search/Sematic/main.py "protein folding" --cluster biochem.pdf mol_bio.pdf
+uv run src/features/Retrival/Sematic/main.py "protein folding" --file biochem.pdf mol_bio.pdf
 ```
 
 ### Advanced Options
 ```bash
 # Get more results with filtering
-uv run src/core/Search/Sematic/main.py "mitochondria function" --top-k 10
+uv run src/features/Retrival/Sematic/main.py "mitochondria function" --top-k 10
 
 # Set minimum score threshold (0-1)
-uv run src/core/Search/Sematic/main.py "ATP synthesis" --min-score 0.5
+uv run src/features/Retrival/Sematic/main.py "ATP synthesis" --min-score 0.5
 
 # Inspect detailed results
-uv run src/core/Search/Sematic/main.py "DNA replication" --inspect
+uv run src/features/Retrival/Sematic/main.py "DNA replication" --inspect
 
 # Export as JSON
-uv run src/core/Search/Sematic/main.py "enzyme kinetics" --json
+uv run src/features/Retrival/Sematic/main.py "enzyme kinetics" --json
 ```
 
 ## Parameters
@@ -59,8 +59,7 @@ uv run src/core/Search/Sematic/main.py "enzyme kinetics" --json
 |-----------|---------|-------------|
 | `--top-k` | 5 | Number of results to return |
 | `--min-score` | 0.3 | Minimum similarity score threshold (0-1) |
-| `--file` | None | Search specific file |
-| `--cluster` | None | Search cluster of files (space-separated) |
+| `--file` | None | Search specific file(s) |
 | `--inspect` | False | Show detailed chunk information |
 | `--json` | False | Output results as JSON |
 
@@ -104,7 +103,7 @@ Adjust based on your precision/recall needs:
 
 - Documents must be processed through the embedding pipeline
 - Embedding model must be configured in your project settings
-- Check embedding status with: `uv run src/core/Status/main.py`
+- Check embedding status with: `uv run src/features/Retrival/main.py`
 
 ## Notes
 

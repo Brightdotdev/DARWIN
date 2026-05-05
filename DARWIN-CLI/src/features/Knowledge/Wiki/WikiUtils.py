@@ -8,7 +8,6 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 
 
-DEFAULT_MAX_CONCEPTS = 20
 DEFAULT_CHUNKS_PER_CONCEPT = 8
 
 
@@ -70,12 +69,9 @@ class DocumentWiki:
 
 @dataclass
 class WikiGenerationArgs:
-    target:             str
-    file:               Optional[str]  = None
-    project:            Optional[str]  = None
+    files: list[str] = field(default_factory=list)
     mode:               str            = "index"   # "index" | "summary"
     llm_model:          Optional[str]  = None
-    max_concepts:       int            = DEFAULT_MAX_CONCEPTS
     chunks_per_concept: int            = DEFAULT_CHUNKS_PER_CONCEPT
     inspect:            bool           = False
     rerun:              bool           = False

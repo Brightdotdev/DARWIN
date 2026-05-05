@@ -56,10 +56,10 @@ uv run src/core/Indexing/main.py --file biology.pdf
 
 ---
 
-### Multiple Files (Cluster)
+### Multiple Files 
 
 ```bash
-uv run src/core/Indexing/main.py --cluster bio.pdf chem.pdf physics.pdf
+uv run src/core/Indexing/main.py --file bio.pdf chem.pdf physics.pdf
 ```
 
 ---
@@ -70,9 +70,7 @@ uv run src/core/Indexing/main.py --cluster bio.pdf chem.pdf physics.pdf
 
 | Flag        | Description                        |
 | ----------- | ---------------------------------- |
-| `path`      | Target project directory           |
-| `--file`    | Index a single file                |
-| `--cluster` | Index multiple specific files      |
+| `--file`    | Index a single file or multiple    |
 | `--rerun`   | Rebuild indexes even if they exist |
 
 ---
@@ -121,10 +119,10 @@ uv run src/core/Indexing/main.py
 
 ---
 
-**3. Cluster Mode**
+**3. Muliple files Mode**
 
 ```bash
---cluster file1.pdf file2.pdf
+--file file1.pdf file2.pdf
 ```
 
 * Processes files sequentially
@@ -156,7 +154,7 @@ For each file:
 2. Embedding generation
 ```
 
-If no file/cluster is provided:
+If no file is provided:
 
 ```
 1. BM25 (all files)
@@ -233,7 +231,6 @@ Indexing complete — 2 indexed · 1 failed
 
 ## Notes
 
-* `--cluster` and `--file` cannot be used together
 * Cached indexes are reused unless `--rerun` is set
 * Embedding model is managed internally
 

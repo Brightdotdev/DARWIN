@@ -16,7 +16,7 @@ This module merges the strengths of both semantic (dense) and keyword (sparse) s
 - **Weighted Combination**: Adjustable weights for semantic vs keyword importance
 - **Configurable Pool**: Control how many candidates each retriever contributes
 - **Overlap Detection**: Identifies potentially duplicated content across retrievers
-- **Multiple Search Scopes**: Search all documents, single files, or clusters
+- **Multiple Search Scopes**: Search all documents, single files or multiple flse
 - **Detailed Scoring**: See RRF, semantic, and keyword scores individually
 - **JSON Export**: Output results in machine-readable format
 
@@ -37,7 +37,7 @@ uv run src/features/Retrival/HybridSearch/main.py --query "cell division mechani
 uv run src/features/Retrival/HybridSearch/main.py "david covenant" --file bible.pdf
 
 # Search a cluster of documents
-uv run src/features/Retrival/HybridSearch/main.py "quantum mechanics" --cluster physics.pdf modern_physics.pdf
+uv run src/features/Retrival/HybridSearch/main.py "quantum mechanics" --file physics.pdf modern_physics.pdf
 ```
 
 ### Advanced Options
@@ -66,8 +66,7 @@ uv run src/features/Retrival/HybridSearch/main.py "enzyme mechanisms" --json
 | `--pool-size` | 50 | Candidates per retriever before fusion |
 | `--alpha` | 0.5 | Alpha parameter for hybrid scoring |
 | `--beta` | 0.5 | Beta parameter for hybrid scoring |
-| `--file` | None | Search specific file |
-| `--cluster` | None | Search cluster of files (space-separated) |
+| `--file` | None | Search specific file(s) |
 | `--inspect` | False | Show detailed chunk information |
 | `--json` | False | Output results as JSON |
 

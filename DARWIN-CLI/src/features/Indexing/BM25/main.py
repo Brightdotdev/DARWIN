@@ -75,8 +75,8 @@ def handle_bm25_indexing(args: BM25IndexingArgs) -> None:
     status = store.status()
     filenames = []
 
-    if args.file:
-        filenames = [args.file] if store.has_chunks(args.file) else []
+    if args.files:
+        filenames = [f for f in args.files if store.has_chunks(f)]
     else:    
         filenames = [
             fname for fname, info in status.get("files", {}).items()
@@ -135,8 +135,10 @@ async def main() -> int:
     parser = argparse.ArgumentParser(
         description="Build BM25 sparse index from chunked documents"
     )
-    parser.add_argument("path",              nargs="?", default=".",             help="Project directory")
-    parser.add_argument("--file",     "-f",  default=None,                       help="Index a single file")
+    
+    parser.add_argument("--file", "-f", nargs="+", default=None,
+                        help="Files to process (paths or bare filenames). Omit for all.")
+
     parser.add_argument("--threshold","-t",  type=float, default=DOMAIN_STOP_THRESHOLD,
                         help=f"Domain stopword threshold (default: {DOMAIN_STOP_THRESHOLD})")
     parser.add_argument("--idf-smoothing", "-s", type=float, default=DEFAULT_IDF_SMOOTHING,
@@ -148,19 +150,13 @@ async def main() -> int:
 
     args = parser.parse_args()
 
-    # Validate target path
-    target_path = Path(args.path).resolve()
-    if not target_path.exists():
-        darwin.log(f"Path does not exist: {args.path}", LogType.ERROR)
-        return 1
 
     # Setup WebSocket
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
 
     try:
         bm25_args = BM25IndexingArgs(
-            target=args.path,
-            file=args.file,
+            files=args.file,
             threshold=args.threshold,
             idf_smoothing=args.idf_smoothing,
             inspect=args.inspect,

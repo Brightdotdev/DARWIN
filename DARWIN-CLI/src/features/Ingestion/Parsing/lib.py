@@ -89,8 +89,7 @@ class ExtractedImage:
 @dataclass
 class ParsingArgs:
     target:            str
-    file:              Optional[str] = None
-    cluster:           Optional[List[str]] = None
+    files: list[str] = field(default_factory=list)
     images:            bool = False
     caption:           bool = False
     recursive:         bool = False

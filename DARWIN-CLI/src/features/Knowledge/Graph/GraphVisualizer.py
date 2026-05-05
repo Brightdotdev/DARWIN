@@ -1,10 +1,10 @@
 """
 src/core/Knowledge/Graph/GraphVisualizer.py
 -------------------------------------------
-Obsidian-style unipartite concept graph visualization.
+Obsidian-style knowledge graph visualization.
 
-Produces HTML with force-directed layout, clear node separation,
-auto-threshold edge filtering, and query highlighting support.
+Updated for spaCy-based entity-relationship graphs.
+Supports directed semantic edges + undirected co-occurrence edges.
 """
 
 from typing import Optional, List
@@ -19,14 +19,12 @@ def render_concept_graph(
     """
     Build interactive HTML graph using pyvis.
 
-    Obsidian-like feel:
-      - Strong repulsion between all nodes (gravitationalConstant: -120)
-      - Weak springs between connected nodes (springConstant: 0.04)
-      - Long spring length for separation (springLength: 200)
-      - High damping for quick stabilization
+    Distinguishes:
+      - Semantic relations (directed, colored by relation type)
+      - Co-occurrence edges (undirected, gray)
 
     Args:
-        graph:             The concept graph
+        graph:             The knowledge graph
         highlighted_nodes: Node IDs to pulse/highlight (gold)
         height:            CSS container height
 
@@ -40,9 +38,9 @@ def render_concept_graph(
 
     highlighted = set(highlighted_nodes or [])
 
-    net = Network(height=height, width="100%", bgcolor="#0f0f0f", font_color="#e0e0e0")
+    net = Network(height=height, width="100%", bgcolor="#0f0f0f", font_color="#e0e0e0", directed=True)
 
-    # ── Obsidian-like physics ───────────────────────────────────────────
+    # ── Physics ───────────────────────────────────────────────────────────
     net.set_options("""{
         "nodes": {
             "shape": "dot",
@@ -57,7 +55,9 @@ def render_concept_graph(
         },
         "edges": {
             "smooth": {"type": "continuous", "roundness": 0.5},
-            "arrows": {"to": {"enabled": false}},
+            "arrows": {
+                "to": {"enabled": true, "scaleFactor": 0.6}
+            },
             "color": {"inherit": false}
         },
         "physics": {
@@ -89,27 +89,44 @@ def render_concept_graph(
 
     for node in graph.nodes:
         size = max(8, min(40, (node.frequency / max_freq) * 35))
-        edge_count = sum(1 for e in graph.edges
-                        if e.source == node.id or e.target == node.id)
 
-        # Color: more connected = warmer
+        # Count edge types
+        semantic_count = sum(1 for e in graph.edges
+                            if (e.source == node.id or e.target == node.id)
+                            and e.relation_type != "co_occurrence")
+        cooc_count = sum(1 for e in graph.edges
+                        if (e.source == node.id or e.target == node.id)
+                        and e.relation_type == "co_occurrence")
+
+        # Color by entity type
+        type_colors = {
+            "PERSON": "#ff6b6b",
+            "ORG": "#4ecdc4",
+            "GPE": "#45b7d1",
+            "PRODUCT": "#feca57",
+            "EVENT": "#ff9ff3",
+            "WORK_OF_ART": "#54a0ff",
+            "LAW": "#5f27cd",
+            "CONCEPT": "#96ceb4",
+        }
+
         if node.id in highlighted:
             color = "#ffd700"
             border_width = 4
-        elif edge_count >= 5:
-            color = "#ff6b6b"
-            border_width = 1.5
-        elif edge_count >= 3:
-            color = "#feca57"
-            border_width = 1.5
         else:
-            color = "#4ecdc4"
+            color = type_colors.get(node.entity_type, "#a8a8a8")
             border_width = 1.5
+
+        title = f"<b>{node.display_name}</b><br>"
+        title += f"Type: {node.entity_type}<br>"
+        title += f"In {node.frequency} chunks<br>"
+        title += f"First @ chunk {node.first_mention_chunk}<br>"
+        title += f"{semantic_count} semantic, {cooc_count} co-occurrence"
 
         net.add_node(
             node.id,
-            label=node.label,
-            title=f"<b>{node.label}</b><br>In {node.frequency} chunks<br>{edge_count} connections",
+            label=node.display_name,
+            title=title,
             size=size,
             color=color,
             borderWidth=border_width,
@@ -123,19 +140,39 @@ def render_concept_graph(
         width = 0.3 + (w / max_weight) * 2.5
         opacity = 0.15 + (w / max_weight) * 0.6
 
+        # Semantic vs co-occurrence styling
+        if edge.relation_type == "co_occurrence":
+            edge_color = f"rgba(150, 180, 220, {opacity})"
+            dashes = True
+            arrow_scale = 0
+        else:
+            # Semantic relation: color by type
+            relation_colors = {
+                "acquire": "#ff6b6b",
+                "found": "#4ecdc4",
+                "create": "#feca57",
+                "lead": "#ff9ff3",
+                "develop": "#54a0ff",
+            }
+            base_color = relation_colors.get(edge.relation_type, "#a8a8a8")
+            edge_color = f"rgba({int(base_color[1:3], 16)}, {int(base_color[3:5], 16)}, {int(base_color[5:7], 16)}, {min(opacity + 0.2, 1.0)})"
+            dashes = False
+            arrow_scale = 0.6
+
         if edge.source in highlighted and edge.target in highlighted:
             edge_color = f"rgba(255, 215, 0, {min(opacity + 0.3, 1.0)})"
-            edge_width = width * 1.8
-        else:
-            edge_color = f"rgba(150, 180, 220, {opacity})"
-            edge_width = width
+            width *= 1.8
+
+        title = f"{edge.relation_type}<br>Confidence: {w:.3f}<br>Evidence: {len(edge.evidence_chunks)} chunks"
 
         net.add_edge(
             edge.source, edge.target,
             value=w,
-            width=edge_width,
+            width=width,
             color={"color": edge_color, "highlight": "#ffffff"},
-            title=f"Similarity: {w:.3f}",
+            title=title,
+            dashes=dashes,
+            arrows={"to": {"enabled": arrow_scale > 0, "scaleFactor": arrow_scale}},
         )
 
     return net.generate_html()

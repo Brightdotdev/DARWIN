@@ -88,10 +88,7 @@ class Chunk:
 
 @dataclass
 class ChunkingArgs:
-    target:    str
-    file:      Optional[str] = None
-    cluster:   Optional[List[str]] = None
-    project:   Optional[str] = None
+    files:     list[str] = field(default_factory=list)
     inspect:   bool = False
     rerun:     bool = False
 

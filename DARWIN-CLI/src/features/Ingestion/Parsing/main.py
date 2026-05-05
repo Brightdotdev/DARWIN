@@ -142,14 +142,14 @@ def parse_documents(
 def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
     target_paths: list[Path] = []
 
-    if args.cluster:
-        for raw in args.cluster:
+    if args.files:
+        for raw in args.files:
             p = Path(raw).resolve()
             if not p.exists():
-                darwin.log(f"Cluster file not found: {raw}", LogType.ERROR)
+                darwin.log(f"file not found: {raw}", LogType.ERROR)
                 continue
             if not p.is_file():
-                darwin.log(f"Cluster entry is not a file: {raw}", LogType.ERROR)
+                darwin.log(f"file provided is not a file: {raw}", LogType.ERROR)
                 continue
             if detect_type(p) is None:
                 darwin.log(f"Unsupported file type in cluster: {p.suffix} ({p.name})", LogType.ERROR)
@@ -157,23 +157,9 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
             target_paths.append(p)
 
         if not target_paths:
-            darwin.log("No valid supported files found in cluster.", LogType.ERROR)
+            darwin.log("No valid supported files found.", LogType.ERROR)
             return []
-
-    elif args.file:
-        file_path = Path(args.file).resolve()
-        if not file_path.exists():
-            darwin.log(f"File not found: {args.file}", LogType.ERROR)
-            return []
-        if not file_path.is_file():
-            darwin.log(f"Not a file: {args.file}", LogType.ERROR)
-            return []
-        file_type = detect_type(file_path)
-        if file_type is None:
-            darwin.log(f"Unsupported file type: {file_path.suffix}", LogType.ERROR)
-            return []
-        target_paths = [file_path]
-
+        
     else:
         target_dir = Path(args.target).resolve()
         if not target_dir.exists():
@@ -186,13 +172,7 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
         darwin.log("Supported types: .pdf, .docx, .pptx, .txt, .md", LogType.INFO)
         return []
 
-    darwin.log("")
-    if args.cluster:
-        darwin.log(f"Parsing cluster: {len(target_paths)} selected file(s)", LogType.INFO)
-    elif args.file:
-        darwin.log(f"Parsing: {target_paths[0].name}", LogType.INFO)
-    else:
-        darwin.log(f"Parsing directory: {args.target}", LogType.INFO)
+
 
     darwin.log(f"Settings: Images={args.images} | Caption={args.caption} | Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}", LogType.INFO)
     darwin.log("")
@@ -263,23 +243,16 @@ async def main() -> int:
     parser.add_argument("--recursive", "-r", action="store_true", help="Scan directories recursively")
     parser.add_argument("--images", "-img", action="store_true", help="Extract images from documents")
     parser.add_argument("--caption", "-c", action="store_true", help="Generate captions for images (requires --images)")
-    parser.add_argument("--file", "-f", default=None, help="Parse a single file instead of a directory")
+    parser.add_argument("--file", "-f",
+    nargs="+", default=None, help="Parse file(s)")
     parser.add_argument("--precise", action="store_true", help="Use pymupdf4llm for layout-accurate extraction")
     parser.add_argument("--no-save", action="store_true", help="Don't save markdown files (preview only)")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
-    parser.add_argument(
-    "--cluster", "-cl",
-    nargs="+",
-    default=None,
-    metavar="FILE",
-    help="Parse a specific set of files (space-separated paths)",
-)
+
     args = parser.parse_args()
     
-    if args.cluster and args.file:
-        darwin.log("--cluster and --file are mutually exclusive", LogType.ERROR)
-        return 1
+ 
 
 
     # Use shared WebSocket setup — only ONE server starts

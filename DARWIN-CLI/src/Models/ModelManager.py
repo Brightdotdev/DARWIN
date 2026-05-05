@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from typing import Optional as Opt
+from typing import Optional
 
 from src.Models.ModelStore import ModelStore
 from src.Models.ModelLoader import ModelLoader
@@ -20,7 +20,7 @@ _SYSTEM_CACHE = None
 class ModelManager:
     """User-facing orchestration for model management."""
     
-    def __init__(self, darwin_store: Opt[DarwinStore] = None):
+    def __init__(self, darwin_store: Optional[DarwinStore] = None):
         global _SYSTEM_CACHE
         
         self.model_store = ModelStore()
@@ -31,7 +31,7 @@ class ModelManager:
         self.system = _SYSTEM_CACHE
         
         self._darwin_store = darwin_store
-        self._loader: Opt[ModelLoader] = None
+        self._loader: Optional[ModelLoader] = None
 
     @staticmethod
     def get_loader() -> ModelLoader:
@@ -86,11 +86,14 @@ class ModelManager:
             self._loader = self.get_loader()
         return self._loader
 
+    def get_active_models(self) -> dict[str, str]:
+        """Return active model_id per category from current preferences."""
+        return self.loader.get_all_model_keys()
     # ═══════════════════════════════════════════════════════════════════════
     # Switch methods
     # ═══════════════════════════════════════════════════════════════════════
 
-    def switch_embedding(self, new_key: str, migrate: bool = True, file: Opt[str] = None) -> None:
+    def switch_embedding(self, new_key: str, migrate: bool = True, file: Optional[str] = None) -> None:
         """Switch embedding model with optional migration."""
         from src.Models.ModelRegistry import REGISTRY as registry
         
@@ -161,7 +164,7 @@ class ModelManager:
         
         darwin.log(f"Switched {category} → {new_key}", LogType.SUCCESS)
 
-    def _resolve_key(self, key: str, expected_category: str) -> Opt[tuple]:
+    def _resolve_key(self, key: str, expected_category: str) -> Optional[tuple]:
         """Resolve model identifier to (registry_key, spec). Returns None on failure."""
         from src.Models.ModelRegistry import REGISTRY as registry, get_spec
         
@@ -185,17 +188,84 @@ class ModelManager:
     # ═══════════════════════════════════════════════════════════════════════
     # Migration methods
     # ═══════════════════════════════════════════════════════════════════════
-
-    def migrate_embedding(self, file: Opt[str] = None, force: bool = False) -> dict:
+    def migrate_embedding(self, file: Optional[str] = None, force: bool = False) -> dict:
         """Re-embed files with current embedding model."""
         if not self._darwin_store:
             darwin.log("No DarwinStore available for migration", LogType.ERROR)
             return {"reembedded": 0, "failed": 1}
-        
-        return self.loader.migrate_embeddings(
-            filename=file,
-            force=force,
+
+        from src.features.Ingestion.main import handle_ingestion
+        from src.features.Ingestion.Parsing.lib import ParsingArgs
+        from src.features.Ingestion.Chunking.lib import ChunkingArgs
+        from src.features.Indexing.lib import IndexingArgs
+        from src.features.Indexing.main import handle_indexing
+        from src.Models.ModelRegistry import ModelCategory
+
+        store = self._darwin_store
+        current_model = self.loader.get_model_key(ModelCategory.EMBEDDING)
+        stats = {"reembedded": 0, "skipped": 0, "term_banks_updated": 0, "failed": 0}
+
+        if file:
+            files_to_process = [file]
+        else:
+            health = store.get_embedding_health()
+            needs = health.get("needs_reembed", [])
+            up_to_date = health.get("up_to_date", []) if force else []
+            files_to_process = list(set(needs) | set(up_to_date))
+
+        if not files_to_process:
+            darwin.log("All files are up-to-date with current embedding model", LogType.SUCCESS)
+            return stats
+
+        darwin.log(f"Migrating {len(files_to_process)} file(s) to {current_model}", LogType.INFO)
+
+        try:
+            handle_ingestion(
+                ParsingArgs(
+                    target=".",
+                    files=list(files_to_process),
+                    save=True,
+                    skip_if_markdown=True,
+                ),
+                ChunkingArgs(
+                    rerun=True,
+                    inspect=False,
+                ),
+            )
+        except Exception as e:
+            darwin.log(f"Ingestion phase failed — {type(e).__name__}: {e}", LogType.ERROR)
+            stats["failed"] += len(files_to_process)
+            return stats
+
+        for fname in files_to_process:
+            try:
+                handle_indexing(IndexingArgs(
+                    path=".",
+                    file=fname,
+                    rerun=True,
+                    inspect=False,
+                ))
+                stats["reembedded"] += 1
+                darwin.log(f"{fname} — migrated", LogType.SUCCESS)
+            except Exception as e:
+                darwin.log(f"{fname} — {type(e).__name__}: {e}", LogType.ERROR)
+                stats["failed"] += 1
+
+        try:
+            self.loader.unload(ModelCategory.EMBEDDING)
+        except Exception:
+            pass
+
+        darwin.log(
+            f"Migration complete: {stats['reembedded']} migrated · "
+            f"{stats['term_banks_updated']} term banks updated · "
+            f"{stats['failed']} failed",
+            LogType.SUCCESS,
         )
+
+        return stats
+
+
 
     # ═══════════════════════════════════════════════════════════════════════
     # User commands
@@ -211,7 +281,7 @@ class ModelManager:
             status = "✅" if installed else "⬜"
             print(f"   {key:<25} {spec.model_id:<45} {status} {size}")
 
-    def list_models(self, category: Opt[str] = None) -> None:
+    def list_models(self, category: Optional[str] = None) -> None:
         """List models available for installation."""
         models = REGISTRY
         if category:

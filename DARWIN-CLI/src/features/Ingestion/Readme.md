@@ -58,10 +58,10 @@ Files (.pdf, .docx, .pptx, .txt, .md, .json)
 
 ```bash
 # Ingest everything in current directory
-uv run src/core/Ingestion/main.py
+uv run src/features/Ingestion/main.py
 
 # Ingest a directory
-uv run src/core/Ingestion/main.py ./documents
+uv run src/features/Ingestion/main.py ./documents
 ````
 
 ---
@@ -69,15 +69,15 @@ uv run src/core/Ingestion/main.py ./documents
 ### Single File
 
 ```bash
-uv run src/core/Ingestion/main.py --file biology.pdf
+uv run src/features/Ingestion/main.py --file biology.pdf
 ```
 
 ---
 
-### Multiple Files (Cluster)
+### Multiple Files 
 
 ```bash
-uv run src/core/Ingestion/main.py --cluster bio.pdf chem.pdf physics.pdf
+uv run src/features/Ingestion/main.py --file bio.pdf chem.pdf physics.pdf
 ```
 
 ---
@@ -109,7 +109,7 @@ uv run src/core/Ingestion/main.py --cluster bio.pdf chem.pdf physics.pdf
 ### Full pipeline with inspection
 
 ```bash
-uv run src/core/Ingestion/main.py --file book.pdf --inspect
+uv run src/features/Ingestion/main.py --file book.pdf --inspect
 ```
 
 ---
@@ -117,7 +117,7 @@ uv run src/core/Ingestion/main.py --file book.pdf --inspect
 ### High-quality parsing + chunking
 
 ```bash
-uv run src/core/Ingestion/main.py --file paper.pdf --precise --images --caption
+uv run src/features/Ingestion/main.py --file paper.pdf --precise --images --caption
 ```
 
 ---
@@ -125,7 +125,7 @@ uv run src/core/Ingestion/main.py --file paper.pdf --precise --images --caption
 ### Batch ingestion
 
 ```bash
-uv run src/core/Ingestion/main.py ./docs --recursive
+uv run src/features/Ingestion/main.py ./docs --recursive
 ```
 
 ---
@@ -148,7 +148,7 @@ After running, data is stored in `.darwin/`:
 * Chunking only runs on successfully parsed files
 * Failed parses are skipped automatically
 * Cached results are reused unless `--rerun` is used
-* Cluster mode overrides automatic file discovery
+* file args mode overrides automatic file discovery
 
 ---
 
@@ -161,8 +161,7 @@ from src.core.Ingestion.main import handle_ingestion
 
 parsing_args = ParsingArgs(
     target=".",
-    file=None,
-    cluster=None,
+    files=None,
     images=False,
     caption=False,
     recursive=False,

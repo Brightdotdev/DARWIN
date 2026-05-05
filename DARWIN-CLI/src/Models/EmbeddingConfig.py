@@ -61,6 +61,38 @@ PRESETS: dict[str, ModelPreset] = {
         instruction_template="<|user|>\nRepresent this passage for retrieval: {text}\n<|assistant|>\n",
         model_name="GritLM/GritLM-7B",
     ),
+     "openai/text-embedding-3-small": ModelPreset(
+        max_tokens=8000,
+        min_tokens=400,
+        overlap=5,
+        category="semantic_markdown",
+        needs_prefix=False,
+        model_name="openai/text-embedding-3-small",
+    ),
+    "openai/text-embedding-3-large": ModelPreset(
+        max_tokens=8000,
+        min_tokens=400,
+        overlap=5,
+        category="semantic_markdown",
+        needs_prefix=False,
+        model_name="openai/text-embedding-3-large",
+    ),
+    "cohere/embed-english-v3.0": ModelPreset(
+        max_tokens=512,
+        min_tokens=100,
+        overlap=3,
+        category="plain_text",
+        needs_prefix=False,
+        model_name="cohere/embed-english-v3.0",
+    ),
+    "voyage/voyage-3-lite": ModelPreset(
+        max_tokens=4000,
+        min_tokens=200,
+        overlap=4,
+        category="semantic_markdown",
+        needs_prefix=False,
+        model_name="voyage/voyage-3-lite",
+    ),
 }
 
 # Fallback for unknown models

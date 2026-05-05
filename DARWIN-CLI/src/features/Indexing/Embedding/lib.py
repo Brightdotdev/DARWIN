@@ -3,15 +3,13 @@ Utility functions and configuration for embedding models.
 
 """
 
-from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass,field
 
 
 
 @dataclass
 class EmbeddingArgs:
-    target:     str
-    file:       Optional[str] = None
+    files: list[str] = field(default_factory=list)
     inspect:    bool = False
     rerun:      bool = False
 
