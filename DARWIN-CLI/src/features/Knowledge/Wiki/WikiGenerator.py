@@ -43,17 +43,41 @@ Return only the paragraph, no preamble."""
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _build_edge_map(graph: GraphData) -> Dict[str, List[str]]:
-    """Build {node_id: [neighbor_labels]} from graph edges."""
+    """
+    Build {node_id: [neighbor_labels]} from graph edges.
+    Semantic relations are ranked higher than co-occurrence edges.
+    """
     node_labels = {n.id: n.label for n in graph.nodes}
     from collections import defaultdict
-    neighbors: Dict[str, set] = defaultdict(set)
+
+    # Separate semantic and co-occurrence edges
+    semantic_neighbors: Dict[str, set] = defaultdict(set)
+    cooc_neighbors: Dict[str, set] = defaultdict(set)
+
     for edge in graph.edges:
-        neighbors[edge.source].add(edge.target)
-        neighbors[edge.target].add(edge.source)
-    return {
-        nid: [node_labels[t] for t in targets if t in node_labels]
-        for nid, targets in neighbors.items()
-    }
+        if edge.relation_type != "co_occurrence":
+            semantic_neighbors[edge.source].add(edge.target)
+            semantic_neighbors[edge.target].add(edge.source)
+        else:
+            cooc_neighbors[edge.source].add(edge.target)
+            cooc_neighbors[edge.target].add(edge.source)
+
+    # Return semantic first, then co-occurrence
+    result = {}
+    for nid in node_labels:
+        related = []
+        # Semantic relations first (higher priority)
+        for target in semantic_neighbors.get(nid, set()):
+            if target in node_labels and node_labels[target] not in related:
+                related.append(node_labels[target])
+        # Co-occurrence edges second
+        for target in cooc_neighbors.get(nid, set()):
+            label = node_labels.get(target)
+            if label and label not in related:
+                related.append(label)
+        result[nid] = related
+
+    return result
 
 
 def _extract_keywords(
@@ -123,7 +147,6 @@ def _build_context(
 
 def build_wiki_from_graph(
     graph: GraphData,
-    centroids: np.ndarray,
     chunks: List[Chunk],
     spacy_extractor=None,
 ) -> DocumentWiki:
@@ -131,8 +154,7 @@ def build_wiki_from_graph(
     Build DocumentWiki directly from GraphData. No LLM calls.
 
     Args:
-        graph:            Extracted concept graph
-        centroids:        Cluster centroids (n_nodes, dim) — for query-time retrieval
+        graph:            Extracted concept graph (with centroids on nodes)
         chunks:           Source chunks — for keyword extraction
         spacy_extractor:  Optional SpacyConceptExtractor — pass None to skip keywords
 
@@ -144,12 +166,9 @@ def build_wiki_from_graph(
     edge_map = _build_edge_map(graph)
 
     pages = []
-    for i, node in enumerate(graph.nodes):
-        centroid = (
-            centroids[i].tolist()
-            if i < len(centroids)
-            else []
-        )
+    for node in graph.nodes:
+        # Centroid now lives on the node directly (computed during graph extraction)
+        centroid = node.centroid if hasattr(node, 'centroid') else []
 
         related = edge_map.get(node.id, [])
 
@@ -306,50 +325,44 @@ def run_wiki_pipeline(
     graph_dict = store.load_graph(filename)
     nodes = [
         ConceptNode(
-            id=n["id"], label=n["label"],
-            frequency=n["freq"], chunk_indices=n["chunks"],
+            id=n["id"],
+            label=n["label"],
+            display_name=n.get("display_name", n["label"]),
+            entity_type=n.get("type", "UNKNOWN"),
+            frequency=n["freq"],
+            chunk_indices=n["chunks"],
+            first_mention_chunk=n.get("first_mention_chunk", 0),
+            mention_forms=n.get("mention_forms", [n["label"]]),
+            centroid=n.get("centroid", []),
         )
         for n in graph_dict.get("nodes", [])
     ]
     edges = [
         Relationship(
-            source=e["source"], target=e["target"],
-            weight=e["weight"], relation_type=e.get("type", "context_similarity"),
+            source=e["source"],
+            target=e["target"],
+            weight=e["weight"],
+            relation_type=e.get("relation_type", e.get("type", "context_similarity")),
+            evidence_chunks=e.get("evidence_chunks", []),
+            surface_forms=e.get("surface_forms", []),
         )
         for e in graph_dict.get("edges", [])
     ]
     graph = GraphData(
         filename=filename, nodes=nodes, edges=edges,
         chunk_count=graph_dict.get("chunk_count", 0),
-        total_concepts_extracted=graph_dict.get("total_concepts_extracted", 0),
+        total_entities_extracted=graph_dict.get("total_entities_extracted", 0),
+        total_relations_extracted=graph_dict.get("total_relations_extracted", 0),
+        processing_mode=graph_dict.get("processing_mode", "unknown"),
     )
 
     if not graph.nodes:
         darwin.log(f"Graph is empty for '{filename}'", LogType.ERROR)
         return None
 
-    # ── Load centroids ──
-    centroid_data = store.load_graph_centroids(filename)
-    if centroid_data:
-        # centroid_data is [{concept, centroid}, ...] — align by node order
-        centroid_map = {c["concept"]: c["centroid"] for c in centroid_data}
-        centroids = np.array([
-            centroid_map.get(node.label, [])
-            for node in graph.nodes
-        ], dtype=object)
-    else:
-        # Fallback: recompute from embeddings if centroids not saved
-        darwin.log("No centroids found — recomputing from embeddings", LogType.WARNING)
-        vectors, emb_chunks = store.load_embeddings(filename)
-        if vectors is None:
-            darwin.log(f"No embeddings for '{filename}' — cannot build wiki", LogType.ERROR)
-            return None
-        centroids = np.array([
-            vectors[[i for i in node.chunk_indices if i < len(vectors)]].mean(axis=0).tolist()
-            if any(i < len(vectors) for i in node.chunk_indices)
-            else []
-            for node in graph.nodes
-        ], dtype=object)
+    # ── Centroids now live on graph nodes directly ──
+    # No need to load separately or recompute from embeddings
+    darwin.log(f"Using {sum(1 for n in graph.nodes if n.centroid)} node centroids from graph", LogType.INFO)
 
     # ── Load chunks ──
     chunks = store.load_chunks(filename)
@@ -382,7 +395,6 @@ def run_wiki_pipeline(
     # ── Stage 1: build structure (always) ──
     wiki = build_wiki_from_graph(
         graph=graph,
-        centroids=centroids,
         chunks=chunks,
         spacy_extractor=spacy_extractor,
     )
