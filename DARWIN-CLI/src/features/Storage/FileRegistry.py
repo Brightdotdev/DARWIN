@@ -80,6 +80,20 @@ class FileRecord:
             self._data.get("updates", {}).get(stage)
             for stage in ["markdown", "chunks", "embeddings", "vector"]
         )
+    @property
+    def has_graph(self) -> bool:
+        """Ready for embedding search: parsed + chunked + embedded."""
+        return all(
+            self._data.get("updates", {}).get(stage)
+            for stage in ["graph", "graph_vis"]
+        )
+    @property
+    def has_wiki(self) -> bool:
+        """Ready for embedding search: parsed + chunked + embedded."""
+        return all(
+            self._data.get("updates", {}).get(stage)
+            for stage in ["wiki"]
+        )
 
     @property
     def embedding_model(self) -> str:

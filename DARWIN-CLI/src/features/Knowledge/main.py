@@ -23,6 +23,7 @@ from src.features.Knowledge.lib import KnowledgePipelineArgs
 from src.features.Knowledge.Graph.main import handle_graph_extraction
 from src.features.Knowledge.Wiki.main import handle_wiki
 from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig, PRESETS
+from src.features.Knowledge.Graph.GraphUtils import GraphExtractionArgs
 from src.features.Knowledge.Wiki.WikiUtils import (
     WikiGenerationArgs,
     DEFAULT_CHUNKS_PER_CONCEPT,
@@ -69,7 +70,7 @@ def _run_graphs(args : KnowledgePipelineArgs) -> list[str]  | None:
     """
    
         
-    graph_args = GraphExtractionConfig(
+    graph_args = GraphExtractionArgs(
             files=args.files or [], 
             min_freq=args.min_freq,
             max_concepts=args.graph_max_concepts,
@@ -80,8 +81,25 @@ def _run_graphs(args : KnowledgePipelineArgs) -> list[str]  | None:
             json_output=args.json_output,
             rerun=args.rerun,
         )
+    graph_config = GraphExtractionConfig(
+            processing_mode=args.processing_mode,
+            chunk_size=args.chunk_size,
+            chunk_overlap=args.chunk_overlap,
+            max_concepts=args.graph_max_concepts,
+            min_freq=args.min_freq,
+            relation_confidence_threshold=args.relation_threshold,
+            dedup_strategy=args.dedup_strategy,
+            similarity_threshold=args.threshold,
+            max_cooccurrence_edges=args.max_cooccurrence_edges,
+            visualize=args.visualize,
+            inspect=args.inspect,
+            json_output=args.json_output,
+            rerun=args.rerun,
+        )
 
-    return handle_graph_extraction(graph_args)
+
+
+    return handle_graph_extraction(graph_config, args.files or [])
 
 
 # ── pass 2: wikis ─────────────────────────────────────────────────────────────

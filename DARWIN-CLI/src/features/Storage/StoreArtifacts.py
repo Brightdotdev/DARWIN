@@ -898,24 +898,6 @@ class GraphMixin(_PathResolverMixin):
         self.invalidate(filename)
 
 
-    def save_graph_centroids(self, filename: str, centroids: list) -> None:
-        d = self._dir_for(filename) / "graph"
-        d.mkdir(parents=True, exist_ok=True)
-        write_json(d / "centroids.json", centroids)
-        self._update_meta(filename, "graph_centroids")
-        record = self._record_for(filename)
-        if record:
-            self.registry.update_pipeline(
-                record.last_seen_path or filename, "graph_centroids"
-            )
-        self.invalidate(filename)
-
-    def load_graph_centroids(self, filename: str) -> list:
-        path = self._dir_for(filename) / "graph" / "centroids.json"
-        if not path.exists():
-            return []
-        return read_json(path) or []
-
     def load_graph(self, filename: str) -> dict:
         
         cache_key = f"graph:{filename}"

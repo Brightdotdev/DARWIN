@@ -61,33 +61,6 @@ from src.features.Retrival.Keyword.KeywordSearch import (
 from src.features.Retrival.Keyword.KeywordUtilities import (
     format_keyword_results,KeywordSearchArgs
 )
-from src.features.Retrival.lib import KeywordSearchResult
-
-
-# ============================================================================
-# Validation helpers
-# ============================================================================
-
-def _is_searchable(filename: str | None, status: dict, method: RetrievalMethod) -> bool:
-    """Check if a file is searchable for the given method."""
-    if filename is None:
-        return False
-    
-    key = Path(filename).name
-    file_data = status.get("files", {}).get(key)
-    if file_data is None:
-        return False
-    
-    if method == RetrievalMethod.KEYWORD:
-        return file_data.get("is_kw_searchable", False)
-    elif method == RetrievalMethod.SEMANTIC:
-        return file_data.get("is_embedding_searchable", False)
-    elif method == RetrievalMethod.HYBRID:
-        return file_data.get("is_hybrid_searchable", False)
-    return False
-
-
-
 
 # ============================================================================
 # Reranking wrapper

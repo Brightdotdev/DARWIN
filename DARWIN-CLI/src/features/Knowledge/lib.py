@@ -15,6 +15,7 @@ class KnowledgePipelineArgs:
     # file selection
     files: Optional[List[str]] = None
     llm: Optional[str] = None
+    elevation : str = "none"
 
     # pass control
     graph_only: bool = False

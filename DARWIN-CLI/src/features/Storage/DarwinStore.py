@@ -257,6 +257,8 @@ class DarwinStore(
             "is_kw_searchable": record.is_kw_searchable,
             "is_embedding_searchable": record.is_embedding_searchable,
             "is_hybrid_searchable": record.is_hybrid_searchable,
+            "has_graph": record.has_graph,
+            "has_wiki": record.has_wiki,
             "progress_percent": record.progress_percent(),
             "status_summary": record.status_summary(),
             "missing_stages": record.missing_stages(),
