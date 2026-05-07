@@ -34,9 +34,8 @@ ResponseTypeName = Literal[
     "bar_chart",
     "stepper",
     "parametric",
-    "knowledge_graph",
+    "network_view", 
 ]
-
 
 @dataclass
 class ResponseType:
@@ -311,11 +310,10 @@ RESPONSE_TYPES: dict[ResponseTypeName, ResponseType] = {
         tier="medium",
         keyword_triggers=[
             "frequency", "distribution", "across chapters",
-            "chart", "graph", "breakdown", "per chapter",
+            "chart", "graph", "per section", "per chapter",
             "how often does", "how frequently",
         ],
         regex_triggers=[
-            r"(frequency|distribution|breakdown) of .+",
             r"how (often|many times) .+ (appears?|occurs?|mentioned)",
             r"across (all )?(chapters|sections|documents|books)",
         ],
@@ -405,46 +403,38 @@ RESPONSE_TYPES: dict[ResponseTypeName, ResponseType] = {
         """,
         top_k=5,
     ),
-
-    "knowledge_graph": ResponseType(
-        name="knowledge_graph",
-        component="KnowledgeGraphViz",
-        description="Full document concept map. Force-directed, interactive.",
-        tier="hard",
+       
+        "network_view": ResponseType(
+        name="network_view",
+        component="NetworkView",
+        description="Related entities with relationship types. Flat list, no graph engine.",
+        tier="easy",
         keyword_triggers=[
-            "map everything", "show all", "full overview",
-            "all connections", "everything related",
-            "complete map", "entire document",
+            "what connects to", "what relates to", "related to",
+            "what else", "who else", "connected to", "associated with",
+            "network of", "web of", "links to",
         ],
         regex_triggers=[
-            r"map (everything|all (concepts|entities|connections))",
-            r"(full|complete|entire) (overview|map|graph)",
-            r"show (me )?all (the )?(connections|relationships|concepts)",
+            r"what (else )?connects to .+",
+            r"what (else )?relates to .+",
+            r"who (else )?is (connected|related) to .+",
         ],
-        min_entities=3,
+        min_entities=1,
         schema="""
         {
             "title": "string",
-            "nodes": [
+            "center": {"id": "string", "label": "string", "type": "string"},
+            "related": [
                 {
-                    "id": "string",
-                    "label": "string",
-                    "type": "string",
-                    "weight": "number"
-                }
-            ],
-            "edges": [
-                {
-                    "from": "string",
-                    "to": "string",
-                    "label": "string",
-                    "weight": "number"
+                    "entity": "string",
+                    "relationship": "string",
+                    "evidence": "string",
+                    "source": {"file": "string", "page": "number"}
                 }
             ]
         }
         """,
-        top_k=30,
-        requires_search=True,
+        top_k=10,
     ),
 }
 
@@ -498,11 +488,11 @@ def detect_response_type(
     priority_order: list[ResponseTypeName] = [
         # hard first — most specific triggers
         "parametric",
-        "knowledge_graph",
         "stepper",
         # medium
         "timeline",
         "entity_map",
+        "network_view",
         "flowchart",
         "bar_chart",
         # easy
@@ -510,6 +500,7 @@ def detect_response_type(
         "stats_grid",
         "summary_card",
     ]
+
 
     for type_name in priority_order:
         rt = RESPONSE_TYPES[type_name]

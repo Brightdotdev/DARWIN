@@ -917,12 +917,12 @@ class GraphMixin(_PathResolverMixin):
 class WikiMixin(_PathResolverMixin):
 
     def has_wiki(self, filename: str) -> bool:
-                
         
-                dir_path = self._dir_for(filename)
-                if dir_path is None:
-                    return False
-                return (dir_path / "wiki" / "wiki.json").exists()
+        dir_path = self._dir_for(filename)
+    
+        if dir_path is None:
+            return False
+        return (dir_path / "wiki" / "wiki.json").exists()
 
     def save_wiki(self, filename: str, wiki: Any) -> None:
         if wiki is None:

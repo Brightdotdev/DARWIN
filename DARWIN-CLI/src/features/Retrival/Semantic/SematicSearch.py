@@ -14,7 +14,7 @@ from typing import List, Optional
 from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Indexing.Embedding.Embedder import embed_query
 from src.features.Storage.DarwinStore import DarwinStore
-from src.features.Retrival.Semantic.SematicSearchUtils import SematicSearchResult
+from src.features.Retrival.Semantic.SematicSearchUtils import SemanticSearchResult
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
@@ -29,7 +29,7 @@ def _usearch_search(
     chunks: List[Chunk],
     top_k: int,
     min_score: float,
-) -> List[SematicSearchResult]:
+) -> List[SemanticSearchResult]:
     """Search using USearch index."""
     darwin.log(f"Searching your {filename}")
     chunk_scores = store.search_vector(filename, query_vec, k=top_k)
@@ -52,7 +52,7 @@ def _usearch_search(
         
         chunk = chunks[idx]
         
-        results.append(SematicSearchResult(
+        results.append(SemanticSearchResult(
             text=chunk.text,
             clean=chunk.clean,
             score=score,
@@ -74,7 +74,7 @@ def _numpy_search(
     chunks: List[Chunk],
     top_k: int,
     min_score: float,
-) -> List[SematicSearchResult]:
+) -> List[SemanticSearchResult]:
     """Fallback: exhaustive numpy dot product search."""
     if vectors is None or vectors.size == 0:
         return []
@@ -95,7 +95,7 @@ def _numpy_search(
             continue
             
         chunk = chunks[idx]
-        results.append(SematicSearchResult(
+        results.append(SemanticSearchResult(
             text=chunk.text,
             clean=chunk.clean,
             score=score,
@@ -175,7 +175,7 @@ def search_single_document(
     top_k: int = 5,
     min_score: float = 0.0,
     use_usearch: bool = True,
-) -> List[SematicSearchResult]:
+) -> List[SemanticSearchResult]:
     """Search within a single document with automatic method selection."""
     try:
         # Load config and validate
@@ -249,7 +249,7 @@ def search_across_documents(
     top_k: int = 10,
     min_score: float = 0.0,
     use_usearch: bool = True,
-) -> List[SematicSearchResult]:
+) -> List[SemanticSearchResult]:
     """Search across multiple documents with automatic method selection."""
     if not filenames:
         darwin.log("No files specified for search", LogType.WARNING)

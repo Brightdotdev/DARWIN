@@ -1,5 +1,4 @@
-
-from src.features.Query.IntentAnalyzer import analyze_query
+from src.features.Query.IntentAnalyzer import analyze_query_legacy, UserMessage, analyze_query
 
 
 # Mock store with filenames for document scope testing
@@ -15,7 +14,6 @@ class MockStore:
     
     def __init__(self):
         self.registry = self.Registry()
-
 
 
 fuzz_queries = [
@@ -120,8 +118,6 @@ fuzz_queries = [
 ]
 
 
-
-
 def run_fuzz_test():
     history = [
         {"role": "user", "content": "Tell me about Enoch"},
@@ -131,23 +127,65 @@ def run_fuzz_test():
     store = MockStore()
 
     for i, query in enumerate(fuzz_queries):
-        metadata = {"type": "normal_reply"}
-
-        analysis = analyze_query(
+        # Test legacy API (string-based, backward compat)
+        analysis = analyze_query_legacy(
             query=query,
             history=history,
             store=store,
-            enabled_tiers=["easy"],
-            message_metadata=metadata,
+            enabled_tiers=["easy", "medium"],
+            message_metadata={"type": "normal_reply"},
         )
 
         print(f"\n[{i}] {query}")
         print(f"intent={analysis.intent} | followup={analysis.is_followup} | multi={analysis.is_multi_question}")
         print(f"parametric={analysis.is_parametric} | doc={analysis.document_scope}")
         print(f"type={analysis.response_type} | search={analysis.requires_search}")
+        print(f"garbage={analysis.is_garbage} | clarify={analysis.needs_clarification}")
+        print(f"blocks={analysis.suggested_blocks}")
+        if analysis.parametric_seed:
+            print(f"seed={analysis.parametric_seed}")
+        if analysis.clarification_options:
+            print(f"clarify_options={[o['label'] for o in analysis.clarification_options]}")
         print("-" * 70)
 
+
+def run_structured_test():
+    """Test new UserMessage API with context/attachments."""
+    store = MockStore()
+
+    # Test with large context (should bypass search)
+    msg = UserMessage(
+        query="what do you think?",
+        context="This is a very long pasted text " * 200,  # >500 chars
+        metadata={"type": "normal_reply"},
+    )
+    analysis = analyze_query(
+        message=msg,
+        history=[],
+        store=store,
+        enabled_tiers=["easy", "medium"],
+    )
+    print("\n[STRUCTURED] Large context test")
+    print(f"query={analysis.query} | source={analysis.context_source} | search={analysis.requires_search}")
+    print("-" * 70)
+
+    # Test with highlight reply (followup)
+    msg2 = UserMessage(
+        query="Can you simplify that?",
+        context="",
+        metadata={"type": "highlight_reply"},
+    )
+    analysis2 = analyze_query(
+        message=msg2,
+        history=[{"role": "assistant", "content": "Previous answer..."}],
+        store=store,
+        enabled_tiers=["easy"],
+    )
+    print("\n[STRUCTURED] Highlight reply test")
+    print(f"followup={analysis2.is_followup} | search={analysis2.requires_search}")
+    print("-" * 70)
 
 
 if __name__ == "__main__":
     run_fuzz_test()
+    run_structured_test()

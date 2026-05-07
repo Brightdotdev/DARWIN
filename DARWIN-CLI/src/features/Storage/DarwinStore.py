@@ -282,7 +282,10 @@ class DarwinStore(
                 "is_parsed": record.is_parsed,
                 "is_chunked": record.is_chunked,
                 "is_embedded": record.is_embedded,
-                "is_kw_searchable": record.is_kw_searchable,
+                    
+                "has_graph": record.has_graph,
+                "has_wiki": record.has_wiki,
+                    "is_kw_searchable": record.is_kw_searchable,
                 "is_embedding_searchable": record.is_embedding_searchable,
                 "is_hybrid_searchable": record.is_hybrid_searchable,
                 "progress_percent": record.progress_percent(),

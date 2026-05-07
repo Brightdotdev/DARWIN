@@ -311,8 +311,10 @@ def run_wiki_pipeline(
         )
         return None
 
-    # ── Cache check ──
-    if not rerun and store.has_wiki(filename):
+
+    # ── Cache check ── 
+    if store.has_wiki(filename) and not rerun:
+        
         darwin.log(f"Skipping wiki: fresh exists for {filename}", LogType.INFO)
         completed_files.append(filename)
 

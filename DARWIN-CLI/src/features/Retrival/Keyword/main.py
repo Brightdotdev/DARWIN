@@ -117,7 +117,7 @@ def _search_wrapper(
     tobe_searched = []
     
     if args.files:
-        darwin.log(f"Searching across {" ".join(args.files)}", LogType.INFO)
+        darwin.log(f"Searching across {' ,'.join(args.files)}", LogType.INFO)
         tobe_searched = _validate_files(args.files, store)
         
         if not tobe_searched:
@@ -213,7 +213,7 @@ def handle_keyword_search(args: KeywordSearchArgs) -> List[KeywordSearchResult] 
     darwin.log(f"Query: {args.query}", LogType.INFO)
     darwin.log(f"BM25: k1={args.k1}, b={args.b}", LogType.INFO)
     darwin.log(f"Top-K: {args.top_k}", LogType.INFO)
-    darwin.log(f"Scope: {" •".join(args.files) if args.files else 'all documents'}", LogType.INFO)
+    darwin.log(f"Scope: {' ,'.join(args.files) if args.files else 'all documents'}", LogType.INFO)
 
 
     darwin.log("")

@@ -14,7 +14,7 @@ from src.features.Retrival.Semantic.SematicSearch import (
     search_single_document as semantic_search_single,
     search_across_documents as semantic_search_all,
 )
-from src.features.Retrival.Semantic.SematicSearchUtils import SematicSearchResult
+from src.features.Retrival.Semantic.SematicSearchUtils import SemanticSearchResult
 
 from src.features.Retrival.Keyword.KeywordSearch import (
     search_single_document_keyword as keyword_search_single,
@@ -57,7 +57,7 @@ def _normalize_scores(results: List[HybridSearchResult]) -> None:
             r.keyword_score = (r.keyword_score - min_s) / span
 
 def hybrid_search(
-    semantic_results: List[SematicSearchResult],
+    semantic_results: List[SemanticSearchResult],
     keyword_results: List[KeywordSearchResult],
     top_k: int = DEFAULT_TOP_K,
     rrf_k: int = DEFAULT_RRF_K,
