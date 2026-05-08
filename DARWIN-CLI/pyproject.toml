@@ -15,6 +15,7 @@ requires-python = ">=3.11"
 dependencies = [
     "blingfire==0.1.8",
     "hdbscan>=0.8.42",
+    "jinja2>=3.1.6",
     "litellm>=1.83.0",
     "markitdown>=0.1.5",
     "nltk>=3.9.4",

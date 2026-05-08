@@ -1,669 +1,671 @@
-"""
-src/core/Agent/IntentAnalyzer.py
---------------------------------
-Pre-LLM query analysis layer for Darwin.
+from __future__ import annotations
 
-Classifies intent, detects followups / multi-question / parametric / document-scope /
-garbage / clarification-needed, selects response type, suggests blocks, handles context.
-
-Usage:
-    from src.core.Agent.IntentAnalyzer import analyze_query, QueryAnalysis, UserMessage
-
-    msg = UserMessage(
-        query="help me with a paper",
-        context="",
-        attachments=[],
-        metadata={"type": "normal_reply"},
-    )
-    analysis = analyze_query(
-        message=msg,
-        history=[...],
-        store=darwin_store,
-        enabled_tiers=["easy", "medium"],
-    )
-"""
-
+import dataclasses
+import json
 import re
-from dataclasses import dataclass, field
-from typing import Literal, Optional, List, Dict
+from dataclasses import dataclass
+from typing import Any, Literal
+from urllib.parse import urlparse
 
-from src.features.Query.ResponseTypes import (
-    RESPONSE_TYPES,
-    ResponseTypeName,
-    detect_response_type,
-    get_top_k,
-)
-from src.core.Logger import darwin, LogType
-
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Config
+# TYPES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# v1: query rewriting disabled. Flip to True when LLM rewriter is ready.
-ENABLE_QUERY_REWRITE = False
-
-# Clarification: "static" = hardcoded options, "dynamic" = cheap LLM generates questions
-CLARIFICATION_MODE = "static"
-
-# Garbage detection
-ENABLE_GARBAGE_CHECK = True
-
-# Followup heuristics
-FOLLOWUP_MAX_WORDS = 6
-FOLLOWUP_PRONOUNS = {
-    "it", "they", "them", "he", "she", "his", "her", "its", "their",
-    "this", "that", "these", "those", "here", "there",
-}
-FOLLOWUP_PHRASES = [
-    "you said", "elaborate", "explain that", "tell me more",
-    "what about", "how about", "go on", "continue", "and then",
-    "put it in simpler", "simpler words", "help me understand",
-    "break it down", "make it clearer", "clarify",
+ResponseTypeName = Literal[
+    "plain_text",
+    "accordion",
+    "comparison_table",
+    "stats_grid",
+    "summary_card",
+    "network_view",
+    "flowchart",
+    "timeline",
+    "entity_map",
+    "bar_chart",
+    "stepper",
+    "parametric",
+    "follow_up_clarification",
+    "context_slot_response",
+    "hybrid",
 ]
 
-# Parametric patterns
-PARAMETRIC_KEYWORDS = [
-    "what if", "if they were", "suppose", "assume",
-    "hypothetically", "if it was", "if there were",
+ConfidenceLevel = Literal["high", "medium", "low"]
+
+PastedTextType = Literal["document", "code", "data", "long_question"]
+
+QuestionType = Literal["WH", "YN", "imperative", "declarative"]
+
+FollowUpReason = Literal[
+    "vague_reference",
+    "no_scope",
+    "url_no_search",
+    "intent_unclear",
+    "file_not_searchable",
+    "ambiguous_file_match",
 ]
-PARAMETRIC_REGEX = re.compile(
-    r"(?:if|what if|suppose|assume|hypothetically)\s.+?"
-    r"(?:were?|is|had|has|was)\s+"
-    r"([\d,]+(?:\.\d+)?)\s*"
-    r"(feet|meters|times|percent|years|people|days|miles|km|kg|lbs|tons|ft|m|%)?",
-    re.IGNORECASE,
-)
-
-# Document scope patterns
-DOC_SCOPE_PREFIXES = [
-    "in the", "from the", "in", "from", "according to",
-    "chapter", "book of", "section", "page",
-]
-DOC_SCOPE_STOPWORDS = {
-    "book", "file", "document", "text", "page", "chapter", "section",
-    "paper", "article", "report", "note", "guide", "story", "letter",
-}
-
-# Intent detection — spaCy-driven
-QUESTION_POS = {"WP", "WRB", "WDT"}
-COMPARISON_LEMMAS = {"compare", "contrast", "differ", "versus", "similarity", "difference"}
-SUMMARY_LEMMAS = {"summarize", "summarise", "overview", "brief", "outline"}
-SEARCH_LEMMAS = {"find", "locate", "look", "search", "seek", "show", "list"}
-
-# Clarification triggers — broad, vague, underspecified
-CLARIFICATION_TRIGGERS = {
-    "help me", "help with", "assist me", "i need help",
-    "do something", "make something",
-    "prepare", "build", "design",
-}
-CLARIFICATION_MIN_WORDS = 3
-CLARIFICATION_MAX_WORDS = 8
-
-# Block composition hints — maps intent to suggested multi-block layouts
-BLOCK_MAP: Dict[str, List[List[str]]] = {
-    "question": [
-        ["plain_text"],
-        ["plain_text", "entity_map"],
-        ["plain_text", "timeline"],
-        ["network_view", "plain_text"],
-    ],
-    "comparison": [
-        ["comparison_table"],
-        ["comparison_table", "plain_text"],
-    ],
-    "summary": [
-        ["summary_card"],
-        ["summary_card", "plain_text"],
-    ],
-    "search": [
-        ["plain_text"],
-        ["stats_grid", "plain_text"],
-        ["network_view"],
-    ],
-}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Types
+# DATACLASSES
 # ═══════════════════════════════════════════════════════════════════════════════
 
-IntentName = Literal["question", "comparison", "summary", "search"]
+@dataclass
+class SpacyFeatures:
+    entities: list[dict]
+    root_verb: str | None
+    comparison_subjects: list[str] | None
 
 
 @dataclass
-class UserMessage:
-    """Structured input from frontend. Replaces raw string query."""
-    query: str
-    context: str = ""
-    attachments: list = field(default_factory=list)
-    metadata: dict = field(default_factory=dict)
+class PastedText:
+    content: str
+    type: PastedTextType
 
 
 @dataclass
-class QueryAnalysis:
-    """The single output of the intent analysis pipeline."""
+class FollowUpOption:
+    id: str
+    label: str
+    value: str
 
-    query: str
-    intent: IntentName
+
+@dataclass
+class FollowUpBlock:
+    question: str
+    options: list[FollowUpOption]
+    allow_custom: bool
+    answer: str | None
+    reason: FollowUpReason
+
+
+@dataclass
+class OrganizedQuery:
+    clean_query: str
+    spacy: SpacyFeatures
+    pasted_texts: list[PastedText]
+    has_urls: bool
+    extracted_urls: list[dict]
+    search_enabled: bool
+    pinned_file_ids: list[str]
     is_followup: bool
-    is_multi_question: bool
-    is_parametric: bool
-    parametric_seed: Optional[dict] = None
-    document_scope: Optional[str] = None
-    response_type: ResponseTypeName = "plain_text"
-    rewritten_queries: list[str] = field(default_factory=list)
-    top_k: int = 5
-    requires_search: bool = True
-    
-    is_garbage: bool = False
-    needs_clarification: bool = False
-    clarification_options: list[dict] = field(default_factory=list)
-    suggested_blocks: list[str] = field(default_factory=list)
-    context_source: str = "search"
-    
-    signals: dict = field(default_factory=dict)
+    needs_clarification: bool
+    followup: FollowUpBlock | None
+    candidate_type: ResponseTypeName
+    candidate_confidence: ConfidenceLevel
+    override_reason: str | None
+    retrieval_hint: str
+    top_k: int
+    comparison_subjects: list[str] | None
+
+
+@dataclass
+class RoutingPrompt:
+    """Prepared prompt data ready to be sent to a small LLM router."""
+    system_prompt: str
+    user_message: str
+    clean_query: str
+    spacy_features: SpacyFeatures
+    has_urls: bool
+    extracted_urls: list[dict]
+    search_enabled: bool
+    is_followup: bool
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# spaCy loader — lazy, never imported at module level
+# PUBLIC API
 # ═══════════════════════════════════════════════════════════════════════════════
 
-_nlp = None
+__all__ = [
+    "prepare_routing_prompt",
+    "parse_routing_response",
+    "OrganizedQuery",
+    "RoutingPrompt",
+    "SpacyFeatures",
+    "PastedText",
+    "FollowUpBlock",
+    "FollowUpOption",
+]
 
-def _get_nlp():
-    global _nlp
-    if _nlp is None:
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CONSTANTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
+
+_COMPARISON_KEYWORDS = [
+    "compare",
+    "vs",
+    "versus",
+    "difference between",
+    "contrast",
+    "similarities",
+    "how do they differ",
+]
+
+_SYSTEM_PROMPT = """\
+You are the query router for Darwin, a local RAG application.
+You receive a user query and metadata. You return a single JSON object.
+No explanation. No markdown. No preamble. Raw JSON only.
+
+Your job in order:
+
+1. CLASSIFY each pasted blob into one of: document, code, data, long_question
+   Each blob gets its own type. Preserve full content.
+
+2. RESOLVE file references against the file registry.
+   Fuzzy match by name or alias.
+   If confident single match → pin it, set needs_clarification false.
+   If 2+ plausible matches → trigger clarification, reason: ambiguous_file_match,
+     list all matches as options.
+   If no match → trigger clarification, reason: vague_reference.
+
+3. CHECK searchability for any referenced or pinned files using searchable_files.
+   If a file is referenced and all search methods are False →
+     trigger clarification, reason: file_not_searchable.
+     Ask if user wants to try anyway or pick a different file.
+   If a file only supports keyword search but query needs semantic understanding →
+     surface this as a warning in the followup question, not a hard block.
+
+4. CHECK scope. If no pinned files, no pasted blobs, no session context,
+   no search enabled, and the query clearly requires a document →
+     trigger clarification, reason: no_scope.
+     Ask naturally — not an error, just a question.
+
+5. CHECK URLs. If has_urls is true and search_enabled is false →
+     trigger clarification, reason: url_no_search.
+     Reference the domain names from placeholders in your question.
+     e.g. "I see you linked arxiv and wikipedia — do you want me to
+     search these? You will need search enabled for that."
+
+6. CLASSIFY intent and select candidate_type from:
+   plain_text, accordion, comparison_table, stats_grid, summary_card,
+   network_view, flowchart, timeline, entity_map, bar_chart,
+   stepper, parametric, follow_up_clarification,
+   context_slot_response, hybrid
+
+7. SET confidence: high / medium / low
+   high   — unambiguous trigger, supporting evidence present
+   medium — plausible but another type could apply
+   low    — fell through to plain_text or signals contradict type
+
+8. SET override_reason if you considered one type and chose another.
+   Explain briefly. Null if no override.
+
+9. REWRITE retrieval_hint as an optimized vector search string.
+   Keep: nouns, proper nouns, lemmatized verbs, entities, dates.
+   Drop: stopwords, question words, filler.
+   If comparison_subjects present: ensure both appear in hint.
+   Empty string if needs_clarification is true.
+
+10. SET top_k based on complexity:
+    Simple factual: 3
+    Summary or overview: 8
+    Flowchart or timeline: 10–15
+    Comparison (per subject): 10
+    Parametric or stepper: 5
+    Broad entity map: 15–20
+    0 if needs_clarification is true.
+
+If is_reply_to_followup is true:
+  Read previous_organized_query.followup.question.
+  Read the user's answer from clean_query.
+  Resolve the previously unresolved field.
+  Return a completed OrganizedQuery.
+  Do not trigger clarification for the same reason again.
+
+Return this exact JSON schema — no deviations:
+
+{
+  "clean_query": "string",
+  "spacy": {
+    "entities": [{"text": "string", "label": "string"}],
+    "root_verb": "string | null",
+    "comparison_subjects": ["string"] | null
+  },
+  "pasted_texts": [
+    {"content": "string", "type": "document|code|data|long_question"}
+  ],
+  "has_urls": bool,
+  "extracted_urls": [
+    {"original": "string", "domain": "string", "placeholder": "string"}
+  ],
+  "search_enabled": bool,
+  "pinned_file_ids": ["string"],
+  "is_followup": bool,
+  "needs_clarification": bool,
+  "followup": {
+    "question": "string",
+    "options": [{"id": "string", "label": "string", "value": "string"}],
+    "allow_custom": bool,
+    "answer": null,
+    "reason": "vague_reference|no_scope|url_no_search|intent_unclear|file_not_searchable|ambiguous_file_match"
+  } | null,
+  "candidate_type": "ResponseTypeName",
+  "candidate_confidence": "high|medium|low",
+  "override_reason": "string | null",
+  "retrieval_hint": "string",
+  "top_k": number,
+  "comparison_subjects": ["string"] | null
+}"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRIVATE — spaCy lazy loader
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_spacy_model = None
+
+
+def _get_spacy_model():
+    global _spacy_model
+    if _spacy_model is None:
         from src.Models import ModelManager, ModelCategory
+
         loader = ModelManager.get_loader()
         extractor = loader.get(ModelCategory.TOKENIZER)
-        _nlp = extractor.nlp
-    return _nlp
+        print("loading spacy model")
+        _spacy_model = extractor.nlp
+    return _spacy_model
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Detectors
+# PRIVATE — URL extraction
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _detect_intent(doc, query: str) -> IntentName:
-    text = query.lower().strip()
-    lemmas = {token.lemma_.lower() for token in doc}
+def _extract_urls(query: str, linked_urls: list[str]) -> tuple[str, bool, list[dict]]:
+    seen_originals: set[str] = set()
+    extracted: list[dict] = []
+    replacements: list[tuple[str, str]] = []
 
-    if lemmas & COMPARISON_LEMMAS:
-        return "comparison"
-    if lemmas & SUMMARY_LEMMAS:
-        return "summary"
-    if lemmas & SEARCH_LEMMAS:
-        if not text.endswith("?") and not any(t.tag_ in QUESTION_POS for t in doc):
-            return "search"
+    for match in _URL_RE.finditer(query):
+        raw = match.group(0)
+        while raw and raw[-1] in ".,;:!?)'>\"]":
+            raw = raw[:-1]
 
-    if text.endswith("?"):
-        return "question"
-    if any(t.tag_ in QUESTION_POS for t in doc):
-        return "question"
-    for i, token in enumerate(doc[:-1]):
-        nxt = doc[i + 1]
-        if token.tag_ in {"VBD", "VBZ", "VBP", "MD"} and nxt.tag_ in {"PRP", "NNP", "NN", "DT"}:
-            return "question"
+        if raw in seen_originals:
+            continue
+        seen_originals.add(raw)
 
-    return "search"
-
-
-def _detect_multi_question(doc, query: str) -> bool:
-    """Detect 2+ questions in a single query."""
-    text = query.strip()
-
-    # BUG FIX: Don't count repeated punctuation as multiple questions
-    question_marks = [m.start() for m in re.finditer(r'\?', text)]
-    if len(question_marks) >= 2:
-        # Check if there's actual text between question marks
-        has_real_separation = any(
-            text[question_marks[i]:question_marks[i+1]].strip('?').strip()
-            for i in range(len(question_marks) - 1)
+        domain = _extract_domain(raw)
+        placeholder = f"[link:{domain}]"
+        extracted.append(
+            {"original": raw, "domain": domain, "placeholder": placeholder}
         )
-        if has_real_separation:
-            return True
+        replacements.append((raw, placeholder))
 
-    separators = [" and ", " & ", " plus ", " as well as ", " along with "]
-    clauses = [text]
-    for sep in separators:
-        new_clauses = []
-        for c in clauses:
-            new_clauses.extend(c.split(sep))
-        clauses = new_clauses
-
-    wh_starts = {"who", "what", "where", "when", "why", "how", "which", "whom", "whose"}
-    
-    question_clauses = 0
-    has_wh_setup = False
-    
-    for i, clause in enumerate(clauses):
-        clause = clause.strip()
-        if not clause:
+    for url in linked_urls:
+        if url in seen_originals:
             continue
-        
-        if clause.endswith("?"):
-            question_clauses += 1
-            continue
-            
-        words = clause.lower().split()
-        if words and words[0] in wh_starts:
-            question_clauses += 1
-            has_wh_setup = True
-            continue
-        
-        # Implicit predicate after WH setup
-        if has_wh_setup and i > 0 and len(words) <= 4:
-            if any(w.pos_ in {"NOUN", "ADJ", "VERB", "PROPN"} for w in doc):
-                question_clauses += 1
-                continue
+        seen_originals.add(url)
+        domain = _extract_domain(url)
+        placeholder = f"[link:{domain}]"
+        extracted.append(
+            {"original": url, "domain": domain, "placeholder": placeholder}
+        )
 
-    return question_clauses >= 2
+    clean_query = query
+    for original, placeholder in sorted(replacements, key=lambda x: len(x[0]), reverse=True):
+        clean_query = clean_query.replace(original, placeholder)
+
+    has_urls = len(extracted) > 0
+    return clean_query, has_urls, extracted
 
 
-def _detect_followup(doc, query: str, history: list[dict], message_metadata: Optional[dict]) -> bool:
-    """Detect if query is a conversational followup."""
-    
-    # Frontend metadata is the strongest signal
-    if message_metadata:
-        msg_type = message_metadata.get("type", "normal_reply")
-        if msg_type in {"highlight_reply", "infographic_interaction", "followup"}:
-            return True
-        if msg_type != "normal_reply":
-            return True
-
-    if not history:
-        return False
-
-    text = query.lower().strip()
-    words = text.split()
-
-    # If query has WH-words or ends with ?, it's a real question — not a followup
-    if any(t.tag_ in QUESTION_POS for t in doc) or text.endswith("?"):
-        return False
-
-    # BUG FIX: Imperative commands (Verb + Noun) are standalone, not followups
-    if len(doc) >= 2:
-        first = doc[0]
-        if first.pos_ == "VERB" and any(t.pos_ in {"NOUN", "PROPN"} for t in doc[1:]):
-            return False
-
-    # BUG FIX: Multiple content nouns = likely a topic query, not followup
-    content_nouns = [t for t in doc if t.pos_ in {"NOUN", "PROPN"} and not t.is_stop]
-    if len(content_nouns) >= 2:
-        return False
-
-    # Short + pronoun
-    if len(words) <= FOLLOWUP_MAX_WORDS:
-        if any(token.lower_ in FOLLOWUP_PRONOUNS for token in doc):
-            return True
-
-    # Explicit followup phrases
-    if any(phrase in text for phrase in FOLLOWUP_PHRASES):
-        return True
-
-    # No named entities + short = likely followup
-    if len(doc.ents) == 0 and len(words) <= 8:
-        return True
-
-    return False
+def _extract_domain(url: str) -> str:
+    parsed = urlparse(url)
+    netloc = parsed.netloc
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    if not netloc:
+        parts = url.split("/")
+        if len(parts) >= 3:
+            netloc = parts[2]
+        else:
+            netloc = "unknown"
+    return netloc.split(".")[0]
 
 
-def _detect_parametric(doc, query: str) -> tuple[bool, Optional[dict]]:
-    """Detect hypothetical queries with numeric seeds."""
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRIVATE — spaCy preprocessing
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    text = query.lower().strip()
-    has_keyword = any(kw in text for kw in PARAMETRIC_KEYWORDS)
-    if not has_keyword:
-        return False, None
+def _run_spacy(clean_query: str) -> SpacyFeatures:
+    nlp = _get_spacy_model()
+    doc = nlp(clean_query)
 
-    match = PARAMETRIC_REGEX.search(query)
-    if match:
-        raw_value = match.group(1).replace(",", "")
-        unit = match.group(2)
-        try:
-            value = float(raw_value)
-        except ValueError:
-            value = None
-        seed = {
-            "value": value,
-            "unit": unit.lower() if unit else None,
-            "raw": match.group(0),
-        }
-        return True, seed
+    entities = [{"text": ent.text, "label": ent.label_} for ent in doc.ents]
 
-    return True, None
+    root_verb = next(
+        (t.lemma_ for t in doc if t.dep_ == "ROOT" and t.pos_ == "VERB"),
+        None,
+    )
+    print("using spacy")
+
+    comparison_subjects = _extract_comparison_subjects(doc)
+
+    return SpacyFeatures(
+        entities=entities,
+        root_verb=root_verb,
+        comparison_subjects=comparison_subjects,
+    )
 
 
-def _detect_document_scope(doc, query: str, store) -> Optional[str]:
-    """Fuzzy match query against known document filenames."""
+def _extract_comparison_subjects(doc) -> list[str] | None:
+    text_lower = doc.text.lower()
 
-    try:
-        filenames = store.registry.list_all()
-    except Exception:
-        darwin.log("Document scope: could not list files from store", LogType.WARNING)
+    keyword_start = -1
+    keyword_end = -1
+    for kw in _COMPARISON_KEYWORDS:
+        idx = text_lower.find(kw)
+        if idx != -1:
+            keyword_start = idx
+            keyword_end = idx + len(kw)
+            break
+
+    if keyword_start == -1:
         return None
 
-    if not filenames:
-        return None
-
-    text = query.lower()
-    candidates = []
-
-    for q in re.findall(r'"([^"]+)"', query) + re.findall(r"'([^']+)'", query):
-        candidates.append(q.lower().strip())
-
-    for prefix in DOC_SCOPE_PREFIXES:
-        for m in re.finditer(rf"{prefix}\s+([a-z0-9_\-\s]+)", text, re.IGNORECASE):
-            candidates.append(m.group(1).strip())
-
+    candidates: list[tuple[int, int, str]] = []
     for chunk in doc.noun_chunks:
-        candidate = chunk.text.lower().strip()
-        words = candidate.split()
-        if len(words) == 1 and len(words[0]) < 4:
-            continue
-        if candidate in DOC_SCOPE_STOPWORDS:
-            continue
-        candidates.append(candidate)
+        candidates.append((chunk.start_char, chunk.end_char, chunk.text))
+    for ent in doc.ents:
+        candidates.append((ent.start_char, ent.end_char, ent.text))
 
-    best_match = None
-    best_score = 0.0
+    seen: set[tuple[int, int]] = set()
+    unique_candidates: list[tuple[int, int, str]] = []
+    for start, end, text in sorted(candidates, key=lambda x: x[0]):
+        if (start, end) not in seen:
+            seen.add((start, end))
+            unique_candidates.append((start, end, text))
 
-    for filename in filenames:
-        fname_lower = filename.lower()
-        fname_stem = fname_lower.rsplit(".", 1)[0] if "." in fname_lower else fname_lower
-        fname_words = set(fname_stem.replace("_", " ").replace("-", " ").split())
+    left = [c for c in unique_candidates if c[1] <= keyword_start]
+    right = [c for c in unique_candidates if c[0] >= keyword_end]
 
-        for candidate in candidates:
-            candidate = candidate.strip()
-            if not candidate:
-                continue
+    subjects: list[str] = []
 
-            if candidate in fname_words and len(candidate) >= 4:
-                return filename
+    if left:
+        left.sort(key=lambda c: c[1], reverse=True)
+        subjects.append(left[0][2])
 
-            cand_words = set(candidate.split())
-            if cand_words and fname_words:
-                overlap = len(cand_words & fname_words) / max(len(cand_words), len(fname_words))
-                if overlap > best_score and overlap >= 0.5:
-                    best_score = overlap
-                    best_match = filename
+    if right:
+        right.sort(key=lambda c: c[0])
+        subjects.append(right[0][2])
 
-    return best_match
+    if not subjects:
+        return None
+
+    return subjects
 
 
-def _detect_garbage(doc, query: str) -> tuple[bool, float]:
-    """Heuristic garbage detection. Returns (is_garbage, confidence)."""
-    if not ENABLE_GARBAGE_CHECK:
-        return False, 0.0
+# ═══════════════════════════════════════════════════════════════════════════════
+# PRIVATE — LLM prompt builder
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    text = query.strip()
-    score = 0.0
-
-    # No alphabetic characters
-    if not any(c.isalpha() for c in text):
-        score += 0.5
-
-    # No content words
-    content_tokens = [t for t in doc if t.pos_ in {"NOUN", "VERB", "PROPN", "ADJ"}]
-    if not content_tokens:
-        score += 0.4
-
-    # All stopwords
-    if len(doc) > 0 and all(t.is_stop for t in doc):
-        score += 0.3
-
-    # Random character distribution
-    alpha_ratio = sum(c.isalpha() or c.isspace() for c in text) / max(len(text), 1)
-    if alpha_ratio < 0.5 and len(text) > 10:
-        score += 0.3
-
-    # Extremely short
-    if len(text) < 3:
-        score += 0.3
-
-    # High out-of-vocabulary ratio = likely gibberish
-    alpha_tokens = [t for t in doc if t.is_alpha]
-    if alpha_tokens:
-        oov_ratio = sum(1 for t in alpha_tokens if t.is_oov) / len(alpha_tokens)
-        # BUG FIX: Lower threshold from > 2 to > 1
-        if oov_ratio > 0.8 and len(alpha_tokens) > 1:
-            score += 0.4
-
-    # BUG FIX: Single long gibberish word
-    if len(doc) == 1 and doc[0].is_alpha and doc[0].is_oov and len(doc[0].text) > 6:
-        score += 0.5
-
-    is_garbage = score >= 0.3
-    return is_garbage, round(score, 2)
-
-
-def _detect_clarification(doc, query: str, intent: str, is_followup: bool) -> tuple[bool, list[dict]]:
-    """Detect vague queries that need disambiguation before answering."""
-    if is_followup:
-        return False, []
-
-    text = query.lower().strip()
-    words = text.split()
-    lemmas = {token.lemma_.lower() for token in doc}
-
-    # Skip if query has specific entities — it's not vague
-    if len(doc.ents) > 0:
-        return False, []
-
-    # Too short + broad intent words
-    has_trigger = any(trig in text for trig in CLARIFICATION_TRIGGERS)
-    is_short = CLARIFICATION_MIN_WORDS <= len(words) <= CLARIFICATION_MAX_WORDS
-
-    # No specific entities + broad verbs
-    no_entities = len(doc.ents) == 0
-    broad_verbs = lemmas & {"help", "make", "do", "prepare", "build", "design"}
-
-    needs_it = (has_trigger and is_short and no_entities) or (has_trigger and broad_verbs and len(words) < 12)
-
-    if not needs_it:
-        return False, []
-
-    options = _build_clarification_options(intent, text)
-    return True, options
-
-
-def _build_clarification_options(intent: str, query: str) -> list[dict]:
-    """Static clarification options. Dynamic mode swaps this for LLM call."""
-    if CLARIFICATION_MODE == "dynamic":
-        return [{"label": "Custom", "value": "custom", "prompt": "Tell me more..."}]
-
-    base_options = {
-        "question": [
-            {"label": "Get a summary", "value": "summary", "intent": "summary"},
-            {"label": "Deep dive with sources", "value": "deep_dive", "intent": "question"},
-            {"label": "Compare with related topics", "value": "compare", "intent": "comparison"},
-            {"label": "Something else...", "value": "custom", "intent": "question"},
-        ],
-        "search": [
-            {"label": "List key facts", "value": "list", "intent": "search"},
-            {"label": "Show statistics", "value": "stats", "intent": "search"},
-            {"label": "Find specific quotes", "value": "quotes", "intent": "search"},
-            {"label": "Something else...", "value": "custom", "intent": "search"},
-        ],
-        "comparison": [
-            {"label": "Side-by-side table", "value": "table", "intent": "comparison"},
-            {"label": "Pros and cons list", "value": "procon", "intent": "comparison"},
-            {"label": "Something else...", "value": "custom", "intent": "comparison"},
-        ],
-        "summary": [
-            {"label": "Brief overview", "value": "brief", "intent": "summary"},
-            {"label": "Key points only", "value": "bullet", "intent": "summary"},
-            {"label": "Full detailed summary", "value": "full", "intent": "summary"},
-            {"label": "Something else...", "value": "custom", "intent": "summary"},
-        ],
+def _build_llm_prompt(
+    clean_query: str,
+    pasted_texts: list[str],
+    extracted_urls: list[dict],
+    search_enabled: bool,
+    spacy_features: SpacyFeatures,
+    pinned_file_ids: list[str],
+    file_registry: list[dict],
+    searchable_files: dict,
+    session_state: dict | None,
+    is_reply_to_followup: bool,
+    previous_organized_query: OrganizedQuery | None,
+) -> tuple[str, str]:
+    metadata: dict[str, Any] = {
+        "clean_query": clean_query,
+        "pasted_texts": pasted_texts,
+        "extracted_urls": extracted_urls,
+        "search_enabled": search_enabled,
+        "spacy_features": {
+            "entities": spacy_features.entities,
+            "root_verb": spacy_features.root_verb,
+            "comparison_subjects": spacy_features.comparison_subjects,
+        },
+        "pinned_file_ids": pinned_file_ids,
+        "file_registry": file_registry,
+        "searchable_files": searchable_files,
+        "session_state": session_state,
+        "is_reply_to_followup": is_reply_to_followup,
+        "previous_organized_query": (
+            dataclasses.asdict(previous_organized_query)
+            if previous_organized_query is not None
+            else None
+        ),
     }
 
-    return base_options.get(intent, base_options["question"])
+    metadata_json = json.dumps(metadata, indent=2, default=str)
 
+    system_prompt = f"{_SYSTEM_PROMPT}\n\n--- INPUT METADATA ---\n{metadata_json}"
+    user_message = clean_query
 
-def _build_suggested_blocks(intent: str, response_type: ResponseTypeName, is_parametric: bool) -> list[str]:
-    """Suggest multi-block layout for the planner LLM."""
-    if is_parametric:
-        return ["parametric", "plain_text"]
-
-    layouts = BLOCK_MAP.get(intent, [["plain_text"]])
-    
-    for layout in layouts:
-        if layout[0] == response_type:
-            return layout
-    
-    return [response_type]
-
-
-def _rewrite_query(query: str, is_multi_question: bool) -> list[str]:
-    if not ENABLE_QUERY_REWRITE:
-        return [query]
-    return [query]
+    return system_prompt, user_message
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Orchestrator
+# PRIVATE — Response parsing & hydration
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def analyze_query(
-    message: UserMessage,
-    history: list[dict],
-    store,
-    enabled_tiers: Optional[list[str]] = None,
-) -> QueryAnalysis:
-    """
-    Analyze a user message and return QueryAnalysis.
+def _strip_markdown_code(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
 
-    Main entrypoint. Runs in <20ms, zero API calls.
-    """
 
-    if enabled_tiers is None:
-        enabled_tiers = ["easy", "medium", "hard"]
-
-    query = message.query.strip()
-    context = message.context.strip()
-    metadata = message.metadata
-
-    # ── Context source routing ────────────────────────────────────────────────
-    context_source = "search"
-    if context and len(context) > 500:
-        context_source = "user_paste"
-        darwin.log(f"Context: user_paste ({len(context)} chars), skipping search", LogType.INFO)
-    elif message.attachments:
-        context_source = "attachment"
-        darwin.log(f"Context: {len(message.attachments)} attachments", LogType.INFO)
-
-    # ── spaCy pass ────────────────────────────────────────────────────────────
-    nlp = _get_nlp()
-    doc = nlp(query)
-
-    # ── Detectors ─────────────────────────────────────────────────────────────
-    intent = _detect_intent(doc, query)
-    darwin.log(f"Intent: {intent}", LogType.INFO)
-
-    is_multi = _detect_multi_question(doc, query)
-    darwin.log(f"Multi-question: {is_multi}", LogType.INFO)
-
-    is_followup = _detect_followup(doc, query, history, metadata)
-    darwin.log(f"Followup: {is_followup}", LogType.INFO)
-
-    is_parametric, parametric_seed = _detect_parametric(doc, query)
-    darwin.log(f"Parametric: {is_parametric} {parametric_seed or ''}", LogType.INFO)
-
-    doc_scope = _detect_document_scope(doc, query, store)
-    darwin.log(f"Document scope: {doc_scope}", LogType.INFO)
-
-    # BUG FIX: Scoped queries are never followups
-    if doc_scope is not None:
-        is_followup = False
-        darwin.log("Followup overridden: document scope detected", LogType.INFO)
-
-    is_garbage, garbage_score = _detect_garbage(doc, query)
-    darwin.log(f"Garbage: {is_garbage} (score: {garbage_score})", LogType.INFO)
-
-    needs_clarification, clarification_options = _detect_clarification(doc, query, intent, is_followup)
-    darwin.log(f"Clarification: {needs_clarification}", LogType.INFO)
-
-    # ── Response type ─────────────────────────────────────────────────────────
-    response_type = detect_response_type(
-        doc=doc,
-        query=query,
-        multi_question=is_multi,
-        is_followup=is_followup,
-        enabled_tiers=enabled_tiers,
-    )
-    darwin.log(f"Response type: {response_type}", LogType.INFO)
-
-    requires_search = RESPONSE_TYPES[response_type].requires_search
-    if is_followup or context_source in {"user_paste", "attachment"}:
-        requires_search = False
-        darwin.log(f"Search disabled: followup={is_followup}, source={context_source}", LogType.INFO)
-
-    # ── Block suggestions ───────────────────────────────────────────────────────
-    suggested_blocks = _build_suggested_blocks(intent, response_type, is_parametric)
-    darwin.log(f"Suggested blocks: {suggested_blocks}", LogType.INFO)
-
-    # ── Query rewrite ─────────────────────────────────────────────────────────
-    rewritten = _rewrite_query(query, is_multi)
-    darwin.log(f"Rewritten: {rewritten}", LogType.INFO)
-
-    # ── Assemble ──────────────────────────────────────────────────────────────
-    analysis = QueryAnalysis(
-        query=query,
-        intent=intent,
-        is_followup=is_followup,
-        is_multi_question=is_multi,
-        is_parametric=is_parametric,
-        parametric_seed=parametric_seed,
-        document_scope=doc_scope,
-        response_type=response_type,
-        rewritten_queries=rewritten,
-        top_k=get_top_k(response_type),
-        requires_search=requires_search,
-        is_garbage=is_garbage,
-        needs_clarification=needs_clarification,
-        clarification_options=clarification_options,
-        suggested_blocks=suggested_blocks,
-        context_source=context_source,
-        signals={
-            "intent": intent,
-            "entity_count": len(doc.ents),
-            "token_count": len(doc),
-            "pos_tags": [t.tag_ for t in doc],
-            "named_entities": [(ent.text, ent.label_) for ent in doc.ents],
-            "message_type": metadata.get("type", "normal_reply"),
-            "garbage_score": garbage_score,
-            "context_length": len(context),
-            "attachment_count": len(message.attachments),
-        },
+def _fallback_query(clean_query: str, spacy: SpacyFeatures) -> OrganizedQuery:
+    return OrganizedQuery(
+        clean_query=clean_query,
+        spacy=spacy,
+        pasted_texts=[],
+        has_urls=False,
+        extracted_urls=[],
+        search_enabled=False,
+        pinned_file_ids=[],
+        is_followup=False,
+        needs_clarification=False,
+        followup=None,
+        candidate_type="plain_text",
+        candidate_confidence="low",
+        override_reason="LLM response parsing failed — safe fallback applied",
+        retrieval_hint=clean_query,
+        top_k=5,
+        comparison_subjects=None,
     )
 
-    darwin.log(
-        f"QueryAnalysis: {analysis.response_type} | "
-        f"search={analysis.requires_search} | "
-        f"clarify={analysis.needs_clarification} | "
-        f"garbage={analysis.is_garbage}",
-    )
-    return analysis
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Backward compat — old string-based API
+# PUBLIC — Preprocessing & parsing
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def analyze_query_legacy(
+def prepare_routing_prompt(
     query: str,
-    history: list[dict],
-    store,
-    enabled_tiers: Optional[list[str]] = None,
-    message_metadata: Optional[dict] = None,
-) -> QueryAnalysis:
-    """Wrapper for old string-based callers. Wraps query in UserMessage."""
-    msg = UserMessage(
-        query=query,
-        context="",
-        attachments=[],
-        metadata=message_metadata or {"type": "normal_reply"},
+    pasted_texts: list[str] = [],
+    linked_urls: list[str] = [],
+    pinned_file_ids: list[str] = [],
+    file_registry: list[dict] = [],
+    searchable_files: dict = {},
+    session_state: dict | None = None,
+    is_reply_to_followup: bool = False,
+    previous_organized_query: OrganizedQuery | None = None,
+    search_enabled: bool = False,
+) -> RoutingPrompt:
+    """
+    Preprocess a user query for intent routing.
+
+    Steps:
+      1. Extract URLs and build clean_query
+      2. Run spaCy for entities, root verb, comparison subjects (skipped for follow-ups)
+      3. Build the system prompt and user message for the small router LLM.
+
+    Returns a RoutingPrompt dataclass containing everything the caller needs
+    to send to an LLM and later parse the response.
+    """
+    # Step 1 — URL extraction
+    clean_query, has_urls, extracted_urls = _extract_urls(query, linked_urls)
+
+    # Step 2 — spaCy
+    if is_reply_to_followup:
+        spacy_features = SpacyFeatures(
+            entities=[],
+            root_verb=None,
+            comparison_subjects=None,
+        )
+    else:
+        spacy_features = _run_spacy(clean_query)
+
+    # Step 3 — Build prompt
+    system_prompt, user_message = _build_llm_prompt(
+        clean_query=clean_query,
+        pasted_texts=pasted_texts,
+        extracted_urls=extracted_urls,
+        search_enabled=search_enabled,
+        spacy_features=spacy_features,
+        pinned_file_ids=pinned_file_ids,
+        file_registry=file_registry,
+        searchable_files=searchable_files,
+        session_state=session_state,
+        is_reply_to_followup=is_reply_to_followup,
+        previous_organized_query=previous_organized_query,
     )
-    return analyze_query(message=msg, history=history, store=store, enabled_tiers=enabled_tiers)
+
+    print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+    print(system_prompt)
+    print(user_message)
+    print(spacy_features)
+    print(has_urls)
+    print(extracted_urls)
+    print(search_enabled)
+    print(is_reply_to_followup)
+    print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
+
+    return RoutingPrompt(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        clean_query=clean_query,
+        spacy_features=spacy_features,
+        has_urls=has_urls,
+        extracted_urls=extracted_urls,
+        search_enabled=search_enabled,
+        is_followup=is_reply_to_followup,
+    )
+
+
+def parse_routing_response(
+    response_text: str,
+    routing_prompt: RoutingPrompt,
+) -> OrganizedQuery:
+    """
+    Parse the raw LLM JSON response into an OrganizedQuery, enforcing
+    spaCy ground-truth for entities/root_verb/comparison_subjects.
+    """
+    try:
+        stripped = _strip_markdown_code(response_text)
+        data = json.loads(stripped)
+
+        required_top = [
+            "clean_query",
+            "spacy",
+            "pasted_texts",
+            "has_urls",
+            "extracted_urls",
+            "search_enabled",
+            "pinned_file_ids",
+            "is_followup",
+            "needs_clarification",
+            "followup",
+            "candidate_type",
+            "candidate_confidence",
+            "override_reason",
+            "retrieval_hint",
+            "top_k",
+            "comparison_subjects",
+        ]
+        for key in required_top:
+            if key not in data:
+                raise ValueError(f"Missing required field in LLM response: {key}")
+
+        spacy_actual = routing_prompt.spacy_features
+        spacy_data = data.get("spacy", {})
+
+        final_entities = spacy_actual.entities
+        final_root_verb = spacy_actual.root_verb
+        final_comparison_subjects = spacy_actual.comparison_subjects
+
+        # Allow LLM to refine comparison_subjects only if spaCy found one or none
+        if spacy_actual.comparison_subjects is not None and len(spacy_actual.comparison_subjects) == 1:
+            llm_subjects = spacy_data.get("comparison_subjects")
+            if isinstance(llm_subjects, list) and len(llm_subjects) >= 2:
+                final_comparison_subjects = llm_subjects
+        elif spacy_actual.comparison_subjects is None:
+            llm_subjects = spacy_data.get("comparison_subjects")
+            if isinstance(llm_subjects, list) and len(llm_subjects) > 0:
+                final_comparison_subjects = llm_subjects
+
+        spacy_features = SpacyFeatures(
+            entities=final_entities,
+            root_verb=final_root_verb,
+            comparison_subjects=final_comparison_subjects,
+        )
+
+        pasted_texts: list[PastedText] = []
+        for pt in data.get("pasted_texts", []):
+            if isinstance(pt, dict) and "content" in pt and "type" in pt:
+                pasted_texts.append(PastedText(content=pt["content"], type=pt["type"]))
+
+        followup: FollowUpBlock | None = None
+        fu = data.get("followup")
+        if fu is not None and isinstance(fu, dict):
+            options = []
+            for opt in fu.get("options", []):
+                if isinstance(opt, dict):
+                    options.append(
+                        FollowUpOption(
+                            id=opt.get("id", ""),
+                            label=opt.get("label", ""),
+                            value=opt.get("value", ""),
+                        )
+                    )
+            followup = FollowUpBlock(
+                question=fu.get("question", ""),
+                options=options,
+                allow_custom=fu.get("allow_custom", True),
+                answer=fu.get("answer"),
+                reason=fu.get("reason", "intent_unclear"),
+            )
+
+        top_level_subjects = None
+        if data.get("candidate_type") == "comparison_table":
+            top_level_subjects = spacy_features.comparison_subjects
+
+        return OrganizedQuery(
+            clean_query=routing_prompt.clean_query,
+            spacy=spacy_features,
+            pasted_texts=pasted_texts,
+            has_urls=routing_prompt.has_urls,
+            extracted_urls=routing_prompt.extracted_urls,
+            search_enabled=routing_prompt.search_enabled,
+            pinned_file_ids=data.get("pinned_file_ids", []),
+            is_followup=routing_prompt.is_followup,
+            needs_clarification=data.get("needs_clarification", False),
+            followup=followup,
+            candidate_type=data.get("candidate_type", "plain_text"),
+            candidate_confidence=data.get("candidate_confidence", "low"),
+            override_reason=data.get("override_reason"),
+            retrieval_hint=data.get("retrieval_hint", ""),
+            top_k=data.get("top_k", 5),
+            comparison_subjects=top_level_subjects,
+        )
+
+    except Exception:
+        return _fallback_query(routing_prompt.clean_query, routing_prompt.spacy_features)
