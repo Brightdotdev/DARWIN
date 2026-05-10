@@ -259,7 +259,6 @@ class ModelStore:
         ]
         
         try:
-            import spacy
             strategies.append(
                 ("spaCy package download", lambda: self._download_spacy_via_package(model_name, target_path))
             )

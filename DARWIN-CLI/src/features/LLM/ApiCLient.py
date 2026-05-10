@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import os
 import base64
-import json
 from pathlib import Path
 from typing import Optional, List, Union
 import litellm
 from dataclasses import dataclass
 
-from src.features.LLM.LLMConfig import LLMClientConfig, TierConfig
+from src.features.LLM.LLMConfig import LLMConfig, TierConfig
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
@@ -32,7 +31,7 @@ class APiClient:
     Handles rate-limit auto-rotation via LLMManager callback.
     """
 
-    def __init__(self, config: LLMClientConfig):
+    def __init__(self, config: LLMConfig):
         self.config = config
         self._validate_or_warn()
 

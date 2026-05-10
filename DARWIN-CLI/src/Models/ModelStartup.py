@@ -3,6 +3,7 @@ src/core/Models/startup.py
 ---------------------------
 Model initialization and onboarding.
 Supports both terminal (print/input) and frontend (darwin.prompt) modes.
+Now integrates OS keychain for API key storage.
 """
 
 from typing import Optional
@@ -14,13 +15,18 @@ from src.Models.ModelSetup import (
     validate_model, calculate_download_size, validate_all_selections,
 )
 from src.core.Logger.DarwinLogger import darwin, LogType
-
+from src.lib.KeyManager import (
+    load_keys_from_keychain,
+    set_api_key,
+    PROVIDER_REGISTRY,
+)
 
 
 def _detect_api_junkies() -> dict[str, bool]:
-    """Check which API keys are available in environment."""
+    """Check which API keys are available (env + keychain)."""
     import os
-    
+    # Ensure keychain is loaded before checking
+    load_keys_from_keychain()
     return {
         "openai": bool(os.getenv("OPENAI_API_KEY")),
         "openrouter": bool(os.getenv("OPENROUTER_API_KEY")),
@@ -33,50 +39,47 @@ def _detect_api_junkies() -> dict[str, bool]:
     }
 
 
-
-
 def download_required(store, preferences, system):
-    """Download required models with hardware validation."""
+    """Download required *local* models; API models are skipped with a check."""
     VALID_CATEGORIES = {"embedding", "reranker", "vision", "tokenizer"}
     selected = {cat: val for cat, val in preferences.items()
                 if cat in VALID_CATEGORIES and val and val not in {"none", "not set"}}
-    if not selected:
+
+    to_download = []
+    for cat, key in selected.items():
+        if key not in REGISTRY:
+            continue
+        spec = REGISTRY[key]
+        if spec.disk_mb == 0:  # API model, nothing to download
+            provider = key.split("/")[0]
+            env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
+            import os
+            if env_var and not os.getenv(env_var):
+                darwin.log(f"⚠️  {key} requires API key for {provider}, which is not set.", LogType.WARNING)
+            else:
+                darwin.log(f"{key} is API‑only, key present.", LogType.SUCCESS)
+            continue
+        validation = validate_model(key, system, store)
+        if validation.can_run:
+            to_download.append(key)
+        else:
+            darwin.log(f"Skipping {key}: {', '.join(validation.warnings)}", LogType.WARNING)
+
+    if not to_download:
+        darwin.log("All compatible local models already cached or skipped.", LogType.SUCCESS)
         return
 
-    required_keys, optional_keys, failed_validation = [], [], []
-    for cat, key in selected.items():
-        if key not in REGISTRY: continue
-        validation = validate_model(key, system, store)
-        if not validation.can_run:
-            failed_validation.append((key, validation.warnings))
-        elif REGISTRY[key].required:
-            required_keys.append(key)
-        else:
-            optional_keys.append(key)
-
-    all_keys = required_keys + optional_keys
-    download_info = calculate_download_size({k: k for k in all_keys}, store) if all_keys else {"total_gb": 0}
-
-    # Use darwin.log so frontend sees these messages
+    download_info = calculate_download_size({k: k for k in to_download}, store)
     darwin.log(f"Models directory: {store.root}", LogType.INFO)
     darwin.log(f"System: {system.ram_gb}GB RAM, {system.disk_free_gb:.1f}GB free", LogType.INFO)
-
-    if failed_validation:
-        darwin.log(f"{len(failed_validation)} model(s) rejected (insufficient hardware)", LogType.WARNING)
-        for key, warnings in failed_validation:
-            darwin.log(f"  {key}: {', '.join(warnings)}", LogType.WARNING)
-
-    new_downloads = [k for k in all_keys if not store.is_downloaded(k)]
-    if not new_downloads:
-        darwin.log("All compatible models already cached", LogType.SUCCESS)
-        return
 
     if download_info["total_gb"] > system.disk_free_gb * 0.8:
         darwin.log(f"Downloads need {download_info['total_gb']:.1f}GB but only {system.disk_free_gb:.1f}GB free", LogType.WARNING)
 
-    darwin.log(f"Downloading {len(new_downloads)} model(s) — ~{download_info['total_gb']:.1f}GB", LogType.INFO)
+    new_downloads = [k for k in to_download if not store.is_downloaded(k)]
+    darwin.log(f"Downloading {len(new_downloads)} local model(s) — ~{download_info['total_gb']:.1f}GB", LogType.INFO)
 
-    for key in all_keys:
+    for key in to_download:
         spec = get_spec(key)
         if store.is_downloaded(key):
             darwin.log(f"{key} — cached ({store.installed_size(key)})", LogType.SUCCESS)
@@ -93,14 +96,19 @@ async def run_onboarding_async() -> ModelLoader:
     """
     Interactive first-run setup with custom model selection.
     Uses darwin.prompt() so it works in terminal AND browser.
+    Keys are loaded from keychain at startup and can be entered during selection.
     """
     store = ModelStore()
     system = detect_system()
     recommended = recommend_defaults(system)
 
+    # Load any previously saved API keys into environment
+    load_keys_from_keychain()
+
     darwin.log("")
     darwin.log("Welcome to Darwin — Let's set up your AI models", LogType.INFO)
-    darwin.log(f"System: {system.ram_gb}GB RAM | {system.cpu_cores} cores | {system.disk_free_gb:.0f}GB free disk", LogType.INFO)
+    darwin.log(f"System: {system.ram_gb}GB RAM | {system.cpu_cores} cores | {system.disk_free_gb:.0f}GB free disk",
+               LogType.INFO)
     if system.has_gpu:
         darwin.log(f"GPU: {system.gpu_name}", LogType.INFO)
     darwin.log(f"Best tier for your hardware: {TIER_LABELS[system.tier]}", LogType.INFO)
@@ -159,7 +167,14 @@ async def run_onboarding_async() -> ModelLoader:
     for cat, key in choices.items():
         if key and key in REGISTRY:
             spec = REGISTRY[key]
-            status = "cached" if store.is_downloaded(key) else f"{spec.disk_mb}MB to download"
+            if spec.disk_mb == 0:
+                # API model
+                provider = key.split("/")[0]
+                api_junkies = _detect_api_junkies()
+                has_key = api_junkies.get(provider, False)
+                status = "🔑 ready" if has_key else "❌ missing key"
+            else:
+                status = "cached" if store.is_downloaded(key) else f"{spec.disk_mb}MB to download"
             can = "fits" if system.can_run(spec) else "may not fit"
             darwin.log(f"  {cat}: {key} ({spec.tier}, {status}, {can})", LogType.INFO)
         elif key:
@@ -174,11 +189,13 @@ async def run_onboarding_async() -> ModelLoader:
         info = validation["download_info"]
         darwin.log(f"Total to download: ~{info['total_gb']:.1f}GB (free: {system.disk_free_gb:.1f}GB)", LogType.INFO)
 
-    # Download valid models
+    # Download valid local models
     for category, key in choices.items():
-        if key and key in REGISTRY and validate_model(key, system, store).can_run and not store.is_downloaded(key):
-            darwin.log(f"Downloading {key}...", LogType.INFO)
-            store.download(key)
+        if key and key in REGISTRY:
+            spec = REGISTRY[key]
+            if spec.disk_mb > 0 and validate_model(key, system, store).can_run and not store.is_downloaded(key):
+                darwin.log(f"Downloading {key}...", LogType.INFO)
+                store.download(key)
 
     darwin.log("All models ready!", LogType.SUCCESS)
     return ModelLoader(store, {k: v for k, v in choices.items() if v})
@@ -211,21 +228,20 @@ async def _onboard_category_async(
 
     darwin.log(f"Available {category} models:", LogType.INFO)
     options = []
+    api_junkies = _detect_api_junkies()  # fresh check
     for i, (key, spec, validation) in enumerate(opts):
         star = " ⭐" if key == recommended_key else ""
-        
+
         # API models show key status, local models show disk size + cache
         if spec.disk_mb == 0:
-            # Check if the API key is available
             provider = key.split("/")[0]
-            api_junkies = _detect_api_junkies()
-            has_key = api_junkies.get(provider, False) or api_junkies.get("openrouter", False)
+            has_key = api_junkies.get(provider, False)
             cached = f" [🔑 {'ready' if has_key else 'missing key'}]"
             size_str = "API"
         else:
             cached = " [cached]" if store.is_downloaded(key) else ""
             size_str = f"{spec.disk_mb}MB"
-        
+
         can = "✅" if validation.can_run else "⚠️"
         label = f"[{i+1}] {key} ({spec.tier}, {size_str}, {spec.ram_gb}GB RAM) {can}{star}{cached}"
         options.append(label)
@@ -244,29 +260,60 @@ async def _onboard_category_async(
         params={"category": category, "opts": opts, "recommended": recommended_key, "required": required},
     )
 
-    # Parse the choice
+    # Parse the choice (returns option number, 's', 'r', or raw string)
+    selected_key = None
     if choice == "s" and not required:
         darwin.log(f"Skipped {category}. Install later from settings.", LogType.INFO)
         return None
     if choice == "r" and recommended_key:
-        return recommended_key
+        selected_key = recommended_key
+    else:
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(opts):
+                key, spec, validation = opts[idx]
+                selected_key = key
+        except (ValueError, TypeError):
+            pass
 
-    # Try to parse as option number
-    try:
-        idx = int(choice) - 1
-        if 0 <= idx < len(opts):
-            key, spec, validation = opts[idx]
-            if not validation.can_run:
-                darwin.log(f"This model may not run well: {', '.join(validation.warnings)}", LogType.WARNING)
-            return key
-    except (ValueError, TypeError):
-        pass
+    if selected_key is None:
+        # Fallback to recommended or first available
+        selected_key = recommended_key if recommended_key else (opts[0][0] if opts else None)
 
-    # Fallback to recommended
-    if recommended_key:
-        darwin.log(f"Using recommended: {recommended_key}", LogType.INFO)
-        return recommended_key
-    return opts[0][0] if opts else None
+    if selected_key:
+        spec = get_spec(selected_key)
+        # If API model and key missing, prompt for it now
+        if spec and spec.disk_mb == 0:
+            provider = selected_key.split("/")[0]
+            if not api_junkies.get(provider, False):
+                darwin.log(f"The model {selected_key} requires an API key for {provider}.", LogType.WARNING)
+                # Prompt for the key (secure input if possible)
+                try:
+                    api_key = await darwin.prompt_password(
+                        id=f"key_{provider}",
+                        message=f"Enter your {provider.upper()} API key:",
+                        action="save_api_key",
+                        params={"provider": provider},
+                    )
+                except AttributeError:
+                    # fallback if darwin.prompt_password doesn't exist
+                    api_key = await darwin.prompt(
+                        id=f"key_{provider}",
+                        message=f"Enter your {provider.upper()} API key (input will be visible):",
+                        action="save_api_key",
+                        params={"provider": provider},
+                    )
+                if api_key and api_key.strip():
+                    try:
+                        set_api_key(provider, api_key, validate=True)
+                        darwin.log(f"✅ API key for {provider} saved.", LogType.SUCCESS)
+                    except Exception as e:
+                        darwin.log(f"❌ Failed: {e}. Key not saved.", LogType.ERROR)
+                else:
+                    darwin.log("No key entered. The API model will not work until you set it.", LogType.WARNING)
+
+    # Ensure we don't return an API model that can't work without a key? We still return it; setup will warn later.
+    return selected_key
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -292,3 +339,9 @@ def onboard_select_action(choice: str, **params) -> str:
     if choice.startswith("[r]"):
         return "r"
     return choice  # Return as-is for fallback
+
+
+# Optionally, register an action to handle key save from prompt
+def save_api_key_action(choice: str, **params) -> str:
+    """Action handler for saving API key via darwin.prompt."""
+    return choice  # just pass through the entered key

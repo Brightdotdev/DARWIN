@@ -227,13 +227,10 @@ class ModelLoader:
     # ── API loader helpers ─────────────────────────────────────────────────
 
     def _load_api_embedding(self, model_id: str) -> APIEmbeddingWrapper:
-        from src.features.LLM.APiClient import APiClient
-        return APIEmbeddingWrapper(APiClient(model=model_id), model_id)
+        return APIEmbeddingWrapper(model_id)
 
     def _load_api_reranker(self, model_id: str) -> APIRerankerWrapper:
-        from src.features.LLM.APiClient import APiClient
-        return APIRerankerWrapper(APiClient(model=model_id), model_id)
+        return APIRerankerWrapper(model_id)
 
     def _load_api_vision(self, model_id: str) -> APIVisionWrapper:
-        from src.features.LLM.APiClient import APiClient
-        return APIVisionWrapper(APiClient(model=model_id), model_id)
+        return APIVisionWrapper(model_id)

@@ -1,7 +1,6 @@
 # src/core/Models/ModelManager.py
 
-import sys
-from pathlib import Path
+import os
 from typing import Optional
 
 from src.Models.ModelStore import ModelStore
@@ -10,7 +9,7 @@ from src.features.Hardware.SystemDetector import detect_system, recommend_defaul
 from src.features.Storage.DarwinStore import DarwinStore
 from src.Models.ModelRegistry import get_spec, REGISTRY
 from src.core.Logger.DarwinLogger import darwin, LogType
-
+from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
 
 _LOADER_INSTANCE = None
 _PREFERENCES_CACHE = None
@@ -19,17 +18,17 @@ _SYSTEM_CACHE = None
 
 class ModelManager:
     """User-facing orchestration for model management."""
-    
+
     def __init__(self, darwin_store: Optional[DarwinStore] = None):
         global _SYSTEM_CACHE
-        
+        load_keys_from_keychain()
+
         self.model_store = ModelStore()
-        
-        # Use cached system info if available, otherwise detect
+
         if _SYSTEM_CACHE is None:
             _SYSTEM_CACHE = detect_system()
         self.system = _SYSTEM_CACHE
-        
+
         self._darwin_store = darwin_store
         self._loader: Optional[ModelLoader] = None
 
@@ -37,27 +36,25 @@ class ModelManager:
     def get_loader() -> ModelLoader:
         """Global ModelLoader singleton."""
         global _LOADER_INSTANCE, _PREFERENCES_CACHE, _SYSTEM_CACHE
-        
+
         if _LOADER_INSTANCE is None:
             mode_store = ModelStore()
-            
+
             if _SYSTEM_CACHE is None:
                 _SYSTEM_CACHE = detect_system()
-            
+
             if _PREFERENCES_CACHE is None:
                 _PREFERENCES_CACHE = recommend_defaults(_SYSTEM_CACHE)
-            
+
             _LOADER_INSTANCE = ModelLoader(mode_store, _PREFERENCES_CACHE)
-        
+
         return _LOADER_INSTANCE
-
-
 
     @staticmethod
     def setup(preferences: dict = None, skip_download: bool = False) -> ModelLoader:
         """Initialize the singleton loader with optional preferences and model downloads."""
         global _LOADER_INSTANCE, _PREFERENCES_CACHE, _SYSTEM_CACHE
-
+        load_keys_from_keychain()
         if _SYSTEM_CACHE is None:
             _SYSTEM_CACHE = detect_system()
 
@@ -89,6 +86,7 @@ class ModelManager:
     def get_active_models(self) -> dict[str, str]:
         """Return active model_id per category from current preferences."""
         return self.loader.get_all_model_keys()
+
     # ═══════════════════════════════════════════════════════════════════════
     # Switch methods
     # ═══════════════════════════════════════════════════════════════════════
@@ -96,13 +94,13 @@ class ModelManager:
     def switch_embedding(self, new_key: str, migrate: bool = True, file: Optional[str] = None) -> None:
         """Switch embedding model with optional migration."""
         from src.Models.ModelRegistry import REGISTRY as registry
-        
+
         resolved = self._resolve_key(new_key, "embedding")
         if not resolved:
             return
-        
+
         key, spec = resolved
-        
+
         if not self.model_store.is_downloaded(key):
             darwin.log(f"Downloading {new_key} first...", LogType.INFO)
             try:
@@ -112,16 +110,16 @@ class ModelManager:
                 return
 
         self.loader.set_preference("embedding", spec.model_id)
-        
+
         if self._darwin_store:
             self._darwin_store.update_model_preference("embedding", spec.model_id)
-        
+
         darwin.log(f"Switched embedding → {new_key}", LogType.SUCCESS)
 
         if self._darwin_store:
             health = self._darwin_store.get_embedding_health()
             stale = health.get("needs_reembed", [])
-            
+
             if stale:
                 if migrate:
                     darwin.log(f"{len(stale)} file(s) need re-embedding. Migrating...", LogType.INFO)
@@ -146,9 +144,9 @@ class ModelManager:
         resolved = self._resolve_key(new_key, category)
         if not resolved:
             return
-        
+
         key, spec = resolved
-        
+
         if not self.model_store.is_downloaded(key):
             darwin.log(f"Downloading {new_key} first...", LogType.INFO)
             try:
@@ -158,18 +156,18 @@ class ModelManager:
                 return
 
         self.loader.set_preference(category, spec.model_id)
-        
+
         if self._darwin_store:
             self._darwin_store.update_model_preference(category, spec.model_id)
-        
+
         darwin.log(f"Switched {category} → {new_key}", LogType.SUCCESS)
 
     def _resolve_key(self, key: str, expected_category: str) -> Optional[tuple]:
         """Resolve model identifier to (registry_key, spec). Returns None on failure."""
         from src.Models.ModelRegistry import REGISTRY as registry, get_spec
-        
+
         id_to_key = {spec.model_id: k for k, spec in registry.items()}
-        
+
         if key in id_to_key:
             registry_key = id_to_key[key]
         elif key in registry:
@@ -177,12 +175,12 @@ class ModelManager:
         else:
             darwin.log(f"Unknown model: {key}", LogType.ERROR)
             return None
-        
+
         spec = get_spec(registry_key)
         if spec.category != expected_category:
             darwin.log(f"{key} is not a {expected_category} model", LogType.ERROR)
             return None
-        
+
         return registry_key, spec
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -265,8 +263,6 @@ class ModelManager:
 
         return stats
 
-
-
     # ═══════════════════════════════════════════════════════════════════════
     # User commands
     # ═══════════════════════════════════════════════════════════════════════
@@ -286,7 +282,7 @@ class ModelManager:
         models = REGISTRY
         if category:
             models = {k: v for k, v in REGISTRY.items() if v.category == category}
-        
+
         print(f"\n📋 Available Models ({category or 'all'}):\n")
         for key, spec in models.items():
             print(f"   {key:<25} {spec.model_id:<45} {spec.tier:<10} {spec.disk_mb}MB")
@@ -297,11 +293,11 @@ class ModelManager:
         models = {k: v for k, v in REGISTRY.items() if v.category == category}
         if tier != 'all':
             models = {k: v for k, v in models.items() if v.tier == tier}
-        
+
         if not models:
             darwin.log(f"No models found for category '{category}' (tier: {tier})", LogType.WARNING)
             return
-            
+
         for key in models:
             if not self.model_store.is_downloaded(key):
                 self.install(key)
@@ -325,11 +321,11 @@ class ModelManager:
         if key not in REGISTRY:
             darwin.log(f"Unknown model: {key}", LogType.ERROR)
             return
-            
+
         if not self.model_store.is_downloaded(key):
             darwin.log(f"{key} is not installed. Use install instead.", LogType.WARNING)
             return
-            
+
         darwin.log(f"Upgrading {key}...", LogType.INFO)
         self.install(key, force=True)
 
@@ -341,8 +337,25 @@ class ModelManager:
 
         spec = get_spec(key)
 
+        # API models: no local download; check key availability
+        if spec.disk_mb == 0:
+            provider = key.split('/')[0]
+            env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
+            if env_var and not os.getenv(env_var):
+                darwin.log(
+                    f"{key} requires an API key for {provider}. "
+                    f"Use 'darwin key set {provider} YOUR_KEY'",
+                    LogType.WARNING
+                )
+            darwin.log(f"{key} is an API model – no local download needed.", LogType.INFO)
+            return
+
+        # Local model: validate hardware
         if not self.system.can_run(spec):
-            darwin.log(f"Warning: {key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)", LogType.WARNING)
+            darwin.log(
+                f"Warning: {key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)",
+                LogType.WARNING
+            )
             response = input("   Continue anyway? [y/N]: ").strip().lower()
             if response != 'y':
                 return
@@ -368,6 +381,10 @@ class ModelManager:
             return
 
         spec = get_spec(key)
+        if spec.disk_mb == 0:
+            darwin.log(f"{key} is an API model; nothing to delete locally.", LogType.INFO)
+            return
+
         if spec.required:
             darwin.log(f"{key} is required. Uninstalling may break functionality.", LogType.WARNING)
             response = input("   Continue? [y/N]: ").strip().lower()

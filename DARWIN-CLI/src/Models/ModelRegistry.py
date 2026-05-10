@@ -108,7 +108,7 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=1,
         disk_mb=45,
         loader="spacy",
-        required=False,
+        required=True,
         notes="Medium English model. Optimized for concept extraction (NER, parsing, lemmatization). 45MB.",
     ),
     "en_core_web_lg": ModelSpec(

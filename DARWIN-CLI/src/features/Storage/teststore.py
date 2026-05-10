@@ -15,21 +15,43 @@ def test_store() -> DarwinStore:
 
 
 
-def return_searchables(filename: str) -> tuple[bool, bool, bool] | None:
-    from src.features.Storage.DarwinStore import DarwinStore
+def return_searchables(filename: str | None = None) -> bool: 
     store = DarwinStore()
     status = store.status()
 
-    file_info = status.get("files", {}).get(filename)
+    files = status.get("files", {})
 
-    if not file_info:
-        return None
+    # Return all files
+    if filename is None:
+        return {
+            fname: {
+                "kw": info.get("is_kw_searchable", False),
+                "hybrid": info.get("is_hybrid_searchable", False),
+                "embedding": info.get("is_embedding_searchable", False),
+            }
+            for fname, info in files.items()
+        }
 
-    return (
-        file_info.get("is_kw_searchable", False),
-        file_info.get("is_hybrid_searchable", False),
-        file_info.get("is_embedding_searchable", False),
-    )
+    # Return single file
+    info = files.get(filename)
+
+    if not info:
+        return False
+
+    return info.get("is_hybrid_searchable", False)
+
+def return_searchabl_files():
+    store = DarwinStore()
+    status = store.status()
+
+    return {
+        filename: {
+            "kw": info.get("is_kw_searchable", False),
+            "hybrid": info.get("is_hybrid_searchable", False),
+            "embedding": info.get("is_embedding_searchable", False),
+        }
+        for filename, info in status.get("files", {}).items()
+    }
 
 
 if __name__ == "__main__":

@@ -27,6 +27,8 @@ def validate_model(key: str, system: SystemInfo, store: Optional[ModelStore] = N
     Check if a model can run on this system.
     Returns a ValidationResult with details about each constraint.
     """
+    from src.lib.KeyManager import PROVIDER_REGISTRY
+    import os
     if key not in REGISTRY:
         return ValidationResult(key, False, False, False, [f"Unknown model: {key}"])
     
@@ -40,6 +42,11 @@ def validate_model(key: str, system: SystemInfo, store: Optional[ModelStore] = N
     if not disk_ok:
         needed_gb = spec.disk_mb / 1024
         warnings.append(f"Needs {needed_gb:.1f}GB disk (you have {system.disk_free_gb:.1f}GB free)")
+    if spec.disk_mb == 0:  # API model
+        provider = key.split('/')[0]
+        env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
+        if env_var and not os.getenv(env_var):
+            warnings.append(f"API key for {provider} not set; model won't work until key is provided")
  
     return ValidationResult(
         model_key=key,
