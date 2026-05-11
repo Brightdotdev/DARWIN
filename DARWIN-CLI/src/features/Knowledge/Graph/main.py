@@ -1,15 +1,3 @@
-"""
-src/core/Knowledge/Graph/main.py
----------------------------------
-Graph extraction CLI entry point.
-
-Usage:
-  uv run src/core/Knowledge/Graph/main.py --file bible.txt
-  uv run src/core/Knowledge/Graph/main.py --file paper.md --processing-mode full
-  uv run src/core/Knowledge/Graph/main.py --file paper.md --max-concepts 50 --relation-threshold 0.7
-  uv run src/core/Knowledge/Graph/main.py --file book.pdf --processing-mode sliding_window --chunk-overlap 0.5
-"""
-
 import sys
 import argparse
 import asyncio
@@ -21,7 +9,6 @@ if __name__ == "__main__":
 
 from src.features.Knowledge.Graph.GraphExtractor import run_graph_extraction_pipeline
 from src.features.Knowledge.Graph.GraphUtils import (
-    GraphExtractionArgs,
     DEFAULT_MIN_CONCEPT_FREQ,
     DEFAULT_MAX_CONCEPTS,
     export_graph_json,

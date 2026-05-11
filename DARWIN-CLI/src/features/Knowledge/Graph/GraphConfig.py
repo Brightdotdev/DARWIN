@@ -1,21 +1,3 @@
-"""
-src/core/Knowledge/Graph/GraphConfig.py
-----------------------------------------
-Tunable configuration for knowledge graph extraction.
-
-All parameters are exposed for iterative tuning to reach best fit.
-"""
-
-from dataclasses import dataclass, field
-from typing import Literal, Set, Optional
-
-
-"""
-src/core/Knowledge/Graph/GraphConfig.py
-----------------------------------------
-Tunable configuration + document-type presets for knowledge graph extraction.
-"""
-
 from dataclasses import dataclass, field
 from typing import Literal, Set, Optional
 
@@ -204,6 +186,7 @@ class GraphExtractionConfig:
 
     rerun: bool = False
     """Force re-extraction even if fresh graph exists."""
+
 
     @classmethod
     def from_preset(

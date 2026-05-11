@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
 main.py — Darwin LLM Manager: onboarding, configuration, and test harness.
+(No REPL, no query pipeline.)
 """
 
 import sys
 import asyncio
 import argparse
+import json
 import requests
 from pathlib import Path
 from typing import Optional, List
@@ -14,28 +16,24 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from src.features.LLM.LLMManager import LLMManager
-from src.features.LLM.KeyStore import KeyStore
+from src.features.LLM.LLMTypes import LLMResponse
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.lib.KeyManager import (
+    set_api_key,
+    load_keys_from_keychain,
+    clear_api_key,
+    PROVIDER_REGISTRY,
+)
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# CONSTANTS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-PROVIDER_CHOICES = [
-    "openai", "anthropic", "google", "ollama", "groq",
-    "mistral", "openrouter", "cohere", "together",
-]
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# OLLAMA HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# OLLAMA HELPERS (unchanged)
+# ═══════════════════════════════════════════════════════════════════════
 
 def fetch_ollama_models(base_url: str) -> Optional[List[str]]:
-    """Fetch list of model names from an Ollama instance. Returns None on failure."""
     try:
         r = requests.get(f"{base_url}/api/tags", timeout=3)
         if r.status_code == 200:
@@ -47,11 +45,6 @@ def fetch_ollama_models(base_url: str) -> Optional[List[str]]:
 
 
 def setup_ollama_interactive() -> Optional[str]:
-    """
-    Interactive Ollama provider setup.
-    Returns the Ollama base URL if setup was successful, None if cancelled.
-    """
-    # 1. Try default
     models = fetch_ollama_models(DEFAULT_OLLAMA_URL)
     base_url = DEFAULT_OLLAMA_URL
 
@@ -77,7 +70,6 @@ def setup_ollama_interactive() -> Optional[str]:
         darwin.log("No models found on your Ollama server.", LogType.WARNING)
         return None
 
-    # 2. Show models and pick fast/smart
     darwin.log("Detected Ollama models:", LogType.INFO)
     for i, m in enumerate(models, 1):
         darwin.log(f"  {i}. {m}", LogType.INFO)
@@ -91,7 +83,6 @@ def setup_ollama_interactive() -> Optional[str]:
         darwin.log("Invalid selection.", LogType.ERROR)
         return None
 
-    # 3. Register provider (Ollama does not use an API key)
     LLMManager.add_provider(
         "ollama",
         fast_model,
@@ -105,19 +96,18 @@ def setup_ollama_interactive() -> Optional[str]:
     return base_url
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# SETUP WIZARD
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
+# SETUP WIZARD (uses KeyManager for API keys)
+# ═══════════════════════════════════════════════════════════════════════
 
 def run_setup_wizard() -> None:
     """Interactive multi‑provider onboarding wizard."""
     darwin.log("Darwin LLM Setup Wizard", LogType.INFO)
-    keystore = KeyStore()
-    keystore.load()
 
     while True:
         darwin.log("Available providers:", LogType.INFO)
-        for i, p in enumerate(PROVIDER_CHOICES, 1):
+        supported = list(PROVIDER_REGISTRY.keys()) + ["ollama"]
+        for i, p in enumerate(supported, 1):
             darwin.log(f"  {i}. {p}", LogType.INFO)
 
         choice = input("Enter number (or 'done' to finish): ").strip()
@@ -126,7 +116,7 @@ def run_setup_wizard() -> None:
 
         try:
             idx = int(choice) - 1
-            provider = PROVIDER_CHOICES[idx]
+            provider = supported[idx]
         except (ValueError, IndexError):
             darwin.log("Invalid choice.", LogType.WARNING)
             continue
@@ -134,10 +124,14 @@ def run_setup_wizard() -> None:
         if provider == "ollama":
             result = setup_ollama_interactive()
             if result is None:
-                continue  # back to provider list
+                continue
         else:
             api_key = input(f"Enter API key for {provider}: ").strip()
-            keystore.add_key(provider, api_key)
+            try:
+                set_api_key(provider, api_key, validate=True)
+            except Exception as e:
+                darwin.log(str(e), LogType.ERROR)
+                continue
 
             fast_model = input("FAST model ID (e.g. gpt-4o-mini): ").strip()
             smart_model = input("SMART model ID (e.g. gpt-4o): ").strip()
@@ -149,7 +143,6 @@ def run_setup_wizard() -> None:
                                     fast_temp=0.1, fast_max_tokens=1024,
                                     smart_temp=0.7, smart_max_tokens=4096)
 
-        # Set as default if it's the first one added
         if len(LLMManager.list_providers()) == 1:
             LLMManager.switch_default_provider(provider)
 
@@ -161,111 +154,38 @@ def run_setup_wizard() -> None:
     darwin.log(f"Configuration saved to {LLMManager._config_path}", LogType.SUCCESS)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# INTERACTIVE REPL
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def run_repl() -> None:
-    """Simple interactive REPL for testing LLM calls and query routing."""
-    client = LLMManager.get_client()
-    darwin.log(
-        "Darwin Test REPL. Type 'exit', '/switch <provider>', or '/test'.",
-        LogType.INFO,
-    )
-    if LLMManager._config:
-        darwin.log(
-            f"Default provider: {LLMManager._config.default_provider}",
-            LogType.INFO,
-        )
-
-    while True:
-        user_input = input("\nYou: ").strip()
-        if user_input.lower() == "exit":
-            break
-
-        if user_input.startswith("/switch"):
-            _, prov = user_input.split(maxsplit=1)
-            try:
-                LLMManager.switch_default_provider(prov)
-                darwin.log(
-                    f"Default provider changed to {prov}",
-                    LogType.SUCCESS,
-                )
-            except Exception as e:
-                darwin.log(str(e), LogType.ERROR)
-            continue
-
-        if user_input == "/test":
-            darwin.log(
-                "Testing fast + smart calls with 'Hello'",
-                LogType.INFO,
-            )
-            for tier in ("fast", "smart"):
-                try:
-                    method = (
-                        client.call_small
-                        if tier == "fast"
-                        else client.call_smart
-                    )
-                    resp = method([{"role": "user", "content": "Hello"}])
-                    darwin.log(f"[{tier}] {resp}", LogType.SUCCESS)
-                except Exception as e:
-                    darwin.log(f"[{tier}] error: {e}", LogType.ERROR)
-            continue
-
-        from src.features.Query.IntentAnalyzer import (
-            prepare_routing_prompt,
-            parse_routing_response,
-        )
-
-        routing_prompt = prepare_routing_prompt(query=user_input)
-        print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
-        print(routing_prompt.user_message)
-        print("&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&")
-
-
-        raw_response = client.call_small(
-            [{"role": "user", "content": routing_prompt.user_message}],
-            system=routing_prompt.system_prompt,
-            # provider="openai"   <-- removed; uses default provider
-        )
-
-        organized = parse_routing_response(raw_response, routing_prompt)
-        print(organized.candidate_type)
-        print(organized.comparison_subjects)
-        print(organized.retrieval_hint)
-
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 # CLI ENTRY POINT
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════
 
 async def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Darwin LLM Manager – configuration, onboarding, and test harness."
+        description="Darwin LLM Manager – configuration and test harness."
     )
     parser.add_argument("--wizard", action="store_true", help="Force run setup wizard")
     parser.add_argument("--show-config", action="store_true", help="Print current LLM config")
     parser.add_argument("--test", action="store_true", help="Run a quick test call to all configured providers")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
-    parser.add_argument("--profile", type=str, default=None, help="Load a specific profile at startup")
+    parser.add_argument("--profile", type=str, default=None, help="Load a specific provider profile at startup")
 
     args = parser.parse_args()
 
-    # Setup WebSocket server (optional, following the same lifecycle as ingestion)
+    # Load API keys from OS keychain at startup
+    load_keys_from_keychain()
+
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
 
     try:
-        # ── Show config only ──────────────────────────────────────────────
+        # ── Show config only ──────────────────────────────────────────
         if args.show_config:
             if LLMManager.initialize():
-                import json
                 darwin.log(json.dumps(LLMManager._serialize_config(), indent=2), LogType.INFO)
             else:
                 darwin.log("No configuration found. Run with --wizard to set up.", LogType.WARNING)
             return 0
 
-        # ── Force wizard or no config? ────────────────────────────────────
+        # ── Force wizard or no config? ────────────────────────────────
         run_wizard = args.wizard
         if not run_wizard:
             exists = LLMManager.initialize()
@@ -277,14 +197,14 @@ async def main() -> int:
 
         if run_wizard:
             # Ensure minimal manager state for wizard
-            if not LLMManager._keystore:
-                LLMManager._keystore = KeyStore()
-                LLMManager._keystore.load()
+            if not LLMManager._config:
+                # Create an empty config to allow the wizard to populate it
+                pass
             run_setup_wizard()
             # Re‑initialize after wizard to load fresh config
             LLMManager.initialize()
 
-        # ── Profile override ──────────────────────────────────────────────
+        # ── Profile override ──────────────────────────────────────────
         if args.profile and LLMManager._config:
             try:
                 LLMManager.switch_default_provider(args.profile)
@@ -293,7 +213,7 @@ async def main() -> int:
                 darwin.log(str(e), LogType.ERROR)
                 return 1
 
-        # ── Quick test ────────────────────────────────────────────────────
+        # ── Quick test ────────────────────────────────────────────────
         if args.test:
             darwin.log("Running quick test...", LogType.INFO)
             client = LLMManager.get_client()
@@ -301,17 +221,20 @@ async def main() -> int:
                 darwin.log(f"Testing provider: {prov}", LogType.INFO)
                 for tier, method in [("fast", client.call_small), ("smart", client.call_smart)]:
                     try:
-                        resp = method(
+                        resp: LLMResponse = method(
                             [{"role": "user", "content": "Hello"}],
                             provider=prov,
                         )
-                        darwin.log(f"  [{tier}] ✓ {resp[:80]}...", LogType.SUCCESS)
+                        if resp.error:
+                            darwin.log(f"  [{tier}] ✗ {resp.error}", LogType.ERROR)
+                        else:
+                            darwin.log(f"  [{tier}] ✓ {resp.text[:80]}...", LogType.SUCCESS)
                     except Exception as e:
                         darwin.log(f"  [{tier}] ✗ {e}", LogType.ERROR)
             return 0
 
-        # ── Default: interactive REPL ─────────────────────────────────────
-        run_repl()
+        # No default action – print help if nothing else specified
+        parser.print_help()
         return 0
 
     except KeyboardInterrupt:

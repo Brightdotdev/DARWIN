@@ -14,7 +14,6 @@ Usage:
 import os
 import subprocess
 from typing import Optional, Literal
-from dataclasses import dataclass
 
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -118,7 +117,7 @@ def _discover_ollama_models() -> list[tuple[str, str, int]]:
 
     models.sort(key=lambda x: x[2])
     _OLLAMA_CACHE = models
-    darwin.log(f"Ollama models discovered: {[m[0] for m in models]}", LogType.DEBUG)
+    darwin.log(f"Ollama models discovered: {[m[0] for m in models]}")
     return _OLLAMA_CACHE
 
 

@@ -28,8 +28,6 @@ from src.features.Knowledge.Graph.GraphUtils import (
     GraphData,
     ConceptNode,
     Relationship,
-    DEFAULT_MIN_CONCEPT_FREQ,
-    DEFAULT_MAX_CONCEPTS,
     normalize_entity,
     lemmatize_verb,
 )
@@ -92,7 +90,6 @@ class EntityRegistry:
         text: str,
         entity_type: str,
         chunk_idx: int,
-        spacy_doc=None,
     ) -> str:
         """Canonicalize entity mention and return node ID."""
         canonical = normalize_entity(text)
@@ -269,7 +266,7 @@ def _load_spacy(config: GraphExtractionConfig):
     return extractor
 
 
-def _is_bad_entity(ent_text: str, ent_label: str) -> bool:
+def _is_bad_entity(ent_text: str) -> bool:
     """Filter out low-quality NER results common in academic text."""
     clean = ent_text.strip()
     lower = clean.lower()
@@ -329,14 +326,13 @@ def _extract_entities_from_doc(
             if ent.label_ in {"DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"}:
                 continue
 
-            if _is_bad_entity(ent.text, ent.label_):
+            if _is_bad_entity(ent.text):
                 continue
 
             node_id = registry.get_or_create(
                 text=ent.text,
                 entity_type=ent.label_,
                 chunk_idx=chunk_idx,
-                spacy_doc=doc,
             )
             if node_id:
                 entity_ids.append(node_id)
@@ -359,7 +355,6 @@ def _extract_entities_from_doc(
                 text=clean_text,
                 entity_type="CONCEPT",
                 chunk_idx=chunk_idx,
-                spacy_doc=doc,
             )
             if node_id:
                 entity_ids.append(node_id)
@@ -489,7 +484,6 @@ def _extract_nominal_rel(sent, root, chunk_idx, relation_acc):
 def _extract_svo_from_doc(
     doc,
     chunk_idx: int,
-    registry: EntityRegistry,
     relation_acc: RelationAccumulator,
 ) -> None:
     """Extract SVO relations from dependency parse."""
@@ -518,7 +512,6 @@ def _extract_svo_from_doc(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _build_cooccurrence_edges(
-    registry: EntityRegistry,
     chunk_entity_map: Dict[int, List[str]],
     similarity_threshold: Optional[float] = None,
     max_edges: int = 500,
@@ -683,7 +676,7 @@ def extract_graph_from_chunks(
         chunk_entity_map[chunk_idx] = entity_ids
 
         if config.require_parser and extractor.has_parser:
-            _extract_svo_from_doc(doc, chunk_idx, registry, relation_acc)
+            _extract_svo_from_doc(doc, chunk_idx, relation_acc)
 
     darwin.log(
         f"[1/3] Done — {len(registry.id_to_node)} raw entities, "
@@ -709,7 +702,6 @@ def extract_graph_from_chunks(
     darwin.log("[3/3] Building co-occurrence edges...", LogType.INFO)
 
     cooccurrence_edges = _build_cooccurrence_edges(
-        registry,
         chunk_entity_map,
         config.similarity_threshold,
         max_edges=min(config.max_cooccurrence_edges, len(registry.id_to_node) * 10),
@@ -779,7 +771,6 @@ def run_graph_extraction_pipeline(
     filename: str,
     store: DarwinStore,
     config: GraphExtractionConfig = None,
-    chunk_vectors: Optional[np.ndarray] = None,
 ) -> Optional[GraphData]:
     """Full pipeline: load chunks, extract graph, save to store."""
     if config is None:

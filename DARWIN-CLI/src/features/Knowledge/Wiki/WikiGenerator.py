@@ -28,6 +28,8 @@ Write a 3-5 sentence summary of what this document says about "{concept}".
 Be specific to this document. Do not add outside knowledge.
 Return only the summary, no preamble."""
 
+
+
 _MANIFEST_PROMPT = """You are writing a one-paragraph overview of a document.
 
 The document covers these concepts:
@@ -105,20 +107,28 @@ def _extract_keywords(
         return []
 
 
-def _call_llm(prompt: str, model: str) -> Optional[str]:
-    """Call LLM via litellm. Returns None on any failure — never raises."""
+# Replace the stub _call_llm with this implementation
+def _call_llm(client, prompt: str) -> Optional[str]:
+    """
+    Call the LLM via the provided LLMClient.
+    Returns the response text, or None on failure.
+    """
     try:
-        from litellm import completion
-        response = completion(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+        from src.features.LLM.LLMTypes import LLMResponse
+        resp: LLMResponse = client.call_small(
+            [{"role": "user", "content": prompt}],
+            temperature=0.3,   # low but not zero, for summarisation
         )
-        return response.choices[0].message.content
+        if resp.error or not resp.text:
+            darwin.log(f"LLM call failed: {resp.error}", LogType.WARNING)
+            return None
+        return resp.text.strip()
     except Exception as e:
-        darwin.log(f"LLM call failed: {e}", LogType.WARNING)
+        darwin.log(f"LLM call exception: {e}", LogType.WARNING)
         return None
+    
 
+    
 
 def _build_context(
     chunk_indices: List[int],
@@ -201,9 +211,10 @@ def build_wiki_from_graph(
 def generate_wiki_summaries(
     wiki: DocumentWiki,
     chunks: List[Chunk],
-    llm_model: str,
+    client,
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
     max_context_chars: int = 4000,
+     
 ) -> DocumentWiki:
     """
     Fill in WikiPage.summary and DocumentWiki.manifest via LLM.
@@ -222,11 +233,6 @@ def generate_wiki_summaries(
         The same DocumentWiki with summaries filled where LLM succeeded
     """
     pending = [p for p in wiki.pages if p.summary is None]
-    darwin.log(
-        f"Generating summaries: {len(pending)} pending / "
-        f"{len(wiki.pages)} total [{llm_model}]",
-        LogType.INFO,
-    )
 
     for i, page in enumerate(pending):
         darwin.log(
@@ -247,7 +253,7 @@ def generate_wiki_summaries(
             context=context,
         )
 
-        summary = _call_llm(prompt, llm_model)
+        summary = _call_llm(prompt)
         if summary:
             page.summary = summary.strip()
         else:
@@ -265,8 +271,7 @@ def generate_wiki_summaries(
                 for p in completed[:20]
             )
             manifest = _call_llm(
-                _MANIFEST_PROMPT.format(concept_summaries=concept_summaries),
-                llm_model,
+                _MANIFEST_PROMPT.format(concept_summaries=concept_summaries)
             )
             if manifest:
                 wiki.manifest = manifest.strip()
@@ -290,7 +295,7 @@ def run_wiki_pipeline(
     filename: str,
     store: DarwinStore,
     mode: str = "index",
-    llm_model: Optional[str] = None,
+    provider: Optional[str] = None,
     chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
     rerun: bool = False,
     completed_files : Optional[List[str]] = None,
@@ -403,17 +408,27 @@ def run_wiki_pipeline(
 
     # ── Stage 2: LLM summaries (opt-in) ──
     if mode == "summary":
-        if not llm_model:
-            darwin.log(
-                "Summary mode requested but no LLM model specified — "
-                "defaulting to ollama/llama3.2",
-                LogType.WARNING,
-            )
-            llm_model = "ollama/llama3.2"
+        darwin.log("Initializing LLMManager for wiki sumary...", LogType.INFO)
+        from src.features.LLM.LLMManager import LLMManager
+        LLMManager.initialize()
+        from src.features.LLM.LLMManager import LLMManager
+
+        if provider and LLMManager._config:
+            try:
+                LLMManager.switch_default_provider(provider)
+                darwin.log(f"Using provider: {provider}", LogType.INFO)
+            except Exception as e:
+                darwin.log(str(e), LogType.ERROR)
+                return
+
+        client = LLMManager.get_client()
+
+    
+
         wiki = generate_wiki_summaries(
             wiki=wiki,
             chunks=chunks,
-            llm_model=llm_model,
+            client=client,
             chunks_per_concept=chunks_per_concept,
         )
 

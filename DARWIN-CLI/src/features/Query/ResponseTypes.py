@@ -201,9 +201,6 @@ class RawQuery:
 
 
 
-
-
-
 @dataclass
 class OrganizedQuery:
     clean_query: str

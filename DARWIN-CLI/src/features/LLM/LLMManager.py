@@ -3,16 +3,13 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from src.features.LLM.LLMConfig import LLMConfig, ProviderConfig, TierConfig
-from src.features.LLM.KeyStore import KeyStore
 from src.features.LLM.LLMClient import LLMClient
-from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.AppPaths import default_models_config_dir
 
 class LLMManager:
     _instance = None
     _client: Optional[LLMClient] = None
     _config: Optional[LLMConfig] = None
-    _keystore: Optional[KeyStore] = None
     _config_path = Path(default_models_config_dir()) / "llm_config.json"
 
     def __new__(cls):
@@ -22,16 +19,14 @@ class LLMManager:
 
     @classmethod
     def initialize(cls, config_path: Optional[Path] = None) -> bool:
-        """Loads config and keystore. Returns True if config existed, False if needs setup."""
+        """Load configuration from JSON file. Returns True if config exists, False if needs setup."""
         if config_path:
             cls._config_path = config_path
-        cls._keystore = KeyStore()
-        cls._keystore.load()
         if cls._config_path.exists():
             with open(cls._config_path, 'r') as f:
                 raw = json.load(f)
             cls._config = cls._deserialize_config(raw)
-            cls._client = None  # will rebuild on get_client
+            cls._client = None
             return True
         else:
             cls._config = None
@@ -42,7 +37,10 @@ class LLMManager:
         if cls._config is None:
             raise RuntimeError("LLMManager not initialized. Call initialize() first.")
         if cls._client is None:
-            cls._client = LLMClient(cls._config.providers, cls._config.default_provider, cls._keystore)
+            cls._client = LLMClient(
+                providers=cls._config.providers,
+                default_provider=cls._config.default_provider,
+            )
         return cls._client
 
     @classmethod
