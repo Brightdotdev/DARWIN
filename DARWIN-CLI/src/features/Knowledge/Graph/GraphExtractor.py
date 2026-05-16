@@ -2,21 +2,11 @@
 src/core/Knowledge/Graph/GraphExtractor.py
 ------------------------------------------
 Knowledge graph extraction using spaCy NER + dependency parsing.
-
-Pipeline (spaCy-only, no LLM):
-  1. Load spaCy model (fail fast if unavailable)
-  2. Process document: full-file or chunked with tunable overlap
-  3. Extract typed entities (NER) and canonicalize across chunks
-  4. Extract SVO relations via dependency parsing per chunk
-  5. Deduplicate relations via SVO canonicalization + chunk voting
-  6. Build co-occurrence edges for entities in same chunk
-  7. Pareto-prune nodes relative to max_concepts
-  8. Attach evidence_chunks for wiki auditability
-
 Document-agnostic. No domain-specific stopwords or biases.
 """
 
 import re
+import math
 import numpy as np
 from collections import Counter, defaultdict
 from typing import List, Dict, Optional, Tuple, Set
@@ -37,7 +27,7 @@ from src.Models import ModelManager, ModelCategory
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Verb synonym groups for academic text
+# Verb synonym groups
 # ═══════════════════════════════════════════════════════════════════════════
 
 VERB_SYNONYMS = {
@@ -74,7 +64,78 @@ def canonicalize_svo(subject: str, verb: str, obj: str) -> tuple:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Entity extraction state (per-document)
+# Document-agnostic specificity scoring
+# ═══════════════════════════════════════════════════════════════════════════
+
+class SpecificityScorer:
+    """
+    Scores how 'concept-like' a text span is, purely from statistics.
+    No domain knowledge. No hardcoded lists.
+    """
+
+    def __init__(self, n_chunks: int):
+        self.n_chunks = max(n_chunks, 1)
+        self.doc_freq: Counter = Counter()
+        self.chunk_bitsets: dict = {}
+
+    def observe(self, candidate: str, chunk_idx: int):
+        c = candidate.lower().strip()
+        self.doc_freq[c] += 1
+        if c not in self.chunk_bitsets:
+            self.chunk_bitsets[c] = 0
+        self.chunk_bitsets[c] |= (1 << min(chunk_idx, 63))
+
+    def score(self, text: str, spacy_tokens=None) -> float:
+        canonical = text.lower().strip()
+        words = canonical.split()
+        score = 0.0
+
+        # Length bonus
+        score += min(len(text) / 25, 0.15)
+        score += min(len(words) / 5, 0.15)
+
+        # Proper noun / acronym bonus
+        if text and text[0].isupper():
+            score += 0.10
+        if text.isupper() and 2 <= len(text) <= 6:
+            score += 0.10
+
+        # Compound bonus
+        if len(words) >= 2:
+            score += 0.10
+        if len(words) >= 3:
+            score += 0.05
+
+        # IDF: rare across chunks = more specific
+        df = bin(self.chunk_bitsets.get(canonical, 0)).count("1")
+        if df > 0 and self.n_chunks > 1:
+            idf = math.log(self.n_chunks / df)
+            max_idf = math.log(self.n_chunks)
+            score += (idf / max_idf) * 0.25
+
+        # Stopword dilution penalty
+        stops = {
+            "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to", "for",
+            "with", "by", "from", "as", "is", "was", "are", "were", "be", "been",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could",
+            "should", "may", "might", "can", "shall", "not", "no", "so", "if",
+            "then", "than", "that", "this", "these", "those", "it", "its",
+            "he", "she", "they", "we", "you", "i", "me", "him", "her", "them",
+        }
+        if words:
+            stop_ratio = sum(1 for w in words if w in stops) / len(words)
+            score -= stop_ratio * 0.20
+
+        # POS bonus
+        if spacy_tokens:
+            noun_ratio = sum(1 for t in spacy_tokens if t.pos_ in ("NOUN", "PROPN")) / max(len(spacy_tokens), 1)
+            score += noun_ratio * 0.10
+
+        return max(0.0, min(1.0, score))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Entity extraction state
 # ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
@@ -188,7 +249,6 @@ class RelationAccumulator:
     ) -> List[Relationship]:
         """
         Return relations that meet confidence threshold.
-
         Threshold behavior:
         - <= 0: keep all explicit relations
         - < 1.0: fractional (occurrences / shared_chunks)
@@ -267,7 +327,7 @@ def _load_spacy(config: GraphExtractionConfig):
 
 
 def _is_bad_entity(ent_text: str) -> bool:
-    """Filter out low-quality NER results common in academic text."""
+    """Filter out low-quality NER results AND structural noise."""
     clean = ent_text.strip()
     lower = clean.lower()
 
@@ -279,7 +339,7 @@ def _is_bad_entity(ent_text: str) -> bool:
     if not any(c.isalpha() for c in clean):
         return True
 
-    # Section/chapter/figure/table references (common false positives)
+    # Section/chapter/figure/table references
     reject_patterns = [
         r"^section\s+\d+",
         r"^chapter\s+\d+",
@@ -289,6 +349,7 @@ def _is_bad_entity(ent_text: str) -> bool:
         r"^part\s+\d+",
         r"^eq\.?\s*\d+",
         r"^equation\s*\d+",
+        r"^page\s+\d+",
     ]
     if any(re.match(p, lower) for p in reject_patterns):
         return True
@@ -297,7 +358,7 @@ def _is_bad_entity(ent_text: str) -> bool:
     if lower in {"et al", "et.", "al.", "et al.", "ibid", "op. cit."}:
         return True
 
-    # Number + label patterns ("Composer 2", "Agent 3")
+    # Number + label patterns
     if re.match(r"^[a-z]+\s+\d+$", lower):
         return True
 
@@ -305,8 +366,25 @@ def _is_bad_entity(ent_text: str) -> bool:
     if len(clean.replace(".", "").replace(" ", "")) <= 2:
         return True
 
-    # Pure years (often misclassified as DATE but might slip through)
+    # Pure years
     if re.match(r"^\d{4}$", clean):
+        return True
+
+    # Structural noise: TOC entries with many dots/dashes
+    if lower.count(".") >= 3 or lower.count(" - ") >= 2 or lower.count(" ch") >= 2:
+        return True
+
+    # Cover/copyright/title page noise
+    structural_fragments = {
+        "cover", "copyright", "title page", "table of contents",
+        "acknowledgments", "preface", "foreword", "introduction - about",
+        "appendix", "index of", "glossary", "bibliography",
+    }
+    if any(frag in lower for frag in structural_fragments):
+        return True
+
+    # Concatenated chapter headers
+    if re.search(r"\b(ch|chapter|book|part|section)\b.*\b(ch|chapter|book|part|section)\b", lower):
         return True
 
     return False
@@ -317,47 +395,91 @@ def _extract_entities_from_doc(
     chunk_idx: int,
     registry: EntityRegistry,
     config: GraphExtractionConfig,
+    scorer: SpecificityScorer = None,
 ) -> List[str]:
-    """Extract typed entities from a spaCy Doc."""
-    entity_ids = []
+    """
+    Document-agnostic entity extraction.
+    Uses NER + noun_chunks + proper noun phrases, ranks by specificity.
+    """
+    candidates = []
 
+    # --- Source 1: NER ---
     if config.require_typed_entities and doc.ents:
         for ent in doc.ents:
             if ent.label_ in {"DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"}:
                 continue
-
             if _is_bad_entity(ent.text):
                 continue
+            if scorer:
+                scorer.observe(ent.text, chunk_idx)
+            spec = scorer.score(ent.text, ent) if scorer else 0.5
+            candidates.append((ent.text, ent.label_, spec, ent))
 
-            node_id = registry.get_or_create(
-                text=ent.text,
-                entity_type=ent.label_,
-                chunk_idx=chunk_idx,
-            )
-            if node_id:
-                entity_ids.append(node_id)
-
-    elif not config.require_typed_entities and hasattr(doc, "noun_chunks"):
+    # --- Source 2: Noun chunks ---
+    if hasattr(doc, "noun_chunks"):
         for chunk in doc.noun_chunks:
-            clean_text = " ".join(
-                t.text for t in chunk
-                if not t.is_stop and not t.is_punct and len(t.text) > 2
-            )
+            clean_tokens = []
+            spacy_tokens = []
+            for t in chunk:
+                if t.is_stop or t.is_punct or len(t.text) <= 2:
+                    continue
+                clean_tokens.append(t.text)
+                spacy_tokens.append(t)
+            clean_text = " ".join(clean_tokens)
             if len(clean_text) < 3:
                 continue
             if not any(c.isalpha() for c in clean_text):
                 continue
-            words = clean_text.split()
-            if len(words) == 1 and len(words[0]) < 5:
+            if _is_bad_entity(clean_text):
                 continue
+            if scorer:
+                scorer.observe(clean_text, chunk_idx)
+            spec = scorer.score(clean_text, spacy_tokens) if scorer else 0.3
+            candidates.append((clean_text, "CONCEPT", spec, spacy_tokens))
 
-            node_id = registry.get_or_create(
-                text=clean_text,
-                entity_type="CONCEPT",
-                chunk_idx=chunk_idx,
-            )
-            if node_id:
-                entity_ids.append(node_id)
+    # --- Source 3: Proper noun phrases ---
+    if hasattr(doc, "sents"):
+        for sent in doc.sents:
+            tokens = [t for t in sent if t.pos_ in ("PROPN", "NOUN", "ADJ")]
+            i = 0
+            while i < len(tokens):
+                if tokens[i].pos_ == "PROPN":
+                    phrase_tokens = [tokens[i]]
+                    j = i + 1
+                    while j < len(tokens) and tokens[j].i == tokens[j - 1].i + 1 and tokens[j].pos_ in ("PROPN", "NOUN", "ADJ"):
+                        phrase_tokens.append(tokens[j])
+                        j += 1
+                    if len(phrase_tokens) >= 2:
+                        phrase = " ".join(t.text for t in phrase_tokens)
+                        if not _is_bad_entity(phrase):
+                            if scorer:
+                                scorer.observe(phrase, chunk_idx)
+                            spec = scorer.score(phrase, phrase_tokens) if scorer else 0.4
+                            candidates.append((phrase, "PROPN_PHRASE", spec, phrase_tokens))
+                    i = j
+                else:
+                    i += 1
+
+    # --- Deduplicate & rank ---
+    seen = set()
+    unique = []
+    for text, etype, spec, tokens in candidates:
+        c = text.lower().strip()
+        if c in seen:
+            continue
+        seen.add(c)
+        unique.append((text, etype, spec, tokens))
+
+    unique.sort(key=lambda x: x[2], reverse=True)
+
+    # --- Register top candidates ---
+    entity_ids = []
+    for text, etype, spec, tokens in unique[:8]:
+        if spec < 0.15:
+            continue
+        node_id = registry.get_or_create(text=text, entity_type=etype, chunk_idx=chunk_idx)
+        if node_id:
+            entity_ids.append(node_id)
 
     return entity_ids
 
@@ -524,7 +646,7 @@ def _build_cooccurrence_edges(
         if len(entity_ids) < 2 or len(entity_ids) > 15:
             continue
         for i, e1 in enumerate(entity_ids):
-            for e2 in entity_ids[i+1:]:
+            for e2 in entity_ids[i + 1:]:
                 if e1 == e2:
                     continue
                 key = tuple(sorted((e1, e2)))
@@ -661,6 +783,9 @@ def extract_graph_from_chunks(
     relation_acc = RelationAccumulator()
     chunk_entity_map: Dict[int, List[str]] = {}
 
+    # Document-agnostic specificity scorer
+    scorer = SpecificityScorer(n_chunks=len(chunks))
+
     darwin.log(f"[1/3] Extracting entities and relations from {n_chunks} chunks...", LogType.INFO)
 
     texts = [chunk.clean[:5000] for chunk in chunks]
@@ -672,7 +797,7 @@ def extract_graph_from_chunks(
         docs = [extractor.nlp(text) for text in texts]
 
     for chunk_idx, (chunk, doc) in enumerate(zip(chunks, docs)):
-        entity_ids = _extract_entities_from_doc(doc, chunk_idx, registry, config)
+        entity_ids = _extract_entities_from_doc(doc, chunk_idx, registry, config, scorer)
         chunk_entity_map[chunk_idx] = entity_ids
 
         if config.require_parser and extractor.has_parser:
@@ -755,10 +880,10 @@ def extract_graph_from_chunks(
     )
 
     darwin.log(
-    f"Graph complete: {len(graph.nodes)} nodes, {len(graph.edges)} edges "
-    f"({len([e for e in graph.edges if e.relation_type != 'co_occurrence'])} semantic)",
-    LogType.SUCCESS,
-)
+        f"Graph complete: {len(graph.nodes)} nodes, {len(graph.edges)} edges "
+        f"({len([e for e in graph.edges if e.relation_type != 'co_occurrence'])} semantic)",
+        LogType.SUCCESS,
+    )
 
     if graph.nodes:
         preview = ", ".join(n.label for n in graph.nodes[:5])

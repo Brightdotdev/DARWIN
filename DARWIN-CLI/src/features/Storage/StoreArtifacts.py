@@ -21,6 +21,7 @@ import numpy as np
 
 from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Ingestion.Parsing.lib import ParsedDocument
+from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki
 from src.features.Storage.StoreUtils import (
     file_hash,
     now,
@@ -29,6 +30,24 @@ from src.features.Storage.StoreUtils import (
     get_current_model_name,
 )
 from src.core.Logger.DarwinLogger import darwin, LogType
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Single source of truth: which files must exist for each pipeline stage
+# ═══════════════════════════════════════════════════════════════════════════
+
+ARTIFACT_MANIFEST = {
+    "markdown":   ["markdown.md"],
+    "chunks":     ["chunks.json"],
+    "vector":     ["vector.usearch", "vector.json"],
+    # embeddings – checked with a dynamic filename; handled separately
+    "embeddings": [],
+    "bm25":       ["bm25.npz", "bm25_meta.json"],
+    "stopwords":  ["stopwords.json"],
+    "graph":      ["graph/graph.json"],
+    "graph_vis":  ["graph/graph.html"],
+    "wiki":       ["wiki/wiki.json"],
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -49,14 +68,14 @@ def _chunk_from_dict(raw: dict) -> Chunk:
 def _normalize_model_name(name: str) -> str:
     """Convert any model identifier to the canonical model_id."""
     from src.Models.ModelRegistry import REGISTRY
-    
+
     if name in REGISTRY:
         return REGISTRY[name].model_id
-    
+
     id_to_key = {spec.model_id: key for key, spec in REGISTRY.items()}
     if name in id_to_key:
         return name
-    
+
     return name
 
 
@@ -77,11 +96,13 @@ def _get_current_model_dimensions() -> int:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Base mixin — filename → hash → directory resolution
+# Base mixin — filename → hash → directory resolution + artifact checks
 # ═══════════════════════════════════════════════════════════════════════════
 
 class _PathResolverMixin:
     """Bridge between calling code (bare filenames) and StorePaths (file hashes)."""
+
+    # ── Path resolution ──────────────────────────────────────────────────
 
     def _record_for(self, filename: str):
         """Return the FileRecord for a bare filename. Raises KeyError if missing."""
@@ -104,18 +125,92 @@ class _PathResolverMixin:
         fh, _ = self._resolve(filename)
         return fh
 
-    def _dir_for(self, filename: str):
+    def _dir_for(self, filename: str) -> Path:
         """Return (and create) the index directory for a bare filename."""
         _, d = self._resolve(filename)
+        if d is not None:
+            d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def _source_path_for(self, filename: str):
+    def _source_path_for(self, filename: str) -> Optional[Path]:
         """Return the last-known source Path for a file (may not exist if moved)."""
-        from pathlib import Path
         record = self._record_for(filename)
         if record.last_seen_path:
             return Path(record.last_seen_path)
         return None
+
+    # ── Unified artifact existence check ─────────────────────────────────
+
+    def _has_artifact(self, filename: str, stage: str) -> bool:
+        """
+        Check whether all required artifact files for a pipeline stage exist.
+        Uses the ARTIFACT_MANIFEST as the single source of truth.
+        """
+        dir_path = self._dir_for(filename)
+        if dir_path is None:
+            return False
+
+        # Embeddings: dynamic filename, check via npz_path
+        if stage == "embeddings":
+            fh = self._hash_for(filename)
+            if not fh:
+                return False
+            current_model = get_current_model_name()
+            return self.paths.npz_path(fh, current_model).exists()
+
+        # General case: every file listed in the manifest must be present
+        file_list = ARTIFACT_MANIFEST.get(stage, [])
+        if not file_list:
+            return True   # stage with no mandatory files is considered present
+        return all((dir_path / fname).exists() for fname in file_list)
+
+    def validate_artifact_integrity(self, filename: str) -> dict:
+        """
+        Full integrity check for one file.
+        Returns:
+            {
+                "filename": "bio.pdf",
+                "registry_says_done": ["markdown", "chunks", "bm25"],
+                "actually_missing": ["chunks"],           # files gone
+                "registry_says_missing": ["embeddings"],  # registry honest about these
+                "actually_present": [],                    # files exist but registry didn't know
+                "is_healthy": False
+            }
+        """
+        record = self._record_for(filename)
+        if record is None:
+            return {
+                "filename": filename,
+                "error": "Not registered",
+                "is_healthy": False
+            }
+
+        registry_done = []
+        registry_missing = []
+        actually_missing = []
+        actually_present = []
+
+        for stage in ARTIFACT_MANIFEST:
+            registry_says_done = record.stage_completed(stage)
+            files_exist = self._has_artifact(filename, stage)
+
+            if registry_says_done:
+                registry_done.append(stage)
+                if not files_exist:
+                    actually_missing.append(stage)
+            else:
+                registry_missing.append(stage)
+                if files_exist:
+                    actually_present.append(stage)
+
+        return {
+            "filename": filename,
+            "registry_says_done": registry_done,
+            "actually_missing": actually_missing,
+            "registry_says_missing": registry_missing,
+            "actually_present": actually_present,
+            "is_healthy": len(actually_missing) == 0,
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -227,11 +322,7 @@ class ConfigMixin:
 class MarkdownMixin(_PathResolverMixin):
 
     def has_markdown(self, filename: str) -> bool:
-                dir_path = self._dir_for(filename)
-                if dir_path is None:
-                    return False
-                return (dir_path / "vector.usearch").exists()
-
+        return self._has_artifact(filename, "markdown")
 
     def save_markdown(self, filename: str, doc: ParsedDocument) -> None:
         if doc.error:
@@ -239,6 +330,8 @@ class MarkdownMixin(_PathResolverMixin):
             return
 
         d = self._dir_for(filename)
+        if d is None:
+            return
         md_path = d / "markdown.md"
 
         try:
@@ -246,9 +339,9 @@ class MarkdownMixin(_PathResolverMixin):
 
             skip_fields = {"text", "error", "filename", "images", "embedding_text", "display_text"}
             extras = {k: v for k, v in dataclasses.asdict(doc).items() if k not in skip_fields}
-            
+
             self._update_meta(filename, "markdown", extras=extras)
-           
+
             record = self._record_for(filename)
             if record:
                 self.registry.update_pipeline(
@@ -281,11 +374,7 @@ class MarkdownMixin(_PathResolverMixin):
 class ChunksMixin(_PathResolverMixin):
 
     def has_chunks(self, filename: str) -> bool:
-
-        dir_path = self._dir_for(filename)
-        if dir_path is None:
-            return False
-        return (dir_path / "chunks.json").exists()
+        return self._has_artifact(filename, "chunks")
 
     def save_chunks(
         self,
@@ -296,8 +385,10 @@ class ChunksMixin(_PathResolverMixin):
         if not chunks:
             darwin.log(f"No chunks to save for {filename}", LogType.ERROR)
             return
-        
+
         d = self._dir_for(filename)
+        if d is None:
+            return
         write_json(d / "chunks.json", [dataclasses.asdict(c) for c in chunks])
 
         extras = {**(chunk_meta or {}), "chunk_count": len(chunks)}
@@ -335,10 +426,7 @@ class ChunksMixin(_PathResolverMixin):
 class VectorMixin(_PathResolverMixin):
 
     def has_vector(self, filename: str) -> bool:
-                dir_path = self._dir_for(filename)
-                if dir_path is None:
-                    return False
-                return (dir_path / "vector.usearch").exists()
+        return self._has_artifact(filename, "vector")
 
     def save_vector(
         self,
@@ -353,6 +441,8 @@ class VectorMixin(_PathResolverMixin):
             )
 
         d = self._dir_for(filename)
+        if d is None:
+            return
 
         from usearch.index import Index
         model_name = _normalize_model_name(model_name)
@@ -388,6 +478,8 @@ class VectorMixin(_PathResolverMixin):
 
     def load_vector(self, filename: str):
         d = self._dir_for(filename)
+        if d is None:
+            return None, None
         index_path = d / "vector.usearch"
         meta_path = d / "vector.json"
 
@@ -406,7 +498,7 @@ class VectorMixin(_PathResolverMixin):
                 LogType.WARNING
             )
             return None, None
-        
+
         expected_dim = _get_current_model_dimensions()
         if expected_dim and meta.get("dimension") != expected_dim:
             darwin.log(
@@ -468,21 +560,21 @@ class VectorMixin(_PathResolverMixin):
             return False
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Embeddings (npz)
+# ═══════════════════════════════════════════════════════════════════════════
+
 class EmbeddingsMixin(_PathResolverMixin):
     """Mixin for saving/loading embeddings with full chunk metadata."""
 
     def has_embeddings(self, filename: str) -> bool:
-        fh, d = self._resolve(filename)
-        if d is None:
-            return False
-        current_model = get_current_model_name()
-        return self.paths.npz_path(fh, current_model).exists()
+        return self._has_artifact(filename, "embeddings")
 
     def _get_overlap_value(self, chunk) -> str:
         """Safely extract overlap direction as string."""
         if not hasattr(chunk, 'overlap_direction'):
             return "none"
-        
+
         od = chunk.overlap_direction
         if hasattr(od, 'value'):
             return od.value
@@ -493,28 +585,25 @@ class EmbeddingsMixin(_PathResolverMixin):
         import json
         if not hasattr(chunk, 'links') or not chunk.links:
             return "[]"
-        
+
         links_data = []
         for link in chunk.links:
             if hasattr(link, 'url'):
-                # ChunkLink object
                 links_data.append({
                     "url": link.url,
                     "text": getattr(link, 'text', '')
                 })
             elif isinstance(link, dict):
-                # Already a dict
                 links_data.append({
                     "url": link.get('url', ''),
                     "text": link.get('text', '')
                 })
             else:
-                # Unknown type, try to get string representation
                 links_data.append({
                     "url": str(link),
                     "text": ""
                 })
-        
+
         return json.dumps(links_data)
 
     def save_embeddings(
@@ -531,7 +620,7 @@ class EmbeddingsMixin(_PathResolverMixin):
 
         if model_name is None:
             model_name = get_current_model_name()
-        
+
         model_name = _normalize_model_name(model_name)
 
         fh, d = self._resolve(filename)
@@ -545,12 +634,9 @@ class EmbeddingsMixin(_PathResolverMixin):
             )
 
         try:
-            # Prepare overlap direction strings
             overlap_values = [self._get_overlap_value(c) for c in chunks]
-            
-            # Prepare links JSON
             links_json_list = [self._serialize_links(c) for c in chunks]
-            
+
             np.savez_compressed(
                 path,
                 vectors=vectors.astype(np.float32),
@@ -564,7 +650,7 @@ class EmbeddingsMixin(_PathResolverMixin):
                 source=np.array([c.source for c in chunks], dtype=object),
                 links_json=np.array(links_json_list, dtype=object),
             )
-            
+
             meta_path = path.with_suffix(".meta.json")
             write_json(meta_path, {
                 "embedding_model": model_name,
@@ -577,11 +663,11 @@ class EmbeddingsMixin(_PathResolverMixin):
                 "embedding_model": model_name,
                 "embedding_dimensions": vectors.shape[1],
             })
-            
+
             record = self._record_for(filename)
             if record:
                 self.registry.update_pipeline(record.last_seen_path or filename, "embeddings")
-            
+
             self.invalidate(filename)
             darwin.log(f"Saved embeddings: {path.name}", LogType.SUCCESS)
 
@@ -602,7 +688,7 @@ class EmbeddingsMixin(_PathResolverMixin):
         fh, d = self._resolve(filename)
         if d is None:
             return None, None
-        
+
         current_model = get_current_model_name()
         path = self.paths.npz_path(fh, current_model)
 
@@ -649,7 +735,7 @@ class EmbeddingsMixin(_PathResolverMixin):
         token_counts = data['token_counts'].tolist() if 'token_counts' in data else [0] * n_chunks
         overlap_raw = data['overlap_direction'].tolist()
         links_raw = data['links_json'].tolist()
-        
+
         overlap_dirs = []
         for raw in overlap_raw:
             try:
@@ -712,6 +798,7 @@ class EmbeddingsMixin(_PathResolverMixin):
         except FileNotFoundError:
             return False
 
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: BM25
 # ═══════════════════════════════════════════════════════════════════════════
@@ -721,17 +808,15 @@ class BM25Mixin(_PathResolverMixin):
     from src.features.Indexing.BM25.lib import BM25Data
 
     def has_bm25(self, filename: str) -> bool:
-                dir_path = self._dir_for(filename)
-                if dir_path is None:
-                    return False
-                return (dir_path / "bm25.npz").exists()
-
+        return self._has_artifact(filename, "bm25")
 
     def save_bm25(self, filename: str, data) -> None:
         if not data.tokens or not data.doc_lengths:
             darwin.log(f"No BM25 data to save for {filename}", LogType.ERROR)
             return
         d = self._dir_for(filename)
+        if d is None:
+            return
         npz_path = d / "bm25.npz"
         meta_path = d / "bm25_meta.json"
 
@@ -775,6 +860,8 @@ class BM25Mixin(_PathResolverMixin):
             return self._artifact_cache[cache_key]
 
         d = self._dir_for(filename)
+        if d is None:
+            return None
         npz_path = d / "bm25.npz"
         meta_path = d / "bm25_meta.json"
 
@@ -811,17 +898,15 @@ class BM25Mixin(_PathResolverMixin):
 class StopwordsMixin(_PathResolverMixin):
 
     def has_stopwords(self, filename: str) -> bool:
-                dir_path = self._dir_for(filename)
-                if dir_path is None:
-                    return False
-                return (dir_path / "stopwords.json").exists()
-
+        return self._has_artifact(filename, "stopwords")
 
     def save_stopwords(self, filename: str, stopwords: set[str]) -> None:
         if not stopwords:
             darwin.log(f"No stopwords to save for {filename}", LogType.ERROR)
             return
         d = self._dir_for(filename)
+        if d is None:
+            return
         write_json(d / "stopwords.json", {"stopwords": sorted(stopwords)})
         self._update_meta(filename, "stopwords")
         record = self._record_for(filename)
@@ -843,15 +928,10 @@ class StopwordsMixin(_PathResolverMixin):
 class GraphMixin(_PathResolverMixin):
 
     def has_graph(self, filename: str) -> bool:
-        
-                dir_path = self._dir_for(filename)
-                if dir_path is None:
-                    return False
-                return (dir_path / "graph" / "graph.json").exists()
-
+        return self._has_artifact(filename, "graph")
 
     def has_graph_html(self, filename: str) -> bool:
-        return (self._dir_for(filename) / "graph" / "graph.html").exists()
+        return self._has_artifact(filename, "graph_vis")
 
     def save_graph(self, filename: str, graph_data: Any) -> None:
         if not graph_data:
@@ -897,16 +977,14 @@ class GraphMixin(_PathResolverMixin):
             )
         self.invalidate(filename)
 
-
     def load_graph(self, filename: str) -> dict:
-        
         cache_key = f"graph:{filename}"
         if hasattr(self, '_artifact_cache') and cache_key in self._artifact_cache:
             return self._artifact_cache[cache_key]
 
         path = self._dir_for(filename) / "graph" / "graph.json"
         if not path.exists():
-            None
+            return None
         result = read_json(path) or {}
 
         if hasattr(self, '_artifact_cache'):
@@ -914,15 +992,14 @@ class GraphMixin(_PathResolverMixin):
         return result
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Mixin: Wiki
+# ═══════════════════════════════════════════════════════════════════════════
+
 class WikiMixin(_PathResolverMixin):
 
     def has_wiki(self, filename: str) -> bool:
-        
-        dir_path = self._dir_for(filename)
-    
-        if dir_path is None:
-            return False
-        return (dir_path / "wiki" / "wiki.json").exists()
+        return self._has_artifact(filename, "wiki")
 
     def save_wiki(self, filename: str, wiki: Any) -> None:
         if wiki is None:
@@ -959,9 +1036,12 @@ class WikiMixin(_PathResolverMixin):
             )
         self.invalidate(filename)
 
-    def load_wiki(self, filename: str) -> dict:
+    def load_wiki(self, filename: str) -> Optional[DocumentWiki]:
         path = self._dir_for(filename) / "wiki" / "wiki.json"
-                
+
         if not path.exists():
             return None
-        return read_json(path) or {}
+
+        data = read_json(path) or {}
+
+        return DocumentWiki.from_dict(data)

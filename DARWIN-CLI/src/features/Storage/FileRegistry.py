@@ -354,36 +354,38 @@ class FileRegistry:
             return existing
         return self.register(file_path)
 
-    def remove(self, file_path: str | Path) -> bool:
-        """Remove a file from the registry. Returns True if it existed."""
+    def remove_by_name(self, filename: str) -> int:
+        """
+        Remove ALL records with this original filename.
+        Cleans up the registry, artifacts directory, and hash cache.
+        Returns the number of records removed.
+        """
         import shutil
-
-        file_path = Path(file_path).resolve()
-        fh = self._get_hash(file_path) if file_path.exists() else None
-
         data = self._load()
+        files = data.get("files", {})
+        to_delete = []
+        for fh, rec in files.items():
+            if rec.get("original_name") == filename:
+                to_delete.append(fh)
 
-        # Try by hash first
-        if fh and fh in data.get("files", {}):
-            del data["files"][fh]
-            self._save(data)
-            # Also remove index directory
+        if not to_delete:
+            return 0
+
+        for fh in to_delete:
+            del files[fh]
+            # Delete artifacts directory
             index_dir = self.paths.file_dir_by_hash(fh)
             if index_dir.exists():
                 shutil.rmtree(index_dir)
-            return True
+            # Purge hash cache entries that point to this hash
+            stale_keys = [k for k, v in self._hash_cache.items() if v == fh]
+            for k in stale_keys:
+                del self._hash_cache[k]
 
-        # Try by name fallback
-        for key, rec in list(data.get("files", {}).items()):
-            if rec.get("original_name") == file_path.name:
-                del data["files"][key]
-                self._save(data)
-                index_dir = self.paths.file_dir_by_hash(key)
-                if index_dir.exists():
-                    shutil.rmtree(index_dir)
-                return True
+        self._save(data)
+        return len(to_delete)
 
-        return False
+
 
     def list_all(self) -> list["FileRecord"]:
         """All registered files."""

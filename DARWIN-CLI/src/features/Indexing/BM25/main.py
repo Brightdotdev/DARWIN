@@ -59,9 +59,7 @@ def _print_inspection(filename: str, store) -> None:
 
 # ── Core handler ───────────────────────────────────────────────────────────────
 
-def handle_bm25_indexing(args: BM25IndexingArgs) -> None:
-    from src.features.Storage.DarwinStore import DarwinStore
-    store = DarwinStore()
+def handle_bm25_indexing(args: BM25IndexingArgs, store) -> None:
 
     darwin.log("")
     darwin.log("BM25 indexing", LogType.INFO)

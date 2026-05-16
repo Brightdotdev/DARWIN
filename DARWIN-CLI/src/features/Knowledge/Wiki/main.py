@@ -11,7 +11,6 @@ from src.features.Knowledge.Wiki.WikiUtils import (
     WikiGenerationArgs, DEFAULT_CHUNKS_PER_CONCEPT,
 )
 from typing import List
-from src.features.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 
@@ -47,8 +46,7 @@ def _print_inspection(wiki, filename: str) -> None:
     darwin.log(f"{'='*60}", LogType.INFO)
 
 
-def handle_wiki(args: WikiGenerationArgs) -> List[str] | None:
-    store = DarwinStore()
+def handle_wiki(args: WikiGenerationArgs,store) -> List[str] | None:
 
     if args.files:
         filenames = [f for f in args.files if store.has_graph(f)]
@@ -69,7 +67,7 @@ def handle_wiki(args: WikiGenerationArgs) -> List[str] | None:
     darwin.log(f"Wiki generation — {len(filenames)} file(s)", LogType.INFO)
     darwin.log(f"Mode: {args.mode}")
     if args.mode == "summary":
-        darwin.log(f"LLM: {args.llm_model}")
+        darwin.log(f"LLM Provider: {args.provider}")
 
     succeeded = failed = 0
     processed_wikis = []
@@ -78,7 +76,7 @@ def handle_wiki(args: WikiGenerationArgs) -> List[str] | None:
         try:
             wiki = run_wiki_pipeline(
                 filename=filename, store=store,
-                mode=args.mode, llm_model=args.llm_model,
+                mode=args.mode, provider=args.provider,
                 chunks_per_concept=args.chunks_per_concept,
                 rerun=args.rerun,
                 completed_files=processed_wikis
@@ -106,7 +104,7 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description="Generate Wikipedia-style docs from concept graphs")
     parser.add_argument("--file", "-f", nargs="+", default=None)
     parser.add_argument("--mode", "-m", default="index", choices=["index", "summary"])
-    parser.add_argument("--llm", default="ollama/llama3.2", help="LLM model for summary mode")
+    parser.add_argument("--provider", help="LLM Provider for wiiki")
     parser.add_argument("--chunks-per-concept", type=int, default=DEFAULT_CHUNKS_PER_CONCEPT)
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--rerun", "-R", action="store_true")
@@ -122,7 +120,7 @@ async def main() -> int:
         wiki_args = WikiGenerationArgs(
             files=args.file or [],
             mode=args.mode,
-            llm_model=args.llm,
+            provider=args.provider,
             chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,

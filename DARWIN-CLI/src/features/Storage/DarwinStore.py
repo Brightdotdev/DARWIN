@@ -30,8 +30,8 @@ class DarwinStore(
     GraphMixin,
     WikiMixin,
 ):
-    def __init__(self):
-        self._darwin_dir = default_darwin_dir()
+    def __init__(self, darwin_dir: Path = None):
+        self._darwin_dir = darwin_dir or default_darwin_dir()
         self.paths = StorePaths(self._darwin_dir)
         self.registry = FileRegistry(self.paths)
         self._artifact_cache: dict = {}
@@ -205,19 +205,14 @@ class DarwinStore(
         return self.registry.update_pipeline(file_path, stage, **extras)
 
     # ─────────────────────────────────────────────
+    def remove_file(self, filename: str) -> bool:
+        """
+        Remove everything known about a file, using its original name.
+        Returns True if at least one record was removed.
+        """
+        removed_count = self.registry.remove_by_name(filename)
+        return removed_count > 0
 
-    def remove_file(self, file_path: str | Path) -> bool:
-        file_path = Path(file_path).resolve()
-        removed = self.registry.remove(file_path)
-
-        if file_path.exists():
-            fh = self.paths.file_hash(file_path)
-            index_dir = self.paths.dir_for_hash(fh)
-            if index_dir.exists():
-                shutil.rmtree(index_dir)
-                return True
-
-        return removed
 
     # ─────────────────────────────────────────────
 
@@ -303,11 +298,125 @@ class DarwinStore(
             "files": files,
         }
 
+
+
+    def repair_registry(self, filename: str = None, dry_run: bool = False) -> dict:
+        """
+        Check and repair registry integrity.
+
+        Args:
+            filename: If None, check/repair ALL files. If provided, check/repair one.
+            dry_run: If True, report what WOULD be fixed without changing anything.
+
+        Returns:
+            {
+                "files_checked": 5,
+                "files_healthy": 3,
+                "files_repaired": 2,
+                "repairs": [
+                    {"filename": "bio.pdf", "cleared_stages": ["chunks", "bm25"]},
+                    ...
+                ]
+            }
+        """
+        from src.features.Storage.StoreArtifacts import ARTIFACT_MANIFEST
+
+        if filename:
+            records = [self.registry._find_by_name(filename)]
+            if records[0] is None:
+                return {"error": f"File not registered: {filename}"}
+        else:
+            records = self.registry.list_all()
+
+        result = {
+            "files_checked": len(records),
+            "files_healthy": 0,
+            "files_repaired": 0,
+            "repairs": [],
+        }
+
+        for record in records:
+            name = record.original_name
+            report = self.validate_artifact_integrity(name)
+
+            if report["is_healthy"]:
+                result["files_healthy"] += 1
+                continue
+
+            # Found broken stages — the registry claims they're done but files don't exist
+            broken_stages = report["actually_missing"]
+
+            if not dry_run and broken_stages:
+                # Clear the broken stage timestamps from the registry
+                # This effectively "un-does" the pipeline progress for those stages
+                data = self.registry._load()
+                fh = record.file_hash
+
+                for stage in broken_stages:
+                    if stage in data["files"][fh].get("updates", {}):
+                        del data["files"][fh]["updates"][stage]
+                        TerminalUI.bold(
+                            f"Repaired registry for '{name}': cleared '{stage}' "
+                            f"(artifacts missing, registry was incorrect)"  )
+
+                data["files"][fh]["updated_at"] = now()
+                self.registry._save(data)
+
+                result["files_repaired"] += 1
+                result["repairs"].append({
+                    "filename": name,
+                    "cleared_stages": broken_stages,
+                })
+
+            # Also handle the inverse: files exist but registry doesn't know
+            orphan_stages = report["actually_present"]
+            if orphan_stages and not dry_run:
+                TerminalUI.bold(
+                    f"Found orphan artifacts for '{name}': {orphan_stages} "
+                    f"(files exist but registry doesn't know — auto-registering)"                )
+                for stage in orphan_stages:
+                    self.registry.update_pipeline(name, stage)
+
+        return result
+
+
+    def full_registry_health_check(self) -> dict:
+        """
+        Run a complete health check on the entire registry.
+        Returns a dashboard-friendly report.
+        """
+        report = self.repair_registry(dry_run=True)  # Check without modifying
+
+        # Enrich with per-file details
+        file_details = {}
+        for record in self.registry.list_all():
+            integrity = self.validate_artifact_integrity(record.original_name)
+            file_details[record.original_name] = integrity
+
+        return {
+            "summary": {
+                "total_files": report["files_checked"],
+                "healthy": report["files_healthy"],
+                "broken": report["files_checked"] - report["files_healthy"],
+                "would_repair": len(report["repairs"]),
+            },
+            "broken_files": [
+                {
+                    "filename": r["filename"],
+                    "missing_artifacts": r["cleared_stages"],
+                }
+                for r in report["repairs"]
+            ],
+            "all_files": file_details,
+        }
     # ─────────────────────────────────────────────
 
     def print_dashboard(self):
         stats = self.registry.stats()
         needing = self.registry.list_needing_work()
+
+        # Quick health check (non-repairing)
+        health = self.full_registry_health_check()
 
         TerminalUI.print_darwin()
         TerminalUI.blank()
@@ -320,6 +429,21 @@ class DarwinStore(
             f"Total pages: {stats['total_pages']}"
         )
         TerminalUI.blank()
+
+        # ═══ Health warning ═══
+        if health["summary"]["broken"] > 0:
+            TerminalUI.warn(
+                f"⚠️  Registry integrity issue: {health['summary']['broken']} file(s) "
+                f"have missing artifacts but the registry thinks they're done."
+            )
+            for broken in health["broken_files"]:
+                TerminalUI.warn(
+                    f"   📄 {broken['filename']} — missing: {', '.join(broken['missing_artifacts'])}"
+                )
+            TerminalUI.info(
+                "   Run darwin_store.repair_registry() to fix automatically."
+            )
+            TerminalUI.blank()
 
         for record in needing:
             TerminalUI.info("file", record.original_name)

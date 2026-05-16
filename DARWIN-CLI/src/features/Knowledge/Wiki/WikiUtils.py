@@ -46,6 +46,22 @@ class WikiPage:
 
 
 @dataclass
+class WikiSearchResult:
+    """
+    A scored search result with full component breakdown.
+    Passed to the agent so it can reason about *why* a page ranked.
+    """
+    page:                  WikiPage
+    score:                 float
+    vector_score:          float
+    keyword_score:         float
+    concept_score:         float
+    content_quality_score: float
+    structural_penalty:    float
+    is_expanded:           bool = False
+
+
+@dataclass
 class DocumentWiki:
     filename: str
     pages:    List[WikiPage]           = field(default_factory=list)
@@ -71,7 +87,12 @@ class DocumentWiki:
 class WikiGenerationArgs:
     files: list[str] = field(default_factory=list)
     mode:               str            = "index"   # "index" | "summary"
-    llm_model:          Optional[str]  = None
+    provider:          Optional[str]  = None
     chunks_per_concept: int            = DEFAULT_CHUNKS_PER_CONCEPT
     inspect:            bool           = False
     rerun:              bool           = False
+
+
+
+
+

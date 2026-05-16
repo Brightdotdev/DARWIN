@@ -98,8 +98,7 @@ def _print_inspection(filename: str, store: DarwinStore, vectors, chunks) -> Non
 # Handler
 # ─────────────────────────────────────────────────────────────────────────────
 
-def handle_embedding(args: EmbeddingArgs) -> None:
-    store = DarwinStore()
+def handle_embedding(args: EmbeddingArgs,store) -> None:
     loader = ModelManager.get_loader()
 
     darwin.log("")

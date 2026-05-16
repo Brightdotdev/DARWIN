@@ -21,7 +21,7 @@ Usage
     from src.features.Storage import DarwinStore
     from src.features.Ingestion.Chunking.ContextResolver import get_full_context
 
-    store  = DarwinStore(project_dir)
+    store  = DarwinStore()
     chunk  = ...   # whatever chunk came back from retrieval
     result = get_full_context(chunk, store, filename="biology.pdf")
 

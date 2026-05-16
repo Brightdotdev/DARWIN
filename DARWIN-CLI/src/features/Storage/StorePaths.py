@@ -23,10 +23,6 @@ def default_darwin_dir() -> Path:
     return base / "Darwin"
 
 
-def default_models_dir() -> Path:
-    """Global models directory (used by ModelStore)."""
-    return default_darwin_dir() / "models"
-
 
 def hash_file(file_path: str | Path) -> str:
     """SHA-256 of file contents. Same file → same hash, always."""

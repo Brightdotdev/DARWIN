@@ -5,7 +5,7 @@ Combined graph + wiki pipeline CLI.
 
 Usage:
   uv run src/core/Knowledge/main.py -f biology.pdf chemistry.pdf
-  uv run src/core/Knowledge/main.py -f biology.pdf --mode summary --llm ollama/llama3.2
+  
   uv run src/core/Knowledge/main.py                             # process all stored files
   uv run src/core/Knowledge/main.py -f biology.pdf --graph-only
   uv run src/core/Knowledge/main.py -f biology.pdf --wiki-only
@@ -23,7 +23,7 @@ from src.features.Knowledge.lib import KnowledgePipelineArgs
 from src.features.Knowledge.Graph.main import handle_graph_extraction
 from src.features.Knowledge.Wiki.main import handle_wiki
 from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig, PRESETS
-from src.features.Knowledge.Graph.GraphUtils import GraphExtractionArgs
+from src.lib.Utils import ensure_writable_directory
 from src.features.Knowledge.Wiki.WikiUtils import (
     WikiGenerationArgs,
     DEFAULT_CHUNKS_PER_CONCEPT,
@@ -62,25 +62,12 @@ def _all_chunked(store: DarwinStore) -> list[str]:
 
 # ── pass 1: graphs ────────────────────────────────────────────────────────────
 
-def _run_graphs(args : KnowledgePipelineArgs) -> list[str]  | None:
+def _run_graphs(args : KnowledgePipelineArgs, store: DarwinStore) -> list[str]  | None:
     """
     Run graph extraction for every file.
     Returns the list of filenames that ended up with a valid graph
     (either freshly extracted or already existing).
     """
-   
-        
-    graph_args = GraphExtractionArgs(
-            files=args.files or [], 
-            min_freq=args.min_freq,
-            max_concepts=args.graph_max_concepts,
-            similarity_threshold=args.threshold,
-            elevation_mode=args.elevation,
-            visualize=args.visualize,
-            inspect=args.inspect,
-            json_output=args.json_output,
-            rerun=args.rerun,
-        )
     graph_config = GraphExtractionConfig(
             processing_mode=args.processing_mode,
             chunk_size=args.chunk_size,
@@ -99,28 +86,33 @@ def _run_graphs(args : KnowledgePipelineArgs) -> list[str]  | None:
 
 
 
-    return handle_graph_extraction(graph_config, args.files or [])
+    return handle_graph_extraction(graph_config, args.files or [],store=store)
 
 
 # ── pass 2: wikis ─────────────────────────────────────────────────────────────
 
-def _run_wikis( args : KnowledgePipelineArgs) -> list[str] | None:
+def _run_wikis( args : KnowledgePipelineArgs, store: DarwinStore) -> list[str] | None:
         
         wiki_args = WikiGenerationArgs(
             files=args.files or [],
             mode=args.wiki_mode,
-            llm_model=args.llm,
+            provider=args.llm_provider,
             chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,
         )
         
-        return handle_wiki(wiki_args)
+        return handle_wiki(wiki_args,store=store)
 
 # ── main handler ──────────────────────────────────────────────────────────────
 
-def handle_knowledge(args : KnowledgePipelineArgs) -> None:
-    store = DarwinStore()
+def handle_knowledge(args : KnowledgePipelineArgs, store_dir: str = None) -> None:
+
+    if store_dir and ensure_writable_directory(store_dir):
+        store = DarwinStore(store_dir)
+    else:
+        store = DarwinStore()
+    
 
     # resolve filenames
     if args.files:
@@ -143,10 +135,10 @@ def handle_knowledge(args : KnowledgePipelineArgs) -> None:
     graph_ready = filenames  # assume all ready if skipping graph pass
 
     if not args.wiki_only:
-        graph_ready = _run_graphs(args)
+        graph_ready = _run_graphs(args,store=store)
 
     if not args.graph_only and graph_ready:
-        _run_wikis(args)
+        _run_wikis(args,store=store)
     elif not graph_ready:
         darwin.log("No files with valid graphs — skipping wiki pass.", LogType.WARNING)
 
@@ -184,11 +176,13 @@ async def main() -> int:
     parser.add_argument("--min-freq", type=int, default=2)
     parser.add_argument("--graph-max-concepts", type=int, default=75)
     parser.add_argument("--visualize", "-v", action="store_true")
+    parser.add_argument("--store-dir", "-s", default=None, help="Store directory")
+
 
     # wiki args
     parser.add_argument("--wiki-mode", "--wm", default="index",
                         choices=["index", "summary"])
-    parser.add_argument("--llm", default="ollama/llama3.2")
+    parser.add_argument("--llm-provider")
     parser.add_argument("--chunks-per-concept", type=int, default=DEFAULT_CHUNKS_PER_CONCEPT)
 
     # shared
@@ -206,7 +200,7 @@ async def main() -> int:
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
 
     try:
-        args = KnowledgePipelineArgs(
+        knowledge_args = KnowledgePipelineArgs(
             files=args.file,
             graph_only=args.graph_only,
             wiki_only=args.wiki_only,
@@ -222,7 +216,7 @@ async def main() -> int:
             graph_max_concepts=args.graph_max_concepts,
             visualize=args.visualize,
             wiki_mode=args.wiki_mode,
-            llm=args.llm,
+            llm_provider=args.llm_provider,
             chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,
@@ -230,7 +224,7 @@ async def main() -> int:
             no_ws=args.no_ws,
             json_output=getattr(args, 'json_output', False),
         )
-        handle_knowledge(args)
+        handle_knowledge(knowledge_args,store_dir=args.store_dir)
         return 0
     except KeyboardInterrupt:
         darwin.log("", LogType.INFO)

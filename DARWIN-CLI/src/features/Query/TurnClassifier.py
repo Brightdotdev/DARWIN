@@ -5,7 +5,7 @@ Classify the user's message into a TurnType using a small LLM call.
 from __future__ import annotations
 
 from src.features.LLM.LLMTypes import LLMResponse
-from src.features.Query.TurnTypes import TurnType
+from src.features.Query.QueryTypes import TurnType
 
 TURN_CLASSIFIER_SYSTEM_PROMPT = (
     "You are a conversation analyst. Given the user's latest message, the assistant's last response (if any), "

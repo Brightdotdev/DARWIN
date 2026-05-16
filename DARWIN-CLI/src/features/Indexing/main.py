@@ -21,8 +21,9 @@ if __name__ == "__main__":
 from src.features.Indexing.lib import IndexingArgs
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-
+from src.lib.Utils import ensure_writable_directory
 from src.features.Indexing.Embedding.lib import EmbeddingArgs
+
 from src.features.Indexing.BM25.lib import (
     BM25IndexingArgs,
     DOMAIN_STOP_THRESHOLD,
@@ -48,12 +49,17 @@ def _validate_inputs(args: IndexingArgs) -> bool:
     return True
 
 
-# ── main handler ───────────────────────────────────────────────────────────────
-
-def handle_indexing(args: IndexingArgs) -> None:
+# ── main handler ──────────────────────
+def handle_indexing(args: IndexingArgs, store_dir: str = None) -> None:
     from src.features.Indexing.Embedding.main import handle_embedding
     from src.features.Indexing.BM25.main import handle_bm25_indexing
+    from src.features.Storage.DarwinStore import DarwinStore
 
+    if store_dir and ensure_writable_directory(store_dir):
+        store = DarwinStore(store_dir)
+    else:
+        store = DarwinStore()
+    
     if not _validate_inputs(args):
         return
 
@@ -92,7 +98,7 @@ def handle_indexing(args: IndexingArgs) -> None:
                 idf_smoothing=args.idf_smoothing,
                 inspect=args.inspect,
                 rerun=args.rerun,
-            ))
+            ),store=store)
         except Exception as e:
             import traceback
             darwin.log(f"BM25 indexing failed — {type(e).__name__}: {e}", LogType.ERROR)
@@ -108,7 +114,7 @@ def handle_indexing(args: IndexingArgs) -> None:
                 files=files,          # full batch — model loads once, embeds all
                 inspect=args.inspect,
                 rerun=args.rerun,
-            ))
+            ),store=store)
         except Exception as e:
             import traceback
             darwin.log(f"Embedding failed — {type(e).__name__}: {e}", LogType.ERROR)
@@ -153,6 +159,7 @@ async def main() -> int:
     # websocket
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
     parser.add_argument("--no-ws",   action="store_true",    help="Disable WebSocket server")
+    parser.add_argument("--store-dir",  default=None,   help="Darwin store directory")
 
     args = parser.parse_args()
 
@@ -170,7 +177,7 @@ async def main() -> int:
             only_semantic=args.only_semantic,
         )
 
-        handle_indexing(indexing_args)
+        handle_indexing(indexing_args, store_dir=args.store_dir)
         return 0
 
     except KeyboardInterrupt:

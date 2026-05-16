@@ -18,7 +18,7 @@ from src.features.Ingestion.Chunking.lib import ChunkingArgs
 from src.features.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-
+from src.lib.Utils import ensure_writable_directory
 
 # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
         darwin.log("")
 
         args = ParsingArgs(**{**vars(parsing_args), "files": needs_md})
-        docs = handle_parsing(args)
+        docs = handle_parsing(args,store=store)
 
         parsed = [d.filename for d in docs if not d.error]
         return has_md + parsed
@@ -76,7 +76,7 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
     darwin.log("[ 1 / 2 ] Parsing", LogType.INFO)
     darwin.log("")
 
-    docs = handle_parsing(parsing_args)
+    docs = handle_parsing(parsing_args,store=store)
     if not docs:
         return []
 
@@ -92,7 +92,7 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
     return parsed
 
 
-def run_chunking(filenames: List[str], base_args: ChunkingArgs) -> None:
+def run_chunking(filenames: List[str], base_args: ChunkingArgs, store: DarwinStore) -> None:
     darwin.log("")
     darwin.log("━" * 50, LogType.INFO)
     darwin.log("")
@@ -100,17 +100,20 @@ def run_chunking(filenames: List[str], base_args: ChunkingArgs) -> None:
     darwin.log("")
 
     args = ChunkingArgs(**{**vars(base_args), "files": filenames})
-    handle_chunking(args)
+    handle_chunking(args, store=store)
 
 
-def handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs) -> None:
+def handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs, store_dir: str = None) -> None:
     darwin.log("")
     darwin.log("━" * 50, LogType.INFO)
     darwin.log("  INGESTION PIPELINE", LogType.INFO)
     darwin.log("━" * 50, LogType.INFO)
     darwin.log("")
-
-    store = DarwinStore()
+    if store_dir and ensure_writable_directory(store_dir):
+        store = DarwinStore(store_dir)
+    else:
+        store = DarwinStore()
+    
 
     parsed_files = run_parsing(parsing_args, store)
 
@@ -118,7 +121,7 @@ def handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs) -> 
         darwin.log("No documents available to chunk. Aborting.", LogType.ERROR)
         return
 
-    run_chunking(parsed_files, chunking_args)
+    run_chunking(parsed_files, chunking_args, store)
 
     darwin.log("")
     darwin.log("━" * 50, LogType.INFO)
@@ -153,6 +156,8 @@ async def main() -> int:
     parser.add_argument("--ws-port", type=int, default=8765)
     parser.add_argument("--no-ws", action="store_true")
 
+    parser.add_argument("--store", "-s", default=None, help="Store directory")
+
     args = parser.parse_args()
 
     ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
@@ -177,7 +182,7 @@ async def main() -> int:
             rerun=args.rerun,
         )
 
-        handle_ingestion(parsing_args, chunking_args)
+        handle_ingestion(parsing_args, chunking_args,store_dir=args.store_dir)
         return 0
 
     except KeyboardInterrupt:

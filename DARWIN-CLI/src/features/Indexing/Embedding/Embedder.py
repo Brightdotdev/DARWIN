@@ -226,6 +226,9 @@ def embed_query(
     return model.encode(prepared, **encode_kwargs).astype(np.float32)
 
 
+
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Pipeline entry point
 # ═══════════════════════════════════════════════════════════════════════════
@@ -249,7 +252,7 @@ def run_embedding_pipeline(
     Args:
         filename:     Document filename (for store paths)
         chunks:       Chunk objects from the chunker
-        store:        DarwinStore instance
+        store:       
         rerun:        Force re-embed even if fresh embeddings exist
         unload_after: Free embedding model from RAM after completion
 

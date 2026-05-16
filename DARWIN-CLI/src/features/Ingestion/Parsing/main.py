@@ -139,7 +139,7 @@ def parse_documents(
 
 # ── handle_parsing ─────────────────────────────────────────────────────────────
 
-def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
+def handle_parsing(args: ParsingArgs, store: DarwinStore) -> list[ParsedDocument]:
     target_paths: list[Path] = []
 
     if args.files:
@@ -177,7 +177,7 @@ def handle_parsing(args: ParsingArgs) -> list[ParsedDocument]:
     darwin.log(f"Settings: Images={args.images} | Caption={args.caption} | Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}", LogType.INFO)
     darwin.log("")
 
-    store = DarwinStore()
+
     for path in target_paths:
         store.registry.register(path)
 

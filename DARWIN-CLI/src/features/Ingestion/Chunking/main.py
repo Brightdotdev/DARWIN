@@ -156,8 +156,7 @@ def _print_chunk(chunk: Chunk) -> None:
 
 # ── core handler ───────────────────────────────────────────────────────────────
 
-def handle_chunking(args: ChunkingArgs) -> None:
-    store  = DarwinStore()
+def handle_chunking(args: ChunkingArgs,store : DarwinStore) -> None:
     status = store.status()
 
     darwin.log("")

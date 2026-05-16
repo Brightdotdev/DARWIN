@@ -34,3 +34,21 @@ def scan_folder():
         if f.is_file() and f.suffix.lower() in SUPPORTED:
             files.append(f)
     return files
+
+
+
+
+def ensure_writable_directory(path_str: str) -> bool:
+    try:
+        path = Path(path_str)
+
+        # Create directory if missing
+        path.mkdir(parents=True, exist_ok=True)
+
+        if not path.is_dir():
+            return False
+
+        return os.access(path, os.W_OK)
+
+    except Exception:
+        return False

@@ -14,7 +14,6 @@ from src.features.Knowledge.Graph.GraphUtils import (
     export_graph_json,
 )
 from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig, PRESETS
-from src.features.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
 
@@ -61,8 +60,7 @@ def _print_inspection(graph, filename: str) -> None:
     darwin.log(f"{'='*60}", LogType.INFO)
 
 
-def handle_graph_extraction(config: GraphExtractionConfig, files: List[str] = None) -> List[str] | None:
-    store = DarwinStore()
+def handle_graph_extraction(config: GraphExtractionConfig,store,files: List[str] = None,) -> List[str] | None:
 
     if files:
         filenames = [f for f in files if store.has_chunks(f)]

@@ -1,10 +1,13 @@
 import json
+import os
 from pathlib import Path
 from typing import Optional, Dict
 
 from src.features.LLM.LLMConfig import LLMConfig, ProviderConfig, TierConfig
 from src.features.LLM.LLMClient import LLMClient
 from src.lib.AppPaths import default_models_config_dir
+from src.core.Logger.DarwinLogger import darwin, LogType
+
 
 class LLMManager:
     _instance = None
@@ -23,11 +26,19 @@ class LLMManager:
         if config_path:
             cls._config_path = config_path
         if cls._config_path.exists():
-            with open(cls._config_path, 'r') as f:
-                raw = json.load(f)
-            cls._config = cls._deserialize_config(raw)
-            cls._client = None
-            return True
+            try:
+                with open(cls._config_path, 'r') as f:
+                    raw = json.load(f)
+                cls._config = cls._deserialize_config(raw)
+                cls._client = None
+                return True
+            except (json.JSONDecodeError, Exception) as e:
+                darwin.log(
+                    f"Failed to load config from {cls._config_path}: {e}. Starting with clean config.",
+                    LogType.WARNING
+                )
+                cls._config = None
+                return False
         else:
             cls._config = None
             return False
@@ -58,6 +69,12 @@ class LLMManager:
                      fast_temp: float = 0.1, fast_max_tokens: int = 1024,
                      smart_temp: float = 0.7, smart_max_tokens: int = 4096,
                      base_url: Optional[str] = None):
+        # Validate inputs
+        if not name or not fast_model or not smart_model:
+            raise ValueError("Provider name and model IDs cannot be empty.")
+        if not base_url and (" " in fast_model or " " in smart_model):
+            raise ValueError("Cloud provider model IDs should not contain spaces. Use the correct model slug.")
+
         if cls._config is None:
             cls._config = LLMConfig(default_provider=name, providers={})
         cls._config.providers[name] = ProviderConfig(
@@ -69,10 +86,40 @@ class LLMManager:
         cls._save_config()
 
     @classmethod
+    def remove_provider(cls, name: str):
+        """Remove a provider from the configuration."""
+        if cls._config is None:
+            raise RuntimeError("No config loaded.")
+        if name not in cls._config.providers:
+            raise ValueError(f"Provider '{name}' not found.")
+        del cls._config.providers[name]
+        # If default was removed, pick the first available or leave empty
+        if cls._config.default_provider == name:
+            if cls._config.providers:
+                cls._config.default_provider = next(iter(cls._config.providers))
+            else:
+                cls._config.default_provider = ""
+        cls._client = None
+        cls._save_config()
+
+    @classmethod
     def _save_config(cls):
         cls._config_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(cls._config_path, 'w') as f:
-            json.dump(cls._serialize_config(), f, indent=2)
+        # Atomic write with backup
+        tmp_path = cls._config_path.with_suffix(".tmp")
+        try:
+            with open(tmp_path, 'w') as f:
+                json.dump(cls._serialize_config(), f, indent=2)
+            # Create backup only if original exists
+            if cls._config_path.exists():
+                backup_path = cls._config_path.with_suffix(".json.bak")
+                os.replace(cls._config_path, backup_path)
+            os.replace(tmp_path, cls._config_path)
+        except Exception:
+            # Clean up tmp if something goes wrong
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
 
     @classmethod
     def _serialize_config(cls) -> dict:
