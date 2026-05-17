@@ -108,7 +108,6 @@ This is your **hard output contract**.
   "retrieval_query": "string",
 
   "suggested_representation": list[
-     "plain_text",
     "markdown",
     "accordion",
     "comparison_table",

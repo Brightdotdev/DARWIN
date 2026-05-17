@@ -14,6 +14,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "blingfire==0.1.8",
+    "cachetools>=7.1.2",
     "cohere>=6.1.0",
     "hdbscan>=0.8.42",
     "jinja2>=3.1.6",

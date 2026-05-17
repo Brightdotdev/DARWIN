@@ -17,11 +17,7 @@
             --accent: #5f5fff;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
             background: var(--bg);
@@ -45,25 +41,15 @@
         }
 
         #status-dot {
-            width: 10px;
-            height: 10px;
+            width: 10px; height: 10px;
             border-radius: 50%;
             background: var(--dim);
             transition: background 0.3s;
         }
-        #status-dot.connected {
-            background: var(--green);
-            box-shadow: 0 0 8px var(--green);
-        }
-        #status-dot.disconnected {
-            background: var(--red);
-            box-shadow: 0 0 8px var(--red);
-        }
+        #status-dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green); }
+        #status-dot.disconnected { background: var(--red); box-shadow: 0 0 8px var(--red); }
 
-        #status-text {
-            font-size: 12px;
-            color: var(--dim);
-        }
+        #status-text { font-size: 12px; color: var(--dim); }
 
         #header input {
             flex: 1;
@@ -76,9 +62,7 @@
             font-size: 13px;
             outline: none;
         }
-        #header input:focus {
-            border-color: var(--cyan);
-        }
+        #header input:focus { border-color: var(--cyan); }
 
         #header button {
             background: var(--surface);
@@ -91,10 +75,7 @@
             font-size: 13px;
             transition: background 0.2s, border-color 0.2s;
         }
-        #header button:hover {
-            background: #222;
-            border-color: var(--cyan);
-        }
+        #header button:hover { background: #222; border-color: var(--cyan); }
 
         /* --- terminal body --- */
         #terminal {
@@ -147,14 +128,25 @@
             border-radius: 4px;
             transition: width 0.2s ease-out;
         }
-        .progress-label {
+        .progress-label { color: var(--cyan); min-width: 140px; }
+        .progress-pct { color: var(--dim); min-width: 45px; text-align: right; }
+
+        /* --- spinner --- */
+        .spinner-block {
+            margin: 2px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
             color: var(--cyan);
-            min-width: 140px;
         }
-        .progress-pct {
-            color: var(--dim);
-            min-width: 45px;
-            text-align: right;
+        .spinner-icon {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
         }
 
         /* --- prompt modal --- */
@@ -167,9 +159,7 @@
             justify-content: center;
             align-items: center;
         }
-        #prompt-overlay.active {
-            display: flex;
-        }
+        #prompt-overlay.active { display: flex; }
 
         #prompt-box {
             background: var(--surface);
@@ -181,11 +171,7 @@
             box-shadow: 0 12px 40px rgba(0,0,0,0.6);
         }
 
-        #prompt-message {
-            color: var(--yellow);
-            font-size: 15px;
-            margin-bottom: 16px;
-        }
+        #prompt-message { color: var(--yellow); font-size: 15px; margin-bottom: 16px; }
 
         .prompt-option {
             display: block;
@@ -202,13 +188,8 @@
             text-align: left;
             transition: background 0.2s, border-color 0.2s;
         }
-        .prompt-option:hover {
-            background: #1a1a1a;
-            border-color: var(--cyan);
-        }
-        .prompt-option:active {
-            background: #222;
-        }
+        .prompt-option:hover { background: #1a1a1a; border-color: var(--cyan); }
+        .prompt-option:active { background: #222; }
     </style>
 </head>
 <body>
@@ -248,12 +229,13 @@
 
     let ws = null;
     let pendingPromptId = null;
+    let currentSession = '';
 
     // =========================================================================
     // Helpers
     // =========================================================================
     function setStatus(state) {
-        statusDot.className = state;  // 'connected' or 'disconnected'
+        statusDot.className = state;
         statusText.textContent = state;
         btnConnect.textContent = state === 'connected' ? 'disconnect' : 'connect';
     }
@@ -266,12 +248,13 @@
         terminal.scrollTop = terminal.scrollHeight;
     }
 
-    // Progress trackers by id
+    // Progress trackers
     const progressEls = {};
 
     function renderProgressStart(id, label, total) {
         const container = document.createElement('div');
         container.className = 'progress-block';
+        container.id = `prog-${id}`;
 
         const labelSpan = document.createElement('span');
         labelSpan.className = 'progress-label';
@@ -313,43 +296,64 @@
         if (!el) return;
         el.inner.style.width = '100%';
         el.pctSpan.textContent = '100%';
-        // Keep it visible, just mark done
         el.container.style.opacity = '0.6';
         delete progressEls[id];
     }
 
+    // Spinner helpers
+    const spinners = {};
 
-    function showPrompt(id, message, options) {
-    // If there's already a pending prompt, hide it first
-    if (pendingPromptId) {
-        hidePrompt();
+    function appendSpinner(id, message) {
+        const div = document.createElement('div');
+        div.className = 'spinner-block';
+        div.id = `spinner-${id}`;
+        div.innerHTML = `<span class="spinner-icon">⏳</span> ${message}`;
+        terminal.appendChild(div);
+        terminal.scrollTop = terminal.scrollHeight;
+        spinners[id] = div;
     }
-    
-    pendingPromptId = id;
-    promptMsg.textContent = message;
-    promptOpts.innerHTML = '';
 
-    options.forEach((opt, i) => {
-        const btn = document.createElement('button');
-        btn.className = 'prompt-option';
-        btn.textContent = `${i + 1}. ${opt}`;
-        btn.addEventListener('click', () => {
-            sendPromptResponse(id, opt);
-            hidePrompt();
-        });
-        promptOpts.appendChild(btn);
-    });
-
-    promptOverlay.classList.add('active');
-    
-    // Auto-dismiss after 60s if no response
-    setTimeout(() => {
-        if (pendingPromptId === id) {
-            hidePrompt();
-            appendLine('[prompt timed out]', 'system');
+    function updateSpinner(id, message) {
+        const div = spinners[id];
+        if (div) {
+            div.innerHTML = `<span class="spinner-icon">⏳</span> ${message}`;
         }
-    }, 60000);
-}
+    }
+
+    function removeSpinner(id, success) {
+        const div = spinners[id];
+        if (div) {
+            div.innerHTML = success ? '✅ Done' : '❌ Failed';
+            div.style.opacity = '0.6';
+            delete spinners[id];
+        }
+    }
+
+    // Prompt
+    function showPrompt(id, message, options) {
+        if (pendingPromptId) hidePrompt();
+        pendingPromptId = id;
+        promptMsg.textContent = message;
+        promptOpts.innerHTML = '';
+        options.forEach((opt, i) => {
+            const btn = document.createElement('button');
+            btn.className = 'prompt-option';
+            btn.textContent = `${i + 1}. ${opt}`;
+            btn.addEventListener('click', () => {
+                sendPromptResponse(id, opt);
+                hidePrompt();
+            });
+            promptOpts.appendChild(btn);
+        });
+        promptOverlay.classList.add('active');
+        setTimeout(() => {
+            if (pendingPromptId === id) {
+                hidePrompt();
+                appendLine('[prompt timed out]', 'system');
+            }
+        }, 60000);
+    }
+
     function hidePrompt() {
         promptOverlay.classList.remove('active');
         pendingPromptId = null;
@@ -364,13 +368,11 @@
     }
 
     // =========================================================================
-    // Message handler
+    // Message handler (updated with spinner, session, history)
     // =========================================================================
     function handleMessage(raw) {
         let data;
-        try {
-            data = JSON.parse(raw);
-        } catch {
+        try { data = JSON.parse(raw); } catch {
             appendLine(`[parse error] ${raw}`, 'error');
             return;
         }
@@ -381,13 +383,16 @@
             case 'log': {
                 let cls = payload.log_type || 'info';
                 if (payload.style === 'banner') cls = 'banner';
-                appendLine(payload.message, cls);
+                // Prefix with session if active
+                const prefix = payload.session ? `[${payload.session}] ` : '';
+                appendLine(prefix + payload.message, cls);
                 break;
             }
             case 'progress': {
                 const { event, id, total, label, current, status } = payload;
                 if (event === 'start') {
-                    renderProgressStart(id, label, total);
+                    const displayLabel = (payload.session ? `[${payload.session}] ` : '') + label;
+                    renderProgressStart(id, displayLabel, total);
                 } else if (event === 'update') {
                     renderProgressUpdate(id, current, status);
                 } else if (event === 'end') {
@@ -399,8 +404,40 @@
                 showPrompt(payload.id, payload.message, payload.options);
                 break;
             }
+            case 'spinner': {
+                const { event, id, message, success } = payload;
+                const msg = (payload.session ? `[${payload.session}] ` : '') + message;
+                if (event === 'start') {
+                    appendSpinner(id, msg);
+                } else if (event === 'update') {
+                    updateSpinner(id, msg);
+                } else if (event === 'end') {
+                    removeSpinner(id, success);
+                }
+                break;
+            }
+            case 'session': {
+                if (payload.event === 'start') {
+                    currentSession = payload.name;
+                    appendLine(`▶ session started: ${payload.name}`, 'system');
+                } else {
+                    appendLine(`◼ session ended: ${payload.name}`, 'system');
+                    currentSession = '';
+                }
+                break;
+            }
+            case 'history': {
+                // Replay all historical events sequentially
+                payload.forEach(ev => {
+                    handleMessage(JSON.stringify({
+                        type: ev.type,
+                        payload: ev
+                    }));
+                });
+                break;
+            }
             default:
-                appendLine(`[unknown: ${type}] ${JSON.stringify(payload)}`, 'warning');
+                appendLine(`[unknown: ${type}]`, 'warning');
         }
     }
 
@@ -419,13 +456,13 @@
         ws.onopen = () => {
             setStatus('connected');
             appendLine('connected to darwin', 'success');
+            // Request session history
+            ws.send(JSON.stringify({ type: 'get_history', payload: { limit: 200 } }));
         };
 
         ws.onmessage = (e) => handleMessage(e.data);
 
-        ws.onerror = () => {
-            appendLine('websocket error', 'error');
-        };
+        ws.onerror = () => appendLine('websocket error', 'error');
 
         ws.onclose = () => {
             setStatus('disconnected');
@@ -437,14 +474,11 @@
 
     btnConnect.addEventListener('click', connect);
 
-    // Allow pressing Enter in URL input to connect
     wsUrlInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') connect();
     });
 
-    // =========================================================================
-    // On load: auto-connect
-    // =========================================================================
+    // Auto-connect on load
     connect();
 </script>
 </body>

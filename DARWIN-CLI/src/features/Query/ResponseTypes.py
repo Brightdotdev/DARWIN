@@ -44,7 +44,7 @@ QuestionType = Literal[
 question_retrieval_map: dict[str, RetrievalPolicy] = {
 
     "fact": {
-        "retrieval": "hybrid",
+        "retrieval": "hybrizsd",
         "top_k": 3,
         "requires_rag": True,
     },
@@ -120,7 +120,7 @@ ResponsePresentation = Literal[
     "flowchart",          # Process or decision flow (directional steps)
     "network_graph",      # Nodes + edges where relationships are the point
     "relationship_map",   # Concept cards with labeled connections between them
-
+    "structural_walkthrough", # Walkthrough of a step-by-step process
     # Data
     "bar_chart",          # Categorical comparisons
     "stepper",            # Guided multi-step walkthrough (linear)
@@ -128,7 +128,6 @@ ResponsePresentation = Literal[
     # Interactive
     "parameter_sandbox",  # Sliders/inputs to explore "what if" scenarios live
     "diagnostic_tree",    # Branching yes/no to reach a conclusion
-    "code_walkthrough",   # Annotated code with step-by-step highlights
 ]
 
 PastedTextType = Literal[
@@ -256,7 +255,6 @@ questionType :: the type of question the user is asking
 suggestedRepresentation :: this is a list of possible response types and you are to return a list of the best ones that fit the users query
 also based on the question type you set for the query
 [
-   "plain_text",
     "markdown",
     "accordion",
     "comparison_table",

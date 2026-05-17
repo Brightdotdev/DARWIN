@@ -1,23 +1,27 @@
-# =============================================================================
-# darwin_logger.py — Unified Core Event System with Auto-Detection
-# =============================================================================
+# darwin_logger.py — Unified Event Hub (no WebSocket, pure events)
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import threading
 import time
+import contextvars
+import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
+
+from cachetools import TTLCache
+
+# Internal error logger for subscriber exceptions
+_log = logging.getLogger("darwin.logger")
 
 
 class OutputMode(Enum):
     TERMINAL = "terminal"
     WEBSOCKET = "websocket"
-    BOTH = "both"
     NONE = "none"
 
 
@@ -34,6 +38,7 @@ class LogEvent:
     message: str = ""
     log_type: LogType = LogType.INFO
     style: str = ""
+    session: str = ""
     timestamp: float = field(default_factory=time.time)
 
 
@@ -43,6 +48,7 @@ class ProgressStartEvent:
     id: str = ""
     total: int = 0
     label: str = ""
+    session: str = ""
     timestamp: float = field(default_factory=time.time)
 
 
@@ -52,6 +58,7 @@ class ProgressUpdateEvent:
     id: str = ""
     current: int = 0
     status: str = ""
+    session: str = ""
     timestamp: float = field(default_factory=time.time)
 
 
@@ -59,6 +66,7 @@ class ProgressUpdateEvent:
 class ProgressEndEvent:
     type: str = "progress_end"
     id: str = ""
+    session: str = ""
     timestamp: float = field(default_factory=time.time)
 
 
@@ -70,45 +78,122 @@ class PromptEvent:
     options: List[str] = field(default_factory=list)
     action: str = ""
     params: Dict[str, Any] = field(default_factory=dict)
+    session: str = ""
     timestamp: float = field(default_factory=time.time)
 
 
-class EventSubscriber:
+@dataclass(frozen=True)
+class SpinnerStartEvent:
+    type: str = "spinner_start"
+    id: str = ""
+    message: str = ""
+    session: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class SpinnerUpdateEvent:
+    type: str = "spinner_update"
+    id: str = ""
+    message: str = ""
+    session: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class SpinnerEndEvent:
+    type: str = "spinner_end"
+    id: str = ""
+    success: bool = True
+    session: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class SessionStartEvent:
+    type: str = "session_start"
+    name: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass(frozen=True)
+class SessionEndEvent:
+    type: str = "session_end"
+    name: str = ""
+    timestamp: float = field(default_factory=time.time)
+
+
+class EventSubscriber(ABC):
+    @abstractmethod
     def on_log(self, event: LogEvent) -> None: ...
+
+    @abstractmethod
     def on_progress_start(self, event: ProgressStartEvent) -> None: ...
+
+    @abstractmethod
     def on_progress_update(self, event: ProgressUpdateEvent) -> None: ...
+
+    @abstractmethod
     def on_progress_end(self, event: ProgressEndEvent) -> None: ...
+
+    @abstractmethod
     def on_prompt(self, event: PromptEvent) -> None: ...
+
+    @abstractmethod
+    def on_spinner_start(self, event: SpinnerStartEvent) -> None: ...
+
+    @abstractmethod
+    def on_spinner_update(self, event: SpinnerUpdateEvent) -> None: ...
+
+    @abstractmethod
+    def on_spinner_end(self, event: SpinnerEndEvent) -> None: ...
+
+    @abstractmethod
+    def on_session_start(self, event: SessionStartEvent) -> None: ...
+
+    @abstractmethod
+    def on_session_end(self, event: SessionEndEvent) -> None: ...
 
 
 class DarwinLogger:
     _instance: Optional[DarwinLogger] = None
+    _lock = threading.Lock()
 
     def __new__(cls) -> DarwinLogger:
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._initialized = False
         return cls._instance
 
     def __init__(self) -> None:
         if self._initialized:
             return
         self._initialized = True
-        
+
         self._subscribers: List[EventSubscriber] = []
+        self._subscriber_filters: Dict[EventSubscriber, Optional[Callable[[Any], bool]]] = {}
         self._actions: Dict[str, Callable[..., Any]] = {}
         self._pending_prompts: Dict[str, asyncio.Future] = {}
-        self._resolved_prompts: set = set()
+        self._resolved_prompts: TTLCache = TTLCache(maxsize=1000, ttl=3600)  # 1h TTL
         self._lock = threading.Lock()
-        
+
         self._mode: OutputMode = OutputMode.NONE
         self._ws_port: int = 8765
         self._ws_host: str = "localhost"
         self._configured: bool = False
-        self._ws_server_started: bool = False  # Prevent double-start
-        self._ws_loop: Optional[asyncio.AbstractEventLoop] = None  # Track dedicated WS loop
         self._tui: Any = None
 
+        # Session context variable
+        self._session_var: contextvars.ContextVar[str] = contextvars.ContextVar("darwin_session", default="")
+
+        # Optional history recorder reference (set externally)
+        self._history_recorder: Optional[Any] = None
+
+    # ------------------------------------------------------------------
+    # Configuration (simplified, no WebSocket start)
+    # ------------------------------------------------------------------
     def configure(
         self,
         mode: Optional[OutputMode] = None,
@@ -119,47 +204,22 @@ class DarwinLogger:
         if self._configured:
             return
         self._configured = True
-        
+
         if mode is None:
-            if os.environ.get("DARWIN_MODE"):
-                mode = OutputMode(os.environ["DARWIN_MODE"])
-            elif os.environ.get("DARWIN_HEADLESS") == "1":
+            if os.environ.get("DARWIN_HEADLESS") == "1":
                 mode = OutputMode.WEBSOCKET
             elif sys.stdout.isatty():
-                mode = OutputMode.BOTH
+                mode = OutputMode.TERMINAL  # terminal also starts WS via ws_helpers
             else:
                 mode = OutputMode.WEBSOCKET
-        
+
         self._mode = mode
         self._ws_port = ws_port
         self._ws_host = ws_host
-        
-        # Only attach terminal — WS is started externally
-        if mode in (OutputMode.TERMINAL, OutputMode.BOTH):
+
+        # Attach terminal if we have a TTY
+        if self._mode == OutputMode.TERMINAL:
             self._attach_terminal(show_banner)
-
-    async def configure_async(
-        self,
-        mode: Optional[OutputMode] = None,
-        ws_port: int = 8765,
-        ws_host: str = "localhost",
-        show_banner: bool = True,
-    ) -> None:
-        """Async configuration — only use if WS should auto-start."""
-        self.configure(mode=mode, ws_port=ws_port, ws_host=ws_host, show_banner=show_banner)
-        if self._mode in (OutputMode.WEBSOCKET, OutputMode.BOTH) and not self._ws_server_started:
-            await self.start_ws_server()
-
-    async def start_ws_server(self) -> None:
-        """Start WebSocket server if not already running."""
-        if self._ws_server_started:
-            return
-        self._ws_server_started = True
-        await self._run_ws_server()
-
-    def set_ws_loop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """Set the dedicated event loop for WebSocket operations."""
-        self._ws_loop = loop
 
     def _attach_terminal(self, show_banner: bool) -> None:
         try:
@@ -171,94 +231,69 @@ class DarwinLogger:
         except ImportError:
             pass
 
-    async def _run_ws_server(self) -> None:
-        try:
-            import websockets
-        except ImportError:
-            return
-
-        async def handler(ws):
-            bridge = self._get_bridge(ws)
-            self.subscribe(bridge)
-            await bridge.send_banner()
-            
-            
-            try:
-                async for raw in ws:
-                    try:
-                        data = json.loads(raw)
-                        if data.get("type") == "prompt_response":
-                            payload = data["payload"]
-                            self.resolve_prompt(payload["id"], payload["choice"])
-                    except (json.JSONDecodeError, KeyError):
-                        pass
-            except Exception:
-                pass
-            finally:
-                self.unsubscribe(bridge)
-
-        try:
-            async with websockets.serve(
-                handler, 
-                self._ws_host, 
-                self._ws_port,
-                reuse_port=False,  # Prevent double-bind on Windows
-            ):
-                self.log(f"WebSocket ready on ws://{self._ws_host}:{self._ws_port}", LogType.SUCCESS)
-                await asyncio.Future()  # Run forever
-        except asyncio.CancelledError:
-            pass
-
-    def _get_bridge(self, ws=None):
-        try:
-            from src.core.Logger.FrontendUi import FrontendBridge
-            return FrontendBridge(websocket=ws, fallback_stdout=False, logger=self)
-        except ImportError:
-            return _MinimalBridge(ws, logger=self)
-
-    def subscribe(self, subscriber: EventSubscriber) -> None:
+    # ------------------------------------------------------------------
+    # Subscriber management (with filtering)
+    # ------------------------------------------------------------------
+    def subscribe(self, subscriber: EventSubscriber, filter: Optional[Callable[[Any], bool]] = None) -> None:
         if subscriber not in self._subscribers:
             self._subscribers.append(subscriber)
+            self._subscriber_filters[subscriber] = filter
 
     def unsubscribe(self, subscriber: EventSubscriber) -> None:
         if subscriber in self._subscribers:
             self._subscribers.remove(subscriber)
+            self._subscriber_filters.pop(subscriber, None)
 
+    # ------------------------------------------------------------------
+    # Action registration
+    # ------------------------------------------------------------------
     def register_action(self, name: str, func: Callable[..., Any]) -> None:
         self._actions[name] = func
 
-    def _get_ws_loop(self) -> Optional[asyncio.AbstractEventLoop]:
-        """Get the loop to use for scheduling async callbacks."""
-        if self._ws_loop and self._ws_loop.is_running():
-            return self._ws_loop
-        try:
-            loop = asyncio.get_running_loop()
-            return loop
-        except RuntimeError:
-            return None
-
+    # ------------------------------------------------------------------
+    # Emit helpers
+    # ------------------------------------------------------------------
     def _emit(self, event) -> None:
-        for sub in self._subscribers:
-            try:
-                if isinstance(event, LogEvent):
-                    sub.on_log(event)
-                elif isinstance(event, ProgressStartEvent):
-                    sub.on_progress_start(event)
-                elif isinstance(event, ProgressUpdateEvent):
-                    sub.on_progress_update(event)
-                elif isinstance(event, ProgressEndEvent):
-                    sub.on_progress_end(event)
-                elif isinstance(event, PromptEvent):
-                    sub.on_prompt(event)
-            except Exception:
-                pass
+        # Attach session if inside a context manager
+        session = self._session_var.get()
+        if session:
+            event = event.__class__(**{**event.__dict__, "session": session})
 
-    def log(
-        self,
-        message: str,
-        log_type: LogType = LogType.INFO,
-        style: str = "",
-    ) -> None:
+        for sub in self._subscribers:
+            filter_fn = self._subscriber_filters.get(sub)
+            if filter_fn and not filter_fn(event):
+                continue
+            try:
+                self._dispatch(sub, event)
+            except Exception:
+                _log.exception("Subscriber failed to handle event %s", event.type)
+
+    def _dispatch(self, sub: EventSubscriber, event) -> None:
+        if isinstance(event, LogEvent):
+            sub.on_log(event)
+        elif isinstance(event, ProgressStartEvent):
+            sub.on_progress_start(event)
+        elif isinstance(event, ProgressUpdateEvent):
+            sub.on_progress_update(event)
+        elif isinstance(event, ProgressEndEvent):
+            sub.on_progress_end(event)
+        elif isinstance(event, PromptEvent):
+            sub.on_prompt(event)
+        elif isinstance(event, SpinnerStartEvent):
+            sub.on_spinner_start(event)
+        elif isinstance(event, SpinnerUpdateEvent):
+            sub.on_spinner_update(event)
+        elif isinstance(event, SpinnerEndEvent):
+            sub.on_spinner_end(event)
+        elif isinstance(event, SessionStartEvent):
+            sub.on_session_start(event)
+        elif isinstance(event, SessionEndEvent):
+            sub.on_session_end(event)
+
+    # ------------------------------------------------------------------
+    # Public API – unchanged
+    # ------------------------------------------------------------------
+    def log(self, message: str, log_type: LogType = LogType.INFO, style: str = "") -> None:
         self._emit(LogEvent(message=message, log_type=log_type, style=style))
 
     def progress_start(self, id: str, total: int, label: str) -> None:
@@ -281,17 +316,10 @@ class DarwinLogger:
         params = params or {}
         loop = asyncio.get_running_loop()
         future = loop.create_future()
-        
         with self._lock:
             self._pending_prompts[id] = future
-        
-        self._emit(PromptEvent(
-            id=id, message=message, options=options,
-            action=action, params=params,
-        ))
-        
+        self._emit(PromptEvent(id=id, message=message, options=options, action=action, params=params))
         choice = await future
-        
         func = self._actions.get(action)
         if func is None:
             raise RuntimeError(f"Action '{action}' not registered")
@@ -303,7 +331,7 @@ class DarwinLogger:
         with self._lock:
             future = self._pending_prompts.pop(id, None)
             if future is not None:
-                self._resolved_prompts.add(id)
+                self._resolved_prompts[id] = True
         if future and not future.done():
             loop = future.get_loop()
             loop.call_soon_threadsafe(future.set_result, choice)
@@ -311,6 +339,50 @@ class DarwinLogger:
     def is_prompt_resolved(self, id: str) -> bool:
         return id in self._resolved_prompts
 
+    # ------------------------------------------------------------------
+    # New: Spinner
+    # ------------------------------------------------------------------
+    def spinner_start(self, id: str, message: str = "") -> None:
+        self._emit(SpinnerStartEvent(id=id, message=message))
+
+    def spinner_update(self, id: str, message: str = "") -> None:
+        self._emit(SpinnerUpdateEvent(id=id, message=message))
+
+    def spinner_stop(self, id: str, success: bool = True) -> None:
+        self._emit(SpinnerEndEvent(id=id, success=success))
+
+    # ------------------------------------------------------------------
+    # New: Session context manager
+    # ------------------------------------------------------------------
+    def session(self, name: str):
+        return _Session(self, name)
+
+    # ------------------------------------------------------------------
+    # Shutdown
+    # ------------------------------------------------------------------
+    def shutdown(self) -> None:
+        # Cancel all pending prompts
+        for fut in self._pending_prompts.values():
+            if not fut.done():
+                fut.cancel()
+        self._pending_prompts.clear()
+        self._subscribers.clear()
+        self._subscriber_filters.clear()
+
+    # ------------------------------------------------------------------
+    # Bridge factory (always FrontendBridge)
+    # ------------------------------------------------------------------
+    def _get_bridge(self, ws=None):
+        try:
+            from src.core.Logger.FrontendUi import FrontendBridge
+            return FrontendBridge(websocket=ws, fallback_stdout=False, logger=self)
+        except ImportError:
+            # Fallback no-op bridge (extremely rare)
+            return _FallbackBridge(ws, logger=self)
+
+    # ------------------------------------------------------------------
+    # Inner context manager for progress (unchanged)
+    # ------------------------------------------------------------------
     class Progress:
         def __init__(self, logger: DarwinLogger, id: str, total: int, label: str):
             self.logger = logger
@@ -318,15 +390,15 @@ class DarwinLogger:
             self.total = total
             self.current = 0
             self.label = label
-        
+
         def __enter__(self):
             self.logger.progress_start(self.id, self.total, self.label)
             return self
-        
+
         def update(self, current: int, status: str = ""):
             self.current = current
             self.logger.progress_update(self.id, current, status)
-        
+
         def __exit__(self, *args):
             self.logger.progress_end(self.id)
 
@@ -334,68 +406,44 @@ class DarwinLogger:
         return self.Progress(self, id, total, label)
 
 
-class _MinimalBridge(EventSubscriber):
-    def __init__(self, ws=None, logger: Optional[DarwinLogger] = None):
+# ---------------------------------------------------------------------------
+# Session context manager
+# ---------------------------------------------------------------------------
+class _Session:
+    def __init__(self, logger: DarwinLogger, name: str):
+        self.logger = logger
+        self.name = name
+        self._token = None
+
+    def __enter__(self):
+        self._token = self.logger._session_var.set(self.name)
+        self.logger._emit(SessionStartEvent(name=self.name))
+        return self
+
+    def __exit__(self, *args):
+        self.logger._emit(SessionEndEvent(name=self.name))
+        self.logger._session_var.reset(self._token)
+
+
+# ---------------------------------------------------------------------------
+# Fallback no-op bridge (used only if FrontendUi.py is missing)
+# ---------------------------------------------------------------------------
+class _FallbackBridge(EventSubscriber):
+    def __init__(self, ws=None, logger=None):
         self._ws = ws
         self._logger = logger
 
-    def _schedule(self, coro):
-        """Schedule coroutine in the WebSocket loop."""
-        if self._logger:
-            loop = self._logger._get_ws_loop()
-            if loop:
-                asyncio.run_coroutine_threadsafe(coro, loop)
-                return
-        # Fallback: try current loop
-        try:
-            loop = asyncio.get_running_loop()
-            asyncio.ensure_future(coro)
-        except RuntimeError:
-            pass
-
-    async def send_banner(self):
-        banner = ["DARWIN SYSTEM", "Event-Driven Core"]
-        await self._send({
-            "type": "log",
-            "payload": {"message": "\n".join(banner), "log_type": "info", "style": "banner"}
-        })
-
-    async def _send(self, data: dict):
-        if self._ws:
-            try:
-                await self._ws.send(json.dumps(data))
-            except Exception:
-                pass
-
-    def on_log(self, event: LogEvent):
-        self._schedule(self._send({
-            "type": "log",
-            "payload": {"message": event.message, "log_type": event.log_type.value, "style": event.style}
-        }))
-
-    def on_progress_start(self, event: ProgressStartEvent):
-        self._schedule(self._send({
-            "type": "progress",
-            "payload": {"event": "start", "id": event.id, "total": event.total, "label": event.label}
-        }))
-
-    def on_progress_update(self, event: ProgressUpdateEvent):
-        self._schedule(self._send({
-            "type": "progress",
-            "payload": {"event": "update", "id": event.id, "current": event.current, "status": event.status}
-        }))
-
-    def on_progress_end(self, event: ProgressEndEvent):
-        self._schedule(self._send({
-            "type": "progress", "payload": {"event": "end", "id": event.id}
-        }))
-
-    def on_prompt(self, event: PromptEvent):
-        self._schedule(self._send({
-            "type": "prompt",
-            "payload": {"id": event.id, "message": event.message, "options": event.options,
-                        "action": event.action, "params": event.params}
-        }))
+    def on_log(self, event): pass
+    def on_progress_start(self, event): pass
+    def on_progress_update(self, event): pass
+    def on_progress_end(self, event): pass
+    def on_prompt(self, event): pass
+    def on_spinner_start(self, event): pass
+    def on_spinner_update(self, event): pass
+    def on_spinner_end(self, event): pass
+    def on_session_start(self, event): pass
+    def on_session_end(self, event): pass
 
 
+# Global instance
 darwin = DarwinLogger()

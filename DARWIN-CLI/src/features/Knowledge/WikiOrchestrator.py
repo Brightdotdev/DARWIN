@@ -154,19 +154,23 @@ def _should_merge_concepts(c1_indices: List[int], c2_indices: List[int],
 
 
 def _has_semantic_overlap(r1: WikiSearchResult, r2: WikiSearchResult) -> bool:
-    """Check if two concepts are semantically related enough to merge."""
-    # Keyword overlap
+    """Check if two concepts are semantically related enough to merge.
+    
+    Requires EITHER:
+    - 2+ shared keywords, OR
+    - 1+ shared non-stopword concept word
+    """
+    # Keyword overlap — require 2+ shared to prevent trivial matches
     if MERGE_KEYWORD_OVERLAP_REQUIRED:
         shared_keywords = set(r1.page.keywords) & set(r2.page.keywords)
-        if len(shared_keywords) > 0:
+        if len(shared_keywords) >= 2:
             return True
     
-    # Concept word overlap
+    # Concept word overlap — require 1+ shared substantive word
     if MERGE_CONCEPT_WORD_OVERLAP_REQUIRED:
         words1 = set(r1.page.concept.lower().split())
         words2 = set(r2.page.concept.lower().split())
-        # Filter out common words
-        stops = {"the", "and", "of", "in", "to", "a", "is", "for", "on", "with", "as", "book", "ch"}
+        stops = {"the", "and", "of", "in", "to", "a", "is", "for", "on", "with", "as", "book", "ch", "enoch"}
         words1 -= stops
         words2 -= stops
         shared_words = words1 & words2
@@ -382,9 +386,12 @@ class WikiOrchestrator:
                 all_indices, chunk_map, self.store, filename, fill_gaps=fill_gaps
             )
 
-            concept_name = group[0].page.concept
+            # Pick highest-scored concept as primary name
+            primary = max(group, key=lambda r: r.score)
+            concept_name = primary.page.concept
+            
             if len(group) > 1:
-                other_names = [r.page.concept for r in group[1:] if r.page.concept != concept_name]
+                other_names = [r.page.concept for r in group if r.page.concept != concept_name]
                 if other_names:
                     # Cap at MAX_MERGED_CONCEPT_NAMES additional names
                     display_names = other_names[:MAX_MERGED_CONCEPT_NAMES]
@@ -394,7 +401,7 @@ class WikiOrchestrator:
 
             concept = WikiConcept(
                 concept=concept_name,
-                summary=group[0].page.summary or "",
+                summary=primary.page.summary or "",
                 keywords=all_keywords[:10],
                 page_start=page_start,
                 page_end=page_end,
@@ -429,7 +436,7 @@ class WikiOrchestrator:
                 # Proximity check
                 proximity = _should_merge_concepts(r.page.chunk_indices, existing.page.chunk_indices, chunk_map)
                 
-                # Semantic gate: REQUIRED for ALL merges now
+                # Semantic gate: REQUIRED for ALL merges
                 semantic = _has_semantic_overlap(r, existing)
                 
                 # Both must pass
