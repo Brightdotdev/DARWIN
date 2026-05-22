@@ -3,7 +3,7 @@ import asyncio
 import json
 import threading
 from typing import Optional
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 class WebSocketServer:
@@ -11,7 +11,7 @@ class WebSocketServer:
 
     def __init__(self, host: str = "localhost", port: int = 8765):
         self._host = host
-        self._port = port
+        self._port = port   
         self._actual_port: int = port
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
@@ -57,30 +57,32 @@ class WebSocketServer:
             return
 
         async def handler(ws):
-            bridge = darwin._get_bridge(ws)
-            # Inject the server’s event loop into the bridge
-            bridge._ws_loop = self._loop
-            darwin.subscribe(bridge)
+            bridge = darwin._get_bridge(ws, loop=self._loop)
+            darwin.subscribe(bridge, verbosity=Verbosity.NORMAL)  # WebSocket can have its own verbosity
             await bridge.send_banner()
             try:
                 async for raw in ws:
                     try:
                         data = json.loads(raw)
-                        if data.get("type") == "prompt_response":
-                            payload = data["payload"]
-                            darwin.resolve_prompt(payload["id"], payload["choice"])
-                        elif data.get("type") == "get_history":
+                        if data.get("type") == "get_history":
                             limit = data.get("payload", {}).get("limit", 200)
-                            recorder = getattr(darwin, "_history_recorder", None)
-                            if recorder:
-                                events = recorder.get_events(limit=limit)
-                                serialized = []
-                                for ev in events:
-                                    d = {k: v for k, v in ev.__dict__.items() if not k.startswith("_")}
-                                    if hasattr(d.get("log_type"), "value"):
-                                        d["log_type"] = d["log_type"].value
-                                    serialized.append(d)
-                                await ws.send(json.dumps({"type": "history", "payload": serialized}))
+                            session = data.get("payload", {}).get("session")
+                            log_types = data.get("payload", {}).get("log_types")
+                            start_time = data.get("payload", {}).get("start_time")
+                            end_time = data.get("payload", {}).get("end_time")
+                            # Convert log_types from strings to LogType enums
+                            lt_set = None
+                            if log_types:
+                                lt_set = {LogType(lt) for lt in log_types}
+                            transcripts = darwin.get_transcripts(
+                                session=session,
+                                log_types=lt_set,
+                                start_time=start_time,
+                                end_time=end_time,
+                                limit=limit,
+                                format="json"
+                            )
+                            await ws.send(json.dumps({"type": "history", "payload": transcripts}))
                     except Exception:
                         pass
             except Exception:
@@ -117,24 +119,3 @@ class WebSocketServer:
         self._thread.join(timeout=timeout)
         if self._thread.is_alive():
             print("[WebSocket] Server thread did not terminate in time")
-
-
-def setup_websocket(ws_port: int = 8765, no_ws: bool = False, show_banner: bool = True) -> Optional[WebSocketServer]:
-    from src.core.Logger.DarwinLogger import OutputMode
-    if no_ws:
-        darwin.configure(mode=OutputMode.TERMINAL, ws_port=ws_port, show_banner=show_banner)
-        return None
-    # Default: WebSocket always on, terminal if TTY
-    darwin.configure(ws_port=ws_port, show_banner=show_banner)
-    ws_server = WebSocketServer(port=ws_port)
-    try:
-        ws_server.start()
-        return ws_server
-    except RuntimeError as e:
-        darwin.log(f"WebSocket server failed: {e}", LogType.WARNING)
-        return None
-
-
-def shutdown_websocket(ws_server: Optional[WebSocketServer]) -> None:
-    if ws_server:
-        ws_server.shutdown()

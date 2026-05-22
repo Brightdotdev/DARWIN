@@ -43,6 +43,4 @@ class KnowledgePipelineArgs:
     # shared
     inspect: bool = False
     rerun: bool = False
-    ws_port: int = 8765
-    no_ws: bool = False
     json_output: bool = False

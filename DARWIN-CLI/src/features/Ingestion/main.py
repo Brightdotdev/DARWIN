@@ -1,6 +1,16 @@
 """
 ingestion/main.py - Unified ingestion pipeline: parsing + chunking (refactored)
+
+Usage:
+  uv run src/core/Ingestion/main.py                          # parse + chunk all files in current dir
+  uv run src/core/Ingestion/main.py -f biology.pdf           # single file
+  uv run src/core/Ingestion/main.py -f docs/ --recursive     # directory with recursion
+  uv run src/core/Ingestion/main.py --quiet                  # suppress INFO logs
+  uv run src/core/Ingestion/main.py --no-ws                  # disable WebSocket server
+  uv run src/core/Ingestion/main.py --skip-if-markdown       # skip files already parsed
 """
+
+from __future__ import annotations
 
 import sys
 import asyncio
@@ -11,14 +21,20 @@ from typing import List, Optional
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+# CHANGED: suppress LiteLLM Bedrock warning spam globally
+import warnings
+warnings.filterwarnings("ignore", module="litellm")
+import os
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
+
 from src.features.Ingestion.Parsing.main import handle_parsing
 from src.features.Ingestion.Chunking.main import handle_chunking
 from src.features.Ingestion.Parsing.lib import ParsingArgs
 from src.features.Ingestion.Chunking.lib import ChunkingArgs
 from src.features.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 from src.lib.Utils import ensure_writable_directory
+
 
 # ── helpers ───────────────────────────────────────────────────────────────
 
@@ -67,7 +83,7 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
         darwin.log("")
 
         args = ParsingArgs(**{**vars(parsing_args), "files": needs_md})
-        docs = handle_parsing(args,store=store)
+        docs = handle_parsing(args, store=store)
 
         parsed = [d.filename for d in docs if not d.error]
         return has_md + parsed
@@ -76,7 +92,7 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
     darwin.log("[ 1 / 2 ] Parsing", LogType.INFO)
     darwin.log("")
 
-    docs = handle_parsing(parsing_args,store=store)
+    docs = handle_parsing(parsing_args, store=store)
     if not docs:
         return []
 
@@ -103,17 +119,12 @@ def run_chunking(filenames: List[str], base_args: ChunkingArgs, store: DarwinSto
     handle_chunking(args, store=store)
 
 
-def handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs, store_dir: str = None) -> None:
+def handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs, store: DarwinStore) -> None:
     darwin.log("")
     darwin.log("━" * 50, LogType.INFO)
     darwin.log("  INGESTION PIPELINE", LogType.INFO)
     darwin.log("━" * 50, LogType.INFO)
     darwin.log("")
-    if store_dir and ensure_writable_directory(store_dir):
-        store = DarwinStore(store_dir)
-    else:
-        store = DarwinStore()
-    
 
     parsed_files = run_parsing(parsing_args, store)
 
@@ -137,52 +148,70 @@ async def main() -> int:
         description="Unified ingestion pipeline - parse and chunk documents"
     )
 
-    parser.add_argument("path", nargs="?", default=".")
-    parser.add_argument("--file", "-f", nargs="+", default=None)
+    parser.add_argument("path", nargs="?", default=".", help="Directory to scan for documents")
+    parser.add_argument("--file", "-f", nargs="+", default=None, help="Specific file(s) to process")
 
-    # parsing
-    parser.add_argument("--recursive", "-r", action="store_true")
-    parser.add_argument("--images", "-img", action="store_true")
-    parser.add_argument("--caption", "-c", action="store_true")
-    parser.add_argument("--precise", action="store_true")
-    parser.add_argument("--rerun", "-R", action="store_true")
-    parser.add_argument("--no-save", action="store_true")
-    parser.add_argument("--skip-if-markdown", action="store_true")
+    # parsing flags
+    parser.add_argument("--recursive", "-r", action="store_true", help="Scan directories recursively")
+    parser.add_argument("--images", "-img", action="store_true", help="Extract images from documents")
+    parser.add_argument("--caption", "-c", action="store_true", help="Generate captions for images (requires --images)")
+    parser.add_argument("--precise", action="store_true", help="Use pymupdf4llm for layout-accurate extraction")
+    parser.add_argument("--rerun", "-R", action="store_true", help="Reprocess cached files")
+    parser.add_argument("--no-save", action="store_true", help="Don't save markdown files (preview only)")
+    parser.add_argument("--skip-if-markdown", action="store_true", help="Skip files already parsed")
 
-    # chunking
-    parser.add_argument("--inspect", "-i", action="store_true")
+    # chunking flags
+    parser.add_argument("--inspect", "-i", action="store_true", help="Print sample chunks to terminal")
 
-    # websocket
-    parser.add_argument("--ws-port", type=int, default=8765)
-    parser.add_argument("--no-ws", action="store_true")
-
-    parser.add_argument("--store", "-s", default=None, help="Store directory")
+    # CHANGED: unified darwin.configure flags (consistent across all pipelines)
+    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
+    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity level")
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
 
     args = parser.parse_args()
 
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    # CHANGED: use darwin.configure() — no manual WebSocket imports
+    verbosity = Verbosity.NORMAL if args.verbosity == "normal" else Verbosity.QUIET
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=verbosity,
+        show_banner=True,
+    )
 
     try:
-        target = resolve_target(args.path, args.file)
+        # CHANGED: wrap entire pipeline in session context manager
+        with darwin.session("ingestion"):
+            target = resolve_target(args.path, args.file)
 
-        parsing_args = ParsingArgs(
-            target=target,
-            files=args.file,
-            images=args.images,
-            caption=args.caption,
-            recursive=args.recursive,
-            rerun=args.rerun,
-            precise=args.precise,
-            save=not args.no_save,
-            skip_if_markdown=args.skip_if_markdown,
-        )
+            parsing_args = ParsingArgs(
+                target=target,
+                files=args.file,
+                images=args.images,
+                caption=args.caption,
+                recursive=args.recursive,
+                rerun=args.rerun,
+                precise=args.precise,
+                save=not args.no_save,
+                skip_if_markdown=args.skip_if_markdown,
+            )
 
-        chunking_args = ChunkingArgs(
-            inspect=args.inspect,
-            rerun=args.rerun,
-        )
+            chunking_args = ChunkingArgs(
+                inspect=args.inspect,
+                rerun=args.rerun,
+            )
 
-        handle_ingestion(parsing_args, chunking_args,store_dir=args.store_dir)
+                    
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+
+
+            handle_ingestion(parsing_args, chunking_args, store=store)
+
         return 0
 
     except KeyboardInterrupt:
@@ -197,7 +226,7 @@ async def main() -> int:
         return 1
 
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

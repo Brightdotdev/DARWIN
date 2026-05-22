@@ -50,32 +50,44 @@ def _dispatch(model_type: str, path: str, dtype):
         from transformers import Idefics3ForConditionalGeneration
         processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
         model = Idefics3ForConditionalGeneration.from_pretrained(
-            path, dtype=dtype, low_cpu_mem_usage=True,
-            device_map=None, trust_remote_code=True,
+            path,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            device_map=None,
+            trust_remote_code=True,
         )
 
     elif "llava" in model_type:
         from transformers import LlavaForConditionalGeneration
         processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
         model = LlavaForConditionalGeneration.from_pretrained(
-            path, dtype=dtype, low_cpu_mem_usage=True,
-            device_map=None, trust_remote_code=True,
+            path,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            device_map=None,
+            trust_remote_code=True,
         )
 
     elif "moondream" in model_type:
         from transformers import AutoModelForCausalLM
         processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(
-            path, dtype=dtype, low_cpu_mem_usage=True,
-            device_map=None, trust_remote_code=True,
+            path,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            device_map=None,
+            trust_remote_code=True,
         )
 
     else:
         from transformers import AutoModelForImageTextToText
         processor = AutoProcessor.from_pretrained(path, trust_remote_code=True)
         model = AutoModelForImageTextToText.from_pretrained(
-            path, dtype=dtype, low_cpu_mem_usage=True,
-            device_map=None, trust_remote_code=True,
+            path,
+            torch_dtype=dtype,
+            low_cpu_mem_usage=True,
+            device_map=None,
+            trust_remote_code=True,
         )
 
     return processor, model

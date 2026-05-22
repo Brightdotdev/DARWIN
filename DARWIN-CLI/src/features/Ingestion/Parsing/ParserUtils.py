@@ -64,14 +64,36 @@ def is_good_enough(text: str) -> bool:
     return ok
 
 
-def normalize_image_path(img_path: Path, base_dir: Path = None) -> str:
-    """Return a relative path for display. Falls back to filename."""
-    if base_dir:
+def normalize_image_path(img_path: Path, images_dir: Path = None) -> str:
+    """
+    Return a relative path for display from the markdown file's perspective.
+
+    images_dir is the directory containing the images (e.g., .../index/images/).
+    The markdown file lives in the parent of images_dir, so we compute
+    paths relative to that directory (e.g., images/page0_img0.png).
+    """
+    if images_dir:
+        markdown_dir = images_dir.parent
         try:
-            return img_path.relative_to(base_dir).as_posix()
+            return img_path.relative_to(markdown_dir).as_posix()
         except ValueError:
-            pass    
-        return img_path.name
+            pass
+        return f"images/{img_path.name}"
+    return img_path.name
+
+
+def _sanitize_caption(caption: str) -> str:
+    """
+    Collapse whitespace and strip characters that break markdown image syntax.
+    Returns a single-line string safe for ![alt](path) alt text.
+    """
+    if not caption:
+        return ""
+    # Collapse all whitespace (newlines, tabs, multiple spaces) into single spaces
+    caption = " ".join(caption.split())
+    # Remove brackets that would terminate markdown alt text early
+    caption = caption.replace("[", "").replace("]", "")
+    return caption.strip()
 
 
 def check_file_size(path: Path) -> Optional[str]:
@@ -97,8 +119,10 @@ def _replace_image_slots(
             return "[Image]"
         caption  = info.get("caption", "")
         rel_path = info.get("rel_path", info.get("path", ""))
-        if caption:
-            return f"\n\n![{caption}]({rel_path})\n*Figure: {caption}*\n\n"
+        clean = _sanitize_caption(caption)
+        if clean:
+            # CHANGED: display markdown — clean image tag with alt text, no Figure line
+            return f"\n\n![{clean}]({rel_path})\n\n"
         return f"\n\n![image]({rel_path})\n\n"
 
     def _embed(m: re.Match) -> str:
@@ -107,7 +131,12 @@ def _replace_image_slots(
         if not info:
             return "[Image]"
         caption = info.get("caption", "")
-        return f"\n\n[Image: {caption}]\n\n" if caption else "\n\n[Image]\n\n"
+        clean = _sanitize_caption(caption)
+        # CHANGED: embedding markdown — full caption text inline, no [Image: wrapper
+        # Just the raw caption as text. If no caption, use simple [Image] placeholder.
+        if clean:
+            return f"\n\n{clean}\n\n"
+        return "\n\n[Image]\n\n"
 
     display_text   = IMAGE_SLOT_RE.sub(_display,   display_text)
     embedding_text = IMAGE_SLOT_RE.sub(_embed, embedding_text)
@@ -132,7 +161,7 @@ def _remap_image_slots(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Captioning
+# Captioning — MAIN PROCESS ONLY
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _run_captioning(
@@ -142,7 +171,13 @@ def _run_captioning(
     images_dir:     Path,
     do_caption:     bool,
 ) -> Tuple[str, str, List[ExtractedImage]]:
-    """Caption all extracted images and resolve [Image:N] slots to final tokens."""
+    """
+    Caption all extracted images and resolve [Image:N] slots to final tokens.
+    
+    WARNING: This function loads the vision model. It MUST run in the main
+    process, never inside a ProcessPoolExecutor worker, to avoid CUDA fork
+    issues and ensure the cache is written reliably.
+    """
 
     processor = model = device = None
     is_api_model = False
@@ -209,15 +244,16 @@ def _run_captioning(
             continue
 
         if should_caption:
+            # Truthy check — treats old poisoned "" entries as misses
             cache_hit = cache.get(img_path.name)
-            if cache_hit is not None:
+            if cache_hit:
                 img_caption = cache_hit
                 darwin.log(f"  [cache] {img_path.name}", LogType.INFO)
             else:
                 ok, reason = should_caption_image(img_dict)
                 if not ok:
                     darwin.log(f"  [skip] {img_path.name} — {reason}", LogType.INFO)
-                    cache[img_path.name] = ""
+                    # Do not cache skips — cheap to re-check, avoids cache pollution
                 else:
                     try:
                         if is_api_model:
@@ -226,6 +262,9 @@ def _run_captioning(
                                 img_path,
                                 max_new_tokens=MAX_NEW_TOKENS,
                             )
+                            # Cache successful API captions
+                            if img_caption:
+                                cache[img_path.name] = img_caption
                         else:
                             # Local captioning — existing pipeline
                             image = prepare_image(img_path)
@@ -237,7 +276,7 @@ def _run_captioning(
                             )
                     except Exception as e:
                         darwin.log(f"Captioning failed for {img_path.name}: {e}", LogType.WARNING)
-                        cache[img_path.name] = ""
+                        # Do NOT cache failures — user wants retry on next run
 
         slot_map[slot_index] = {
             "caption":  img_caption,
@@ -258,6 +297,7 @@ def _run_captioning(
         display_text, embedding_text, slot_map
     )
 
+    # CHANGED: always save cache in main process — guaranteed to succeed
     if images_dir:
         save_caption_cache(images_dir, cache)
 
@@ -274,7 +314,12 @@ def _parse_pdf_chunk(
     do_images:   bool,
     precise:     bool = False,
 ) -> Dict[str, Any]:
-    """Extract one contiguous page range from a PDF."""
+    """
+    Extract one contiguous page range from a PDF.
+    
+    NOTE: This runs in a subprocess. It does NOT load vision models.
+    Image extraction only — captioning happens in the main process.
+    """
 
     extractor = pymupdf4llm_extract if precise else fitz_extract
 
@@ -310,6 +355,11 @@ def _parse_pdf_single(
     metadata:    Dict,
     precise:     bool = False,
 ) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+    """
+    Parse a small PDF (single process, no chunking).
+    
+    For small PDFs we can caption inline since there's no subprocess boundary.
+    """
     extractor = pymupdf4llm_extract if precise else fitz_extract
 
     display_text, embedding_text, extracted_imgs = extractor(
@@ -359,7 +409,11 @@ def _parse_pdf_chunked(
     metadata:    Dict,
     precise:     bool = False,
 ) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
-    """Extract a large PDF in parallel page-range chunks."""
+    """
+    Extract a large PDF in parallel page-range chunks.
+    
+    CAPTIONING HAPPENS IN MAIN PROCESS — workers only extract raw text + images.
+    """
     all_pages   = list(range(page_count))
     page_chunks = [
         all_pages[i : i + LARGE_PDF_CHUNK_PAGES]
@@ -367,7 +421,8 @@ def _parse_pdf_chunked(
     ]
 
     n_chunks  = len(page_chunks)
-    n_workers = min(n_chunks, max(1, CPU_COUNT // 2) if caption else CPU_COUNT)
+    # CHANGED: never use GPU workers for extraction — captioning is main-process only
+    n_workers = min(n_chunks, CPU_COUNT)
 
     darwin.log(f"Using {n_workers} workers for {n_chunks} chunks...", LogType.INFO)
 
@@ -436,7 +491,7 @@ def _parse_pdf_chunked(
     display_text   = re.sub(r"\n{3,}", "\n\n", "\n\n".join(display_parts)).strip()
     embedding_text = re.sub(r"\n{3,}", "\n\n", "\n\n".join(embedding_parts)).strip()
 
-    # ── Captioning pass ──
+    # ── Captioning pass — MAIN PROCESS ONLY ──
     if not images_dir:
         return display_text, embedding_text, page_count, metadata, []
 
@@ -444,6 +499,7 @@ def _parse_pdf_chunked(
         darwin.log("No images extracted from any chunk — skipping captioning", LogType.INFO)
         return display_text, embedding_text, page_count, metadata, []
 
+    # CHANGED: captioning happens here, in main process, after all workers done
     display_text, embedding_text, all_images = _run_captioning(
         display_text, embedding_text, all_raw_imgs,
         images_dir, caption,

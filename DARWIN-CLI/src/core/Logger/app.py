@@ -1,12 +1,10 @@
-# =============================================================================
-# main.py — Minimal entry point.  DarwinLogger handles everything.
-# =============================================================================
+# main.py — Minimal entry point. DarwinLogger handles everything.
 from __future__ import annotations
 
 import asyncio
 import sys
 
-from src.core.Logger.DarwinLogger import darwin, LogType, OutputMode
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 from src.core.Logger.actions import ACTION_REGISTRY
 
 
@@ -17,7 +15,7 @@ def register_all_actions():
 
 
 async def demo_workload():
-    """Example workload — replace with your actual app logic."""
+    """Example workload — no prompts, just logs, progress, spinners."""
     darwin.log("App started", LogType.INFO)
     darwin.log("All systems nominal", LogType.SUCCESS)
     darwin.log("Disk usage at 92%", LogType.WARNING)
@@ -35,37 +33,31 @@ async def demo_workload():
             await asyncio.sleep(0.02)
             p.update(i + 1, f"chunk_{i+1}.txt")
 
-    # Prompt — works in terminal AND browser simultaneously
-    result = await darwin.prompt(
-        id="choose_model",
-        message="Select default model",
-        options=["gpt-4", "claude-3-opus", "gemini-ultra"],
-        action="select_model",
-        params={"context": "initial_setup"},
-    )
-    darwin.log(f"Selected: {result}", LogType.SUCCESS)
+    darwin.log("Workload complete", LogType.SUCCESS)
 
 
 async def main():
-    # Register actions
+    # Register actions (optional, no prompts needed)
     register_all_actions()
 
-    # Configure — auto-detects terminal vs headless
-    # Override with CLI args:
-    if "--cli" in sys.argv:
-        darwin.configure(mode=OutputMode.TERMINAL)
-    elif "--headless" in sys.argv:
-        darwin.configure(mode=OutputMode.WEBSOCKET)
-    elif "--silent" in sys.argv:
-        darwin.configure(mode=OutputMode.NONE)
+    # Configure — auto-detect terminal, enable history, default verbosity normal
+    if "--quiet" in sys.argv:
+        verbosity = Verbosity.QUIET
     else:
-        darwin.configure()  # auto-detect
+        verbosity = Verbosity.NORMAL
 
-    # Run your app
+    darwin.configure(
+        enable_websocket="--no-ws" not in sys.argv,
+        ws_port=8765,
+        enable_history=True,
+        verbosity_default=verbosity,
+        show_banner=True,
+    )
+
     await demo_workload()
 
-    # Keep alive if WebSocket is running
-    if darwin._mode in (OutputMode.WEBSOCKET, OutputMode.BOTH):
+    # Keep alive if WebSocket is enabled
+    if darwin._ws_server is not None:
         darwin.log("Server running — press Ctrl+C to stop", LogType.INFO)
         await asyncio.Future()
 

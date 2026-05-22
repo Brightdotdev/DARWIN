@@ -3,6 +3,8 @@ src/core/Embedding/main.py - Clean embedding pipeline (refactored, no architectu
 """
 
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 from pathlib import Path
@@ -11,12 +13,16 @@ import numpy as np
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
+
 from src.features.Indexing.Embedding.Embedder import run_embedding_pipeline
 from src.features.Indexing.Embedding.lib import EmbeddingArgs
 from src.features.Storage.DarwinStore import DarwinStore
 from src.Models import ModelManager, ModelCategory
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
+from src.lib.Utils import ensure_writable_directory
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,12 +194,29 @@ async def main() -> int:
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--rerun", "-R", action="store_true")
 
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765)
     parser.add_argument("--no-ws", action="store_true")
 
     args = parser.parse_args()
 
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+
+
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
+    
+    if args.store_dir and ensure_writable_directory(args.store_dir):
+        store = DarwinStore(args.store_dir)
+    else:
+        store = DarwinStore()
+
+
 
     try:
         embedding_args = EmbeddingArgs(
@@ -202,7 +225,8 @@ async def main() -> int:
             rerun=args.rerun,
         )
 
-        handle_embedding(embedding_args)
+        with darwin.session("embedding"):
+            handle_embedding(embedding_args, store)
         return 0
 
     except KeyboardInterrupt:
@@ -217,7 +241,7 @@ async def main() -> int:
         return 1
 
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

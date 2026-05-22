@@ -1,10 +1,7 @@
 # TerminalUi.py — Rich CLI Renderer with spinner and session prefix
 from __future__ import annotations
 
-import asyncio
 import sys
-import threading
-import time
 from typing import Dict, Optional
 
 from rich.console import Console
@@ -16,27 +13,10 @@ from rich.progress import (
 from src.core.Logger.DarwinLogger import (
     DarwinLogger, EventSubscriber, LogEvent, LogType,
     ProgressStartEvent, ProgressUpdateEvent, ProgressEndEvent,
-    PromptEvent, SpinnerStartEvent, SpinnerUpdateEvent, SpinnerEndEvent,
+    SpinnerStartEvent, SpinnerUpdateEvent, SpinnerEndEvent,
     SessionStartEvent, SessionEndEvent, darwin,
 )
-from src.core.Logger.lib import ASCII_BANNER  # You must have this file
-
-# Platform-specific non-blocking input (unchanged)
-if sys.platform == "win32":
-    import msvcrt
-    def _char_available(): return msvcrt.kbhit()
-    def _read_char(): return msvcrt.getwch()
-else:
-    import select, tty, termios
-    def _char_available(): return bool(select.select([sys.stdin], [], [], 0.0)[0])
-    def _read_char():
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setraw(fd)
-            return sys.stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+from src.core.Logger.lib import ASCII_BANNER
 
 LOG_ICONS = {
     LogType.INFO:    ("[cyan]ℹ[/cyan]", "cyan"),
@@ -52,8 +32,6 @@ class TerminalUI(EventSubscriber):
         self.logger = logger or darwin
         self._progress_trackers: Dict[str, tuple] = {}
         self._spinner_trackers: Dict[str, tuple] = {}
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._prompt_cancel_events: Dict[str, threading.Event] = {}
         self._current_session: str = ""
 
     def show_banner(self) -> None:
@@ -63,11 +41,7 @@ class TerminalUI(EventSubscriber):
         self.console.print()
 
     def attach(self) -> None:
-        self.logger.subscribe(self)  # No filter needed (or add one)
-        try:
-            self._loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
+        self.logger.subscribe(self)
 
     def detach(self) -> None:
         self.logger.unsubscribe(self)
@@ -146,68 +120,3 @@ class TerminalUI(EventSubscriber):
             progress.stop()
             icon = "✓" if event.success else "✗"
             self.console.print(f"  {self._session_prefix()}{icon} {event.id} done")
-
-    # ---------- Prompt (kept original, just for completeness) ----------
-    def on_prompt(self, event: PromptEvent) -> None:
-        if self._loop is None:
-            return
-        cancel_event = threading.Event()
-        self._prompt_cancel_events[event.id] = cancel_event
-        _logger = self.logger
-        _console = self.console
-        _loop = self._loop
-
-        def _prompt_and_resolve():
-            cancel_event.wait(1.0)
-            if _logger.is_prompt_resolved(event.id):
-                _console.print("  [dim](resolved by another client)[/dim]")
-                self._prompt_cancel_events.pop(event.id, None)
-                return
-            _console.print()
-            _console.print(f"  [bold yellow]?[/bold yellow] {event.message}")
-            for i, opt in enumerate(event.options, 1):
-                _console.print(f"    [dim]{i}.[/dim] {opt}")
-            _console.print(f"  Enter choice [1-{len(event.options)}]: ", end="")
-            sys.stdout.flush()
-            buffer = ""
-            while not _logger.is_prompt_resolved(event.id):
-                if not _char_available():
-                    time.sleep(0.1)
-                    continue
-                char = _read_char()
-                if _logger.is_prompt_resolved(event.id):
-                    _console.print("\n  [dim](resolved by another client)[/dim]")
-                    break
-                if char in ('\r', '\n'):
-                    _console.print()
-                    raw = buffer.strip()
-                    buffer = ""
-                    if raw.isdigit() and 1 <= int(raw) <= len(event.options):
-                        selected = event.options[int(raw) - 1]
-                        _loop.call_soon_threadsafe(_logger.resolve_prompt, event.id, selected)
-                        break
-                    elif raw:
-                        _console.print(f"  [red]Invalid choice: {raw}[/red]")
-                        _console.print("  Please select one of the available options")
-                        _console.print(f"  Enter choice [1-{len(event.options)}]: ", end="")
-                        sys.stdout.flush()
-                elif char == '\x03':
-                    _console.print("^C")
-                    break
-                elif char == '\x04':
-                    break
-                elif char in ('\x08', '\x7f'):
-                    if buffer:
-                        buffer = buffer[:-1]
-                        _console.print('\b \b', end="")
-                        sys.stdout.flush()
-                elif char == '\x1b':
-                    pass
-                elif len(char) == 1 and ord(char) >= 32:
-                    buffer += char
-                    _console.print(char, end="")
-                    sys.stdout.flush()
-            _console.print()
-            self._prompt_cancel_events.pop(event.id, None)
-
-        threading.Thread(target=_prompt_and_resolve, daemon=True).start()

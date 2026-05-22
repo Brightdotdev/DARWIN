@@ -3,10 +3,14 @@ main.py - Document chunking pipeline entry point
 
 Usage:
   uv run src/core/Ingestion/Chunking/main.py                        # chunk all parsed files
-  uv run src/core/Ingestion/Chunking/main.py -f biology.pdf         # single file
+  uv run src/core/Ingestion/Chunking/main.py -f biology.pdf           # single file
   uv run src/core/Ingestion/Chunking/main.py -f docs/biology.pdf    # path — normalized to basename
   uv run src/core/Ingestion/Chunking/main.py -f biology.pdf chemistry.pdf --rerun
+  uv run src/core/Ingestion/Chunking/main.py --quiet                # suppress INFO logs
+  uv run src/core/Ingestion/Chunking/main.py --no-ws                # disable WebSocket server
 """
+
+from __future__ import annotations
 
 import sys
 import argparse
@@ -17,11 +21,16 @@ from pathlib import Path
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+# CHANGED: suppress LiteLLM Bedrock warning spam globally
+import warnings
+warnings.filterwarnings("ignore", module="litellm")
+import os
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
+
 from src.features.Storage.DarwinStore import DarwinStore
 from src.features.Ingestion.Chunking.Chunker import chunk_for_model
 from src.features.Ingestion.Chunking.lib import Chunk, ChunkingArgs
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ── file resolution ────────────────────────────────────────────────────────────
@@ -156,7 +165,7 @@ def _print_chunk(chunk: Chunk) -> None:
 
 # ── core handler ───────────────────────────────────────────────────────────────
 
-def handle_chunking(args: ChunkingArgs,store : DarwinStore) -> None:
+def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
     status = store.status()
 
     darwin.log("")
@@ -270,10 +279,11 @@ def handle_chunking(args: ChunkingArgs,store : DarwinStore) -> None:
 # ── CLI entry point ────────────────────────────────────────────────────────────
 
 async def main() -> int:
+    from src.lib.Utils import ensure_writable_directory
+
     parser = argparse.ArgumentParser(
         description="Chunk parsed documents into embedding-ready pieces"
     )
-
 
     parser.add_argument(
         "--file", "-f", nargs="+", default=None, dest="files",
@@ -282,22 +292,40 @@ async def main() -> int:
     )
     parser.add_argument("--inspect", "-i", action="store_true", help="Print sample chunks to terminal")
     parser.add_argument("--rerun",   "-R", action="store_true", help="Rechunk even if fresh chunks exist")
-    parser.add_argument("--ws-port", type=int, default=8765,    help="WebSocket server port (default: 8765)")
-    parser.add_argument("--no-ws",   action="store_true",       help="Disable WebSocket server")
+    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
+    parser.add_argument("--no-ws",   action="store_true", help="Disable WebSocket server")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity level")
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
 
     args = parser.parse_args()
 
-
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    # CHANGED: use darwin.configure() — no manual WebSocket or history imports
+    verbosity = Verbosity.NORMAL if args.verbosity == "normal" else Verbosity.QUIET
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=verbosity,
+        show_banner=True,
+    )
 
     try:
-        chunking_args = ChunkingArgs(
-            files=args.files,   # list[str] | None
-            inspect=args.inspect,
-            rerun=args.rerun,
-        )
+        # CHANGED: wrap in session context manager
+        with darwin.session("chunking"):
+            chunking_args = ChunkingArgs(
+                files=args.files,
+                inspect=args.inspect,
+                rerun=args.rerun,
+            )
 
-        handle_chunking(chunking_args)
+            
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+
+            handle_chunking(chunking_args, store)
+
         return 0
 
     except KeyboardInterrupt:
@@ -310,7 +338,7 @@ async def main() -> int:
         darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

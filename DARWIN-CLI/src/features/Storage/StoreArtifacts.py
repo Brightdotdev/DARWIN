@@ -38,6 +38,7 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 
 ARTIFACT_MANIFEST = {
     "markdown":   ["markdown.md"],
+    "display-markdown":   ["display-markdown.md"],
     "chunks":     ["chunks.json"],
     "vector":     ["vector.usearch", "vector.json"],
     # embeddings – checked with a dynamic filename; handled separately
@@ -324,6 +325,9 @@ class MarkdownMixin(_PathResolverMixin):
     def has_markdown(self, filename: str) -> bool:
         return self._has_artifact(filename, "markdown")
 
+    def has_display_markdown(self, filename: str) -> bool:
+        return self._has_artifact(filename, "display-markdown")
+
     def save_markdown(self, filename: str, doc: ParsedDocument) -> None:
         if doc.error:
             darwin.log(f"Skipping markdown save for {filename}: {doc.error}", LogType.INFO)
@@ -333,9 +337,11 @@ class MarkdownMixin(_PathResolverMixin):
         if d is None:
             return
         md_path = d / "markdown.md"
+        display_md_path = d / "display-markdown.md"
 
         try:
-            md_path.write_text(doc.display_text, encoding="utf-8")
+            display_md_path.write_text(doc.display_text, encoding="utf-8")
+            md_path.write_text(doc.embedding_text, encoding="utf-8")
 
             skip_fields = {"text", "error", "filename", "images", "embedding_text", "display_text"}
             extras = {k: v for k, v in dataclasses.asdict(doc).items() if k not in skip_fields}

@@ -1,4 +1,6 @@
 import sys
+import os
+import warnings
 import argparse
 import time
 import asyncio
@@ -7,6 +9,10 @@ from typing import List
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.features.Retrival.Keyword.KeywordSearch import (
     search_across_documents_keyword,
@@ -24,8 +30,7 @@ from src.features.Retrival.Keyword.KeywordUtilities import (
 )
 from src.lib.Utils import scan_folder
 from src.features.Storage.DarwinStore import DarwinStore
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ============================================================================
@@ -205,8 +210,7 @@ def _display_search_results(results: List[KeywordSearchResult], args: KeywordSea
 # Core handler
 # ============================================================================
 
-def handle_keyword_search(args: KeywordSearchArgs) -> List[KeywordSearchResult] | None:
-    store = DarwinStore()
+def handle_keyword_search(args: KeywordSearchArgs, store: DarwinStore) -> List[KeywordSearchResult] | None:
     
     darwin.log("")
     darwin.log("Keyword Search", LogType.INFO)
@@ -239,6 +243,9 @@ def handle_keyword_search(args: KeywordSearchArgs) -> List[KeywordSearchResult] 
 # ============================================================================
 
 async def main() -> int:
+    from src.lib.Utils import ensure_writable_directory
+    from src.features.Storage.DarwinStore import DarwinStore
+
     parser = argparse.ArgumentParser(
         description="BM25 keyword search over indexed documents"
     )
@@ -251,10 +258,14 @@ async def main() -> int:
     parser.add_argument("--b", type=float, default=DEFAULT_B)
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--json", "-j", action="store_true")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
 
     args = parser.parse_args()
+
+    store = DarwinStore(args.store_dir or None)
     
     query = args.query or args.query_flag
     
@@ -263,7 +274,13 @@ async def main() -> int:
         
 
     # Setup WebSocket
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
         search_args = KeywordSearchArgs(
@@ -276,7 +293,12 @@ async def main() -> int:
             json_output=args.json,
         )
         
-        handle_keyword_search(search_args)
+        with darwin.session("keyword_search"):
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+            handle_keyword_search(search_args, store)
         return 0
 
     except KeyboardInterrupt:
@@ -289,7 +311,7 @@ async def main() -> int:
         darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

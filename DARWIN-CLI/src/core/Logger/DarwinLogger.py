@@ -1,4 +1,3 @@
-# darwin_logger.py — Unified Event Hub (no WebSocket, pure events)
 from __future__ import annotations
 
 import asyncio
@@ -8,12 +7,12 @@ import threading
 import time
 import contextvars
 import logging
+import multiprocessing
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
-
-from cachetools import TTLCache
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from datetime import datetime
 
 # Internal error logger for subscriber exceptions
 _log = logging.getLogger("darwin.logger")
@@ -23,6 +22,12 @@ class OutputMode(Enum):
     TERMINAL = "terminal"
     WEBSOCKET = "websocket"
     NONE = "none"
+    AUTO = "auto"  # auto-detect
+
+
+class Verbosity(Enum):
+    NORMAL = "normal"   # all logs
+    QUIET = "quiet"     # only ERROR, WARNING, SUCCESS
 
 
 class LogType(Enum):
@@ -66,18 +71,6 @@ class ProgressUpdateEvent:
 class ProgressEndEvent:
     type: str = "progress_end"
     id: str = ""
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
-
-
-@dataclass(frozen=True)
-class PromptEvent:
-    type: str = "prompt"
-    id: str = ""
-    message: str = ""
-    options: List[str] = field(default_factory=list)
-    action: str = ""
-    params: Dict[str, Any] = field(default_factory=dict)
     session: str = ""
     timestamp: float = field(default_factory=time.time)
 
@@ -137,9 +130,6 @@ class EventSubscriber(ABC):
     def on_progress_end(self, event: ProgressEndEvent) -> None: ...
 
     @abstractmethod
-    def on_prompt(self, event: PromptEvent) -> None: ...
-
-    @abstractmethod
     def on_spinner_start(self, event: SpinnerStartEvent) -> None: ...
 
     @abstractmethod
@@ -173,53 +163,65 @@ class DarwinLogger:
         self._initialized = True
 
         self._subscribers: List[EventSubscriber] = []
-        self._subscriber_filters: Dict[EventSubscriber, Optional[Callable[[Any], bool]]] = {}
+        self._subscriber_verbosity: Dict[EventSubscriber, Verbosity] = {}
         self._actions: Dict[str, Callable[..., Any]] = {}
-        self._pending_prompts: Dict[str, asyncio.Future] = {}
-        self._resolved_prompts: TTLCache = TTLCache(maxsize=1000, ttl=3600)  # 1h TTL
         self._lock = threading.Lock()
 
         self._mode: OutputMode = OutputMode.NONE
-        self._ws_port: int = 8765
-        self._ws_host: str = "localhost"
         self._configured: bool = False
         self._tui: Any = None
+        self._ws_server: Any = None
+        self._history_recorder: Any = None
+        self._default_verbosity: Verbosity = Verbosity.NORMAL
 
         # Session context variable
         self._session_var: contextvars.ContextVar[str] = contextvars.ContextVar("darwin_session", default="")
 
-        # Optional history recorder reference (set externally)
-        self._history_recorder: Optional[Any] = None
+        # CHANGED: multiprocessing support for worker processes
+        self._mp_queue: Optional[multiprocessing.Queue] = None
+        self._mp_listener: Optional[threading.Thread] = None
+        self._mp_shutdown: threading.Event = threading.Event()
 
     # ------------------------------------------------------------------
-    # Configuration (simplified, no WebSocket start)
+    # Configuration (centralised)
     # ------------------------------------------------------------------
     def configure(
         self,
         mode: Optional[OutputMode] = None,
-        ws_port: int = 8765,
+        enable_websocket: bool = False,
         ws_host: str = "localhost",
+        ws_port: int = 8765,
+        enable_history: bool = True,
+        history_max_age: int = 10800,  # 3 hours
+        verbosity_default: Verbosity = Verbosity.NORMAL,
         show_banner: bool = True,
     ) -> None:
         if self._configured:
             return
         self._configured = True
+        self._default_verbosity = verbosity_default
 
+        # Determine mode if not given
         if mode is None:
             if os.environ.get("DARWIN_HEADLESS") == "1":
                 mode = OutputMode.WEBSOCKET
             elif sys.stdout.isatty():
-                mode = OutputMode.TERMINAL  # terminal also starts WS via ws_helpers
+                mode = OutputMode.TERMINAL
             else:
                 mode = OutputMode.WEBSOCKET
-
         self._mode = mode
-        self._ws_port = ws_port
-        self._ws_host = ws_host
 
-        # Attach terminal if we have a TTY
+        # Attach terminal UI if in terminal mode
         if self._mode == OutputMode.TERMINAL:
             self._attach_terminal(show_banner)
+
+        # Start WebSocket server if enabled
+        if enable_websocket:
+            self._start_websocket_server(ws_host, ws_port)
+
+        # Start history recorder if enabled
+        if enable_history:
+            self._start_history_recorder(history_max_age)
 
     def _attach_terminal(self, show_banner: bool) -> None:
         try:
@@ -231,21 +233,91 @@ class DarwinLogger:
         except ImportError:
             pass
 
+    def _start_websocket_server(self, host: str, port: int) -> None:
+        try:
+            from src.core.Logger.WebsocketHelpers import WebSocketServer
+            self._ws_server = WebSocketServer(host=host, port=port)
+            self._ws_server.start()
+            # Bridge will be created per connection inside the server
+        except Exception as e:
+            self.log(f"Failed to start WebSocket server: {e}", LogType.ERROR)
+
+    def _start_history_recorder(self, max_age: int) -> None:
+        try:
+            from src.core.Logger.History import HistoryRecorder
+            self._history_recorder = HistoryRecorder(max_age_seconds=max_age)
+            self.subscribe(self._history_recorder)
+        except Exception as e:
+            self.log(f"Failed to start history recorder: {e}", LogType.ERROR)
+
     # ------------------------------------------------------------------
-    # Subscriber management (with filtering)
+    # Multiprocessing support — NEW
     # ------------------------------------------------------------------
-    def subscribe(self, subscriber: EventSubscriber, filter: Optional[Callable[[Any], bool]] = None) -> None:
+    def _is_worker_process(self) -> bool:
+        """True if we're inside a ProcessPoolExecutor worker."""
+        return multiprocessing.current_process().name != "MainProcess"
+
+    def _ensure_mp_queue(self) -> multiprocessing.Queue:
+        """Get or create the multiprocessing queue for worker log forwarding."""
+        if self._mp_queue is None:
+            self._mp_queue = multiprocessing.Queue()
+        return self._mp_queue
+
+    def start_mp_listener(self) -> None:
+        """
+        Start a background thread that drains worker log messages from the
+        multiprocessing queue and replays them through the real logger.
+        Call this once in the main process before spawning workers.
+        """
+        if self._mp_listener is not None:
+            return  # Already running
+
+        queue = self._ensure_mp_queue()
+        self._mp_shutdown.clear()
+
+        def _drain():
+            while not self._mp_shutdown.is_set():
+                try:
+                    # Non-blocking with timeout so we can check shutdown
+                    msg = queue.get(timeout=0.1)
+                    if msg is None:
+                        break
+                    level_name, message = msg
+                    log_type = LogType(level_name) if level_name in {lt.value for lt in LogType} else LogType.INFO
+                    self.log(message, log_type)
+                except Exception:
+                    pass
+
+        self._mp_listener = threading.Thread(target=_drain, daemon=True)
+        self._mp_listener.start()
+
+    def stop_mp_listener(self) -> None:
+        """Stop the background listener thread."""
+        self._mp_shutdown.set()
+        if self._mp_queue is not None:
+            try:
+                self._mp_queue.put(None, timeout=1.0)
+            except Exception:
+                pass
+        if self._mp_listener is not None:
+            self._mp_listener.join(timeout=2.0)
+            self._mp_listener = None
+
+    # ------------------------------------------------------------------
+    # Subscriber management with verbosity
+    # ------------------------------------------------------------------
+    def subscribe(self, subscriber: EventSubscriber, verbosity: Optional[Verbosity] = None) -> None:
         if subscriber not in self._subscribers:
             self._subscribers.append(subscriber)
-            self._subscriber_filters[subscriber] = filter
+            self._subscriber_verbosity[subscriber] = verbosity if verbosity is not None else self._default_verbosity
 
     def unsubscribe(self, subscriber: EventSubscriber) -> None:
         if subscriber in self._subscribers:
             self._subscribers.remove(subscriber)
-            self._subscriber_filters.pop(subscriber, None)
+            self._subscriber_verbosity.pop(subscriber, None)
 
     # ------------------------------------------------------------------
-    # Action registration
+    # Action registration (kept for any future actions, no prompts)
     # ------------------------------------------------------------------
     def register_action(self, name: str, func: Callable[..., Any]) -> None:
         self._actions[name] = func
@@ -254,15 +326,26 @@ class DarwinLogger:
     # Emit helpers
     # ------------------------------------------------------------------
     def _emit(self, event) -> None:
-        # Attach session if inside a context manager
+        # CHANGED: in worker processes, forward to main process via queue
+        if self._is_worker_process():
+            if isinstance(event, LogEvent):
+                queue = self._ensure_mp_queue()
+                try:
+                    queue.put((event.log_type.value, event.message), timeout=0.5)
+                except Exception:
+                    pass  # Queue full or closed — drop silently
+            return
+
+        # Main process: normal subscriber dispatch
         session = self._session_var.get()
-        if session:
+        if session and hasattr(event, "session"):
             event = event.__class__(**{**event.__dict__, "session": session})
 
-        for sub in self._subscribers:
-            filter_fn = self._subscriber_filters.get(sub)
-            if filter_fn and not filter_fn(event):
-                continue
+        for sub in self._subscribers[:]:
+            verbosity = self._subscriber_verbosity.get(sub, Verbosity.NORMAL)
+            if isinstance(event, LogEvent):
+                if verbosity == Verbosity.QUIET and event.log_type not in (LogType.ERROR, LogType.WARNING, LogType.SUCCESS):
+                    continue
             try:
                 self._dispatch(sub, event)
             except Exception:
@@ -277,8 +360,6 @@ class DarwinLogger:
             sub.on_progress_update(event)
         elif isinstance(event, ProgressEndEvent):
             sub.on_progress_end(event)
-        elif isinstance(event, PromptEvent):
-            sub.on_prompt(event)
         elif isinstance(event, SpinnerStartEvent):
             sub.on_spinner_start(event)
         elif isinstance(event, SpinnerUpdateEvent):
@@ -291,7 +372,7 @@ class DarwinLogger:
             sub.on_session_end(event)
 
     # ------------------------------------------------------------------
-    # Public API – unchanged
+    # Public API – logging, progress, spinner, sessions
     # ------------------------------------------------------------------
     def log(self, message: str, log_type: LogType = LogType.INFO, style: str = "") -> None:
         self._emit(LogEvent(message=message, log_type=log_type, style=style))
@@ -305,43 +386,6 @@ class DarwinLogger:
     def progress_end(self, id: str) -> None:
         self._emit(ProgressEndEvent(id=id))
 
-    async def prompt(
-        self,
-        id: str,
-        message: str,
-        options: List[str],
-        action: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Any:
-        params = params or {}
-        loop = asyncio.get_running_loop()
-        future = loop.create_future()
-        with self._lock:
-            self._pending_prompts[id] = future
-        self._emit(PromptEvent(id=id, message=message, options=options, action=action, params=params))
-        choice = await future
-        func = self._actions.get(action)
-        if func is None:
-            raise RuntimeError(f"Action '{action}' not registered")
-        if asyncio.iscoroutinefunction(func):
-            return await func(choice=choice, **params)
-        return func(choice=choice, **params)
-
-    def resolve_prompt(self, id: str, choice: str) -> None:
-        with self._lock:
-            future = self._pending_prompts.pop(id, None)
-            if future is not None:
-                self._resolved_prompts[id] = True
-        if future and not future.done():
-            loop = future.get_loop()
-            loop.call_soon_threadsafe(future.set_result, choice)
-
-    def is_prompt_resolved(self, id: str) -> bool:
-        return id in self._resolved_prompts
-
-    # ------------------------------------------------------------------
-    # New: Spinner
-    # ------------------------------------------------------------------
     def spinner_start(self, id: str, message: str = "") -> None:
         self._emit(SpinnerStartEvent(id=id, message=message))
 
@@ -351,37 +395,103 @@ class DarwinLogger:
     def spinner_stop(self, id: str, success: bool = True) -> None:
         self._emit(SpinnerEndEvent(id=id, success=success))
 
-    # ------------------------------------------------------------------
-    # New: Session context manager
-    # ------------------------------------------------------------------
     def session(self, name: str):
         return _Session(self, name)
+
+    # ------------------------------------------------------------------
+    # Transcripts (formatted logs with filtering)
+    # ------------------------------------------------------------------
+    def get_transcripts(
+        self,
+        session: Optional[str] = None,
+        log_types: Optional[Set[LogType]] = None,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
+        limit: int = 1000,
+        format: str = "human",  # 'human' or 'json'
+    ) -> List[str]:
+        """
+        Return formatted log strings.
+        - session: filter by session name (empty string for no session)
+        - log_types: set of LogType to include (None = all)
+        - start_time / end_time: Unix timestamps or ISO format strings
+        - limit: max number of events to return (most recent)
+        - format: 'human' -> "[YYYY-MM-DD HH:MM:SS] LEVEL: message"
+                  'json' -> JSON string per line
+        """
+        if self._history_recorder is None:
+            return []
+
+        def to_timestamp(t):
+            if t is None:
+                return None
+            if isinstance(t, (int, float)):
+                return float(t)
+            if isinstance(t, str):
+                return datetime.fromisoformat(t.replace('Z', '+00:00')).timestamp()
+            raise TypeError("start_time/end_time must be float, int, or ISO string")
+
+        start_ts = to_timestamp(start_time)
+        end_ts = to_timestamp(end_time)
+
+        events = self._history_recorder.get_events(session=session, limit=limit * 2)
+
+        filtered = []
+        for ev in events:
+            if not isinstance(ev, LogEvent):
+                continue
+            if log_types is not None and ev.log_type not in log_types:
+                continue
+            if start_ts is not None and ev.timestamp < start_ts:
+                continue
+            if end_ts is not None and ev.timestamp > end_ts:
+                continue
+            filtered.append(ev)
+
+        if limit and len(filtered) > limit:
+            filtered = filtered[-limit:]
+
+        result = []
+        for ev in filtered:
+            dt = datetime.fromtimestamp(ev.timestamp).strftime("%Y-%m-%d %H:%M:%S")
+            level = ev.log_type.value.upper()
+            if format == "human":
+                result.append(f"[{dt}] {level}: {ev.message}")
+            elif format == "json":
+                import json
+                result.append(json.dumps({
+                    "timestamp": ev.timestamp,
+                    "datetime": dt,
+                    "level": level,
+                    "message": ev.message,
+                    "session": ev.session,
+                }))
+            else:
+                raise ValueError("format must be 'human' or 'json'")
+        return result
+
+    # ------------------------------------------------------------------
+    # Bridge factory (used by WebSocket server)
+    # ------------------------------------------------------------------
+    def _get_bridge(self, ws=None, loop=None):
+        try:
+            from src.core.Logger.FrontendUi import FrontendBridge
+            return FrontendBridge(websocket=ws, fallback_stdout=False, logger=self, loop=loop)
+        except ImportError:
+            return _FallbackBridge(ws, logger=self)
 
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
     def shutdown(self) -> None:
-        # Cancel all pending prompts
-        for fut in self._pending_prompts.values():
-            if not fut.done():
-                fut.cancel()
-        self._pending_prompts.clear()
+        self.stop_mp_listener()
+        if self._ws_server:
+            self._ws_server.shutdown()
         self._subscribers.clear()
-        self._subscriber_filters.clear()
+        self._subscriber_verbosity.clear()
 
     # ------------------------------------------------------------------
-    # Bridge factory (always FrontendBridge)
-    # ------------------------------------------------------------------
-    def _get_bridge(self, ws=None):
-        try:
-            from src.core.Logger.FrontendUi import FrontendBridge
-            return FrontendBridge(websocket=ws, fallback_stdout=False, logger=self)
-        except ImportError:
-            # Fallback no-op bridge (extremely rare)
-            return _FallbackBridge(ws, logger=self)
-
-    # ------------------------------------------------------------------
-    # Inner context manager for progress (unchanged)
+    # Progress context manager
     # ------------------------------------------------------------------
     class Progress:
         def __init__(self, logger: DarwinLogger, id: str, total: int, label: str):
@@ -410,8 +520,8 @@ class DarwinLogger:
 # Session context manager
 # ---------------------------------------------------------------------------
 class _Session:
-    def __init__(self, logger: DarwinLogger, name: str):
-        self.logger = logger
+    def __init__(self, log: DarwinLogger, name: str):
+        self.logger = log
         self.name = name
         self._token = None
 
@@ -426,7 +536,7 @@ class _Session:
 
 
 # ---------------------------------------------------------------------------
-# Fallback no-op bridge (used only if FrontendUi.py is missing)
+# Fallback no-op bridge
 # ---------------------------------------------------------------------------
 class _FallbackBridge(EventSubscriber):
     def __init__(self, ws=None, logger=None):
@@ -437,7 +547,6 @@ class _FallbackBridge(EventSubscriber):
     def on_progress_start(self, event): pass
     def on_progress_update(self, event): pass
     def on_progress_end(self, event): pass
-    def on_prompt(self, event): pass
     def on_spinner_start(self, event): pass
     def on_spinner_update(self, event): pass
     def on_spinner_end(self, event): pass

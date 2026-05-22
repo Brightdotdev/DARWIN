@@ -12,7 +12,6 @@ from src.core.Logger.DarwinLogger import (
     ProgressStartEvent,
     ProgressUpdateEvent,
     ProgressEndEvent,
-    PromptEvent,
     SpinnerStartEvent,
     SpinnerUpdateEvent,
     SpinnerEndEvent,
@@ -20,9 +19,7 @@ from src.core.Logger.DarwinLogger import (
     SessionEndEvent,
     DarwinLogger,
 )
-
-
-from src.core.Logger.lib import ASCII_BANNER  # You must have this file
+from src.core.Logger.lib import ASCII_BANNER
 
 
 class FrontendBridge(EventSubscriber):
@@ -31,16 +28,16 @@ class FrontendBridge(EventSubscriber):
         websocket=None,
         fallback_stdout: bool = False,
         logger: Optional[DarwinLogger] = None,
-        ws_loop: Optional[asyncio.AbstractEventLoop] = None,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
     ) -> None:
         self._ws = websocket
         self._fallback = fallback_stdout
         self._logger = logger
-        self._ws_loop = ws_loop
+        self._loop = loop
 
     def _schedule(self, coro):
-        if self._ws_loop and self._ws_loop.is_running():
-            asyncio.run_coroutine_threadsafe(coro, self._ws_loop)
+        if self._loop and self._loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, self._loop)
         else:
             try:
                 loop = asyncio.get_running_loop()
@@ -95,15 +92,6 @@ class FrontendBridge(EventSubscriber):
     def on_progress_end(self, event: ProgressEndEvent) -> None:
         self._schedule(self._send({
             "type": "progress", "payload": {"event": "end", "id": event.id, "session": event.session}
-        }))
-
-    def on_prompt(self, event: PromptEvent) -> None:
-        self._schedule(self._send({
-            "type": "prompt",
-            "payload": {
-                "id": event.id, "message": event.message, "options": event.options,
-                "action": event.action, "params": event.params, "session": event.session,
-            }
         }))
 
     def on_spinner_start(self, event: SpinnerStartEvent) -> None:

@@ -10,23 +10,23 @@ from typing import List, Optional
 
 from src.core.Logger.DarwinLogger import (
     EventSubscriber, LogEvent, ProgressStartEvent, ProgressUpdateEvent, ProgressEndEvent,
-    PromptEvent, SpinnerStartEvent, SpinnerUpdateEvent, SpinnerEndEvent,
+    SpinnerStartEvent, SpinnerUpdateEvent, SpinnerEndEvent,
     SessionStartEvent, SessionEndEvent, darwin,
 )
 
 _HISTORY_DIR = Path(".darwin_logs")
 _CLEANUP_INTERVAL = 300  # seconds
-_MAX_AGE = 3 * 3600      # 3 hours
 
 
 class HistoryRecorder(EventSubscriber):
     """Records all events in memory, and writes session events to file."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_age_seconds: int = 10800) -> None:
         self._events: List[object] = []
         self._lock = threading.Lock()
         self._active_session: Optional[str] = None
         self._session_events: List[object] = []
+        self._max_age = max_age_seconds
         _HISTORY_DIR.mkdir(exist_ok=True)
         self._start_cleanup_thread()
 
@@ -40,9 +40,6 @@ class HistoryRecorder(EventSubscriber):
         self._store(event)
 
     def on_progress_end(self, event: ProgressEndEvent) -> None:
-        self._store(event)
-
-    def on_prompt(self, event: PromptEvent) -> None:
         self._store(event)
 
     def on_spinner_start(self, event: SpinnerStartEvent) -> None:
@@ -101,20 +98,14 @@ class HistoryRecorder(EventSubscriber):
             for f in _HISTORY_DIR.iterdir():
                 if f.is_file() and f.suffix == ".jsonl":
                     age = now - f.stat().st_mtime
-                    if age > _MAX_AGE:
+                    if age > self._max_age:
                         f.unlink()
         except Exception:
             pass
 
     def get_events(self, session: Optional[str] = None, limit: int = 500) -> List[object]:
         with self._lock:
-            if session:
+            if session is not None:
+                # session == "" means events without a session
                 return [e for e in self._events if getattr(e, "session", "") == session][-limit:]
             return self._events[-limit:]
-
-
-def setup_history() -> HistoryRecorder:
-    recorder = HistoryRecorder()
-    darwin.subscribe(recorder)
-    darwin._history_recorder = recorder  # expose for WebSocket history queries
-    return recorder

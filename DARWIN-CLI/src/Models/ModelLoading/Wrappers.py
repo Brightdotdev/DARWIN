@@ -7,9 +7,12 @@ import base64
 import warnings
 from pathlib import Path
 from typing import  List, Tuple, Union
-
+import logging
 import numpy as np
 
+import warnings
+warnings.filterwarnings("ignore", message=".*bedrock-runtime.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*Bedrock.*", category=UserWarning)
 try:
     import torch
 except ImportError:
@@ -19,6 +22,15 @@ try:
     import litellm
 except ImportError:
     litellm = None
+
+
+
+litellm.suppress_debug_info = True
+litellm.telemetry = False
+litellm.turn_off_message_logging = True
+
+# Set root logger to ERROR to suppress verbose output
+logging.getLogger("litellm").setLevel(logging.ERROR)
 
 
 def _validate_non_empty_texts(texts: Union[str, List[str]]) -> List[str]:

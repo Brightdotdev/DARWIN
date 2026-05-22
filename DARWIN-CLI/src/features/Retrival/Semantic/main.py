@@ -3,6 +3,8 @@ src/core/Search/Sematic/main.py - Semantic search CLI
 """
 
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 from pathlib import Path
@@ -10,6 +12,10 @@ from typing import List
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.features.Retrival.Semantic.SematicSearch import (
     search_single_document,
@@ -23,8 +29,7 @@ from src.features.Retrival.Semantic.SematicSearchUtils import (
 
 from src.features.Retrival.lib import SemanticSearchResult
 from src.features.Storage.DarwinStore import DarwinStore
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ============================================================================
@@ -107,8 +112,7 @@ def _validate_files(
 # Core handler
 # ============================================================================
 
-def handle_semantic_search(args: SemanticSearchArgs) -> List[SemanticSearchResult] | None:
-    store = DarwinStore()
+def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List[SemanticSearchResult] | None:
     config = store.load_config()
     model_name = config.get("embedding_model", "unknown")
     
@@ -205,6 +209,8 @@ def handle_semantic_search(args: SemanticSearchArgs) -> List[SemanticSearchResul
 # ============================================================================
 
 async def main() -> int:
+    from src.features.Storage.DarwinStore import DarwinStore
+    from src.lib.Utils import ensure_writable_directory
     parser = argparse.ArgumentParser(
         description="Semantic search over embedded documents",
         usage="darwin search [QUERY] [options]"
@@ -217,10 +223,13 @@ async def main() -> int:
     parser.add_argument("--min-score", "-s", type=float, default=DEFAULT_MIN_SCORE, help="Minimum score threshold (0-1)")
     parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
     parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
     
     args = parser.parse_args()
+
     
     query = args.query or args.query_flag
     
@@ -228,7 +237,13 @@ async def main() -> int:
         parser.error("Query required (either as positional argument or --query flag)")
     
     
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
         search_args = SemanticSearchArgs(
@@ -240,7 +255,12 @@ async def main() -> int:
             json_output=args.json,
         )
         
-        handle_semantic_search(search_args)
+        with darwin.session("semantic_search"):
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+            handle_semantic_search(search_args, store)
         return 0
 
     except KeyboardInterrupt:
@@ -253,7 +273,7 @@ async def main() -> int:
         darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

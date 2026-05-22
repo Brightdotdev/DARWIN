@@ -3,6 +3,8 @@ src/core/HybridSearch/main.py - Hybrid search
 """
 
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 from pathlib import Path
@@ -10,6 +12,10 @@ from typing import List
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.features.Retrival.Hybrid.HybridSearch import (
     search_single_document_hybrid,
@@ -30,8 +36,7 @@ from src.features.Retrival.Hybrid.HybridSearchUtils import (
 )
 from src.features.Storage.DarwinStore import DarwinStore
 from src.lib.Utils import scan_folder
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ============================================================================
@@ -115,9 +120,8 @@ def _validate_files(
 # Core handler
 # ============================================================================
 
-def handle_hybrid_search(args: HybridSearchArgs) -> List[HybridSearchResult] | None:
+def handle_hybrid_search(args: HybridSearchArgs, store: DarwinStore) -> List[HybridSearchResult] | None:
     """Main handler for hybrid search CLI."""
-    store = DarwinStore()
     status = store.status()
     tobe_searched = []
 
@@ -263,6 +267,8 @@ def create_hybrid_search_parser():
     parser.add_argument("--pool-size", type=int, default=DEFAULT_POOL_SIZE, help="Candidates per retriever")
     parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
     parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
 
@@ -271,8 +277,12 @@ def create_hybrid_search_parser():
 
 async def main() -> int:
     """Entry point for hybrid search CLI."""
+    from src.lib.Utils import ensure_writable_directory
+
     parser = create_hybrid_search_parser()
     args = parser.parse_args()
+
+
 
     # Resolve query
     query = args.query or args.query_flag
@@ -285,7 +295,13 @@ async def main() -> int:
 
 
     # Setup WebSocket
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
         search_args = HybridSearchArgs(
@@ -302,7 +318,12 @@ async def main() -> int:
             beta=args.beta,
         )
         
-        handle_hybrid_search(search_args)
+        with darwin.session("hybrid_search"):
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+            handle_hybrid_search(search_args, store)
         return 0
 
     except KeyboardInterrupt:
@@ -315,7 +336,7 @@ async def main() -> int:
         darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

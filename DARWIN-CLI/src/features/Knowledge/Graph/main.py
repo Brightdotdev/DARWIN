@@ -1,4 +1,6 @@
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 from pathlib import Path
@@ -7,6 +9,10 @@ from typing import List
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
+
 from src.features.Knowledge.Graph.GraphExtractor import run_graph_extraction_pipeline
 from src.features.Knowledge.Graph.GraphUtils import (
     DEFAULT_MIN_CONCEPT_FREQ,
@@ -14,8 +20,8 @@ from src.features.Knowledge.Graph.GraphUtils import (
     export_graph_json,
 )
 from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig, PRESETS
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 def _print_inspection(graph, filename: str) -> None:
@@ -119,6 +125,8 @@ def handle_graph_extraction(config: GraphExtractionConfig,store,files: List[str]
 
 async def main() -> int:
     """Async entry point with WebSocket support."""
+    from src.lib.Utils import ensure_writable_directory
+
     parser = argparse.ArgumentParser(description="Extract knowledge graphs from documents")
 
     # File selection
@@ -168,10 +176,14 @@ async def main() -> int:
     parser.add_argument("--rerun", "-R", action="store_true", help="Force re-extraction")
 
     # WebSocket
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
 
     args = parser.parse_args()
+
+
 
     # Handle --no-require-ner / --no-require-parser
     require_ner = not args.no_require_ner if hasattr(args, "no_require_ner") else args.require_ner
@@ -217,10 +229,21 @@ async def main() -> int:
         )
 
     # Setup WebSocket
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
-        handle_graph_extraction(config, files=args.file)
+        with darwin.session("graph_extraction"):
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+            handle_graph_extraction(config, store, files=args.file)
         return 0
 
     except KeyboardInterrupt:
@@ -233,7 +256,7 @@ async def main() -> int:
         darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

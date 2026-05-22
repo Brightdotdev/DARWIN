@@ -10,6 +10,8 @@ Usage:
 """
 
 import sys
+import os
+import warnings
 import multiprocessing
 import asyncio
 from pathlib import Path
@@ -18,10 +20,15 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
+
 from src.features.Indexing.lib import IndexingArgs
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 from src.lib.Utils import ensure_writable_directory
+from src.features.Storage.DarwinStore import DarwinStore
+
 from src.features.Indexing.Embedding.lib import EmbeddingArgs
 
 from src.features.Indexing.BM25.lib import (
@@ -50,16 +57,11 @@ def _validate_inputs(args: IndexingArgs) -> bool:
 
 
 # ── main handler ──────────────────────
-def handle_indexing(args: IndexingArgs, store_dir: str = None) -> None:
+def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
     from src.features.Indexing.Embedding.main import handle_embedding
     from src.features.Indexing.BM25.main import handle_bm25_indexing
-    from src.features.Storage.DarwinStore import DarwinStore
 
-    if store_dir and ensure_writable_directory(store_dir):
-        store = DarwinStore(store_dir)
-    else:
-        store = DarwinStore()
-    
+  
     if not _validate_inputs(args):
         return
 
@@ -157,13 +159,21 @@ async def main() -> int:
     mode.add_argument("--only-semantic", action="store_true", help="Run semantic embedding only")
 
     # websocket
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
     parser.add_argument("--no-ws",   action="store_true",    help="Disable WebSocket server")
     parser.add_argument("--store-dir",  default=None,   help="Darwin store directory")
 
     args = parser.parse_args()
 
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
         indexing_args = IndexingArgs(
@@ -176,8 +186,17 @@ async def main() -> int:
             only_kw=args.only_kw,
             only_semantic=args.only_semantic,
         )
+        
+        if args.store_dir and ensure_writable_directory(args.store_dir):
+            store = DarwinStore(args.store_dir)
+        else:
+            store = DarwinStore()
 
-        handle_indexing(indexing_args, store_dir=args.store_dir)
+
+        
+
+        with darwin.session("indexing"):
+            handle_indexing(indexing_args, store)
         return 0
 
     except KeyboardInterrupt:
@@ -190,7 +209,7 @@ async def main() -> int:
         darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

@@ -23,6 +23,8 @@ Usage:
 from __future__ import annotations
 
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 import time
@@ -31,6 +33,10 @@ from typing import List, Any
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.features.Retrival.RetrivalUtils import (
     RetrievalArgs,
@@ -56,8 +62,7 @@ from src.features.Retrival.RetrievalResult import (
     from_keyword,
 )
 
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 from src.features.Retrival.Hybrid.main import handle_hybrid_search
 from src.features.Retrival.Semantic.main import handle_semantic_search
@@ -78,7 +83,7 @@ from src.features.Retrival.Keyword.KeywordUtilities import (
 # Search dispatchers
 # ============================================================================
 
-def _run_hybrid(args: RetrievalArgs) -> List[Any]:
+def _run_hybrid(args: RetrievalArgs,store) -> List[Any]:
     hybrid_args = HybridSearchArgs(
         query           = args.query,
         files           = args.files,
@@ -92,10 +97,10 @@ def _run_hybrid(args: RetrievalArgs) -> List[Any]:
         alpha           = args.alpha,
         beta            = args.beta,
     )
-    return handle_hybrid_search(hybrid_args) or []
+    return handle_hybrid_search(hybrid_args,store=store) or []
 
 
-def _run_semantic(args: RetrievalArgs) -> List[Any]:
+def _run_semantic(args: RetrievalArgs,store) -> List[Any]:
     sem_args = SemanticSearchArgs(
         query       = args.query,
         files       = args.files,
@@ -104,10 +109,10 @@ def _run_semantic(args: RetrievalArgs) -> List[Any]:
         inspect     = args.inspect,
         json_output = args.json_output,
     )
-    return handle_semantic_search(sem_args) or []
+    return handle_semantic_search(sem_args,store=store) or []
 
 
-def _run_keyword(args: RetrievalArgs) -> List[Any]:
+def _run_keyword(args: RetrievalArgs,store) -> List[Any]:
     kw_args = KeywordSearchArgs(
         query       = args.query,
         files       = args.files,
@@ -117,7 +122,7 @@ def _run_keyword(args: RetrievalArgs) -> List[Any]:
         inspect     = args.inspect,
         json_output = args.json_output,
     )
-    return handle_keyword_search(kw_args) or []
+    return handle_keyword_search(kw_args,store=store) or []
 
 
 # ============================================================================
@@ -250,7 +255,7 @@ def _print_inspection(results: List[RetrievalResult], args: RetrievalArgs) -> No
 # Core handler
 # ============================================================================
 
-def handle_retrieval(args: RetrievalArgs) -> List[RetrievalResult]:
+def handle_retrieval(args: RetrievalArgs,store) -> List[RetrievalResult]:
     """
     Main retrieval entry point. Always returns List[RetrievalResult].
 
@@ -275,13 +280,13 @@ def handle_retrieval(args: RetrievalArgs) -> List[RetrievalResult]:
     raw: List[Any] = []
     if args.method == RetrievalMethod.HYBRID:
         darwin.log(f"Pool size: {args.pool_size}  |  rrf_k={args.rrf_k}", LogType.INFO)
-        raw = _run_hybrid(args)
+        raw = _run_hybrid(args,store=store)
     elif args.method == RetrievalMethod.SEMANTIC:
         darwin.log(f"Min score: {args.min_score}", LogType.INFO)
-        raw = _run_semantic(args)
+        raw = _run_semantic(args,store=store)
     elif args.method == RetrievalMethod.KEYWORD:
         darwin.log(f"BM25: k1={args.k1}  b={args.b}", LogType.INFO)
-        raw = _run_keyword(args)
+        raw = _run_keyword(args,store=store)
 
     elapsed = time.perf_counter() - start
     darwin.log(f"Search: {len(raw)} results in {elapsed:.2f}s", LogType.INFO)
@@ -374,6 +379,7 @@ Examples:
     rerank.add_argument("--rerank-weight",      type=float, default=DEFAULT_RERANK_WEIGHT)
     rerank.add_argument("--rerank-top-k",       type=int,   default=DEFAULT_RERANK_TOP_K)
 
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765)
     parser.add_argument("--no-ws",   action="store_true")
 
@@ -381,6 +387,9 @@ Examples:
 
 
 async def main() -> int:
+    from src.features.Storage.DarwinStore import DarwinStore
+    from src.lib.Utils import ensure_writable_directory
+
     parser = create_parser()
     cli    = parser.parse_args()
 
@@ -388,7 +397,13 @@ async def main() -> int:
     if not query:
         parser.error("Query required")
 
-    ws_server = setup_websocket(ws_port=cli.ws_port, no_ws=cli.no_ws)
+    darwin.configure(
+        enable_websocket=not cli.no_ws,
+        ws_port=cli.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if cli.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
         args = RetrievalArgs(
@@ -414,7 +429,12 @@ async def main() -> int:
             no_ws           = cli.no_ws,
         )
 
-        handle_retrieval(args)
+        with darwin.session("retrieval"):
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+            handle_retrieval(args,store=store)
         return 0
 
     except KeyboardInterrupt:
@@ -426,7 +446,7 @@ async def main() -> int:
         darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

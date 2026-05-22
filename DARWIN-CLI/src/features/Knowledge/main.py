@@ -12,12 +12,18 @@ Usage:
 """
 
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 from pathlib import Path
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.features.Knowledge.lib import KnowledgePipelineArgs
 from src.features.Knowledge.Graph.main import handle_graph_extraction
@@ -29,8 +35,7 @@ from src.features.Knowledge.Wiki.WikiUtils import (
     DEFAULT_CHUNKS_PER_CONCEPT,
 )
 from src.features.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ── file resolution ───────────────────────────────────────────────────────────
@@ -86,7 +91,7 @@ def _run_graphs(args : KnowledgePipelineArgs, store: DarwinStore) -> list[str]  
 
 
 
-    return handle_graph_extraction(graph_config, args.files or [],store=store)
+    return handle_graph_extraction(config=graph_config, files=args.files or [],store=store)
 
 
 # ── pass 2: wikis ─────────────────────────────────────────────────────────────
@@ -106,13 +111,9 @@ def _run_wikis( args : KnowledgePipelineArgs, store: DarwinStore) -> list[str] |
 
 # ── main handler ──────────────────────────────────────────────────────────────
 
-def handle_knowledge(args : KnowledgePipelineArgs, store_dir: str = None) -> None:
+def handle_knowledge(args: KnowledgePipelineArgs, store: DarwinStore) -> None:
 
-    if store_dir and ensure_writable_directory(store_dir):
-        store = DarwinStore(store_dir)
-    else:
-        store = DarwinStore()
-    
+
 
     # resolve filenames
     if args.files:
@@ -188,16 +189,24 @@ async def main() -> int:
     # shared
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--rerun", "-R", action="store_true")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765)
     parser.add_argument("--no-ws", action="store_true")
 
     args = parser.parse_args()
 
+
     if args.graph_only and args.wiki_only:
         darwin.log("--graph-only and --wiki-only are mutually exclusive.", LogType.ERROR)
         return 1
 
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
         knowledge_args = KnowledgePipelineArgs(
@@ -220,11 +229,14 @@ async def main() -> int:
             chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,
-            ws_port=args.ws_port,
-            no_ws=args.no_ws,
             json_output=getattr(args, 'json_output', False),
         )
-        handle_knowledge(knowledge_args,store_dir=args.store_dir)
+        with darwin.session("knowledge"):
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+            handle_knowledge(knowledge_args, store)
         return 0
     except KeyboardInterrupt:
         darwin.log("", LogType.INFO)
@@ -236,7 +248,7 @@ async def main() -> int:
         darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

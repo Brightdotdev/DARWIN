@@ -374,7 +374,7 @@ class RetrievalOrchestrator:
             top_k=top_k,
             **kwargs
         )
-        return handle_retrieval(args)
+        return handle_retrieval(args,self.store)
 
     def filter_structural(self, results, all_chunks, aggressive=True):
         is_bad = _is_structural_chunk if aggressive else _is_obvious_structural

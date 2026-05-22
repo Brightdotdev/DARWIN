@@ -1,4 +1,6 @@
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 from pathlib import Path
@@ -6,13 +8,17 @@ from pathlib import Path
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
+
 from src.features.Knowledge.Wiki.WikiGenerator import run_wiki_pipeline
 from src.features.Knowledge.Wiki.WikiUtils import (
     WikiGenerationArgs, DEFAULT_CHUNKS_PER_CONCEPT,
 )
 from typing import List
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
+from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 
@@ -101,6 +107,8 @@ def handle_wiki(args: WikiGenerationArgs,store) -> List[str] | None:
 
 async def main() -> int:
     """Async entry point with WebSocket support."""
+    from src.lib.Utils import ensure_writable_directory
+
     parser = argparse.ArgumentParser(description="Generate Wikipedia-style docs from concept graphs")
     parser.add_argument("--file", "-f", nargs="+", default=None)
     parser.add_argument("--mode", "-m", default="index", choices=["index", "summary"])
@@ -108,13 +116,23 @@ async def main() -> int:
     parser.add_argument("--chunks-per-concept", type=int, default=DEFAULT_CHUNKS_PER_CONCEPT)
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--rerun", "-R", action="store_true")
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
 
     args = parser.parse_args()
 
+
+
     # Setup WebSocket
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
 
     try:
         wiki_args = WikiGenerationArgs(
@@ -126,7 +144,13 @@ async def main() -> int:
             rerun=args.rerun,
         )
         
-        handle_wiki(wiki_args)
+        with darwin.session("wiki_generation"):
+            
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+            handle_wiki(wiki_args, store)
         return 0
 
     except KeyboardInterrupt:
@@ -139,7 +163,7 @@ async def main() -> int:
         darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":

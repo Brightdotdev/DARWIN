@@ -23,9 +23,7 @@ from src.features.Ingestion.Parsing.lib import (
     detect_type,
 )
 from src.features.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-from src.core.Logger.History import setup_history
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ---------------------------------------------------------------------------
@@ -55,6 +53,7 @@ def parse_document(
 # ---------------------------------------------------------------------------
 # Orchestrator — throttled progress updates
 # ---------------------------------------------------------------------------
+
 def parse_documents(
     files: list[FileWithImages],
     caption_images: bool = False,
@@ -75,6 +74,10 @@ def parse_documents(
     file_errors: dict[str, str] = {}
 
     darwin.progress_start("parsing", total, f"Parsing {total} files")
+    
+    # CHANGED: start MP listener so worker logs are forwarded to main process
+    darwin.start_mp_listener()
+    
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
         future_to_info = {}
         for orig_idx, fw in indexed_files:
@@ -108,6 +111,8 @@ def parse_documents(
                 last_update = processed
 
     darwin.progress_end("parsing")
+    # CHANGED: stop MP listener after workers are done
+    darwin.stop_mp_listener()
 
     # Summary logs
     if completed_files:
@@ -213,6 +218,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> list[ParsedDocument
 # CLI entry point
 # ---------------------------------------------------------------------------
 async def main() -> int:
+    from src.lib.Utils import ensure_writable_directory
     parser = argparse.ArgumentParser(description="Parse documents into .darwin format")
     parser.add_argument("path", nargs="?", default=".", help="File or directory to parse")
     parser.add_argument("--rerun", "-R", action="store_true", help="Reprocess cached files")
@@ -225,32 +231,41 @@ async def main() -> int:
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
     parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity level")
     args = parser.parse_args()
 
-    # Start WebSocket server (if not disabled)
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
-
-    # Always record history
-    history = setup_history()
+    # Configure the logger centrally
+    verbosity = Verbosity.NORMAL if args.verbosity == "normal" else Verbosity.QUIET
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=verbosity,
+        show_banner=True,
+    )
 
     try:
         # Wrap the entire run in a session
         with darwin.session("parsing"):
             darwin.spinner_start("init", "Initializing parsing pipeline...")
-            # Optional: a brief pause for spinner visibility (remove in production)
-            time.sleep(0.3)
+            time.sleep(0.3)  # optional spinner visibility
 
             parsing_args = ParsingArgs(
-                target=args.path if not args.file else str(Path(args.file).parent),
+                target=args.path if not args.file else str(Path(args.file[0]).parent),
                 images=args.images,
                 caption=args.caption,
                 recursive=args.recursive,
                 rerun=args.rerun,
-                file=args.file,
+                files=args.file,
                 precise=args.precise,
                 save=not args.no_save,
             )
-            store = DarwinStore(args.store_dir or None)
+            
+            if args.store_dir and ensure_writable_directory(args.store_dir):
+                store = DarwinStore(args.store_dir)
+            else:
+                store = DarwinStore()
+
             handle_parsing(parsing_args, store)
             darwin.spinner_stop("init", success=True)
 
@@ -265,7 +280,6 @@ async def main() -> int:
         darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
         darwin.shutdown()
 
 

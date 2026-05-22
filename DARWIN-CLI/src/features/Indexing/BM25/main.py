@@ -26,6 +26,8 @@ uv run src/core/BM25/main.py --rerun
 """
 
 import sys
+import os
+import warnings
 import argparse
 import asyncio
 from pathlib import Path
@@ -33,6 +35,11 @@ from pathlib import Path
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+# CHANGED: suppress LiteLLM Bedrock warning spam
+warnings.filterwarnings("ignore", module="litellm")
+os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
+
+from src.lib.Utils import ensure_writable_directory
 from src.features.Indexing.BM25.BM25Indexer import (
     run_bm25_indexing_pipeline,
     inspect_bm25_index,
@@ -43,8 +50,8 @@ from src.features.Indexing.BM25.lib import (
     DEFAULT_IDF_SMOOTHING,
 )
 
-from src.core.Logger.WebsocketHelpers import setup_websocket, shutdown_websocket
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ── Inspection helper ──────────────────────────────────────────────────────────
@@ -59,7 +66,7 @@ def _print_inspection(filename: str, store) -> None:
 
 # ── Core handler ───────────────────────────────────────────────────────────────
 
-def handle_bm25_indexing(args: BM25IndexingArgs, store) -> None:
+def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
 
     darwin.log("")
     darwin.log("BM25 indexing", LogType.INFO)
@@ -143,14 +150,30 @@ async def main() -> int:
                         help=f"IDF smoothing parameter (default: {DEFAULT_IDF_SMOOTHING})")
     parser.add_argument("--inspect",  "-i",  action="store_true",                help="Print index stats and samples")
     parser.add_argument("--rerun",    "-R",  action="store_true",                help="Re-index even if fresh index exists")
+    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765,                     help="WebSocket server port (default: 8765)")
     parser.add_argument("--no-ws",   action="store_true",                        help="Disable WebSocket server")
 
     args = parser.parse_args()
 
 
+
+
     # Setup WebSocket
-    ws_server = setup_websocket(ws_port=args.ws_port, no_ws=args.no_ws)
+    darwin.configure(
+        enable_websocket=not args.no_ws,
+        ws_port=args.ws_port,
+        enable_history=True,
+        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        show_banner=True,
+    )
+
+    
+    if args.store_dir and ensure_writable_directory(args.store_dir):
+        store = DarwinStore(args.store_dir)
+    else:
+        store = DarwinStore()
 
     try:
         bm25_args = BM25IndexingArgs(
@@ -161,7 +184,8 @@ async def main() -> int:
             rerun=args.rerun,
         )
         
-        handle_bm25_indexing(bm25_args)
+        with darwin.session("bm25_indexing"):
+            handle_bm25_indexing(bm25_args, store)
         return 0
 
     except KeyboardInterrupt:
@@ -174,7 +198,7 @@ async def main() -> int:
         darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
-        shutdown_websocket(ws_server)
+        darwin.shutdown()
 
 
 if __name__ == "__main__":
