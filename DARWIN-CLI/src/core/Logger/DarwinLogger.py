@@ -191,7 +191,7 @@ class DarwinLogger:
         enable_websocket: bool = False,
         ws_host: str = "localhost",
         ws_port: int = 8765,
-        enable_history: bool = True,
+        enable_history: bool = False,
         history_max_age: int = 10800,  # 3 hours
         verbosity_default: Verbosity = Verbosity.NORMAL,
         show_banner: bool = True,

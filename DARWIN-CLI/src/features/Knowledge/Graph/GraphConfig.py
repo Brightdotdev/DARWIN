@@ -160,7 +160,7 @@ class GraphExtractionConfig:
     # ═══════════════════════════════════════════════════════════════════════
     # Performance
     # ═══════════════════════════════════════════════════════════════════════
-    batch_size_spacy: int = 128
+    batch_size_spacy: int = 64
     """Batch size for spaCy nlp.pipe()."""
 
     batch_size_embed: int = 64

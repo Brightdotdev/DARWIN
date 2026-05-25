@@ -260,7 +260,7 @@ class ModelManager:
             f"{stats['failed']} failed",
             LogType.SUCCESS,
         )
-
+        # todo condider reindexing conversations too cause damn thiss is geetting more complex than i thoughts
         return stats
 
     # ═══════════════════════════════════════════════════════════════════════

@@ -2,14 +2,16 @@
 src/core/Knowledge/Graph/GraphExtractor.py
 ------------------------------------------
 Knowledge graph extraction using spaCy NER + dependency parsing.
-Document-agnostic. No domain-specific stopwords or biases.
+Document-agnostic. Now gates structural chunks BEFORE extraction.
+Includes dynamic batch sizing with pre-emptive text-length estimation.
 """
 
+import gc
 import re
 import math
 import numpy as np
 from collections import Counter, defaultdict
-from typing import List, Dict, Optional, Tuple, Set
+from typing import List, Dict, Optional, Tuple, Set, Any
 from dataclasses import dataclass, field
 
 from src.core.Logger.DarwinLogger import darwin, LogType
@@ -20,10 +22,120 @@ from src.features.Knowledge.Graph.GraphUtils import (
     Relationship,
     normalize_entity,
     lemmatize_verb,
+    detect_communities_louvain,
+    extract_narrative_keyphrase,
+    extract_community_keywords,
+    CommunityCluster,
 )
 from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig
 from src.features.Storage.DarwinStore import DarwinStore
 from src.Models import ModelManager, ModelCategory
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Document-agnostic structural chunk detection
+# ═══════════════════════════════════════════════════════════════════════════
+
+STRUCTURAL_SIGNALS = {
+    "cover", "title", "copyright", "table of contents", "contents",
+    "acknowledgments", "preface", "foreword", "introduction", "about",
+    "appendix", "index", "glossary", "bibliography", "references",
+    "page", "chapter", "book", "part", "section", "volume",
+    "ebook", "edition", "published", "publisher", "isbn",
+    "all rights reserved", "printed in", "first edition",
+    "dedication", "prologue", "epilogue", "notes", "footnote",
+    "abstract", "summary", "overview", "list of", "figure", "table",
+    "extras", "chart", "works cited", "front matter", "back matter",
+}
+
+SECTION_PREFIX_RE = re.compile(
+    r'^(Book|Chapter|Ch\.|Part|Section|Vol\.|Volume|Appendix|Excerpt|'
+    r'Reference|Note|Figure|Table|Chart|Map|Illustration)s?\s*[\dIVX]+',
+    re.IGNORECASE
+)
+
+TOC_ENTRY_RE = re.compile(
+    r'([\.•\-–—]\s*\d+\s*$)|(^\d+[\.\)]\s+\w+)',
+    re.IGNORECASE
+)
+
+VERSE_CITATION_RE = re.compile(r'\b\w+\s+\d+:\d+\b')
+CROSS_REF_RE = re.compile(r'\b(?:cf\.|see|compare|v\.|vv\.|verses?|ch\.|chap\.|pp\.|p\.)\b', re.IGNORECASE)
+
+
+def _is_structural_chunk(chunk: Chunk, all_chunks: List[Chunk]) -> bool:
+    """Detect structural chunks by content — document-agnostic."""
+    text = chunk.clean
+    text_lower = text.lower()
+    words = set(re.findall(r'\b[a-z]+\b', text_lower))
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+
+    if len(text) < 200:
+        return True
+
+    structural_found = words & STRUCTURAL_SIGNALS
+    if len(words) > 0 and len(structural_found) / len(words) > 0.30:
+        return True
+
+    if len(lines) > 3:
+        short_numbered = sum(1 for l in lines if len(l) < 60 and re.search(r'\d', l))
+        if short_numbered / len(lines) > 0.5:
+            return True
+
+    if len(lines) > 2:
+        citation_lines = sum(1 for l in lines if VERSE_CITATION_RE.search(l) or CROSS_REF_RE.search(l))
+        if citation_lines / len(lines) > 0.3:
+            return True
+
+    if len(lines) > 4:
+        book_ref_lines = sum(1 for l in lines if re.match(r'^[A-Za-z]+\s+\d+[:.\-]\d*$', l.strip()))
+        if book_ref_lines / len(lines) > 0.4:
+            return True
+
+    text_hash = hash(text_lower[:200])
+    repeat_count = sum(1 for c in all_chunks if hash(c.clean.lower()[:200]) == text_hash)
+    if repeat_count > 2:
+        return True
+
+    if chunk.index <= len(all_chunks) * 0.05 and len(words) < 20:
+        return True
+
+    section_headers = sum(1 for l in lines if SECTION_PREFIX_RE.match(l))
+    if section_headers >= 3:
+        return True
+
+    if len(lines) > 3:
+        toc_entries = sum(1 for l in lines if TOC_ENTRY_RE.search(l))
+        if toc_entries / len(lines) > 0.40:
+            return True
+
+    if chunk.index <= len(all_chunks) * 0.10 and len(lines) > 0:
+        avg_line_len = sum(len(l) for l in lines) / len(lines)
+        if (len(words) > 0 and
+            len(structural_found) / len(words) > 0.15 and
+            avg_line_len < 80):
+            return True
+
+    if len(lines) >= 3:
+        prefixes = []
+        for l in lines:
+            m = re.match(r'^([A-Za-z]+)[\s\-–—]', l)
+            if m:
+                prefixes.append(m.group(1).lower())
+        if prefixes:
+            most_common = Counter(prefixes).most_common(1)[0]
+            if most_common[1] >= 3:
+                return True
+
+    return False
+
+
+def _is_obvious_structural(chunk: Chunk, all_chunks: Optional[List[Chunk]] = None) -> bool:
+    """Light-mode filter: only obviously structural chunks (>50% signals)."""
+    text = chunk.clean.lower()
+    words = set(re.findall(r'\b[a-z]+\b', text))
+    structural_found = words & STRUCTURAL_SIGNALS
+    return len(words) > 0 and len(structural_found) / len(words) > 0.5
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -55,7 +167,6 @@ for canonical, synonyms in VERB_SYNONYMS.items():
 
 
 def canonicalize_svo(subject: str, verb: str, obj: str) -> tuple:
-    """Canonicalize an SVO triple for deduplication."""
     s = normalize_entity(subject)
     v = lemmatize_verb(verb)
     o = normalize_entity(obj)
@@ -64,15 +175,10 @@ def canonicalize_svo(subject: str, verb: str, obj: str) -> tuple:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Document-agnostic specificity scoring
+# SpecificityScorer
 # ═══════════════════════════════════════════════════════════════════════════
 
 class SpecificityScorer:
-    """
-    Scores how 'concept-like' a text span is, purely from statistics.
-    No domain knowledge. No hardcoded lists.
-    """
-
     def __init__(self, n_chunks: int):
         self.n_chunks = max(n_chunks, 1)
         self.doc_freq: Counter = Counter()
@@ -90,30 +196,25 @@ class SpecificityScorer:
         words = canonical.split()
         score = 0.0
 
-        # Length bonus
         score += min(len(text) / 25, 0.15)
         score += min(len(words) / 5, 0.15)
 
-        # Proper noun / acronym bonus
         if text and text[0].isupper():
             score += 0.10
         if text.isupper() and 2 <= len(text) <= 6:
             score += 0.10
 
-        # Compound bonus
         if len(words) >= 2:
             score += 0.10
         if len(words) >= 3:
             score += 0.05
 
-        # IDF: rare across chunks = more specific
         df = bin(self.chunk_bitsets.get(canonical, 0)).count("1")
         if df > 0 and self.n_chunks > 1:
             idf = math.log(self.n_chunks / df)
             max_idf = math.log(self.n_chunks)
             score += (idf / max_idf) * 0.25
 
-        # Stopword dilution penalty
         stops = {
             "the", "a", "an", "and", "or", "but", "of", "in", "on", "at", "to", "for",
             "with", "by", "from", "as", "is", "was", "are", "were", "be", "been",
@@ -126,7 +227,6 @@ class SpecificityScorer:
             stop_ratio = sum(1 for w in words if w in stops) / len(words)
             score -= stop_ratio * 0.20
 
-        # POS bonus
         if spacy_tokens:
             noun_ratio = sum(1 for t in spacy_tokens if t.pos_ in ("NOUN", "PROPN")) / max(len(spacy_tokens), 1)
             score += noun_ratio * 0.10
@@ -135,24 +235,17 @@ class SpecificityScorer:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Entity extraction state
+# EntityRegistry
 # ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class EntityRegistry:
-    """Tracks all entity mentions across chunks for canonicalization."""
     canonical_to_id: Dict[str, str] = field(default_factory=dict)
     id_to_node: Dict[str, ConceptNode] = field(default_factory=dict)
     mention_to_canonical: Dict[str, str] = field(default_factory=dict)
     next_id: int = 0
 
-    def get_or_create(
-        self,
-        text: str,
-        entity_type: str,
-        chunk_idx: int,
-    ) -> str:
-        """Canonicalize entity mention and return node ID."""
+    def get_or_create(self, text: str, entity_type: str, chunk_idx: int) -> str:
         canonical = normalize_entity(text)
         if not canonical or len(canonical) < 2:
             return None
@@ -201,7 +294,6 @@ class EntityRegistry:
 
     @staticmethod
     def _is_alias(a: str, b: str) -> bool:
-        """Check if two canonical forms are aliases."""
         if a == b:
             return True
         if a in b or b in a:
@@ -218,51 +310,28 @@ class EntityRegistry:
 
 @dataclass
 class RelationAccumulator:
-    """Accumulates and deduplicates SVO relations across chunks."""
     canonical_relations: Dict[tuple, List[Tuple[int, float, str]]] = field(
         default_factory=lambda: defaultdict(list)
     )
 
-    def add(
-        self,
-        subject_text: str,
-        verb_text: str,
-        object_text: str,
-        chunk_idx: int,
-        weight: float = 1.0,
-        spacy_doc=None,
-    ) -> None:
-        """Add a relation, canonicalizing for deduplication."""
+    def add(self, subject_text: str, verb_text: str, object_text: str,
+            chunk_idx: int, weight: float = 1.0, spacy_doc=None) -> None:
         s, v, o = canonicalize_svo(subject_text, verb_text, object_text)
         if not s or not v or not o:
             return
         if s == o:
             return
-
         key = (s, v, o)
         self.canonical_relations[key].append((chunk_idx, weight, verb_text))
 
-    def get_confident_relations(
-        self,
-        entity_registry: EntityRegistry,
-        threshold: float = 0.6,
-    ) -> List[Relationship]:
-        """
-        Return relations that meet confidence threshold.
-        Threshold behavior:
-        - <= 0: keep all explicit relations
-        - < 1.0: fractional (occurrences / shared_chunks)
-        - >= 1.0: absolute occurrence count
-        """
+    def get_confident_relations(self, entity_registry: EntityRegistry,
+                                threshold: float = 0.6) -> List[Relationship]:
         edges = []
-
         for (s_canon, v_canon, o_canon), occurrences in self.canonical_relations.items():
             if o_canon == "passive":
                 continue
-
             src_id = entity_registry.canonical_to_id.get(s_canon)
             tgt_id = entity_registry.canonical_to_id.get(o_canon)
-
             if not src_id or not tgt_id:
                 continue
 
@@ -295,7 +364,6 @@ class RelationAccumulator:
                     evidence_chunks=chunk_indices,
                     surface_forms=surface_verbs,
                 ))
-
         return edges
 
 
@@ -304,7 +372,6 @@ class RelationAccumulator:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _load_spacy(config: GraphExtractionConfig):
-    """Load spaCy model. Fail fast if required components missing."""
     try:
         loader = ModelManager.get_loader()
         extractor = loader.get(ModelCategory.TOKENIZER)
@@ -327,19 +394,14 @@ def _load_spacy(config: GraphExtractionConfig):
 
 
 def _is_bad_entity(ent_text: str) -> bool:
-    """Filter out low-quality NER results AND structural noise."""
     clean = ent_text.strip()
     lower = clean.lower()
 
-    # Too short
     if len(clean) < 3:
         return True
-
-    # No alphabetic characters
     if not any(c.isalpha() for c in clean):
         return True
 
-    # Section/chapter/figure/table references
     reject_patterns = [
         r"^section\s+\d+",
         r"^chapter\s+\d+",
@@ -354,27 +416,21 @@ def _is_bad_entity(ent_text: str) -> bool:
     if any(re.match(p, lower) for p in reject_patterns):
         return True
 
-    # Citation markers
     if lower in {"et al", "et.", "al.", "et al.", "ibid", "op. cit."}:
         return True
 
-    # Number + label patterns
     if re.match(r"^[a-z]+\s+\d+$", lower):
         return True
 
-    # Single letters or initials
     if len(clean.replace(".", "").replace(" ", "")) <= 2:
         return True
 
-    # Pure years
     if re.match(r"^\d{4}$", clean):
         return True
 
-    # Structural noise: TOC entries with many dots/dashes
     if lower.count(".") >= 3 or lower.count(" - ") >= 2 or lower.count(" ch") >= 2:
         return True
 
-    # Cover/copyright/title page noise
     structural_fragments = {
         "cover", "copyright", "title page", "table of contents",
         "acknowledgments", "preface", "foreword", "introduction - about",
@@ -383,27 +439,17 @@ def _is_bad_entity(ent_text: str) -> bool:
     if any(frag in lower for frag in structural_fragments):
         return True
 
-    # Concatenated chapter headers
     if re.search(r"\b(ch|chapter|book|part|section)\b.*\b(ch|chapter|book|part|section)\b", lower):
         return True
 
     return False
 
 
-def _extract_entities_from_doc(
-    doc,
-    chunk_idx: int,
-    registry: EntityRegistry,
-    config: GraphExtractionConfig,
-    scorer: SpecificityScorer = None,
-) -> List[str]:
-    """
-    Document-agnostic entity extraction.
-    Uses NER + noun_chunks + proper noun phrases, ranks by specificity.
-    """
+def _extract_entities_from_doc(doc, chunk_idx: int, registry: EntityRegistry,
+                                config: GraphExtractionConfig,
+                                scorer: SpecificityScorer = None) -> List[str]:
     candidates = []
 
-    # --- Source 1: NER ---
     if config.require_typed_entities and doc.ents:
         for ent in doc.ents:
             if ent.label_ in {"DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"}:
@@ -415,7 +461,6 @@ def _extract_entities_from_doc(
             spec = scorer.score(ent.text, ent) if scorer else 0.5
             candidates.append((ent.text, ent.label_, spec, ent))
 
-    # --- Source 2: Noun chunks ---
     if hasattr(doc, "noun_chunks"):
         for chunk in doc.noun_chunks:
             clean_tokens = []
@@ -437,7 +482,6 @@ def _extract_entities_from_doc(
             spec = scorer.score(clean_text, spacy_tokens) if scorer else 0.3
             candidates.append((clean_text, "CONCEPT", spec, spacy_tokens))
 
-    # --- Source 3: Proper noun phrases ---
     if hasattr(doc, "sents"):
         for sent in doc.sents:
             tokens = [t for t in sent if t.pos_ in ("PROPN", "NOUN", "ADJ")]
@@ -460,7 +504,6 @@ def _extract_entities_from_doc(
                 else:
                     i += 1
 
-    # --- Deduplicate & rank ---
     seen = set()
     unique = []
     for text, etype, spec, tokens in candidates:
@@ -472,7 +515,6 @@ def _extract_entities_from_doc(
 
     unique.sort(key=lambda x: x[2], reverse=True)
 
-    # --- Register top candidates ---
     entity_ids = []
     for text, etype, spec, tokens in unique[:8]:
         if spec < 0.15:
@@ -485,34 +527,26 @@ def _extract_entities_from_doc(
 
 
 def _get_full_phrase(token) -> str:
-    """Extract full noun phrase for a token, including modifiers."""
     if token is None:
         return None
-
     tokens = [token]
-
     def _collect_modifiers(t, collected):
         for child in t.children:
             if child.dep_ in ("compound", "amod", "nmod", "nummod", "det", "poss"):
                 if child not in collected:
                     collected.append(child)
                     _collect_modifiers(child, collected)
-
     _collect_modifiers(token, tokens)
     tokens.sort(key=lambda t: t.i)
     phrase = " ".join(t.text for t in tokens)
     phrase = phrase.strip()
-
     if len(phrase) < 2:
         return None
     return phrase
 
 
 def _extract_active_svo(sent, root, chunk_idx, relation_acc):
-    """Extract active voice SVO."""
-    subjects = []
-    objects = []
-
+    subjects, objects = [], []
     for token in sent:
         if token.head == root:
             if token.dep_ in ("nsubj", "nsubj:pass"):
@@ -523,17 +557,13 @@ def _extract_active_svo(sent, root, chunk_idx, relation_acc):
                 obj = _get_full_phrase(token)
                 if obj:
                     objects.append(obj)
-
     for subj in subjects:
         for obj in objects:
             relation_acc.add(subj, root.lemma_, obj, chunk_idx)
 
 
 def _extract_passive_svo(sent, root, chunk_idx, relation_acc):
-    """Extract passive voice."""
-    passive_subjs = []
-    agents = []
-
+    passive_subjs, agents = [], []
     for token in sent:
         if token.head == root:
             if token.dep_ == "nsubj:pass":
@@ -544,7 +574,6 @@ def _extract_passive_svo(sent, root, chunk_idx, relation_acc):
                 ag = _get_full_phrase(token)
                 if ag:
                     agents.append(ag)
-
     if passive_subjs and not agents:
         for ps in passive_subjs:
             relation_acc.add(ps, root.lemma_, "passive", chunk_idx)
@@ -555,7 +584,6 @@ def _extract_passive_svo(sent, root, chunk_idx, relation_acc):
 
 
 def _extract_prepositional_rel(sent, root, chunk_idx, relation_acc):
-    """Extract prepositional relationships."""
     for token in sent:
         if token.head == root and token.dep_ == "prep":
             prep = token.lemma_
@@ -569,10 +597,7 @@ def _extract_prepositional_rel(sent, root, chunk_idx, relation_acc):
 
 
 def _extract_copular_rel(sent, root, chunk_idx, relation_acc):
-    """Extract copular constructions."""
-    subjects = []
-    complements = []
-
+    subjects, complements = [], []
     for token in sent:
         if token.head == root:
             if token.dep_ in ("nsubj", "nsubj:pass"):
@@ -583,14 +608,12 @@ def _extract_copular_rel(sent, root, chunk_idx, relation_acc):
                 comp = _get_full_phrase(token)
                 if comp:
                     complements.append(comp)
-
     for subj in subjects:
         for comp in complements:
             relation_acc.add(subj, "is", comp, chunk_idx)
 
 
 def _extract_nominal_rel(sent, root, chunk_idx, relation_acc):
-    """Extract from nominal roots with prepositional phrases."""
     for token in sent:
         if token.head == root and token.dep_ == "prep":
             prep = token.lemma_
@@ -603,22 +626,15 @@ def _extract_nominal_rel(sent, root, chunk_idx, relation_acc):
                             relation_acc.add(subj, prep, obj_text, chunk_idx)
 
 
-def _extract_svo_from_doc(
-    doc,
-    chunk_idx: int,
-    relation_acc: RelationAccumulator,
-) -> None:
-    """Extract SVO relations from dependency parse."""
+def _extract_svo_from_doc(doc, chunk_idx: int, relation_acc: RelationAccumulator) -> None:
     for sent in doc.sents:
         root = None
         for token in sent:
             if token.dep_ == "ROOT":
                 root = token
                 break
-
         if not root:
             continue
-
         if root.pos_ == "VERB":
             _extract_active_svo(sent, root, chunk_idx, relation_acc)
             _extract_passive_svo(sent, root, chunk_idx, relation_acc)
@@ -633,12 +649,9 @@ def _extract_svo_from_doc(
 # Co-occurrence edges
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _build_cooccurrence_edges(
-    chunk_entity_map: Dict[int, List[str]],
-    similarity_threshold: Optional[float] = None,
-    max_edges: int = 500,
-) -> List[Relationship]:
-    """Build edges between entities that co-occur in same chunks."""
+def _build_cooccurrence_edges(chunk_entity_map: Dict[int, List[str]],
+                               similarity_threshold: Optional[float] = None,
+                               max_edges: int = 500) -> List[Relationship]:
     cooccurrence_counts: Dict[Tuple[str, str], int] = Counter()
     evidence: Dict[Tuple[str, str], List[int]] = defaultdict(list)
 
@@ -664,7 +677,6 @@ def _build_cooccurrence_edges(
         weight = count / max_count
         if similarity_threshold is not None and weight < similarity_threshold:
             continue
-
         edges.append(Relationship(
             source=e1,
             target=e2,
@@ -673,7 +685,6 @@ def _build_cooccurrence_edges(
             evidence_chunks=sorted(list(set(evidence[(e1, e2)]))),
             surface_forms=[],
         ))
-
     return edges
 
 
@@ -681,13 +692,8 @@ def _build_cooccurrence_edges(
 # Pareto pruning
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _pareto_prune(
-    registry: EntityRegistry,
-    relations: List[Relationship],
-    cooccurrence_edges: List[Relationship],
-    max_concepts: int,
-) -> Tuple[List[ConceptNode], List[Relationship]]:
-    """Pareto-based pruning on frequency, relation density, and centrality."""
+def _pareto_prune(registry: EntityRegistry, relations: List[Relationship],
+                  cooccurrence_edges: List[Relationship], max_concepts: int):
     nodes = list(registry.id_to_node.values())
     if not nodes:
         return [], []
@@ -723,18 +729,15 @@ def _pareto_prune(
     keep_ids = {n.id for n, _ in combined[:max_concepts]}
 
     pruned_nodes = [n for n in nodes if n.id in keep_ids]
-
     pruned_relations = [e for e in relations if e.source in keep_ids and e.target in keep_ids]
     pruned_cooccurrence = [e for e in cooccurrence_edges if e.source in keep_ids and e.target in keep_ids]
 
     seen_pairs: Set[Tuple[str, str]] = set()
     final_edges = []
-
     for e in pruned_relations:
         key = tuple(sorted((e.source, e.target)))
         seen_pairs.add(key)
         final_edges.append(e)
-
     for e in pruned_cooccurrence:
         key = tuple(sorted((e.source, e.target)))
         if key not in seen_pairs:
@@ -742,6 +745,79 @@ def _pareto_prune(
             final_edges.append(e)
 
     return pruned_nodes, final_edges
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Dynamic batch sizing for spaCy
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _estimate_batch_size(texts: List[str], base_size: int) -> int:
+    """
+    Pre-emptively lower batch size for very long texts to prevent OOM.
+    """
+    if not texts:
+        return base_size
+    avg_len = sum(len(t) for t in texts) / len(texts)
+    if avg_len > 4000:
+        return max(1, base_size // 8)
+    elif avg_len > 2000:
+        return max(1, base_size // 4)
+    elif avg_len > 1000:
+        return max(1, base_size // 2)
+    return base_size
+
+
+def _process_with_dynamic_batch(
+    extractor,
+    texts: List[str],
+    initial_batch_size: int,
+) -> List[Any]:
+    """
+    Run spaCy nlp.pipe with automatic batch size reduction on OOM.
+    Falls back to sequential (batch_size=1) with GC if needed.
+    """
+    batch_size = max(1, initial_batch_size)
+    last_error = None
+
+    while batch_size >= 1:
+        try:
+            darwin.log(
+                f"spaCy processing {len(texts)} texts with batch_size={batch_size}",
+                LogType.INFO,
+            )
+            return list(extractor.nlp.pipe(texts, batch_size=batch_size))
+        except MemoryError as e:
+            last_error = e
+            if batch_size == 1:
+                break
+            new_batch = max(1, batch_size // 2)
+            darwin.log(
+                f"MemoryError at batch_size={batch_size}, halving to {new_batch}...",
+                LogType.WARNING,
+            )
+            batch_size = new_batch
+            gc.collect()
+        except Exception:
+            raise
+
+    # Final fallback: sequential with explicit GC
+    darwin.log(
+        "MemoryError even at batch_size=1. Falling back to sequential "
+        "processing with garbage collection.",
+        LogType.WARNING,
+    )
+
+    docs = []
+    for i, text in enumerate(texts):
+        try:
+            docs.append(extractor.nlp(text))
+        except MemoryError:
+            darwin.log(f"MemoryError on doc {i}/{len(texts)}. Skipping.", LogType.ERROR)
+            docs.append(extractor.nlp(""))
+        if i % 10 == 0:
+            gc.collect()
+
+    return docs
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -754,54 +830,61 @@ def extract_graph_from_chunks(
     config: GraphExtractionConfig = None,
     chunk_vectors: Optional[np.ndarray] = None,
 ) -> GraphData:
-    """Extract a knowledge graph from document chunks using spaCy."""
     if config is None:
         config = GraphExtractionConfig()
 
-    n_chunks = len(chunks)
+    # Filter structural chunks before any processing
+    n_all = len(chunks)
+    valid_chunks = [c for c in chunks if not _is_structural_chunk(c, chunks)]
+    n_filtered = n_all - len(valid_chunks)
+
+    if n_filtered > 0:
+        darwin.log(
+            f"[GraphExtractor] Filtered {n_filtered}/{n_all} structural chunks",
+            LogType.INFO,
+        )
+
+    n_chunks = len(valid_chunks)
     darwin.log(
-        f"Extracting knowledge graph: {filename} ({n_chunks} chunks)",
+        f"Extracting graph: {filename} ({n_chunks} valid / {n_all} total chunks)",
         LogType.INFO,
     )
-    darwin.log(f"Config: {config.to_dict()}", LogType.INFO)
 
     extractor = _load_spacy(config)
     if extractor is None:
         darwin.log("spaCy unavailable — cannot extract graph", LogType.ERROR)
         return GraphData(
             filename=filename,
-            chunk_count=n_chunks,
+            chunk_count=n_all,
             total_entities_extracted=0,
             total_relations_extracted=0,
             config_snapshot=config.to_dict(),
             processing_mode="failed",
         )
 
-    darwin.log(f"spaCy loaded: {extractor}", LogType.INFO)
-
     registry = EntityRegistry()
     relation_acc = RelationAccumulator()
     chunk_entity_map: Dict[int, List[str]] = {}
 
-    # Document-agnostic specificity scorer
-    scorer = SpecificityScorer(n_chunks=len(chunks))
+    scorer = SpecificityScorer(n_chunks=len(valid_chunks))
 
-    darwin.log(f"[1/3] Extracting entities and relations from {n_chunks} chunks...", LogType.INFO)
+    darwin.log(f"[1/3] Extracting entities and relations...", LogType.INFO)
 
-    texts = [chunk.clean[:5000] for chunk in chunks]
+    texts = [chunk.clean[:5000] for chunk in valid_chunks]
 
-    try:
-        docs = extractor.nlp.pipe(texts, batch_size=config.batch_size_spacy)
-    except Exception as e:
-        darwin.log(f"nlp.pipe failed ({e}), falling back to sequential", LogType.WARNING)
-        docs = [extractor.nlp(text) for text in texts]
+    # Dynamic batch sizing with pre-emptive estimation
+    estimated_batch = _estimate_batch_size(texts, config.batch_size_spacy)
+    docs = _process_with_dynamic_batch(extractor, texts, estimated_batch)
 
-    for chunk_idx, (chunk, doc) in enumerate(zip(chunks, docs)):
-        entity_ids = _extract_entities_from_doc(doc, chunk_idx, registry, config, scorer)
-        chunk_entity_map[chunk_idx] = entity_ids
+    valid_index_map = {i: valid_chunks[i].index for i in range(len(valid_chunks))}
+
+    for local_idx, (chunk, doc) in enumerate(zip(valid_chunks, docs)):
+        original_chunk_idx = valid_index_map[local_idx]
+        entity_ids = _extract_entities_from_doc(doc, local_idx, registry, config, scorer)
+        chunk_entity_map[local_idx] = entity_ids
 
         if config.require_parser and extractor.has_parser:
-            _extract_svo_from_doc(doc, chunk_idx, relation_acc)
+            _extract_svo_from_doc(doc, local_idx, relation_acc)
 
     darwin.log(
         f"[1/3] Done — {len(registry.id_to_node)} raw entities, "
@@ -819,10 +902,7 @@ def extract_graph_from_chunks(
         threshold=config.relation_confidence_threshold,
     )
 
-    darwin.log(
-        f"[2/3] Done — {len(semantic_relations)} confident semantic relations",
-        LogType.SUCCESS,
-    )
+    darwin.log(f"[2/3] Done — {len(semantic_relations)} confident relations", LogType.SUCCESS)
 
     darwin.log("[3/3] Building co-occurrence edges...", LogType.INFO)
 
@@ -832,15 +912,9 @@ def extract_graph_from_chunks(
         max_edges=min(config.max_cooccurrence_edges, len(registry.id_to_node) * 10),
     )
 
-    darwin.log(
-        f"[3/3] Done — {len(cooccurrence_edges)} co-occurrence edges",
-        LogType.SUCCESS,
-    )
+    darwin.log(f"[3/3] Done — {len(cooccurrence_edges)} co-occurrence edges", LogType.SUCCESS)
 
-    darwin.log(
-        f"Pruning to max {config.max_concepts} concepts (Pareto)...",
-        LogType.INFO,
-    )
+    darwin.log(f"Pruning to max {config.max_concepts} concepts...", LogType.INFO)
 
     pruned_nodes, pruned_edges = _pareto_prune(
         registry,
@@ -849,12 +923,8 @@ def extract_graph_from_chunks(
         config.max_concepts,
     )
 
-    darwin.log(
-        f"Pruned: {len(pruned_nodes)} nodes, {len(pruned_edges)} edges",
-        LogType.SUCCESS,
-    )
+    darwin.log(f"Pruned: {len(pruned_nodes)} nodes, {len(pruned_edges)} edges", LogType.SUCCESS)
 
-    # Compute centroids from chunk vectors
     if chunk_vectors is not None and len(chunk_vectors) > 0:
         for node in pruned_nodes:
             valid_indices = [i for i in node.chunk_indices if i < len(chunk_vectors)]
@@ -871,7 +941,7 @@ def extract_graph_from_chunks(
         filename=filename,
         nodes=pruned_nodes,
         edges=pruned_edges,
-        chunk_count=n_chunks,
+        chunk_count=n_all,
         total_entities_extracted=len(registry.id_to_node),
         total_relations_extracted=len(relation_acc.canonical_relations),
         cluster_map=cluster_map,
@@ -880,8 +950,7 @@ def extract_graph_from_chunks(
     )
 
     darwin.log(
-        f"Graph complete: {len(graph.nodes)} nodes, {len(graph.edges)} edges "
-        f"({len([e for e in graph.edges if e.relation_type != 'co_occurrence'])} semantic)",
+        f"Graph complete: {len(graph.nodes)} nodes, {len(graph.edges)} edges",
         LogType.SUCCESS,
     )
 
@@ -897,7 +966,6 @@ def run_graph_extraction_pipeline(
     store: DarwinStore,
     config: GraphExtractionConfig = None,
 ) -> Optional[GraphData]:
-    """Full pipeline: load chunks, extract graph, save to store."""
     if config is None:
         config = GraphExtractionConfig()
 

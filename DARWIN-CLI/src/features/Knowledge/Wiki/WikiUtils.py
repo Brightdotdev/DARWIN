@@ -18,7 +18,6 @@ class WikiPage:
     related:       List[str]
     centroid:      List[float]
     frequency:     int
-    summary:       Optional[str]       = None
     keywords:      List[str]           = field(default_factory=list)
 
     def to_dict(self) -> Dict:
@@ -28,7 +27,6 @@ class WikiPage:
             "related":       self.related,
             "centroid":      self.centroid,
             "frequency":     self.frequency,
-            "summary":       self.summary,
             "keywords":      self.keywords,
         }
 
@@ -40,7 +38,6 @@ class WikiPage:
             related       = d.get("related", []),
             centroid      = d.get("centroid", []),
             frequency     = d.get("frequency", 0),
-            summary       = d.get("summary"),
             keywords      = d.get("keywords", []),
         )
 
@@ -65,12 +62,10 @@ class WikiSearchResult:
 class DocumentWiki:
     filename: str
     pages:    List[WikiPage]           = field(default_factory=list)
-    manifest: Optional[str]           = None
 
     def to_dict(self) -> Dict:
         return {
             "filename": self.filename,
-            "manifest": self.manifest,
             "pages":    [p.to_dict() for p in self.pages],
         }
 
@@ -78,7 +73,6 @@ class DocumentWiki:
     def from_dict(d: Dict) -> "DocumentWiki":
         return DocumentWiki(
             filename = d.get("filename", ""),
-            manifest = d.get("manifest"),
             pages    = [WikiPage.from_dict(p) for p in d.get("pages", [])],
         )
 
@@ -86,9 +80,6 @@ class DocumentWiki:
 @dataclass
 class WikiGenerationArgs:
     files: list[str] = field(default_factory=list)
-    mode:               str            = "index"   # "index" | "summary"
-    provider:          Optional[str]  = None
-    chunks_per_concept: int            = DEFAULT_CHUNKS_PER_CONCEPT
     inspect:            bool           = False
     rerun:              bool           = False
 

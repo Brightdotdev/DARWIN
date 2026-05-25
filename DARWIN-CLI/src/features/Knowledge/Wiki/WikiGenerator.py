@@ -3,189 +3,44 @@ src/core/Knowledge/Wiki/WikiGenerator.py
 ----------------------------------------
 Generates DocumentWiki from GraphData.
 
-Document-agnostic structural chunk filtering via content analysis.
+Optimizations:
+  1. O(n) precomputed structural mask (was O(n²) via repeat-scan).
+  2. Batched spaCy via nlp.pipe() with dynamic batch size.
+  3. Cross-node spaCy cache so shared chunks are processed once.
+  4. O(1) label→id lookup + precomputed degrees for sorting.
+  5. Compiled regexes & frozenset for faster set ops.
+  6. Ordered dedup with dict.fromkeys() instead of list(set()).
 """
 
 import re
-import numpy as np
-from typing import List, Dict, Optional, Callable
-from collections import Counter
+from typing import List, Dict, Optional, Counter as CounterType
+from collections import Counter, defaultdict
 
 from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Knowledge.Graph.GraphUtils import GraphData, ConceptNode, Relationship
-from src.features.Knowledge.Wiki.WikiUtils import (
-    WikiPage,
-    DocumentWiki,
-    DEFAULT_CHUNKS_PER_CONCEPT,
-)
+from src.features.Knowledge.Wiki.WikiUtils import WikiPage, DocumentWiki
 from src.features.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Document-agnostic structural chunk detection
+# Compiled patterns & constants
 # ═══════════════════════════════════════════════════════════════════════════
 
-STRUCTURAL_SIGNALS = {
+_WORD_RE = re.compile(r'\b[a-z]+\b')
+_BIGRAM_WORD_RE = re.compile(r'\b[a-z]{3,}\b')
+_TOC_DIGIT_RE = re.compile(r'\d')
+
+STRUCTURAL_SIGNALS = frozenset({
     "cover", "title", "copyright", "table of contents", "contents",
     "acknowledgments", "preface", "foreword", "introduction", "about",
     "appendix", "index", "glossary", "bibliography", "references",
     "page", "chapter", "book", "part", "section", "volume",
     "ebook", "edition", "published", "publisher", "isbn",
     "all rights reserved", "printed in", "first edition",
-}
+})
 
-
-def _is_structural_chunk(chunk: Chunk, all_chunks: List[Chunk]) -> bool:
-    """Detect structural chunks by content, not index."""
-    text = chunk.clean.lower()
-    words = set(re.findall(r'\b[a-z]+\b', text))
-
-    # Very short chunks
-    if len(chunk.clean) < 200:
-        return True
-
-    # High structural signal ratio
-    structural_found = words & STRUCTURAL_SIGNALS
-    if len(words) > 0 and len(structural_found) / len(words) > 0.3:
-        return True
-
-    # TOC pattern: many short numbered lines
-    lines = [l.strip() for l in chunk.clean.split('\n') if l.strip()]
-    if len(lines) > 3:
-        short_numbered = sum(1 for l in lines if len(l) < 60 and re.search(r'\d', l))
-        if short_numbered / len(lines) > 0.5:
-            return True
-
-    # Repetitive text (headers/footers)
-    text_hash = hash(text[:200])
-    repeat_count = sum(1 for c in all_chunks if hash(c.clean.lower()[:200]) == text_hash)
-    if repeat_count > 2:
-        return True
-
-    # First 5% of doc with very low word count
-    if chunk.index <= len(all_chunks) * 0.05 and len(words) < 20:
-        return True
-
-    return False
-
-
-def _filter_page_chunks(page_chunk_indices: List[int], all_chunks: List[Chunk]) -> List[int]:
-    """Filter a page's chunks to exclude structural ones."""
-    structural = {c.index for c in all_chunks if _is_structural_chunk(c, all_chunks)}
-    filtered = [idx for idx in page_chunk_indices if idx not in structural]
-
-    # Fallback: if all removed, keep the longest non-structural or original
-    if not filtered and page_chunk_indices:
-        candidates = [c for c in all_chunks if c.index in page_chunk_indices]
-        if candidates:
-            non_struct = [c for c in candidates if not _is_structural_chunk(c, all_chunks)]
-            if non_struct:
-                longest = max(non_struct, key=lambda c: len(c.clean))
-            else:
-                longest = max(candidates, key=lambda c: len(c.clean))
-            return [longest.index]
-
-    return filtered
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Prompts
-# ═══════════════════════════════════════════════════════════════════════════
-
-_PAGE_PROMPT = """You are summarizing one concept from a document.
-
-Concept: {concept}
-Related concepts in this document: {related}
-
-Source passages:
-{context}
-
-Write a 3-5 sentence summary of what this document says about "{concept}".
-Be specific to this document. Do not add outside knowledge.
-Return only the summary, no preamble."""
-
-
-_MANIFEST_PROMPT = """You are writing a one-paragraph overview of a document.
-
-The document covers these concepts:
-{concept_summaries}
-
-Write a single paragraph describing what this document is about.
-Themes and purpose only. No author names, dates, or specific claims.
-Return only the paragraph, no preamble."""
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Anchor chunk selection
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _find_best_anchor_chunk(page: WikiPage, chunks: List[Chunk]) -> Optional[Chunk]:
-    """Text overlap — no embeddings needed."""
-    concept_words = set(page.concept.lower().split())
-
-    best_chunk = None
-    best_score = -1
-
-    for idx in page.chunk_indices:
-        chunk = next((c for c in chunks if c.index == idx), None)
-        if not chunk:
-            continue
-
-        chunk_text = chunk.clean.lower()
-        chunk_words = set(re.findall(r'\b[a-z]{3,}\b', chunk_text))
-        overlap = len(concept_words & chunk_words)
-
-        if page.concept.lower() in chunk_text:
-            overlap += 10
-        elif any(w in chunk_text for w in concept_words if len(w) > 4):
-            overlap += 3
-
-        if overlap > best_score:
-            best_score = overlap
-            best_chunk = chunk
-
-    return best_chunk
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Helpers
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _build_edge_map(graph: GraphData) -> Dict[str, List[str]]:
-    """Build {node_id: [neighbor_labels]} from graph edges."""
-    node_labels = {n.id: n.label for n in graph.nodes}
-
-    semantic_neighbors: Dict[str, set] = {}
-    cooc_neighbors: Dict[str, set] = {}
-
-    for edge in graph.edges:
-        src, tgt = edge.source, edge.target
-        if edge.relation_type != "co_occurrence":
-            semantic_neighbors.setdefault(src, set()).add(tgt)
-            semantic_neighbors.setdefault(tgt, set()).add(src)
-        else:
-            cooc_neighbors.setdefault(src, set()).add(tgt)
-            cooc_neighbors.setdefault(tgt, set()).add(src)
-
-    result = {}
-    for nid, label in node_labels.items():
-        related = []
-        for target in semantic_neighbors.get(nid, set()):
-            tlabel = node_labels.get(target)
-            if tlabel and tlabel not in related:
-                related.append(tlabel)
-        for target in cooc_neighbors.get(nid, set()):
-            tlabel = node_labels.get(target)
-            if tlabel and tlabel not in related:
-                related.append(tlabel)
-        result[nid] = related
-
-    return result
-
-
-# Stopwords for keyword extraction — expanded from original
-_KEYWORD_STOPS = {
+_KEYWORD_STOPS = frozenset({
     "the", "and", "for", "are", "but", "not", "you", "all", "can", "had", "her",
     "was", "one", "our", "out", "day", "get", "has", "him", "his", "how", "man",
     "new", "now", "old", "see", "two", "way", "who", "boy", "did", "its", "let",
@@ -199,90 +54,63 @@ _KEYWORD_STOPS = {
     "world", "people", "between", "another", "because", "without", "against",
     "nothing", "himself", "something", "anything", "everything", "someone",
     "anyone", "everyone", "book", "chapter", "part", "section", "page",
-}
+})
 
 
-def _extract_keywords(
-    chunk_indices: List[int],
-    chunks: List[Chunk],
-    spacy_extractor=None,
-    max_keywords: int = 5,
-) -> List[str]:
-    """Extract top keywords from a cluster's chunks."""
-    counts: Counter = Counter()
+# ═══════════════════════════════════════════════════════════════════════════
+# O(n) structural chunk detection
+# ═══════════════════════════════════════════════════════════════════════════
 
-    for idx in chunk_indices[:10]:
-        if idx >= len(chunks):
+def _precompute_structural_mask(chunks: List[Chunk]) -> set:
+    """One-pass structural detection. Replaces the old O(n²) repeat-scan."""
+    if not chunks:
+        return set()
+
+    total = len(chunks)
+    five_pct = total * 0.05
+    mask: set = set()
+
+    # 1. Precompute fingerprints for repeat detection
+    fingerprints: CounterType[str] = Counter(c.clean.lower()[:200] for c in chunks)
+
+    # 2. Single-pass evaluation
+    for chunk in chunks:
+        text = chunk.clean.lower()
+        words = set(_WORD_RE.findall(text))
+
+        # Very short chunks
+        if len(chunk.clean) < 200:
+            mask.add(chunk.index)
             continue
 
-        text = chunks[idx].clean.lower()
+        # High structural signal ratio
+        if words:
+            hits = len(words & STRUCTURAL_SIGNALS)
+            if hits / len(words) > 0.3:
+                mask.add(chunk.index)
+                continue
 
-        # Try spaCy noun chunks
-        if spacy_extractor and hasattr(spacy_extractor, 'nlp'):
-            try:
-                doc = spacy_extractor.nlp(text[:3000])
-                for nc in doc.noun_chunks:
-                    phrase = " ".join(
-                        t.text for t in nc
-                        if not t.is_stop and len(t.text) > 2
-                    )
-                    if len(phrase) > 3:
-                        counts[phrase.lower().strip()] += 1
-            except Exception:
-                pass
+        # TOC pattern: many short numbered lines
+        lines = [l.strip() for l in chunk.clean.split('\n') if l.strip()]
+        if len(lines) > 3:
+            short_numbered = sum(
+                1 for l in lines if len(l) < 60 and _TOC_DIGIT_RE.search(l)
+            )
+            if short_numbered / len(lines) > 0.5:
+                mask.add(chunk.index)
+                continue
 
-        # Fallback: simple bigram extraction
-        words = re.findall(r'\b[a-z]{3,}\b', text)
-        words = [w for w in words if w not in _KEYWORD_STOPS]
-
-        for i in range(len(words) - 1):
-            bigram = f"{words[i]} {words[i + 1]}"
-            # Reject stopword-only bigrams that slipped through
-            if words[i] not in _KEYWORD_STOPS and words[i + 1] not in _KEYWORD_STOPS:
-                counts[bigram] += 1
-
-    return [k for k, _ in counts.most_common(max_keywords)]
-
-
-def _call_llm(client, prompt: str) -> Optional[str]:
-    """Call the LLM via the provided LLMClient."""
-    if client is None:
-        return None
-
-    try:
-        from src.features.LLM.LLMTypes import LLMResponse
-        resp: LLMResponse = client.call_small(
-            [{"role": "user", "content": prompt}],
-            temperature=0.3,
-        )
-        if resp.error or not resp.text:
-            darwin.log(f"LLM call failed: {resp.error}", LogType.WARNING)
-            return None
-        return resp.text.strip()
-    except Exception as e:
-        darwin.log(f"LLM call exception: {e}", LogType.WARNING)
-        return None
-
-
-def _build_context(
-    chunk_indices: List[int],
-    chunks: List[Chunk],
-    chunks_per_concept: int,
-    max_chars: int = 4000,
-) -> str:
-    """Assemble chunk text into LLM context string."""
-    parts = []
-    total = 0
-    for idx in chunk_indices[:chunks_per_concept]:
-        if idx >= len(chunks):
+        # Repetitive text (headers/footers)
+        if fingerprints[text[:200]] > 2:
+            mask.add(chunk.index)
             continue
-        c = chunks[idx]
-        part = f"[Page {c.page}] {c.heading or ''}\n{c.clean[:600]}".strip()
-        if total + len(part) > max_chars:
-            break
-        parts.append(part)
-        total += len(part)
-    return "\n\n---\n\n".join(parts)
+
+        # First 5% of doc with very low word count
+        if chunk.index <= five_pct and len(words) < 20:
+            mask.add(chunk.index)
+            continue
+
+    return mask
 
 
 def _is_structural_node(node: ConceptNode) -> bool:
@@ -312,7 +140,7 @@ def _is_structural_node(node: ConceptNode) -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Schema guard for GraphData deserialization
+# Schema guard
 # ═══════════════════════════════════════════════════════════════════════════
 
 class GraphDataSchema:
@@ -347,6 +175,107 @@ class GraphDataSchema:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _build_edge_map(graph: GraphData) -> Dict[str, List[str]]:
+    """Build {node_id: [neighbor_labels]} from graph edges — O(edges)."""
+    node_labels = {n.id: n.label for n in graph.nodes}
+
+    semantic_neighbors: Dict[str, set] = {}
+    cooc_neighbors: Dict[str, set] = {}
+
+    for edge in graph.edges:
+        src, tgt = edge.source, edge.target
+        if edge.relation_type != "co_occurrence":
+            semantic_neighbors.setdefault(src, set()).add(tgt)
+            semantic_neighbors.setdefault(tgt, set()).add(src)
+        else:
+            cooc_neighbors.setdefault(src, set()).add(tgt)
+            cooc_neighbors.setdefault(tgt, set()).add(src)
+
+    result: Dict[str, List[str]] = {}
+    for nid, label in node_labels.items():
+        related: List[str] = []
+        seen: set = set()
+        for target in semantic_neighbors.get(nid, ()):
+            tlabel = node_labels.get(target)
+            if tlabel and tlabel not in seen:
+                seen.add(tlabel)
+                related.append(tlabel)
+        for target in cooc_neighbors.get(nid, ()):
+            tlabel = node_labels.get(target)
+            if tlabel and tlabel not in seen:
+                seen.add(tlabel)
+                related.append(tlabel)
+        result[nid] = related
+
+    return result
+
+
+def _extract_keywords(
+    chunk_indices: List[int],
+    chunks: List[Chunk],
+    spacy_extractor=None,
+    max_keywords: int = 5,
+    batch_size: int = 32,
+    spacy_cache: Optional[Dict[int, CounterType[str]]] = None,
+) -> List[str]:
+    """
+    Extract top keywords with batched spaCy and cross-node chunk caching.
+    If multiple nodes reference the same chunk, spaCy processes it once.
+    """
+    counts: CounterType[str] = Counter()
+
+    # Deduplicate while preserving order
+    unique_indices = list(dict.fromkeys(idx for idx in chunk_indices[:10] if idx < len(chunks)))
+    if not unique_indices:
+        return []
+
+    # ── Batched spaCy with cache ──────────────────────────────────────────
+    if spacy_extractor and hasattr(spacy_extractor, 'nlp'):
+        try:
+            nlp = spacy_extractor.nlp
+            cache = spacy_cache if spacy_cache is not None else {}
+
+            # Only process chunks we haven't seen yet
+            uncached = [idx for idx in unique_indices if idx not in cache]
+            if uncached:
+                texts = [chunks[idx].clean[:3000] for idx in uncached]
+                for idx, doc in zip(uncached, nlp.pipe(texts, batch_size=batch_size)):
+                    idx_counts: CounterType[str] = Counter()
+                    for nc in doc.noun_chunks:
+                        phrase = " ".join(
+                            t.text for t in nc
+                            if not t.is_stop and len(t.text) > 2
+                        )
+                        if len(phrase) > 3:
+                            idx_counts[phrase.lower().strip()] += 1
+                    cache[idx] = idx_counts
+
+            # Merge cached results for this request
+            for idx in unique_indices:
+                counts.update(cache.get(idx, Counter()))
+
+        except Exception:
+            pass  # Fall through to bigram fallback
+
+    # ── Fallback bigram extraction ────────────────────────────────────────
+    if not counts:
+        for idx in unique_indices:
+            text = chunks[idx].clean.lower()
+            words = _BIGRAM_WORD_RE.findall(text)
+            words = [w for w in words if w not in _KEYWORD_STOPS]
+
+            for i in range(len(words) - 1):
+                w1, w2 = words[i], words[i + 1]
+                if w1 not in _KEYWORD_STOPS and w2 not in _KEYWORD_STOPS:
+                    counts[f"{w1} {w2}"] += 1
+
+    return [k for k, _ in counts.most_common(max_keywords)]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Stage 1 — Build wiki from graph
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -358,24 +287,55 @@ def build_wiki_from_graph(
     """Build DocumentWiki directly from GraphData."""
     darwin.log(f"Building wiki from graph: {len(graph.nodes)} concepts", LogType.INFO)
 
+    # ── Precompute O(1) lookups & masks ─────────────────────────────────
     edge_map = _build_edge_map(graph)
+    structural_mask = _precompute_structural_mask(chunks)
 
-    pages = []
+    # Precompute node degrees for sorting
+    node_degrees: CounterType[str] = Counter()
+    for e in graph.edges:
+        node_degrees[e.source] += 1
+        node_degrees[e.target] += 1
+
+    # Fast label → node_id lookup (was O(n) per page)
+    label_to_id = {n.label: n.id for n in graph.nodes}
+
+    # Dynamic batch size: scales with doc size, bounded for memory safety
+    n_chunks = len(chunks)
+    spacy_batch_size = min(128, max(16, n_chunks // 50))
+
+    # Shared spaCy cache across all nodes
+    spacy_cache: Dict[int, CounterType[str]] = {}
+
+    pages: List[WikiPage] = []
     for node in graph.nodes:
         if _is_structural_node(node):
             continue
 
-        centroid = node.centroid if hasattr(node, 'centroid') else []
+        centroid = getattr(node, 'centroid', [])
         related = edge_map.get(node.id, [])
 
-        # Filter structural chunks by content, not index
-        valid_chunks = _filter_page_chunks(node.chunk_indices, chunks)
+        # Filter structural chunks using precomputed mask
+        valid_chunks = [idx for idx in node.chunk_indices if idx not in structural_mask]
 
-        # Fallback: if all filtered out, keep original
-        if not valid_chunks:
-            valid_chunks = node.chunk_indices
+        # Fallback: if all filtered out, keep the longest non-structural or original
+        if not valid_chunks and node.chunk_indices:
+            candidates = [chunks[idx] for idx in node.chunk_indices if idx < len(chunks)]
+            if candidates:
+                non_struct = [c for c in candidates if c.index not in structural_mask]
+                if non_struct:
+                    longest = max(non_struct, key=lambda c: len(c.clean))
+                else:
+                    longest = max(candidates, key=lambda c: len(c.clean))
+                valid_chunks = [longest.index]
 
-        keywords = _extract_keywords(valid_chunks, chunks, spacy_extractor)
+        keywords = _extract_keywords(
+            valid_chunks,
+            chunks,
+            spacy_extractor,
+            batch_size=spacy_batch_size,
+            spacy_cache=spacy_cache,
+        )
 
         # Fallback: if spaCy keywords empty, use concept words + related
         if not keywords:
@@ -385,7 +345,8 @@ def build_wiki_from_graph(
             ]
             keywords = concept_words[:5]
 
-        keywords = list(set(keywords + [r.lower() for r in related[:3]]))[:10]
+        # Ordered dedup without set() shuffle
+        keywords = list(dict.fromkeys(keywords + [r.lower() for r in related[:3]]))[:10]
 
         pages.append(WikiPage(
             concept=node.label,
@@ -396,14 +357,9 @@ def build_wiki_from_graph(
             keywords=keywords,
         ))
 
-    # Sort by connectivity-weighted frequency
-    node_degrees = Counter()
-    for e in graph.edges:
-        node_degrees[e.source] += 1
-        node_degrees[e.target] += 1
-
+    # Sort by connectivity-weighted frequency — O(pages) now
     for page in pages:
-        node_id = next((n.id for n in graph.nodes if n.label == page.concept), None)
+        node_id = label_to_id.get(page.concept)
         deg = node_degrees.get(node_id, 0)
         page._sort_score = page.frequency * (1 + deg / 10)
 
@@ -419,79 +375,12 @@ def build_wiki_from_graph(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Stage 2 — LLM enrichment (opt-in)
-# ═══════════════════════════════════════════════════════════════════════════
-
-def generate_wiki_summaries(
-    wiki: DocumentWiki,
-    chunks: List[Chunk],
-    client,
-    chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
-    max_context_chars: int = 4000,
-) -> DocumentWiki:
-    """Fill in WikiPage.summary and DocumentWiki.manifest via LLM."""
-    pending = [p for p in wiki.pages if p.summary is None]
-
-    for i, page in enumerate(pending):
-        darwin.log(f"  [{i+1}/{len(pending)}] {page.concept}", LogType.INFO)
-
-        context = _build_context(
-            page.chunk_indices, chunks, chunks_per_concept, max_context_chars
-        )
-        if not context:
-            darwin.log(f"  No context for '{page.concept}' — skipping", LogType.WARNING)
-            continue
-
-        related_str = ", ".join(page.related[:5]) if page.related else "none"
-        prompt = _PAGE_PROMPT.format(
-            concept=page.concept,
-            related=related_str,
-            context=context,
-        )
-
-        summary = _call_llm(client, prompt)
-        if summary:
-            page.summary = summary.strip()
-        else:
-            darwin.log(f"  LLM failed for '{page.concept}' — leaving pending", LogType.WARNING)
-
-    if wiki.manifest is None:
-        completed = [p for p in wiki.pages if p.summary]
-        if completed:
-            darwin.log("Generating document manifest...", LogType.INFO)
-            concept_summaries = "\n".join(
-                f"- {p.concept}: {p.summary[:120]}..."
-                if p.summary and len(p.summary) > 120
-                else f"- {p.concept}: {p.summary or '(no summary)'}"
-                for p in completed[:20]
-            )
-            manifest = _call_llm(client,
-                _MANIFEST_PROMPT.format(concept_summaries=concept_summaries)
-            )
-            if manifest:
-                wiki.manifest = manifest.strip()
-                darwin.log("Manifest generated", LogType.SUCCESS)
-            else:
-                darwin.log("Manifest generation failed — leaving None", LogType.WARNING)
-
-    completed_count = sum(1 for p in wiki.pages if p.summary)
-    darwin.log(
-        f"Summaries complete: {completed_count}/{len(wiki.pages)} pages",
-        LogType.SUCCESS,
-    )
-    return wiki
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # Pipeline entry point
 # ═══════════════════════════════════════════════════════════════════════════
 
 def run_wiki_pipeline(
     filename: str,
     store: DarwinStore,
-    mode: str = "index",
-    provider: Optional[str] = None,
-    chunks_per_concept: int = DEFAULT_CHUNKS_PER_CONCEPT,
     rerun: bool = False,
     completed_files: Optional[List[str]] = None,
 ) -> Optional[DocumentWiki]:
@@ -594,32 +483,9 @@ def run_wiki_pipeline(
         spacy_extractor=spacy_extractor,
     )
 
-    if mode == "summary":
-        darwin.log("Initializing LLMManager for wiki summary...", LogType.INFO)
-        from src.features.LLM.LLMManager import LLMManager
-        LLMManager.initialize()
-
-        if provider and LLMManager._config:
-            try:
-                LLMManager.switch_default_provider(provider)
-                darwin.log(f"Using provider: {provider}", LogType.INFO)
-            except Exception as e:
-                darwin.log(str(e), LogType.ERROR)
-                return None
-
-        client = LLMManager.get_client()
-
-        wiki = generate_wiki_summaries(
-            wiki=wiki,
-            chunks=chunks,
-            client=client,
-            chunks_per_concept=chunks_per_concept,
-        )
-
     store.save_wiki(filename, wiki)
     darwin.log(
-        f"Wiki saved — {len(wiki.pages)} pages, "
-        f"manifest={'yes' if wiki.manifest else 'pending'}",
+        f"Wiki saved — {len(wiki.pages)} pages",
         LogType.SUCCESS,
     )
     return wiki

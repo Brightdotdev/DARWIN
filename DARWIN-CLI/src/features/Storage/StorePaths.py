@@ -39,33 +39,7 @@ def is_file_hash(value: str) -> bool:
 
 
 class StorePaths:
-    """
-    Content-addressed storage. The same PDF always maps to the same
-    index folder regardless of location or filename.
-
-    Layout:
-        ~/.darwin/
-        ├── models/                    ← AI models
-        ├── config.json                ← global user preferences
-        ├── file_registry.json         ← global file tracker
-        ├── indexes/
-        │   └── {sha256}/
-        │       ├── meta.json
-        │       ├── markdown.md
-        │       ├── chunks.json
-        │       ├── embeddings_{model}.npz
-        │       ├── embeddings_{model}.meta.json
-        │       ├── vector.usearch
-        │       ├── vector.json
-        │       ├── bm25.npz
-        │       ├── bm25_meta.json
-        │       ├── stopwords.json
-        │       ├── graph/
-        │       ├── wiki/
-        │       └── images/
-        └── checkpoints/
-    """
-
+    
     def __init__(self, darwin_dir: Path = None):
         self.root = darwin_dir or default_darwin_dir()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -96,7 +70,13 @@ class StorePaths:
         path = self.root / "checkpoints"
         path.mkdir(parents=True, exist_ok=True)
         return path
-
+    
+    @property
+    def conversations_dir(self) -> Path:
+        """Directory for conversation storage."""
+        path = self.root / "conversations"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
     # ── Core resolution ───────────────────────────────────────────────────
 
     def file_hash(self, file_path: str | Path) -> str:

@@ -1,5 +1,5 @@
 """
-src/Utils/api_key_manager.py
+src/lib/KeyManager.py
 Secure API key management using OS keychain.
 """
 
@@ -9,17 +9,21 @@ import logging
 import keyring
 import litellm
 
-from src.core.Logger.DarwinLogger import darwin , LogEvent
+from src.core.Logger.DarwinLogger import darwin, LogType
+from src.features.LLM.LLMConfig import PROVIDER_ENV_MAP
+
 APP_NAME = "darwin"
 
+
 # --------------------------------------------------------------------------------
-# Validation functions – each makes a cheap, authenticated API call to verify the key
+# Validation functions – each makes a cheap, authenticated API call to verify
 # --------------------------------------------------------------------------------
 
 def _validate_openai(key: str) -> bool:
     from openai import OpenAI
     OpenAI(api_key=key).models.list(limit=1, timeout=10)
     return True
+
 
 def _validate_anthropic(key: str) -> bool:
     litellm.completion(
@@ -29,6 +33,7 @@ def _validate_anthropic(key: str) -> bool:
     )
     return True
 
+
 def _validate_google(key: str) -> bool:
     litellm.completion(
         model="gemini/gemini-2.0-flash",
@@ -36,6 +41,7 @@ def _validate_google(key: str) -> bool:
         max_tokens=1, api_key=key, timeout=10, num_retries=1,
     )
     return True
+
 
 def _validate_mistral(key: str) -> bool:
     litellm.completion(
@@ -45,6 +51,7 @@ def _validate_mistral(key: str) -> bool:
     )
     return True
 
+
 def _validate_groq(key: str) -> bool:
     litellm.completion(
         model="groq/llama-3.1-8b-instant",
@@ -53,10 +60,12 @@ def _validate_groq(key: str) -> bool:
     )
     return True
 
+
 def _validate_cohere(key: str) -> bool:
     import cohere
     cohere.Client(api_key=key).list_models()
     return True
+
 
 def _validate_together(key: str) -> bool:
     litellm.completion(
@@ -65,6 +74,7 @@ def _validate_together(key: str) -> bool:
         max_tokens=1, api_key=key, timeout=10, num_retries=1,
     )
     return True
+
 
 def _validate_openrouter(key: str) -> bool:
     litellm.completion(
@@ -75,23 +85,36 @@ def _validate_openrouter(key: str) -> bool:
     return True
 
 
+def _validate_deepseek(key: str) -> bool:
+    litellm.completion(
+        model="deepseek/deepseek-chat",
+        messages=[{"role": "user", "content": "Hi"}],
+        max_tokens=1, api_key=key, timeout=10, num_retries=1,
+    )
+    return True
+
+
 # --------------------------------------------------------------------------------
-# Registry of supported providers – maps provider name → (env var, validator)
+# Registry derived from single source of truth (PROVIDER_ENV_MAP) to avoid drift
 # --------------------------------------------------------------------------------
-PROVIDER_REGISTRY = {
-    "openai":      ("OPENAI_API_KEY",      _validate_openai),
-    "anthropic":   ("ANTHROPIC_API_KEY",   _validate_anthropic),
-    "google":      ("GEMINI_API_KEY",      _validate_google),
-    "mistral":     ("MISTRAL_API_KEY",     _validate_mistral),
-    "groq":        ("GROQ_API_KEY",        _validate_groq),
-    "cohere":      ("COHERE_API_KEY",      _validate_cohere),
-    "together":    ("TOGETHER_API_KEY",    _validate_together),
-    "openrouter":  ("OPENROUTER_API_KEY",  _validate_openrouter),
+
+_VALIDATORS = {
+    "openai": _validate_openai,
+    "anthropic": _validate_anthropic,
+    "google": _validate_google,
+    "mistral": _validate_mistral,
+    "groq": _validate_groq,
+    "cohere": _validate_cohere,
+    "together": _validate_together,
+    "openrouter": _validate_openrouter,
+    "deepseek": _validate_deepseek,
 }
 
-# Also used by LLMClient for early‑warning logging (optional, kept for convenience)
-PROVIDER_ENV_MAP = {name: env for name, (env, _) in PROVIDER_REGISTRY.items()}
-# Note: Ollama is handled separately (no API key required).
+PROVIDER_REGISTRY = {
+    name: (env_var, _VALIDATORS[name])
+    for name, env_var in PROVIDER_ENV_MAP.items()
+    if name in _VALIDATORS
+}
 
 
 # --------------------------------------------------------------------------------
@@ -103,12 +126,13 @@ def set_api_key(provider: str, key: str, validate: bool = True) -> None:
     Save an API key for `provider` into the OS keychain and set it
     for the current process. Optionally validate before saving.
     """
-    provider = provider.lower()
+    provider = provider.lower().strip()
     if provider not in PROVIDER_REGISTRY:
         raise ValueError(
             f"Unsupported provider: '{provider}'. Supported: {list(PROVIDER_REGISTRY)}"
         )
-    if not key.strip():
+    key = key.strip()
+    if not key:
         raise ValueError("API key must not be empty")
 
     env_var, validator = PROVIDER_REGISTRY[provider]
@@ -121,52 +145,69 @@ def set_api_key(provider: str, key: str, validate: bool = True) -> None:
         except Exception as e:
             raise ValueError(f"Invalid API key for {provider}: {e}") from e
 
-    # Persist to keychain
     try:
         keyring.set_password(APP_NAME, provider, key)
     except Exception as e:
         raise RuntimeError(f"Failed to store key in keychain: {e}") from e
 
-    # Set environment variable for the running process
     os.environ[env_var] = key
     darwin.log(f"API key for {provider} saved and activated.")
 
 
-def load_keys_from_keychain(log: bool = False) -> None:
+def load_keys_from_keychain(log: bool = True) -> None:
     """
     Load all stored API keys from keychain into environment variables.
     Skips any key already set in the environment (respects manual overrides).
     Call once at application startup.
     """
+    loaded = 0
+    skipped = 0
+    failed = 0
+
     for provider, (env_var, _) in PROVIDER_REGISTRY.items():
-        if env_var in os.environ:
+        if env_var in os.environ and os.environ[env_var].strip():
             if log:
                 darwin.log(f"{env_var} already set, skipping keychain.")
+            skipped += 1
             continue
         try:
             key = keyring.get_password(APP_NAME, provider)
         except Exception as e:
             if log:
-                darwin.log(f"Could not read {provider} from keychain: {e}")
+                darwin.log(f"Could not read {provider} from keychain: {e}", LogType.WARNING)
+            failed += 1
             continue
+
         if key:
-            os.environ[env_var] = key
-            if log:
-                darwin.log(f"Loaded {env_var} from keychain.")
+            key = key.strip()
+            if key:
+                os.environ[env_var] = key
+                loaded += 1
+                if log:
+                    darwin.log(f"Loaded {env_var} from keychain.")
+            else:
+                if log:
+                    darwin.log(f"Empty key for {provider} in keychain, ignoring.")
         else:
             if log:
                 darwin.log(f"No saved key for {provider} in keychain.")
 
+    if log:
+        darwin.log(
+            f"Keychain summary: {loaded} loaded, {skipped} already present, {failed} failed.",
+            LogType.INFO if loaded else LogType.WARNING,
+        )
+
 
 def clear_api_key(provider: str) -> None:
     """Remove a saved API key from the keychain and the current environment."""
-    provider = provider.lower()
-    env_var, _ = PROVIDER_REGISTRY.get(provider, (None, None))
+    provider = provider.lower().strip()
+    env_var = PROVIDER_ENV_MAP.get(provider)
     if not env_var:
         raise ValueError(f"Unknown provider: '{provider}'")
     try:
         keyring.delete_password(APP_NAME, provider)
     except keyring.errors.PasswordDeleteError:
-        pass  # already gone
+        pass
     os.environ.pop(env_var, None)
     darwin.log(f"Removed API key for {provider}.")

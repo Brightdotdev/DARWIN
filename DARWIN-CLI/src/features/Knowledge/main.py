@@ -100,9 +100,6 @@ def _run_wikis( args : KnowledgePipelineArgs, store: DarwinStore) -> list[str] |
         
         wiki_args = WikiGenerationArgs(
             files=args.files or [],
-            mode=args.wiki_mode,
-            provider=args.llm_provider,
-            chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,
         )
@@ -130,7 +127,6 @@ def handle_knowledge(args: KnowledgePipelineArgs, store: DarwinStore) -> None:
         f"graph={not args.wiki_only} | "
         f"wiki={not args.graph_only} | "
         f"preset={args.preset or 'none'} | "
-        f"wiki_mode={args.wiki_mode}"
     )
 
     graph_ready = filenames  # assume all ready if skipping graph pass
@@ -181,10 +177,8 @@ async def main() -> int:
 
 
     # wiki args
-    parser.add_argument("--wiki-mode", "--wm", default="index",
-                        choices=["index", "summary"])
-    parser.add_argument("--llm-provider")
-    parser.add_argument("--chunks-per-concept", type=int, default=DEFAULT_CHUNKS_PER_CONCEPT)
+
+
 
     # shared
     parser.add_argument("--inspect", "-i", action="store_true")
@@ -224,9 +218,6 @@ async def main() -> int:
             min_freq=args.min_freq,
             graph_max_concepts=args.graph_max_concepts,
             visualize=args.visualize,
-            wiki_mode=args.wiki_mode,
-            llm_provider=args.llm_provider,
-            chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,
             json_output=getattr(args, 'json_output', False),

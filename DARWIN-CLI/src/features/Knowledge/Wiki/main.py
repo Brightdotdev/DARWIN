@@ -28,13 +28,7 @@ def _print_inspection(wiki, filename: str) -> None:
     darwin.log(f"{'='*60}", LogType.INFO)
 
     darwin.log(f"Pages: {len(wiki.pages)}", LogType.INFO)
-    darwin.log(f"Manifest: {'generated' if wiki.manifest else 'pending'}", LogType.INFO)
-    summaries_done = sum(1 for p in wiki.pages if p.summary)
-    darwin.log(f"Summaries: {summaries_done}/{len(wiki.pages)}", LogType.INFO)
 
-    if wiki.manifest:
-        darwin.log(f"\n--- Manifest ---", LogType.INFO)
-        darwin.log(wiki.manifest[:400], LogType.INFO)
 
     darwin.log(f"\n--- Concept Pages ---", LogType.INFO)
     for page in wiki.pages[:5]:
@@ -45,10 +39,6 @@ def _print_inspection(wiki, filename: str) -> None:
             f"related: {related_str}",
             LogType.INFO,
         )
-        if page.summary:
-            darwin.log(f"  {page.summary[:150]}...", LogType.INFO)
-        darwin.log("-" * 40)
-
     darwin.log(f"{'='*60}", LogType.INFO)
 
 
@@ -71,9 +61,7 @@ def handle_wiki(args: WikiGenerationArgs,store) -> List[str] | None:
         return
 
     darwin.log(f"Wiki generation — {len(filenames)} file(s)", LogType.INFO)
-    darwin.log(f"Mode: {args.mode}")
-    if args.mode == "summary":
-        darwin.log(f"LLM Provider: {args.provider}")
+    
 
     succeeded = failed = 0
     processed_wikis = []
@@ -82,8 +70,6 @@ def handle_wiki(args: WikiGenerationArgs,store) -> List[str] | None:
         try:
             wiki = run_wiki_pipeline(
                 filename=filename, store=store,
-                mode=args.mode, provider=args.provider,
-                chunks_per_concept=args.chunks_per_concept,
                 rerun=args.rerun,
                 completed_files=processed_wikis
             )
@@ -111,9 +97,6 @@ async def main() -> int:
 
     parser = argparse.ArgumentParser(description="Generate Wikipedia-style docs from concept graphs")
     parser.add_argument("--file", "-f", nargs="+", default=None)
-    parser.add_argument("--mode", "-m", default="index", choices=["index", "summary"])
-    parser.add_argument("--provider", help="LLM Provider for wiiki")
-    parser.add_argument("--chunks-per-concept", type=int, default=DEFAULT_CHUNKS_PER_CONCEPT)
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--rerun", "-R", action="store_true")
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
@@ -137,9 +120,6 @@ async def main() -> int:
     try:
         wiki_args = WikiGenerationArgs(
             files=args.file or [],
-            mode=args.mode,
-            provider=args.provider,
-            chunks_per_concept=args.chunks_per_concept,
             inspect=args.inspect,
             rerun=args.rerun,
         )

@@ -1,323 +1,449 @@
+#!/usr/bin/env python3
 """
-src/core/HybridSearch/main.py - Hybrid search
+main.py — Darwin LLM Manager: onboarding, configuration, and test harness.
 """
 
 import sys
+import asyncio
+import argparse
+import json
 import os
 import warnings
-import argparse
-import asyncio
+import requests
 from pathlib import Path
-from typing import List
+from typing import Optional, List
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-# CHANGED: suppress LiteLLM Bedrock warning spam
+# Suppress noisy LiteLLM/Bedrock warnings early
 warnings.filterwarnings("ignore", module="litellm")
 os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
-from src.features.Retrival.Hybrid.HybridSearch import (
-    search_single_document_hybrid,
-    search_across_documents_hybrid,
-)
-from src.features.Retrival.lib import (HybridSearchResult)
-from src.features.Retrival.Hybrid.HybridSearchUtils import (
-    HybridSearchArgs,
-    DEFAULT_TOP_K,
-    DEFAULT_RRF_K,
-    DEFAULT_SEMANTIC_WEIGHT,
-    DEFAULT_KEYWORD_WEIGHT,
-    DEFAULT_POOL_SIZE,
-    DEFAULT_ALPHA,
-    DEFAULT_BETA,
-    OverlapDirection,
-    format_hybrid_results
-)
-from src.features.Storage.DarwinStore import DarwinStore
-from src.lib.Utils import scan_folder
+from src.features.LLM.LLMManager import LLMManager
+from src.features.LLM.LLMTypes import LLMResponse
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
+from src.lib.KeyManager import (
+    set_api_key,
+    load_keys_from_keychain,
+    clear_api_key,
+    PROVIDER_REGISTRY,
+)
+from src.features.LLM.ModelPicker import is_likely_llm_model, get_default_models
+from src.features.LLM.LLMConfig import PROVIDER_ENV_MAP
+
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
 
 
-# ============================================================================
-# Inspect
-# =========================================================================
-
-def _print_inspection(results: List[HybridSearchResult], query: str) -> None:
-    """Print detailed inspection of hybrid search results."""
-    darwin.log(f"\n{'='*60}", LogType.INFO)
-    darwin.log(f"Hybrid Search Inspection — '{query}'", LogType.INFO)
-    darwin.log(f"{'='*60}", LogType.INFO)
-    
-    darwin.log(f"Total results: {len(results)}", LogType.INFO)
-    if results:
-        darwin.log(f"Top RRF score: {results[0].rrf_score:.4f}", LogType.INFO)
-        darwin.log(f"Top final score: {results[0].final_score:.4f}", LogType.INFO)
-    
-    darwin.log(f"\n--- Top Results ---", LogType.INFO)
-    
-    for i, r in enumerate(results[:5], 1):
-        darwin.log(f"\n[{i}] Rank {i}", LogType.INFO)
-        darwin.log(f"    Final score: {r.final_score:.4f}", LogType.INFO)
-        darwin.log(f"    RRF score: {r.rrf_score:.4f}", LogType.INFO)
-        if r.semantic_score:
-            darwin.log(f"    Semantic: {r.semantic_score:.4f}", LogType.INFO)
-        if r.keyword_score:
-            darwin.log(f"    Keyword: {r.keyword_score:.4f}", LogType.INFO)
-        if r.matched_terms:
-            darwin.log(f"    Matched terms: {', '.join(list(r.matched_terms)[:10])}", LogType.INFO)
-        darwin.log(f"    Source: {r.source}", LogType.INFO)
-        darwin.log(f"    Page: {r.page}" + (f"-{r.page_end}" if r.page_end != r.page else ""), LogType.INFO)
-        darwin.log(f"    Heading: {r.heading or '(none)'}", LogType.INFO)
-        if r.links:
-            darwin.log(f"    Links: {len(r.links)} found", LogType.INFO)
-        if r.overlap_direction != OverlapDirection.NONE:
-            darwin.log(f"    Overlap: ⚠️ This chunk has {r.overlap_direction.value} overlap", LogType.WARNING)
-        
-        preview = r.text[:500].replace("\n", " ").strip()
-        if len(r.text) > 500:
-            preview += "..."
-        darwin.log(f"    Preview: {preview}", LogType.INFO)
-        darwin.log(f"    {'-'*40}", LogType.INFO)
-    
-    darwin.log(f"{'='*60}", LogType.INFO)
+# -------------------------------------------------------------------
+# Input helpers
+# -------------------------------------------------------------------
+def _resolve_model_input(user_input: str, models: List[str], default: str) -> str:
+    """
+    Accept either a raw model name or a 1-based index from a displayed list.
+    This prevents '3' from being saved as a model ID when the user means
+    'the 3rd item in the list above'.
+    """
+    user_input = user_input.strip()
+    if not user_input:
+        return default
+    if user_input.isdigit():
+        idx = int(user_input) - 1
+        if 0 <= idx < len(models):
+            return models[idx]
+        darwin.log(f"Invalid selection '{user_input}'; using default.", LogType.WARNING)
+        return default
+    return user_input
 
 
-def _is_hybrid_searchable(filename: str | None, status: dict) -> bool:
-    """Determine which files to search based on args and registry status."""
-    if filename is None:
-        return False
-
-    key = Path(filename).name
-    file_data = status.get("files", {}).get(key)
-    if file_data is None:
-        return False
-    return file_data.get("is_hybrid_searchable", False)
-
-
-def _validate_files(
-    files: List[str], 
-    store: DarwinStore
-) -> List[str]:
-    """Validate files exist and are searchable, returning valid filenames."""
-    status = store.status()
-    valid_files = []
-    invalid_files = []
-    
-    for filename in files:
-        if _is_hybrid_searchable(filename, status):
-            valid_files.append(filename)
-        else:
-            invalid_files.append(filename)
-    
-    if invalid_files:
-        for f in invalid_files:
-            darwin.log(f"{f} is not searchable", LogType.WARNING)
-    return valid_files
+def _input_float(prompt: str, default: float) -> float:
+    raw = input(prompt).strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        darwin.log("Invalid number, using default.", LogType.WARNING)
+        return default
 
 
-# ============================================================================
-# Core handler
-# ============================================================================
+def _input_int(prompt: str, default: int) -> int:
+    raw = input(prompt).strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        darwin.log("Invalid integer, using default.", LogType.WARNING)
+        return default
 
-def handle_hybrid_search(args: HybridSearchArgs, store: DarwinStore) -> List[HybridSearchResult] | None:
-    """Main handler for hybrid search CLI."""
-    status = store.status()
-    tobe_searched = []
+
+# -------------------------------------------------------------------
+# Ollama helpers
+# -------------------------------------------------------------------
+def fetch_ollama_models(base_url: str) -> Optional[List[str]]:
+    try:
+        r = requests.get(f"{base_url}/api/tags", timeout=3)
+        if r.status_code == 200:
+            data = r.json()
+            models = []
+            for m in data.get("models", []):
+                name = m["name"].split(":")[0]
+                if is_likely_llm_model(name):
+                    models.append(name)
+            return sorted(models)
+    except Exception:
+        pass
+    return None
 
 
-    if args.files:
-        tobe_searched = _validate_files(args.files, store)
-        
-        if not tobe_searched:
-            darwin.log("No valid files provided for search. Search aborted.", LogType.ERROR)
-            return
-        
-        darwin.log(f"Searching {len(tobe_searched)} valid file(s)  for '{args.query}'", LogType.INFO)
-    
-    else:
-        tobe_searched = [
-            fname for fname, info in status.get("files", {}).items()
-             if info.get("is_hybrid_searchable", False)
-        ]
-        darwin.log(f"Searching {len(tobe_searched)} files for '{args.query}'", LogType.INFO)
+def setup_ollama_interactive() -> None:
+    base_url = input(f"Ollama base URL [{DEFAULT_OLLAMA_URL}]: ").strip()
+    if not base_url:
+        base_url = DEFAULT_OLLAMA_URL
 
-    if not tobe_searched:
-        darwin.log("No hybrid-searchable files found. Run both keyword and embedding indexing pipelines first.", LogType.WARNING)
+    models = fetch_ollama_models(base_url)
+    if not models:
+        darwin.log("Could not fetch models from Ollama. Is it running?", LogType.ERROR)
         return
 
-    darwin.log(f"\n{'='*50}", LogType.INFO)
-    darwin.log(f"Hybrid Search: '{args.query}'", LogType.INFO)
-    darwin.log(f"RRF k={args.rrf_k} | Semantic weight={args.semantic_weight} | Keyword weight={args.keyword_weight}", LogType.INFO)
-    darwin.log(f"Pool size={args.pool_size} | Top-K={args.top_k}", LogType.INFO)
-    
-    
-    darwin.log(f"{'='*50}", LogType.INFO)
+    darwin.log("Available models:", LogType.INFO)
+    for i, m in enumerate(models, 1):
+        darwin.log(f"  {i}. {m}", LogType.INFO)
 
-    if args.top_k == 0:
-        darwin.log("top_k=0 requested, using default", LogType.WARNING)
-        args.top_k = DEFAULT_TOP_K
+    fast_default = models[0] if models else ""
+    smart_default = models[-1] if models else ""
 
-    results = []
-    if len(tobe_searched) == 1:
-        results = search_single_document_hybrid(
-            query=args.query,
-            filename=tobe_searched[0],
-            store=store,
-            top_k=args.top_k,
-            rrf_k=args.rrf_k,
-            semantic_weight=args.semantic_weight,
-            keyword_weight=args.keyword_weight,
-            pool_size=args.pool_size,
-            alpha=args.alpha,
-            beta=args.beta
-        )
-    else:
-        results = search_across_documents_hybrid(
-            query=args.query,
-            store=store,
-            filenames=tobe_searched if tobe_searched else None,
-            top_k=args.top_k,
-            rrf_k=args.rrf_k,
-            semantic_weight=args.semantic_weight,
-            keyword_weight=args.keyword_weight,
-            pool_size=args.pool_size,
-            alpha=args.alpha,
-            beta=args.beta
-        )
+    # Accept either a model name or the list number
+    fast_model = _resolve_model_input(input(f"FAST model [{fast_default}]: "), models, fast_default)
+    smart_model = _resolve_model_input(input(f"SMART model [{smart_default}]: "), models, smart_default)
+    normal_model = _resolve_model_input(input(f"NORMAL model [{smart_model}]: "), models, smart_model)
 
-    darwin.log(f"Found {len(results)} results", LogType.SUCCESS)
-
-    if not results:
-        darwin.log("No results found", LogType.WARNING)
-        darwin.log("")
-        darwin.log("Try:", LogType.INFO)
-        darwin.log("  • Using different or more specific keywords", LogType.INFO)
-        darwin.log("  • Adjusting RRF parameters (--rrf-k, --semantic-weight, --keyword-weight)", LogType.INFO)
-        darwin.log("  • Increasing pool size (--pool-size)", LogType.INFO)
-        darwin.log("  • Searching a specific file with --file", LogType.INFO)
+    if not fast_model or not smart_model or not normal_model:
+        darwin.log("All three model IDs are required.", LogType.WARNING)
         return
 
-    # Output results
-    if args.json_output:
-        print(format_hybrid_results(results, json_output=True))
-    else:
-        # Console output with proper formatting
-        darwin.log(f"\n--- Hybrid Search Results ({len(results)} found) ---", LogType.INFO)
-        
-        for i, r in enumerate(results[:args.top_k], 1):
-            darwin.log(f"\n[{i}] Score: {r.final_score:.4f} | Source: {r.source} (p{r.page})", LogType.INFO)
-            preview = r.text[:200].replace('\n', ' ')
-            if len(r.text) > 200:
-                preview += "..."
-            darwin.log(f"    {preview}", LogType.INFO)
-            
-            # Show additional info
-            details = []
-            if r.rrf_score:
-                details.append(f"RRF: {r.rrf_score:.3f}")
-            if r.semantic_score:
-                details.append(f"Sem: {r.semantic_score:.3f}")
-            if r.keyword_score:
-                details.append(f"KW: {r.keyword_score:.3f}")
-            if details:
-                darwin.log(f"    ({' | '.join(details)})", LogType.INFO)
-        
-        # Summary stats
-        darwin.log(f"\n{'='*50}", LogType.INFO)
-        darwin.log(f"Sources: {len(set(r.source for r in results))} files", LogType.INFO)
-        darwin.log(f"Top RRF score: {results[0].rrf_score:.4f}" if results else "N/A", LogType.INFO)
-        darwin.log(f"Top final score: {results[0].final_score:.4f}" if results else "N/A", LogType.INFO)
+    fast_temp = _input_float("FAST temperature [0.1]: ", 0.1)
+    fast_max_tok = _input_int("FAST max tokens [1024]: ", 1024)
+    smart_temp = _input_float("SMART temperature [0.7]: ", 0.7)
+    smart_max_tok = _input_int("SMART max tokens [4096]: ", 4096)
+    normal_temp = _input_float("NORMAL temperature [0.3]: ", 0.3)
+    normal_max_tok = _input_int("NORMAL max tokens [2048]: ", 2048)
 
-    if args.inspect:
-        _print_inspection(results, args.query)
-    return results
+    try:
+        LLMManager.add_provider(
+            "ollama",
+            fast_model,
+            smart_model,
+            normal_model=normal_model,
+            fast_temp=fast_temp,
+            fast_max_tokens=fast_max_tok,
+            smart_temp=smart_temp,
+            smart_max_tokens=smart_max_tok,
+            normal_temp=normal_temp,
+            normal_max_tokens=normal_max_tok,
+            base_url=base_url,
+        )
+        darwin.log("Ollama provider added.", LogType.SUCCESS)
+    except ValueError as e:
+        darwin.log(f"Invalid model selection: {e}", LogType.ERROR)
+    except Exception as e:
+        darwin.log(f"Failed to add Ollama: {e}", LogType.ERROR)
 
 
-# ============================================================================
-# CLI
-# ============================================================================
-
-def create_hybrid_search_parser():
-    """Create parser for hybrid search CLI."""
-    parser = argparse.ArgumentParser(
-        description="Hybrid search combining semantic and keyword retrieval"
-    )
-
-    # Flexible query - positional OR flag
-    parser.add_argument(
-        "query",
-        nargs="?",
-        default=None,
-        help="Search query string (positional)"
-    )
-    parser.add_argument(
-        "--query", "-q",
-        dest="query_flag",
-        help="Search query string (flag alternative)"
-    )
-    
-    parser.add_argument("--file", "-f", nargs="+", default=None, help="One or more files to index")
-    parser.add_argument("--top-k", "-k", type=int, default=DEFAULT_TOP_K, help="Final results to return")
-    parser.add_argument("--rrf-k", type=int, default=DEFAULT_RRF_K, help="RRF dampening constant")
-    parser.add_argument("--semantic-weight", type=float, default=DEFAULT_SEMANTIC_WEIGHT, help="Weight for semantic results")
-    parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA, help="Alpha parameter for hybrid scoring")
-    parser.add_argument("--beta", type=float, default=DEFAULT_BETA, help="Beta parameter for hybrid scoring")
-    parser.add_argument("--keyword-weight", type=float, default=DEFAULT_KEYWORD_WEIGHT, help="Weight for keyword results")
-    parser.add_argument("--pool-size", type=int, default=DEFAULT_POOL_SIZE, help="Candidates per retriever")
-    parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
-    parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
-    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
-    parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
-    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
-
-    return parser
+# -------------------------------------------------------------------
+# Provider key status
+# -------------------------------------------------------------------
+def get_provider_key_status(provider: str) -> bool:
+    env_var = PROVIDER_ENV_MAP.get(provider)
+    if env_var:
+        return bool(os.environ.get(env_var))
+    return True
 
 
+# -------------------------------------------------------------------
+# Setup wizard
+# -------------------------------------------------------------------
+def run_setup_wizard() -> None:
+    darwin.log("Darwin LLM Setup Wizard", LogType.INFO)
+
+    if not LLMManager._config:
+        LLMManager.initialize()
+
+    while True:
+        darwin.log("Available providers:", LogType.INFO)
+        supported = list(PROVIDER_REGISTRY.keys()) + ["ollama"]
+        for i, p in enumerate(supported, 1):
+            key_icon = "✓" if get_provider_key_status(p) else "✗"
+            darwin.log(f"  {i}. {p}  [{key_icon} API key]", LogType.INFO)
+
+        choice = input("Enter number (or 'done' to finish, 'del' to remove a provider): ").strip()
+        if choice.lower() == "done":
+            break
+        if choice.lower() == "del":
+            _remove_provider_interactive()
+            continue
+
+        try:
+            idx = int(choice) - 1
+            provider = supported[idx]
+        except (ValueError, IndexError):
+            darwin.log("Invalid choice.", LogType.WARNING)
+            continue
+
+        if provider == "ollama":
+            setup_ollama_interactive()
+            continue
+
+        existing = LLMManager._config and provider in LLMManager._config.providers
+        if existing:
+            darwin.log(f"Provider '{provider}' already configured.", LogType.WARNING)
+            update = input("Update its settings? (y/n): ").lower()
+            if update != "y":
+                continue
+
+        defaults = get_default_models(provider)
+        fast_default = defaults["fast"]
+        smart_default = defaults["smart"]
+        normal_default = defaults.get("normal", smart_default)
+
+        darwin.log(f"Default models for {provider}:", LogType.INFO)
+        darwin.log(f"  FAST   : {fast_default}")
+        darwin.log(f"  NORMAL : {normal_default}")
+        darwin.log(f"  SMART  : {smart_default}")
+
+        fast_model = input(f"FAST model ID [{fast_default}]: ").strip()
+        if not fast_model:
+            fast_model = fast_default
+        smart_model = input(f"SMART model ID [{smart_default}]: ").strip()
+        if not smart_model:
+            smart_model = smart_default
+        normal_model = input(f"NORMAL model ID [{normal_default}]: ").strip()
+        if not normal_model:
+            normal_model = normal_default
+
+        if not fast_model or not smart_model or not normal_model:
+            darwin.log("All three model IDs are required.", LogType.WARNING)
+            continue
+
+        fast_temp = _input_float("FAST temperature [0.1]: ", 0.1)
+        fast_max_tok = _input_int("FAST max tokens [1024]: ", 1024)
+        smart_temp = _input_float("SMART temperature [0.7]: ", 0.7)
+        smart_max_tok = _input_int("SMART max tokens [4096]: ", 4096)
+        normal_temp = _input_float("NORMAL temperature [0.3]: ", 0.3)
+        normal_max_tok = _input_int("NORMAL max tokens [2048]: ", 2048)
+
+        api_key = input(f"Enter API key for {provider}: ").strip()
+        try:
+            set_api_key(provider, api_key, validate=True)
+        except Exception as e:
+            darwin.log(str(e), LogType.ERROR)
+            continue
+
+        try:
+            LLMManager.add_provider(
+                provider,
+                fast_model,
+                smart_model,
+                normal_model=normal_model,
+                fast_temp=fast_temp,
+                fast_max_tokens=fast_max_tok,
+                smart_temp=smart_temp,
+                smart_max_tokens=smart_max_tok,
+                normal_temp=normal_temp,
+                normal_max_tokens=normal_max_tok,
+            )
+        except ValueError as e:
+            darwin.log(f"Configuration error: {e}", LogType.ERROR)
+            continue
+        except Exception as e:
+            darwin.log(f"Failed to add provider: {e}", LogType.ERROR)
+            continue
+
+        if len(LLMManager.list_providers()) == 1:
+            LLMManager.switch_default_provider(provider)
+
+        another = input("Add another provider? (y/n): ").lower()
+        if another != "y":
+            break
+
+    LLMManager._save_config()
+    darwin.log(f"Configuration saved to {LLMManager._config_path}", LogType.SUCCESS)
+
+
+def _remove_provider_interactive():
+    if not LLMManager._config or not LLMManager._config.providers:
+        darwin.log("No providers to remove.", LogType.WARNING)
+        return
+    print("Configured providers:")
+    providers = list(LLMManager.list_providers())
+    for i, p in enumerate(providers, 1):
+        print(f"  {i}. {p}")
+    try:
+        idx = int(input("Number to remove: ")) - 1
+        provider = providers[idx]
+        LLMManager.remove_provider(provider)
+        darwin.log(f"Removed provider '{provider}'.", LogType.SUCCESS)
+    except Exception as e:
+        darwin.log(str(e), LogType.ERROR)
+
+
+# -------------------------------------------------------------------
+# CLI entry point
+# -------------------------------------------------------------------
 async def main() -> int:
-    """Entry point for hybrid search CLI."""
-    parser = create_hybrid_search_parser()
+    parser = argparse.ArgumentParser(
+        description="Darwin LLM Manager – configuration and test harness."
+    )
+    parser.add_argument("--wizard", action="store_true", help="Force run setup wizard")
+    parser.add_argument("--show-config", action="store_true", help="Print current LLM config")
+    parser.add_argument("--status", action="store_true", help="Show providers and key status")
+    parser.add_argument("--test", action="store_true", help="Run a quick test call to all configured providers")
+    parser.add_argument("--test-json", action="store_true", help="Run a test with a simple JSON schema")
+    parser.add_argument("--remove-provider", type=str, metavar="PROVIDER", help="Remove a provider by name")
+    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
+    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+    parser.add_argument("--no-keychain", action="store_true", help="Do not load keys from OS keychain")
+    parser.add_argument("--profile", type=str, default=None, help="Load a specific provider profile at startup")
+    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal",
+                        help="Log verbosity (default: normal)")
+
     args = parser.parse_args()
 
-    store = DarwinStore(args.store_dir or None)
+    if not args.no_keychain:
+        load_keys_from_keychain()
 
-    # Resolve query
-    query = args.query or args.query_flag
-    if not query:
-        parser.error("❌ Query required (either as positional argument or --query flag)")
+    verbosity_map = {
+        "quiet": Verbosity.QUIET,
+        "normal": Verbosity.NORMAL,
+    }
+    terminal_verbosity = verbosity_map[args.verbosity]
 
-    if args.query and args.query_flag:
-        darwin.log(f"Both positional and --query provided. Using positional: '{args.query}'", LogType.WARNING)
-        query = args.query
-
-
-    # Setup WebSocket
     darwin.configure(
         enable_websocket=not args.no_ws,
         ws_port=args.ws_port,
         enable_history=True,
-        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        verbosity_default=terminal_verbosity,
         show_banner=True,
     )
 
     try:
-        search_args = HybridSearchArgs(
-            query=query,
-            files=args.file,
-            top_k=args.top_k,
-            rrf_k=args.rrf_k,
-            semantic_weight=args.semantic_weight,
-            keyword_weight=args.keyword_weight,
-            pool_size=args.pool_size,
-            inspect=args.inspect,
-            json_output=args.json,
-            alpha=args.alpha,
-            beta=args.beta,
-        )
-        
-        with darwin.session("hybrid_search"):
-            handle_hybrid_search(search_args, store)
+        # ── Status
+        if args.status:
+            if LLMManager.initialize():
+                print("Providers:")
+                for p in LLMManager.list_providers():
+                    key_status = "✓" if get_provider_key_status(p) else "✗"
+                    print(f"  {p}  [{key_status} key]")
+            else:
+                darwin.log("No configuration found.", LogType.WARNING)
+            return 0
+
+        # ── Remove provider
+        if args.remove_provider:
+            if not LLMManager.initialize():
+                darwin.log("No configuration found.", LogType.ERROR)
+                return 1
+            try:
+                LLMManager.remove_provider(args.remove_provider)
+                darwin.log(f"Provider '{args.remove_provider}' removed.", LogType.SUCCESS)
+            except Exception as e:
+                darwin.log(str(e), LogType.ERROR)
+                return 1
+            return 0
+
+        # ── Show config
+        if args.show_config:
+            if LLMManager.initialize():
+                darwin.log(json.dumps(LLMManager._serialize_config(), indent=2), LogType.INFO)
+            else:
+                darwin.log("No configuration found. Run with --wizard to set up.", LogType.WARNING)
+            return 0
+
+        # ── Wizard / normal start
+        run_wizard = args.wizard
+        if not run_wizard:
+            exists = LLMManager.initialize()
+            if not exists:
+                darwin.log("No configuration found. Launching setup wizard...", LogType.WARNING)
+                run_wizard = True
+            else:
+                darwin.log("Configuration loaded.", LogType.SUCCESS)
+
+        if run_wizard:
+            run_setup_wizard()
+            LLMManager.initialize()
+
+        if args.profile and LLMManager._config:
+            try:
+                LLMManager.switch_default_provider(args.profile)
+                darwin.log(f"Active profile: {args.profile}", LogType.INFO)
+            except Exception as e:
+                darwin.log(str(e), LogType.ERROR)
+                return 1
+
+        # ── Plain test (now includes normal tier)
+        if args.test:
+            darwin.log("Running quick test...", LogType.INFO)
+            client = LLMManager.get_client()
+            for prov in LLMManager.list_providers():
+                darwin.log(f"Testing provider: {prov}", LogType.INFO)
+                tiers = [
+                    ("fast",   client.call_small),
+                    ("normal", client.call_normal),
+                    ("smart",  client.call_smart),
+                ]
+                for tier_name, method in tiers:
+                    try:
+                        resp: LLMResponse = method(
+                            [{"role": "user", "content": "Hello"}],
+                            provider=prov,
+                        )
+                        if resp.error:
+                            darwin.log(f"  [{tier_name}] ✗ {resp.error}", LogType.ERROR)
+                        else:
+                            darwin.log(f"  [{tier_name}] ✓ {resp.text[:80]}...", LogType.SUCCESS)
+                    except Exception as e:
+                        darwin.log(f"  [{tier_name}] ✗ {e}", LogType.ERROR)
+            return 0
+
+        # ── JSON schema test
+        if args.test_json:
+            darwin.log("Running JSON schema test...", LogType.INFO)
+            client = LLMManager.get_client()
+            test_schema = {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string"},
+                    "confidence": {"type": "number"}
+                },
+                "required": ["message", "confidence"]
+            }
+            for prov in LLMManager.list_providers():
+                darwin.log(f"Testing provider: {prov}", LogType.INFO)
+                tiers = [
+                    ("fast",   client.call_small),
+                    ("normal", client.call_normal),
+                    ("smart",  client.call_smart),
+                ]
+                for tier_name, method in tiers:
+                    try:
+                        resp: LLMResponse = method(
+                            [{"role": "user",
+                              "content": "Reply with a JSON object containing 'message' and 'confidence'."}],
+                            provider=prov,
+                            json_schema=test_schema,
+                        )
+                        if resp.error:
+                            darwin.log(f"  [{tier_name}] ✗ {resp.error}", LogType.ERROR)
+                        else:
+                            darwin.log(f"  [{tier_name}] ✓ {resp.json}", LogType.SUCCESS)
+                    except Exception as e:
+                        darwin.log(f"  [{tier_name}] ✗ {e}", LogType.ERROR)
+            return 0
+
+        # No action → print help
+        parser.print_help()
         return 0
 
     except KeyboardInterrupt:
@@ -327,7 +453,7 @@ async def main() -> int:
     except Exception as e:
         import traceback
         darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
         return 1
     finally:
         darwin.shutdown()

@@ -14,8 +14,6 @@ class KnowledgePipelineArgs:
 
     # file selection
     files: Optional[List[str]] = None
-    llm_provider: Optional[str] = None
-    elevation : str = "none"
 
     # pass control
     graph_only: bool = False
@@ -37,8 +35,6 @@ class KnowledgePipelineArgs:
     visualize: bool = False
 
     # wiki config
-    wiki_mode: str = "index"
-    chunks_per_concept: int = 5
 
     # shared
     inspect: bool = False

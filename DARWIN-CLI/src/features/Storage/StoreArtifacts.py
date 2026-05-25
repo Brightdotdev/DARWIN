@@ -1017,7 +1017,6 @@ class WikiMixin(_PathResolverMixin):
 
         wiki_dict = {
             "filename": wiki.filename,
-            "manifest": wiki.manifest,
             "pages": [
                 {
                     "concept":       p.concept,
@@ -1025,7 +1024,6 @@ class WikiMixin(_PathResolverMixin):
                     "related":       p.related,
                     "centroid":      p.centroid,
                     "frequency":     p.frequency,
-                    "summary":       p.summary,
                     "keywords":      p.keywords,
                 }
                 for p in wiki.pages
