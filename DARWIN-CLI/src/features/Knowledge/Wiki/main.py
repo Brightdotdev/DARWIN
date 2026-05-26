@@ -17,7 +17,7 @@ from src.features.Knowledge.Wiki.WikiUtils import (
     WikiGenerationArgs, DEFAULT_CHUNKS_PER_CONCEPT,
 )
 from typing import List
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 

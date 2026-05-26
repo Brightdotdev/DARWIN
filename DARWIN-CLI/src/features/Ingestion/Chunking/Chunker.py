@@ -16,7 +16,6 @@ from src.features.Ingestion.Chunking.ChunkerUtils import (
     count_page_seps,
     merge_small,
     section_to_chunks,
-    get_dynamic_chunk_params_for_text,
 )
 from src.features.Ingestion.Chunking.ChunkConfig import get_chunk_config
 
@@ -72,7 +71,7 @@ def chunk_document(
 def chunk_for_model(
     text:   str,
     source: str = "unknown",
-) -> Tuple[List[Chunk], dict]:
+) ->List[Chunk]:
     """
     Convert parser embedding_text into chunks using auto-detected parameters.
 
@@ -83,11 +82,10 @@ def chunk_for_model(
     Returns:
         (chunks, chunk_metadata)
     """
-    chunk_metadata = get_dynamic_chunk_params_for_text(text)
-
+    
     chunks = chunk_document(
         text   = text,
         source = source,
     )
 
-    return chunks, chunk_metadata
+    return chunks

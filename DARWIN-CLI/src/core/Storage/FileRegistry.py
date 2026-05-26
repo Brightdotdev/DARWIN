@@ -15,8 +15,8 @@ without touching any per-file directories.
 """
 
 from pathlib import Path
-from src.features.Storage.StorePaths import StorePaths
-from src.features.Storage.StoreUtils import read_json, write_json, now
+from src.core.Storage.StorePaths import StorePaths
+from src.core.Storage.StoreUtils import read_json, write_json, now
 
 
 class FileRecord:

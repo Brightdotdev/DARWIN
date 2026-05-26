@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -55,6 +55,33 @@ class OverlapDirection(str, Enum):
 class ChunkLink:
     url:  str
     text: str = ""
+
+
+@dataclass
+class SearchAudit:
+    """Audit trail attached to search results explaining ranking decisions."""
+    raw_score: float = 0.0
+    final_score: float = 0.0
+    structural_type: Optional[str] = None
+    penalty_factor: float = 1.0
+    was_penalized: bool = False
+    penalty_reason: Optional[str] = None
+    merge_reason: Optional[str] = None
+    gap_filled: bool = False
+    concept_source: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "raw_score": self.raw_score,
+            "final_score": self.final_score,
+            "structural_type": self.structural_type,
+            "penalty_factor": self.penalty_factor,
+            "was_penalized": self.was_penalized,
+            "penalty_reason": self.penalty_reason,
+            "merge_reason": self.merge_reason,
+            "gap_filled": self.gap_filled,
+            "concept_source": self.concept_source,
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -107,6 +134,9 @@ class RetrievalResult:
     rerank_score:           Optional[float]         = None
     rerank_original_score:  Optional[float]         = None
 
+    # ── audit ──────────────────────────────────────────────────────────────
+    audit:                  Optional[SearchAudit]   = None
+
     # ── helpers ────────────────────────────────────────────────────────────
 
     @property
@@ -157,6 +187,7 @@ def from_hybrid(r: Any) -> RetrievalResult:
         matched_terms         = getattr(r, "matched_terms", None),
         rerank_score          = getattr(r, "rerank_score", None),
         rerank_original_score = getattr(r, "original_score", None),
+        audit                 = getattr(r, "audit", None),
     )
 
 
@@ -176,6 +207,7 @@ def from_semantic(r: Any) -> RetrievalResult:
         links                 = getattr(r, "links", []),
         rerank_score          = getattr(r, "rerank_score", None),
         rerank_original_score = getattr(r, "original_score", None),
+        audit                 = getattr(r, "audit", None),
     )
 
 
@@ -196,4 +228,5 @@ def from_keyword(r: Any) -> RetrievalResult:
         matched_terms         = getattr(r, "matched_terms", None),
         rerank_score          = getattr(r, "rerank_score", None),
         rerank_original_score = getattr(r, "original_score", None),
+        audit                 = getattr(r, "audit", None),
     )

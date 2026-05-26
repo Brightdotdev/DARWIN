@@ -36,6 +36,10 @@ def default_conversations_dir() -> Path:
     return get_darwin_dir() / "conversations"
     
 
+def default_conversations_index() -> Path:
+    """Platform-appropriate global models directory."""
+    return get_darwin_dir() / "conversations"/ "index.json"
+
 def default_models_config_dir() -> Path:
     """Platform-appropriate global models directory."""
     return get_darwin_dir() / "models" / "config"

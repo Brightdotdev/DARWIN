@@ -1,8 +1,8 @@
-
 from dataclasses import dataclass, field
 from enum import Enum
 import re
-from typing import List, Optional
+from typing import List
+from typing import Dict, Any, Optional
 
 
 
@@ -72,6 +72,7 @@ class Chunk:
     page_end: int
     overlap_direction: OverlapDirection = OverlapDirection.NONE
     links: List[ChunkLink] = field(default_factory=list)
+    structural_type: Optional[str] = None  # toc | cover | caption | heading | footnote | body
     
     def __post_init__(self):
         """Ensure overlap_direction is always an Enum."""
@@ -85,6 +86,48 @@ class Chunk:
     def is_overlap(self) -> bool:
         """Legacy property for backward compatibility."""
         return self.overlap_direction != OverlapDirection.NONE
+    
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert Chunk into a storage-safe dictionary.
+
+        Rules:
+        - No Enums (convert to string)
+        - No dataclass nesting (flatten ChunkLink)
+        - JSON / Parquet safe
+        - Stable schema for embeddings + metadata pipelines
+        """
+
+        return {
+            "text": self.text,
+            "clean": self.clean,
+            "index": self.index,
+            "source": self.source,
+            "token_count": self.token_count,
+            "heading": self.heading,
+            "page": self.page,
+            "page_end": self.page_end,
+
+            # Enum → string (critical for Parquet/JSON compatibility)
+            "overlap_direction": (
+                self.overlap_direction.value
+                if hasattr(self.overlap_direction, "value")
+                else str(self.overlap_direction)
+            ),
+
+            # Flatten links (avoid nested dataclass in storage layer)
+            "links": [
+                {
+                    "url": link.url,
+                    "text": link.text
+                }
+                for link in self.links
+            ],
+
+            # Structural type for penalty system
+            "structural_type": self.structural_type,
+        }
 
 @dataclass
 class ChunkingArgs:
@@ -107,4 +150,3 @@ def count_page_seps(text: str) -> int:
     new_style    = len(PAGE_HEADER_RE.findall(text))
     legacy_style = len(LEGACY_PAGE_SEP_RE.findall(text))
     return new_style + legacy_style
-

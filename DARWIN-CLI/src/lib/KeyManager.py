@@ -154,6 +154,7 @@ def set_api_key(provider: str, key: str, validate: bool = True) -> None:
     darwin.log(f"API key for {provider} saved and activated.")
 
 
+
 def load_keys_from_keychain(log: bool = True) -> None:
     """
     Load all stored API keys from keychain into environment variables.
@@ -162,42 +163,32 @@ def load_keys_from_keychain(log: bool = True) -> None:
     """
     loaded = 0
     skipped = 0
-    failed = 0
 
     for provider, (env_var, _) in PROVIDER_REGISTRY.items():
-        if env_var in os.environ and os.environ[env_var].strip():
-            if log:
-                darwin.log(f"{env_var} already set, skipping keychain.")
+        # Already set in env — respect override, no log spam
+        if os.environ.get(env_var, "").strip():
             skipped += 1
             continue
+
         try:
             key = keyring.get_password(APP_NAME, provider)
         except Exception as e:
+            # Only warn if there was a real read error, not "not found"
             if log:
-                darwin.log(f"Could not read {provider} from keychain: {e}", LogType.WARNING)
-            failed += 1
+                darwin.log(f"Keychain error for {provider}: {e}", LogType.WARNING)
             continue
 
-        if key:
-            key = key.strip()
-            if key:
-                os.environ[env_var] = key
-                loaded += 1
-                if log:
-                    darwin.log(f"Loaded {env_var} from keychain.")
-            else:
-                if log:
-                    darwin.log(f"Empty key for {provider} in keychain, ignoring.")
-        else:
+        if key and key.strip():
+            os.environ[env_var] = key.strip()
+            loaded += 1
             if log:
-                darwin.log(f"No saved key for {provider} in keychain.")
+                darwin.log(f"Loaded {env_var} from keychain.")
 
     if log:
         darwin.log(
-            f"Keychain summary: {loaded} loaded, {skipped} already present, {failed} failed.",
+            f"Keychain: {loaded} loaded, {skipped} already present.",
             LogType.INFO if loaded else LogType.WARNING,
         )
-
 
 def clear_api_key(provider: str) -> None:
     """Remove a saved API key from the keychain and the current environment."""

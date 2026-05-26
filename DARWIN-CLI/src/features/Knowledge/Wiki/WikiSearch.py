@@ -406,11 +406,14 @@ class WikiSearchEngine:
             score += CONTENT_CHUNK_BONUS
 
         return min(score, 1.0)
-
     def _structural_penalty(self, page: WikiPage) -> float:
-
+        """
+        DISABLED absolute kill-shot.
+        The orchestrator now applies per-chunk multiplicative penalties.
+        We keep mild additive nudges for long concepts / dash noise.
+        """
         if self._is_structural_page(page):
-            return STRUCTURAL_PENALTY_ABSOLUTE
+            return 0.0
 
         penalty = 0.0
 

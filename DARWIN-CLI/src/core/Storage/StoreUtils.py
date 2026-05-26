@@ -12,6 +12,12 @@ import json
 from typing import Optional
 
 
+import os
+import tempfile
+from pathlib import Path
+from typing import Any,Iterable
+
+
 # ── Default global config ──────────────────────────────────────────────────
 
 DEFAULT_CONFIG = {
@@ -48,7 +54,7 @@ def get_current_model_name() -> str:
     if _model_name_cache is not None:
         return _model_name_cache
     try:
-        from src.Models import ModelManager, ModelCategory
+        from src.core.Models import ModelManager, ModelCategory
         loader = ModelManager.get_loader()
         _model_name_cache = loader.get_model_key(ModelCategory.EMBEDDING)
         return _model_name_cache
@@ -109,3 +115,145 @@ def read_json(path: Path) -> dict | None:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
+
+
+
+def write_atomic_json(
+    path: str | Path,
+    data: Any,
+    *,
+    indent: int | None = None,
+    ensure_ascii: bool = False,
+) -> None:
+    """
+    Atomically write JSON to disk.
+
+    Guarantees:
+    - avoids partial/corrupt writes
+    - atomic replacement
+    - parent directory creation
+    - UTF-8 encoding
+    - fsync durability
+
+    Args:
+        path:
+            Destination JSON file path.
+
+        data:
+            JSON-serializable object.
+
+        indent:
+            Pretty-print indentation.
+            Use None for compact JSON.
+
+        ensure_ascii:
+            Whether to escape unicode characters.
+    """
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            delete=False,
+        ) as tmp:
+
+            json.dump(
+                data,
+                tmp,
+                indent=indent,
+                ensure_ascii=ensure_ascii,
+                separators=(",", ":") if indent is None else None,
+            )
+
+            tmp.flush()
+            os.fsync(tmp.fileno())
+
+            temp_path = Path(tmp.name)
+
+        # Atomic replace
+        os.replace(temp_path, path)
+
+    finally:
+        # Cleanup orphan temp file if something failed
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+
+
+def write_atomic_jsonl(
+    path: str | Path,
+    rows: Iterable[Any],
+    *,
+    ensure_ascii: bool = False,
+) -> None:
+    """
+    Atomically write JSONL data to disk.
+
+    Each item in `rows` becomes one JSON line.
+
+    Guarantees:
+    - atomic replacement
+    - UTF-8 encoding
+    - parent directory creation
+    - fsync durability
+    - cleanup on failure
+
+    Args:
+        path:
+            Destination .jsonl file.
+
+        rows:
+            Iterable of JSON-serializable objects.
+
+        ensure_ascii:
+            Whether to escape unicode characters.
+    """
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            delete=False,
+        ) as tmp:
+
+            for row in rows:
+                line = json.dumps(
+                    row,
+                    ensure_ascii=ensure_ascii,
+                    separators=(",", ":"),
+                )
+
+                tmp.write(line)
+                tmp.write("\n")
+
+            tmp.flush()
+            os.fsync(tmp.fileno())
+
+            temp_path = Path(tmp.name)
+
+        # Atomic swap
+        os.replace(temp_path, path)
+
+    finally:
+        # Cleanup orphan temp file if write failed
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass

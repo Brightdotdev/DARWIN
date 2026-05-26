@@ -1,112 +1,94 @@
-
-from enum import Enum
 from dataclasses import dataclass, field
-from typing import List,Optional,Any
-
-# ============================================================================
-# Data model
-# ============================================================================
+from typing import List, Dict, Optional, Set, Any
+from enum import Enum
 
 
 class OverlapDirection(str, Enum):
-    """
-    Describes which side(s) of a chunk carry overlap sentences.
-
-    NONE   — no overlap; chunk is self-contained
-    LEFT   — chunk *opens* with sentences repeated from the tail of the
-             previous chunk  (this chunk "looks left")
-    RIGHT  — chunk *closes* with sentences repeated at the head of the
-             next chunk  (this chunk "donates right")
-    BOTH   — interior window: received from the left AND donates to the right
-
-    Use str-Enum so the value serialises cleanly to JSON as a plain string
-    ("none", "left", "right", "both") without needing a custom encoder.
-    """
-    NONE  = "none"
-    LEFT  = "left"
+    NONE = "none"
+    LEFT = "left"
     RIGHT = "right"
-    BOTH  = "both"
+    BOTH = "both"
 
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data model
-# ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
 class ChunkLink:
-    """A hyperlink scoped to a chunk."""
-    url:  str
+    url: str
     text: str = ""
 
+
+@dataclass
+class SearchAudit:
+    """Audit trail attached to search results explaining ranking decisions."""
+    raw_score: float = 0.0
+    final_score: float = 0.0
+    structural_type: Optional[str] = None
+    penalty_factor: float = 1.0
+    was_penalized: bool = False
+    penalty_reason: Optional[str] = None
+    merge_reason: Optional[str] = None
+    gap_filled: bool = False
+    concept_source: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "raw_score": self.raw_score,
+            "final_score": self.final_score,
+            "structural_type": self.structural_type,
+            "penalty_factor": self.penalty_factor,
+            "was_penalized": self.was_penalized,
+            "penalty_reason": self.penalty_reason,
+            "merge_reason": self.merge_reason,
+            "gap_filled": self.gap_filled,
+            "concept_source": self.concept_source,
+        }
+
+
+@dataclass
+class HybridSearchResult:
+    text: str
+    clean: str
+    rrf_score: float = 0.0
+    final_score: float = 0.0
+    semantic_score: Optional[float] = None
+    keyword_score: Optional[float] = None
+    source: str = ""
+    page: int = 0
+    page_end: int = 0
+    heading: str = ""
+    chunk_index: int = 0
+    links: List[ChunkLink] = field(default_factory=list)
+    matched_terms: Set[str] = field(default_factory=set)
+    overlap_direction: OverlapDirection = OverlapDirection.NONE
+    audit: Optional[SearchAudit] = None
 
 
 @dataclass
 class SemanticSearchResult:
-    """Single search result with all metadata needed for RAG."""
-    text: str           # Original text (for LLM context)
-    clean: str          # Cleaned text (what was embedded)
-    score: float        # Cosine similarity (0-1)
-    source: str         # Document filename
-    page: int           # Page number
-    heading: str        # Section heading
-    chunk_index: int    # Original chunk position
-    page_end : int = 0
-    overlap_direction : OverlapDirection = OverlapDirection.NONE
-    links: List[tuple[str, str]] = field(default_factory=list)
-    
-    def __repr__(self) -> str:
-        return f"SemanticSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
+    text: str
+    clean: str
+    score: float
+    source: str
+    page: int
+    page_end: int = 0
+    heading: str = ""
+    chunk_index: int = 0
+    links: List[ChunkLink] = field(default_factory=list)
+    matched_terms: Set[str] = field(default_factory=set)
+    overlap_direction: OverlapDirection = OverlapDirection.NONE
+    audit: Optional[SearchAudit] = None
+
 
 @dataclass
 class KeywordSearchResult:
-    """Single BM25 search result with all metadata."""
-    text: str           # Original text (for LLM context)
-    clean: str          # Cleaned text (what was indexed)
-    score: float        # BM25 score (not normalized to 0-1)
-    source: str         # Document filename
-    page: int           # Page number
-    heading: str        # Section heading
-    chunk_index: int    # Original chunk position
-    matched_terms: List[str]
-    page_end : int = 0
-    overlap_direction : OverlapDirection =  OverlapDirection.NONE 
-    links:            List[ChunkLink]  = field(default_factory=list)
-    
-    
-    def __repr__(self) -> str:
-        return f"KeywordSearchResult(score={self.score:.3f}, source='{self.source}', page={self.page})"
-
-
-# ============================================================================
-# Data model
-# ============================================================================
-
-@dataclass
-class HybridSearchResult:
-    """Single hybrid search result with scores from both retrievers."""
-    text:          str
-    clean:         str
-    rrf_score:     float = 0.0
-    final_score:   float = 0.0
-    semantic_score: Optional[float] = None
-    keyword_score:  Optional[float] = None
-    source:        str = ""
-    page:          int = 0
-    page_end:      int = 0
-    heading:       str = ""
-    chunk_index:   int = 0
-    links:         List[Any] = field(default_factory=list) 
-    matched_terms: List[str] | None = None
-    overlap_direction : OverlapDirection =  OverlapDirection.NONE 
-    links:            List[ChunkLink]  = field(default_factory=list)
-    
-    def __repr__(self) -> str:
-        return (
-    f"HybridSearchResult(rrf={self.rrf_score:.3f}, "
-    f"final={self.final_score:.3f}, "
-    f"sem={self.semantic_score}, kw={self.keyword_score}, "
-    f"src='{self.source}', p={self.page})"
-)
-        
-        
+    text: str
+    clean: str
+    score: float
+    source: str
+    page: int
+    page_end: int = 0
+    heading: str = ""
+    chunk_index: int = 0
+    links: List[ChunkLink] = field(default_factory=list)
+    matched_terms: Set[str] = field(default_factory=set)
+    overlap_direction: OverlapDirection = OverlapDirection.NONE
+    audit: Optional[SearchAudit] = None

@@ -3,23 +3,19 @@ src/core/Knowledge/Wiki/WikiGenerator.py
 ----------------------------------------
 Generates DocumentWiki from GraphData.
 
-Optimizations:
-  1. O(n) precomputed structural mask (was O(n²) via repeat-scan).
-  2. Batched spaCy via nlp.pipe() with dynamic batch size.
-  3. Cross-node spaCy cache so shared chunks are processed once.
-  4. O(1) label→id lookup + precomputed degrees for sorting.
-  5. Compiled regexes & frozenset for faster set ops.
-  6. Ordered dedup with dict.fromkeys() instead of list(set()).
+Optimized for new DarwinStore:
+* Loads chunks as dict rows via query_records (partial columns)
+* Saves wiki as pages list via store.save_wiki (not DocumentWiki object)
+* Loads wiki as dict list via store.load_wiki, reconstructs to DocumentWiki
 """
 
 import re
-from typing import List, Dict, Optional, Counter as CounterType
-from collections import Counter, defaultdict
+from typing import Any, List, Dict, Optional, Counter as CounterType
+from collections import Counter
 
-from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Knowledge.Graph.GraphUtils import GraphData, ConceptNode, Relationship
 from src.features.Knowledge.Wiki.WikiUtils import WikiPage, DocumentWiki
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
@@ -61,7 +57,7 @@ _KEYWORD_STOPS = frozenset({
 # O(n) structural chunk detection
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _precompute_structural_mask(chunks: List[Chunk]) -> set:
+def _precompute_structural_mask(chunks: List[Dict[str, Any]]) -> set:
     """One-pass structural detection. Replaces the old O(n²) repeat-scan."""
     if not chunks:
         return set()
@@ -71,43 +67,43 @@ def _precompute_structural_mask(chunks: List[Chunk]) -> set:
     mask: set = set()
 
     # 1. Precompute fingerprints for repeat detection
-    fingerprints: CounterType[str] = Counter(c.clean.lower()[:200] for c in chunks)
+    fingerprints: CounterType[str] = Counter(c.get("clean", "").lower()[:200] for c in chunks)
 
     # 2. Single-pass evaluation
     for chunk in chunks:
-        text = chunk.clean.lower()
+        text = chunk.get("clean", "").lower()
         words = set(_WORD_RE.findall(text))
 
         # Very short chunks
-        if len(chunk.clean) < 200:
-            mask.add(chunk.index)
+        if len(chunk.get("clean", "")) < 200:
+            mask.add(chunk.get("index"))
             continue
 
         # High structural signal ratio
         if words:
             hits = len(words & STRUCTURAL_SIGNALS)
             if hits / len(words) > 0.3:
-                mask.add(chunk.index)
+                mask.add(chunk.get("index"))
                 continue
 
         # TOC pattern: many short numbered lines
-        lines = [l.strip() for l in chunk.clean.split('\n') if l.strip()]
+        lines = [l.strip() for l in chunk.get("clean", "").split('\n') if l.strip()]
         if len(lines) > 3:
             short_numbered = sum(
                 1 for l in lines if len(l) < 60 and _TOC_DIGIT_RE.search(l)
             )
             if short_numbered / len(lines) > 0.5:
-                mask.add(chunk.index)
+                mask.add(chunk.get("index"))
                 continue
 
         # Repetitive text (headers/footers)
         if fingerprints[text[:200]] > 2:
-            mask.add(chunk.index)
+            mask.add(chunk.get("index"))
             continue
 
         # First 5% of doc with very low word count
-        if chunk.index <= five_pct and len(words) < 20:
-            mask.add(chunk.index)
+        if chunk.get("index") <= five_pct and len(words) < 20:
+            mask.add(chunk.get("index"))
             continue
 
     return mask
@@ -145,7 +141,7 @@ def _is_structural_node(node: ConceptNode) -> bool:
 
 class GraphDataSchema:
     """Minimal schema validation to catch drift between graph extractor and wiki builder."""
-    REQUIRED_NODE_FIELDS = {"id", "label", "freq", "chunks"}
+    REQUIRED_NODE_FIELDS = {"id", "label", "frequency", "chunk_indices"}
     REQUIRED_EDGE_FIELDS = {"source", "target", "weight"}
 
     @classmethod
@@ -215,7 +211,7 @@ def _build_edge_map(graph: GraphData) -> Dict[str, List[str]]:
 
 def _extract_keywords(
     chunk_indices: List[int],
-    chunks: List[Chunk],
+    chunk_rows: List[Dict[str, Any]],
     spacy_extractor=None,
     max_keywords: int = 5,
     batch_size: int = 32,
@@ -224,11 +220,13 @@ def _extract_keywords(
     """
     Extract top keywords with batched spaCy and cross-node chunk caching.
     If multiple nodes reference the same chunk, spaCy processes it once.
+    
+    chunk_rows: list of dicts from store.query_records() — NOT Chunk objects.
     """
     counts: CounterType[str] = Counter()
 
     # Deduplicate while preserving order
-    unique_indices = list(dict.fromkeys(idx for idx in chunk_indices[:10] if idx < len(chunks)))
+    unique_indices = list(dict.fromkeys(idx for idx in chunk_indices[:10] if idx < len(chunk_rows)))
     if not unique_indices:
         return []
 
@@ -241,7 +239,7 @@ def _extract_keywords(
             # Only process chunks we haven't seen yet
             uncached = [idx for idx in unique_indices if idx not in cache]
             if uncached:
-                texts = [chunks[idx].clean[:3000] for idx in uncached]
+                texts = [chunk_rows[idx].get("clean", "")[:3000] for idx in uncached]
                 for idx, doc in zip(uncached, nlp.pipe(texts, batch_size=batch_size)):
                     idx_counts: CounterType[str] = Counter()
                     for nc in doc.noun_chunks:
@@ -263,7 +261,7 @@ def _extract_keywords(
     # ── Fallback bigram extraction ────────────────────────────────────────
     if not counts:
         for idx in unique_indices:
-            text = chunks[idx].clean.lower()
+            text = chunk_rows[idx].get("clean", "").lower()
             words = _BIGRAM_WORD_RE.findall(text)
             words = [w for w in words if w not in _KEYWORD_STOPS]
 
@@ -281,15 +279,19 @@ def _extract_keywords(
 
 def build_wiki_from_graph(
     graph: GraphData,
-    chunks: List[Chunk],
+    chunk_rows: List[Dict[str, Any]],
     spacy_extractor=None,
 ) -> DocumentWiki:
-    """Build DocumentWiki directly from GraphData."""
+    """
+    Build DocumentWiki directly from GraphData.
+    
+    chunk_rows: list of dicts from store.query_records() — must have "clean" and "index" keys.
+    """
     darwin.log(f"Building wiki from graph: {len(graph.nodes)} concepts", LogType.INFO)
 
     # ── Precompute O(1) lookups & masks ─────────────────────────────────
     edge_map = _build_edge_map(graph)
-    structural_mask = _precompute_structural_mask(chunks)
+    structural_mask = _precompute_structural_mask(chunk_rows)
 
     # Precompute node degrees for sorting
     node_degrees: CounterType[str] = Counter()
@@ -301,7 +303,7 @@ def build_wiki_from_graph(
     label_to_id = {n.label: n.id for n in graph.nodes}
 
     # Dynamic batch size: scales with doc size, bounded for memory safety
-    n_chunks = len(chunks)
+    n_chunks = len(chunk_rows)
     spacy_batch_size = min(128, max(16, n_chunks // 50))
 
     # Shared spaCy cache across all nodes
@@ -320,18 +322,18 @@ def build_wiki_from_graph(
 
         # Fallback: if all filtered out, keep the longest non-structural or original
         if not valid_chunks and node.chunk_indices:
-            candidates = [chunks[idx] for idx in node.chunk_indices if idx < len(chunks)]
+            candidates = [chunk_rows[idx] for idx in node.chunk_indices if idx < len(chunk_rows)]
             if candidates:
-                non_struct = [c for c in candidates if c.index not in structural_mask]
+                non_struct = [c for c in candidates if c.get("index") not in structural_mask]
                 if non_struct:
-                    longest = max(non_struct, key=lambda c: len(c.clean))
+                    longest = max(non_struct, key=lambda c: len(c.get("clean", "")))
                 else:
-                    longest = max(candidates, key=lambda c: len(c.clean))
-                valid_chunks = [longest.index]
+                    longest = max(candidates, key=lambda c: len(c.get("clean", "")))
+                valid_chunks = [longest.get("index")]
 
         keywords = _extract_keywords(
             valid_chunks,
-            chunks,
+            chunk_rows,
             spacy_extractor,
             batch_size=spacy_batch_size,
             spacy_cache=spacy_cache,
@@ -392,15 +394,20 @@ def run_wiki_pipeline(
         )
         return None
 
+    # Check for cached wiki — load_wiki now returns list[dict]
     if store.has_wiki(filename) and not rerun:
         darwin.log(f"Skipping wiki: fresh exists for {filename}", LogType.INFO)
         if completed_files is not None:
             completed_files.append(filename)
         try:
-            return store.load_wiki(filename)
+            pages_dicts = store.load_wiki(filename)
+            if pages_dicts:
+                pages = [WikiPage.from_dict(p) for p in pages_dicts]
+                return DocumentWiki(filename=filename, pages=pages)
         except Exception:
             darwin.log("Cached wiki corrupted — regenerating...", LogType.WARNING)
 
+    # Load graph as dict components
     graph_dict = store.load_graph(filename)
 
     # Schema guard
@@ -410,14 +417,15 @@ def run_wiki_pipeline(
         darwin.log(f"Graph schema validation failed: {e}", LogType.ERROR)
         return None
 
+    # Reconstruct GraphData from dicts
     nodes = [
         ConceptNode(
             id=n["id"],
             label=n["label"],
             display_name=n.get("display_name", n["label"]),
-            entity_type=n.get("type", "UNKNOWN"),
-            frequency=n["freq"],
-            chunk_indices=n["chunks"],
+            entity_type=n.get("entity_type", "UNKNOWN"),
+            frequency=n["frequency"],
+            chunk_indices=n["chunk_indices"],
             first_mention_chunk=n.get("first_mention_chunk", 0),
             mention_forms=n.get("mention_forms", [n["label"]]),
             centroid=n.get("centroid", []),
@@ -452,38 +460,43 @@ def run_wiki_pipeline(
         LogType.INFO,
     )
 
-    chunks = store.load_chunks(filename)
-    if not chunks:
+    # Load chunks as dict rows — only columns we need
+    chunk_rows = store.query_records(filename, columns=["clean", "index"])
+    if not chunk_rows:
         darwin.log(f"No chunks for '{filename}'", LogType.ERROR)
         return None
 
+    # Validate chunk index consistency
     max_chunk_idx = max(
         (idx for node in nodes for idx in node.chunk_indices),
         default=0,
     )
-    if max_chunk_idx >= len(chunks):
+    if max_chunk_idx >= len(chunk_rows):
         darwin.log(
             f"Graph indices stale — references chunk {max_chunk_idx} "
-            f"but only {len(chunks)} exist. Re-run graph extraction.",
+            f"but only {len(chunk_rows)} exist. Re-run graph extraction.",
             LogType.ERROR,
         )
         return None
 
+    # Optional spaCy for keyword extraction
     spacy_extractor = None
     try:
-        from src.Models import ModelManager, ModelCategory
+        from src.core.Models import ModelManager, ModelCategory
         loader = ModelManager.get_loader()
         spacy_extractor = loader.get(ModelCategory.TOKENIZER)
     except Exception:
         pass
 
+    # Build wiki
     wiki = build_wiki_from_graph(
         graph=graph,
-        chunks=chunks,
+        chunk_rows=chunk_rows,
         spacy_extractor=spacy_extractor,
     )
 
-    store.save_wiki(filename, wiki)
+    # Save wiki — pass pages list, not DocumentWiki object
+    store.save_wiki(filename, wiki.pages)
     darwin.log(
         f"Wiki saved — {len(wiki.pages)} pages",
         LogType.SUCCESS,

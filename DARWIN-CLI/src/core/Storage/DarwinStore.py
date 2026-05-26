@@ -1,20 +1,23 @@
 import shutil
 from pathlib import Path
 
-from src.features.Storage.StorePaths import StorePaths, default_darwin_dir
-from src.features.Storage.FileRegistry import FileRegistry, FileRecord
-from src.features.Storage.StoreArtifacts import (
+from dataclasses import dataclass
+from typing import Any, List, Optional
+from src.core.Storage.StorePaths import StorePaths, default_darwin_dir
+from src.core.Storage.FileRegistry import FileRegistry, FileRecord
+from src.core.Storage.StoreArtifacts import (
     MetaMixin,
     ConfigMixin,
     MarkdownMixin,
     VectorMixin,
-    ChunksMixin,
+    RecordsMixin,
     EmbeddingsMixin,
     BM25Mixin,
     StopwordsMixin,
     GraphMixin,
+    SearchMixin,
     WikiMixin)
-from src.features.Storage.StoreUtils import DEFAULT_CONFIG, now, read_json, write_json, invalidate_model_cache
+from src.core.Storage.StoreUtils import DEFAULT_CONFIG, now, read_json, write_json, invalidate_model_cache
 from src.lib.Terminal import TerminalUI
 
 
@@ -23,12 +26,13 @@ class DarwinStore(
     ConfigMixin,
     MarkdownMixin,
     VectorMixin,
-    ChunksMixin,
+    RecordsMixin,
     EmbeddingsMixin,
     BM25Mixin,
     StopwordsMixin,
     GraphMixin,
     WikiMixin,
+    SearchMixin
 ):
     def __init__(self, darwin_dir: Path = None):
         self._darwin_dir = darwin_dir or default_darwin_dir()
@@ -36,16 +40,14 @@ class DarwinStore(
         self.registry = FileRegistry(self.paths)
         self._artifact_cache: dict = {}
 
-        from src.Models import ModelManager
+        from src.core.Models import ModelManager
         prefs = self.get_model_preferences() if self.paths.config_path.exists() else None
         ModelManager.setup(preferences=prefs)
 
         self._init_config()
 
-        from src.Models.Main import ModelManager
+        from src.core.Models.Main import ModelManager
         self.models = ModelManager(darwin_store=self)
-
-    # ─────────────────────────────────────────────
 
     def invalidate(self, filename: str) -> None:
         """Clear all cached artifacts for a file after save."""
@@ -57,7 +59,7 @@ class DarwinStore(
         if self.paths.config_path.exists():
             return
 
-        from src.Models import ModelManager, ModelCategory
+        from src.core.Models import ModelManager, ModelCategory
 
         ModelManager.setup()
         loader = ModelManager.get_loader()
@@ -102,8 +104,8 @@ class DarwinStore(
     # ─────────────────────────────────────────────
 
     def get_embedded_files_by_model(self) -> dict:
-        from src.Models.ModelRegistry import REGISTRY
-        from src.Models.ModelStore import ModelStore
+        from src.core.Models.ModelRegistry import REGISTRY
+        from src.core.Models.ModelStore import ModelStore
 
         prefs = self.get_model_preferences()
         model_store = ModelStore()
@@ -146,8 +148,8 @@ class DarwinStore(
     # ─────────────────────────────────────────────
 
     def get_embedding_health(self) -> dict:
-        from src.Models.ModelRegistry import REGISTRY
-        from src.Models.ModelStore import ModelStore
+        from src.core.Models.ModelRegistry import REGISTRY
+        from src.core.Models.ModelStore import ModelStore
 
         prefs = self.get_model_preferences()
         active_key = prefs.get("embedding")
@@ -319,7 +321,7 @@ class DarwinStore(
                 ]
             }
         """
-        from src.features.Storage.StoreArtifacts import ARTIFACT_MANIFEST
+        from src.core.Storage.StoreArtifacts import ARTIFACT_MANIFEST
 
         if filename:
             records = [self.registry._find_by_name(filename)]

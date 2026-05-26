@@ -34,7 +34,7 @@ from src.features.Knowledge.Wiki.WikiUtils import (
     WikiGenerationArgs,
     DEFAULT_CHUNKS_PER_CONCEPT,
 )
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
@@ -48,7 +48,7 @@ def _resolve_files(raw: list[str], store: DarwinStore) -> list[str]:
     resolved: list[str] = []
     for r in raw:
         candidate = Path(r).name
-        if store.has_chunks(candidate):
+        if store.has_records(candidate):
             resolved.append(candidate)
         else:
             darwin.log(f"'{r}' → '{candidate}' has no chunks — skipping", LogType.WARNING)

@@ -85,3 +85,83 @@ class BM25Data:
             "doc_lengths":      self.doc_lengths,
             "precomputed_idfs": self.precomputed_idfs or {},
         }
+      
+   
+    @classmethod
+    def from_dict(cls, data: dict) -> "BM25Data":
+        """
+        Reconstruct BM25Data from a storage-layer dictionary.
+
+        Expected schema:
+        {
+            "tokens": List[List[str]],
+            "doc_freqs": Dict[str, int],
+            "avgdl": float,
+            "doc_lengths": List[int],
+            "domain_stopwords": set[str] | list[str],
+            "threshold": float,
+            "chunk_count": int,
+            "vocab_size": int,
+            "idf_smoothing": float,
+            "precomputed_idfs": Optional[Dict[str, float]]
+        }
+        """
+
+        return cls(
+            tokens=[
+                list(toks)
+                for toks in data.get("tokens", [])
+            ],
+
+            doc_freqs={
+                str(k): int(v)
+                for k, v in data.get("doc_freqs", {}).items()
+            },
+
+            avgdl=float(
+                data.get("avgdl", 0.0)
+            ),
+
+            doc_lengths=[
+                int(x)
+                for x in data.get("doc_lengths", [])
+            ],
+
+            domain_stopwords=list(
+                data.get("domain_stopwords", [])
+            ),
+
+            threshold=float(
+                data.get("threshold", 0.0)
+            ),
+
+            chunk_count=int(
+                data.get(
+                    "chunk_count",
+                    len(data.get("tokens", []))
+                )
+            ),
+
+            vocab_size=int(
+                data.get("vocab_size", 0)
+            ),
+
+            idf_smoothing=float(
+                data.get(
+                    "idf_smoothing",
+                    DEFAULT_IDF_SMOOTHING
+                )
+            ),
+
+            precomputed_idfs=(
+                {
+                    str(k): float(v)
+                    for k, v in data.get(
+                        "precomputed_idfs",
+                        {}
+                    ).items()
+                }
+                if data.get("precomputed_idfs") is not None
+                else None
+            ),
+        )

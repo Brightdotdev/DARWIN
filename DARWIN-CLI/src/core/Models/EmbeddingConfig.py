@@ -118,7 +118,7 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
         return PRESETS.get(model_key, DEFAULT_PRESET)
     
     try:
-        from src.Models import ModelManager, ModelCategory
+        from src.core.Models import ModelManager, ModelCategory
         loader = ModelManager.get_loader()
         # get_model_key() now returns canonical model_id via _resolve_key()
         model_key = loader.get_model_key(ModelCategory.EMBEDDING)

@@ -39,9 +39,7 @@ Formula: log((N - df + s) / (df + s) + 1)   where s = smoothing
 import re
 import numpy as np
 from collections import Counter
-from typing import Iterator, List, Set, Tuple
-
-from src.features.Ingestion.Chunking.lib import Chunk
+from typing import Iterator, List, Set, Tuple,Dict, Any, Optional
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 from src.features.Indexing.BM25.lib import ( MIN_TOKEN_LENGTH, STANDARD_STOPS,DOMAIN_STOP_THRESHOLD)
@@ -83,16 +81,16 @@ def tokenize_text(
 
 
 def tokenize_chunks(
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     domain_stops: Set[str] = frozenset(),
 ) -> List[List[str]]:
-    return [tokenize_text(c.clean, domain_stops=domain_stops) for c in chunks]
+    return [tokenize_text(c.get("clean", ""), domain_stops=domain_stops) for c in chunks]
 
 
 # ── Streaming ──────────────────────────────────────────────────────────────────
 
 def stream_tokenize_chunks(
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     domain_stops: Set[str] = frozenset(),
     batch_size: int = 100,
 ) -> Iterator[List[List[str]]]:
@@ -105,14 +103,14 @@ def stream_tokenize_chunks(
         yield [
             tokens
             for chunk in chunks[i : i + batch_size]
-            if (tokens := tokenize_text(chunk.clean, domain_stops=domain_stops))
+            if (tokens := tokenize_text(chunk.get("clean", ""), domain_stops=domain_stops))
         ]
 
 
 # ── Domain stopword detection ──────────────────────────────────────────────────
 
 def detect_domain_stopwords(
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     threshold: float = DOMAIN_STOP_THRESHOLD,
 ) -> Set[str]:
     """
@@ -127,7 +125,7 @@ def detect_domain_stopwords(
 
     doc_freq: Counter = Counter()
     for chunk in chunks:
-        doc_freq.update(set(re.findall(r"[a-zA-Z]{3,}", chunk.clean.lower())))
+        doc_freq.update(set(re.findall(r"[a-zA-Z]{3,}", chunk.get("clean", "").lower())))
 
     n = len(chunks)
     stops = {term for term, count in doc_freq.items() if count / n > threshold}

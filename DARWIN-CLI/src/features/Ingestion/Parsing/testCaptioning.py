@@ -129,7 +129,7 @@ def main() -> int:
 
     
 
-    from src.Models import ModelManager
+    from src.core.Models import ModelManager
     ModelManager.setup()
 
 

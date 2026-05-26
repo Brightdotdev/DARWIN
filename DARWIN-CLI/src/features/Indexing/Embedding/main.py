@@ -19,85 +19,11 @@ os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.features.Indexing.Embedding.Embedder import run_embedding_pipeline
 from src.features.Indexing.Embedding.lib import EmbeddingArgs
-from src.features.Storage.DarwinStore import DarwinStore
-from src.Models import ModelManager, ModelCategory
+from src.core.Storage.DarwinStore import DarwinStore
+from src.core.Models import ModelManager, ModelCategory
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 from src.lib.Utils import ensure_writable_directory
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Inspection
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _print_inspection(filename: str, store: DarwinStore, vectors, chunks) -> None:
-    """
-    Inspect embedding output for a file.
-    """
-
-    if not store.has_embeddings(filename):
-        darwin.log("Could not load embeddings for inspection", LogType.ERROR)
-        return
-
-    if not chunks or vectors is None or len(vectors) == 0:
-        darwin.log("Missing chunks or vectors for inspection", LogType.ERROR)
-        return
-
-    texts = [c.text for c in chunks]
-    headings = [c.heading for c in chunks]
-    pages = [c.page for c in chunks]
-
-    darwin.log("")
-    darwin.log(f"── embedding inspection — {filename} ──", LogType.INFO)
-    darwin.log("")
-
-    norms = np.linalg.norm(vectors, axis=1) if len(vectors) else []
-
-    dot_self = float(np.dot(vectors[0], vectors[0])) if len(vectors) else 0.0
-
-    darwin.log("  metric                          value", LogType.INFO)
-    darwin.log("  ──────────────────────────────  ─────", LogType.INFO)
-    darwin.log(f"  vectors shape                   {vectors.shape}", LogType.INFO)
-    darwin.log(f"  dtype                           {vectors.dtype}", LogType.INFO)
-
-    if vectors.ndim > 1:
-        darwin.log(f"  embedding dim                   {vectors.shape[1]}", LogType.INFO)
-
-    darwin.log(
-        f"  L2 norms                        min={np.min(norms):.4f} max={np.max(norms):.4f}",
-        LogType.INFO,
-    )
-
-    darwin.log(f"  v[0] · v[0]                    {dot_self:.4f}", LogType.INFO)
-
-    darwin.log(f"  unique pages                   {len(set(pages))}", LogType.INFO)
-
-    heading_count = sum(1 for h in headings if h)
-    darwin.log(f"  chunks with heading            {heading_count}/{len(headings)}", LogType.INFO)
-
-    darwin.log("")
-    darwin.log("── sample chunks ──", LogType.INFO)
-    darwin.log("")
-
-    indices = [0, len(texts)//2, len(texts)-1] if len(texts) >= 3 else range(len(texts))
-
-    for idx in indices:
-        darwin.log(f"  index   {idx}", LogType.INFO)
-        darwin.log(f"  heading {headings[idx] or '(none)'}", LogType.INFO)
-        darwin.log(f"  page    {pages[idx]}", LogType.INFO)
-
-        preview = texts[idx][:300].replace("\n", " ").strip()
-        if len(texts[idx]) > 300:
-            preview += "..."
-
-        darwin.log(f"  text    {preview}", LogType.INFO)
-
-        vec_preview = ", ".join(f"{v:.4f}" for v in vectors[idx][:3])
-        darwin.log(f"  vector  [{vec_preview}, ...]", LogType.INFO)
-
-        darwin.log("─" * 40, LogType.INFO)
-
-    darwin.log("─" * 60, LogType.INFO)
-    darwin.log("")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -114,7 +40,7 @@ def handle_embedding(args: EmbeddingArgs,store) -> None:
 
     # ── resolve files using store identity (hash-safe) ──
     if args.files:
-        filenames = [f for f in args.files if store.has_chunks(f)]
+        filenames = [f for f in args.files if store.has_records(f)]
     else:
         filenames = [
             fname for fname, info in store.status().get("files", {}).items()
@@ -138,7 +64,8 @@ def handle_embedding(args: EmbeddingArgs,store) -> None:
             skipped += 1
             continue
 
-        chunks = store.load_chunks(filename)
+        chunks = store.query_records(filename=filename, columns=["clean","index"])
+
         if not chunks:
             darwin.log(f"{filename} — no chunks found", LogType.ERROR)
             failed += 1
@@ -157,9 +84,9 @@ def handle_embedding(args: EmbeddingArgs,store) -> None:
 
             if vectors is not None:
                 succeeded += 1
-
+                
                 if args.inspect:
-                    _print_inspection(filename, store, vectors, chunks)
+                    darwin.log(f"{filename} — {vectors.shape}", LogType.INFO)
             else:
                 skipped += 1
 

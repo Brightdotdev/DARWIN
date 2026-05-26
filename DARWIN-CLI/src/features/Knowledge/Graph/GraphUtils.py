@@ -3,10 +3,11 @@ src/core/Knowledge/Graph/GraphUtils.py
 --------------------------------------
 Data models, constants, and helpers for knowledge graph extraction.
 Updated for spaCy-based entity-relationship extraction + community detection.
+Optimized for new DarwinStore: accepts dict-based chunk rows.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Set, Tuple
+from typing import List, Dict, Optional, Set, Tuple, Any
 import re
 import math
 from collections import Counter, defaultdict
@@ -95,10 +96,10 @@ class GraphData:
                     "id": n.id,
                     "label": n.label,
                     "display_name": n.display_name,
-                    "type": n.entity_type,
-                    "freq": n.frequency,
+                    "entity_type": n.entity_type,
+                    "frequency": n.frequency,
                     "first_mention_chunk": n.first_mention_chunk,
-                    "chunks": n.chunk_indices,
+                    "chunk_indices": n.chunk_indices,
                     "mention_forms": n.mention_forms,
                     "centroid": n.centroid,
                 }
@@ -460,14 +461,28 @@ def extract_narrative_keyphrase(
 
 def extract_community_keywords(
     chunk_indices: List[int],
-    chunks,
+    chunk_rows: List[Dict[str, Any]],
     spacy_extractor,
     max_keywords: int = 8,
 ) -> List[str]:
-    """Extract top keywords for a community from its chunk text."""
+    """
+    Extract top keywords for a community from its chunk text.
+    
+    chunk_rows: list of dicts from store.query_records() — NOT Chunk objects.
+    Each row must have at least a "clean" or "text" key.
+    """
     from collections import Counter as _Counter
 
-    text = " ".join(chunks[i].clean for i in chunk_indices[:20] if i < len(chunks))
+    # Build text from chunk rows using dict access
+    texts = []
+    for row in chunk_rows:
+        idx = row.get("index", -1)
+        if idx in chunk_indices:
+            text = row.get("clean", "") or row.get("text", "")
+            if text:
+                texts.append(text)
+
+    text = " ".join(texts[:20])  # cap at 20 chunks for speed
 
     if spacy_extractor and hasattr(spacy_extractor, 'nlp'):
         doc = spacy_extractor.nlp(text[:5000])

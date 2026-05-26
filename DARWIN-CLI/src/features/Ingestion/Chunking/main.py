@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore", module="litellm")
 import os
 os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Ingestion.Chunking.Chunker import chunk_for_model
 from src.features.Ingestion.Chunking.lib import Chunk, ChunkingArgs
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
@@ -205,7 +205,7 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
             failed += 1
             continue
 
-        if not args.rerun and store.has_chunks(filename):
+        if not args.rerun and store.has_records(filename):
             darwin.log(f"{filename} — already chunked (use --rerun to rechunk)", LogType.INFO)
             succeeded += 1
             continue
@@ -232,7 +232,7 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
         try:
             t0 = time.perf_counter()
 
-            chunks, chunk_metadata = chunk_for_model(
+            chunks = chunk_for_model(
                 text=chunk_text,
                 source=filename,
             )
@@ -247,10 +247,9 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
 
             total_links = sum(len(c.links) for c in chunks)
 
-            store.save_chunks(
+            store.save_records(
                 filename=filename,
-                chunks=chunks,
-                chunk_meta={**chunk_metadata, "total_links": total_links},
+                records=chunks,
             )
 
             avg_tokens = sum(c.token_count for c in chunks) // len(chunks)

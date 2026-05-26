@@ -6,10 +6,10 @@ from typing import Optional
 
 from src.features.Hardware.SystemDetector import detect_system, recommend_defaults
 from src.features.Hardware.DeviceManager import DeviceManager
-from src.Models.ModelRegistry import ModelCategory, by_category, get_spec
-from src.Models.ModelManager import ModelManager
-from src.Models.ModelSetup import handle_download_error
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Models.ModelRegistry import ModelCategory, by_category, get_spec
+from src.core.Models.ModelManager import ModelManager
+from src.core.Models.ModelSetup import handle_download_error
+from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.KeyManager import (
     set_api_key,
     clear_api_key,
@@ -93,12 +93,12 @@ def handle_models(args):
 
     elif args.command == "setup-custom":
         import asyncio
-        from src.Models.ModelStartup import run_onboarding_async
+        from src.core.Models.ModelStartup import run_onboarding_async
         asyncio.run(run_onboarding_async())
         print("✅ Custom setup complete. Run 'status' to see your models.")
 
     elif args.command == "validate":
-        from src.Models.ModelSetup import validate_model, validate_category
+        from src.core.Models.ModelSetup import validate_model, validate_category
         system = detect_system()
 
         if args.model:

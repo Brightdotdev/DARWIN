@@ -387,7 +387,7 @@ Examples:
 
 
 async def main() -> int:
-    from src.features.Storage.DarwinStore import DarwinStore
+    from src.core.Storage.DarwinStore import DarwinStore
     from src.lib.Utils import ensure_writable_directory
 
     parser = create_parser()

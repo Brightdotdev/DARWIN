@@ -9,7 +9,8 @@ from typing import List
 from src.features.Retrival.Keyword.KeywordUtilities import calculate_bm25
 from src.features.Retrival.lib import KeywordSearchResult
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
+from src.features.Indexing.BM25.lib import BM25Data
 
 def search_single_document_keyword(
     query: str,
@@ -31,7 +32,7 @@ def search_single_document_keyword(
     if not query.strip():
         return []
 
-    chunks = store.load_chunks(filename)
+    chunks = store.query_records(filename)
     data = store.load_bm25(filename)
     if not chunks or not data:
         darwin.log(f"Skipping {filename} — no data for keyword search", LogType.INFO)
@@ -40,7 +41,7 @@ def search_single_document_keyword(
 
     from src.features.Indexing.BM25.BM25Utils import tokenize_text, STANDARD_STOPS
 
-    stopwords = set(data.domain_stopwords).union(STANDARD_STOPS)
+    stopwords = set(data['domain_stopwords']).union(STANDARD_STOPS)
 
     # ── Query expansion (with automatic fallback) ──────────────────────────
     search_query = query  # Default: use original query
@@ -60,23 +61,23 @@ def search_single_document_keyword(
         return []
 
     results = []
-    for chunk_idx in range(len(data.tokens)):
+    for chunk_idx in range(len(data["tokens"])):
         score, matched = calculate_bm25(query_terms, chunk_idx, data, k1, b)
         
         if score >= min_score:
             chunk = chunks[chunk_idx]
             results.append(KeywordSearchResult(
-                text=chunk.text,
-                clean=chunk.clean,
+                text=chunk["text"],
+                clean=chunk["clean"],
                 score=score,
                 source=filename,
-                page=chunk.page,
-                page_end=chunk.page_end,
-                heading=chunk.heading,
+                page=chunk["page"],
+                page_end=chunk["page_end"],
+                heading=chunk["heading"],
                 chunk_index=chunk_idx,
                 matched_terms=matched,
-                links=chunk.links if chunk.links else [],
-                overlap_direction=chunk.overlap_direction,
+                links=chunk["links"] if chunk["links"] else [],
+                overlap_direction=chunk["overlap_direction"],
             ))
 
     results.sort(key=lambda r: r.score, reverse=True)
@@ -98,7 +99,7 @@ def search_across_documents_keyword(
         if not store.has_bm25(filename):
             darwin.log(f"Skipping {filename} — no BM25 index", LogType.INFO)
             continue
-        if not store.has_chunks(filename):
+        if not store.has_records(filename):
             darwin.log(f"Skipping {filename} — no chunks", LogType.INFO)
             continue
         try:

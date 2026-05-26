@@ -11,7 +11,7 @@ from typing import List, Dict, Optional, Literal, Set, Tuple
 from dataclasses import dataclass, field
 import re
 
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -32,7 +32,7 @@ class SpacyLoader:
     def get_nlp(cls):
         if cls._nlp is None:
             try:
-                from src.Models import ModelManager, ModelCategory
+                from src.core.Models import ModelManager, ModelCategory
                 loader = ModelManager.get_loader()
                 spacy_wrapper = loader.get(ModelCategory.TOKENIZER)
                 cls._nlp = spacy_wrapper.nlp

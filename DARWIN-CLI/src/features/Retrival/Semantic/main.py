@@ -28,7 +28,7 @@ from src.features.Retrival.Semantic.SematicSearchUtils import (
     format_results)
 
 from src.features.Retrival.lib import SemanticSearchResult
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
@@ -209,7 +209,7 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
 # ============================================================================
 
 async def main() -> int:
-    from src.features.Storage.DarwinStore import DarwinStore
+    from src.core.Storage.DarwinStore import DarwinStore
     from src.lib.Utils import ensure_writable_directory
     parser = argparse.ArgumentParser(
         description="Semantic search over embedded documents",

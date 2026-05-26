@@ -7,15 +7,15 @@ Wrappers live in wrappers.py. Vision dispatch lives in vision_loader.py.
 from pathlib import Path
 from typing import Optional, Any
 
-from src.Models.ModelStore import ModelStore
-from src.Models.ModelRegistry import get_spec, ModelCategory, REGISTRY
-from src.Models.ModelLoading.Wrappers import (
+from src.core.Models.ModelStore import ModelStore
+from src.core.Models.ModelRegistry import get_spec, ModelCategory, REGISTRY
+from src.core.Models.ModelLoading.Wrappers import (
     HFEmbeddingWrapper,
     APIEmbeddingWrapper,
     APIRerankerWrapper,
     APIVisionWrapper,
 )
-from src.Models.ModelLoading.vision_loader import load_vision_model
+from src.core.Models.ModelLoading.vision_loader import load_vision_model
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
@@ -162,7 +162,7 @@ class ModelLoader:
             return model
 
         elif spec.loader == "spacy":
-            from src.Models.ModelLoading.SpacyConceptExtractor import SpacyConceptExtractor
+            from src.core.Models.ModelLoading.SpacyConceptExtractor import SpacyConceptExtractor
             model = SpacyConceptExtractor(path, spec.model_id)
             self._cache[registry_key] = model
             return model

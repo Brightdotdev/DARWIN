@@ -7,6 +7,8 @@ Data models and CLI args for wiki generation.
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 
+from src.features.Retrival.lib import SearchAudit
+
 
 DEFAULT_CHUNKS_PER_CONCEPT = 8
 
@@ -56,6 +58,7 @@ class WikiSearchResult:
     content_quality_score: float
     structural_penalty:    float
     is_expanded:           bool = False
+    audit: Optional[SearchAudit] = None
 
 
 @dataclass

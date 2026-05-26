@@ -46,7 +46,7 @@ REGISTRY: dict[str, ModelSpec] = {
         disk_mb=2200,
         loader="embedding_st",
         required=True,
-        notes="1024-dim, multilingual, understands markdown structure. Recommended.",
+        notes="1024-dim, multilingual, understands markdown structure. 16GB RAM recommended.",
     ),
     "GritLM/GritLM-7B": ModelSpec(
         model_id="GritLM/GritLM-7B",
@@ -57,7 +57,7 @@ REGISTRY: dict[str, ModelSpec] = {
         loader="sentence_transformers",
         required=False,
         experimental=True,
-        notes="7B LLM repurposed as embedder. 4096-dim. GPU strongly recommended; CPU inference will be prohibitively slow (minutes per document)."
+        notes="7B LLM repurposed as embedder. 4096-dim. GPU strongly recommended; CPU inference will be prohibitively slow (hours per document)."
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -85,7 +85,7 @@ REGISTRY: dict[str, ModelSpec] = {
         disk_mb=500,
         loader="transformers",
         required=False,
-        notes="256M params. Fast captions, low memory. Good enough for most docs.",
+        notes="256M params. Fast captions, low memory. Good enough for most docs. swiss army knife of vision models.",
     ),
     "vikhyatk/moondream2": ModelSpec(
         model_id="vikhyatk/moondream2",
@@ -109,7 +109,7 @@ REGISTRY: dict[str, ModelSpec] = {
         disk_mb=45,
         loader="spacy",
         required=True,
-        notes="Medium English model. Optimized for concept extraction (NER, parsing, lemmatization). 45MB.",
+        notes="Medium English model. Optimized for concept extraction (NER, parsing, lemmatization). 45MB. Always installed.",
     ),
     "en_core_web_lg": ModelSpec(
         model_id="en_core_web_lg",

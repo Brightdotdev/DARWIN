@@ -22,7 +22,7 @@ from src.features.Ingestion.Parsing.lib import (
     ParsingArgs,
     detect_type,
 )
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 

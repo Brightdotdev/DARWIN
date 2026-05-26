@@ -36,7 +36,7 @@ from src.features.Retrival.Hybrid.HybridSearchUtils import (
     DEFAULT_ALPHA,
     DEFAULT_BETA,
 )
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.Utils import scan_folder
 
@@ -208,4 +208,3 @@ def search_across_documents_hybrid(
     darwin.log(f"done — {len(results)} final results", LogType.SUCCESS)
 
     return results
-

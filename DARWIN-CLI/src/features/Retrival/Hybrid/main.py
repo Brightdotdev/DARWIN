@@ -34,7 +34,7 @@ from src.features.Retrival.Hybrid.HybridSearchUtils import (
     OverlapDirection,
     format_hybrid_results
 )
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Utils import scan_folder
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 

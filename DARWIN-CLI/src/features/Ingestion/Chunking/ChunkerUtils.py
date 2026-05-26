@@ -190,17 +190,6 @@ def dynamic_chunk_params(doc_tokens: int) -> dict:
     }
 
 
-def get_dynamic_chunk_params_for_text(text: str) -> dict:
-    """Analyse text and return optimal chunking parameters + metadata."""
-    total_tokens = tokens(text)
-    config = get_chunk_config()
-    params = dynamic_chunk_params(total_tokens)
-    params.update({
-        "doc_tokens":       total_tokens,
-        "estimated_chunks": max(1, total_tokens // params["max_tokens"]),
-        "model":            config.model_name,
-    })
-    return params
 
 
 # ── Update _make_chunk — no model_name parameter ──

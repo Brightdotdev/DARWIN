@@ -45,7 +45,7 @@ print(f"[OK] LLM client ready: {type(llm_client).__module__}.{type(llm_client)._
 # ═══════════════════════════════════════════════════════════════════════════
 # Project Imports
 # ═══════════════════════════════════════════════════════════════════════════
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Query.QueryExpansionLayer import QueryExpansionLayer
 from src.features.Query.SearchOrchestrator import SearchOrchestrator, SearchContext
 from src.features.Query.Response.ResponseRouter import ResponseRouter
@@ -149,7 +149,7 @@ recorder = ResultRecorder()
 def check_prerequisites(store: DarwinStore) -> bool:
     ok = True
     for filename in [ENOCH_FILE, BIBLE_FILE]:
-        chunks = store.load_chunks(filename)
+        chunks = store.query_records(filename)
         wiki = store.load_wiki(filename)
         if not chunks:
             print(f"  ✗ {filename}: NO CHUNKS")

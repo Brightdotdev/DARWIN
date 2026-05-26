@@ -26,7 +26,7 @@ os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 # ── store ────────────────────────────────────────────────────────────────────
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 
 # ── pipeline args & handlers ───────────────────────────────────────────────
 from src.features.Ingestion.Chunking.lib import ChunkingArgs
@@ -40,9 +40,9 @@ from src.features.Indexing.BM25.lib import DOMAIN_STOP_THRESHOLD, DEFAULT_IDF_SM
 from src.features.Knowledge.lib import KnowledgePipelineArgs
 from src.features.Knowledge.main import handle_knowledge
 
-# ── orchestrators ────────────────────────────────────────────────────────────
-from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator
-from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator
+# ── unified search orchestrator ─────────────────────────────────────────────
+from src.features.Query.SearchOrchestrator import SearchOrchestrator
+from src.features.Query.Response.ResponseTypes import ResolvedQuery
 
 # ── LLM ──────────────────────────────────────────────────────────────────────
 from src.features.LLM.LLMManager import LLMManager
@@ -121,34 +121,43 @@ def main() -> int:
         )
         handle_knowledge(knowledge_args, store=store)
 
-        # ── 4. retrieval ─────────────────────────────────────────────────────
+        # ── 4. retrieval (unified via SearchOrchestrator) ──────────────────────
         darwin.log("═" * 60, LogType.INFO)
         darwin.log("Stage 4: Retrieval", LogType.INFO)
         darwin.log("═" * 60, LogType.INFO)
 
-        # 4a. Wiki-style semantic search
-        wiki_orch = WikiOrchestrator(store)
-        wiki_context = wiki_orch.search(
-            query=QUERY,
-            filename=FILES[0],
+        search_orch = SearchOrchestrator(store)
+
+        # 4a. Broad / Wiki-style semantic search (concepts-first)
+        broad_query = ResolvedQuery(
+            original_query=QUERY,
+            intent="broad",
+            query_embedding=None,
+        )
+        broad_ctx = search_orch.search(
+            resolved_query=broad_query,
+            files=FILES,
             top_k=3,
         )
-        wiki_prompt = wiki_orch.build_llm_prompt(wiki_context, QUERY)
+        wiki_prompt = broad_ctx.merged_prompt
 
         darwin.log("\n── Wiki Prompt ──", LogType.INFO)
         darwin.log(wiki_prompt[:500] + "...", LogType.INFO)
 
-        # 4b. Hybrid RAG retrieval
-        rag_orch = RetrievalOrchestrator(store)
-        rag_context = rag_orch.retrieve_and_resolve(
-            query=QUERY,
-            filename=FILES[0],
-            method="hybrid",
+        # 4b. Dense / RAG-style retrieval (passages-first)
+        dense_query = ResolvedQuery(
+            original_query=QUERY,
+            intent="dense",
+            query_embedding=None,
+        )
+        dense_ctx = search_orch.search(
+            resolved_query=dense_query,
+            files=FILES,
             top_k=5,
             merge_sources=True,
             fill_gaps=True,
         )
-        rag_prompt = rag_orch.build_llm_prompt(rag_context)
+        rag_prompt = dense_ctx.merged_prompt
 
         darwin.log("\n── RAG Prompt ──", LogType.INFO)
         darwin.log(rag_prompt[:500] + "...", LogType.INFO)

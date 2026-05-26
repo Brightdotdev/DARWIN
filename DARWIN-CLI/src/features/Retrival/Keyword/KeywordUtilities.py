@@ -1,6 +1,6 @@
 
 from dataclasses import dataclass,field
-from typing import List
+from typing import List,Optional,Dict,Any
 from src.features.Indexing.BM25.lib import BM25Data,compute_idf
         
 
@@ -33,7 +33,7 @@ class KeywordSearchArgs:
 def calculate_bm25(
     query_terms: List[str],
     chunk_idx:   int,
-    data:        BM25Data,
+    data:        Dict[str, Any],
     k1:          float,
     b:           float,
 ) -> tuple[float, List[str]]:
@@ -46,12 +46,12 @@ def calculate_bm25(
         tf_norm = (tf × (k1 + 1)) / (tf + k1 × (1 − b + b × dl/avgdl))
         score  += IDF × tf_norm
     """
-    if data.avgdl == 0:
+    if data.get("avgdl") == 0:
         return 0.0, []
 
-    dl           = data.doc_lengths[chunk_idx]
-    length_norm  = 1 - b + b * (dl / data.avgdl)
-    chunk_tokens = data.tokens[chunk_idx]
+    dl           = data["doc_lengths"][chunk_idx]
+    length_norm  = 1 - b + b * (dl / data["avgdl"])
+    chunk_tokens = data["tokens"][chunk_idx]
 
     # Build a term→frequency map for this chunk (once per score call)
     tf_map: dict[str, int] = {}
@@ -61,7 +61,7 @@ def calculate_bm25(
     score         = 0.0
     matched_terms = []
 
-    idfs = data.precomputed_idfs or {}
+    idfs = data.get("precomputed_idfs") or {}
 
     for term in set(query_terms):          # deduplicate query terms
         tf = tf_map.get(term, 0)
@@ -71,8 +71,8 @@ def calculate_bm25(
         idf      = idfs.get(term)
         if idf is None:
             # term not in index vocab — compute on the fly (OOV at index time)
-            df  = data.doc_freqs.get(term, 0)
-            idf = compute_idf(df, data.chunk_count, data.idf_smoothing)
+            df  = data.get("doc_freqs", {}).get(term, 0)
+            idf = compute_idf(df, data.get("chunk_count"), data.get("idf_smoothing"))
 
         tf_norm  = (tf * (k1 + 1)) / (tf + k1 * length_norm)
         score   += idf * tf_norm

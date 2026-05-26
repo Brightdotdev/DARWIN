@@ -20,7 +20,7 @@ from src.features.Knowledge.Graph.GraphUtils import (
     export_graph_json,
 )
 from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig, PRESETS
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
@@ -69,8 +69,8 @@ def _print_inspection(graph, filename: str) -> None:
 def handle_graph_extraction(config: GraphExtractionConfig,store,files: List[str] = None,) -> List[str] | None:
 
     if files:
-        filenames = [f for f in files if store.has_chunks(f)]
-        missing = [f for f in files if not store.has_chunks(f)]
+        filenames = [f for f in files if store.has_records(f)]
+        missing = [f for f in files if not store.has_records(f)]
         for f in missing:
             darwin.log(f"'{f}' has no chunks — skipping", LogType.WARNING)
     else:

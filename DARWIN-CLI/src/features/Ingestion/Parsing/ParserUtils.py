@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.Models import ModelManager, ModelCategory
+from src.core.Models import ModelManager, ModelCategory
 
 from src.features.Ingestion.Parsing.Captioning import (
     caption_image,

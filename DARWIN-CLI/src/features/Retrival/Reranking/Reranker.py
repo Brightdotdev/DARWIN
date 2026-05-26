@@ -158,7 +158,7 @@ def rerank_results(
         List of RerankedResult sorted by final_score
     """
     from src.core.Logger.DarwinLogger import darwin, LogType
-    from src.Models import ModelManager, ModelCategory
+    from src.core.Models import ModelManager, ModelCategory
     
     if not candidates:
         darwin.log("No candidates to rerank", LogType.WARNING)

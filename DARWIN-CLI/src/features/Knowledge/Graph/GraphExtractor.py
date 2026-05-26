@@ -4,6 +4,11 @@ src/core/Knowledge/Graph/GraphExtractor.py
 Knowledge graph extraction using spaCy NER + dependency parsing.
 Document-agnostic. Now gates structural chunks BEFORE extraction.
 Includes dynamic batch sizing with pre-emptive text-length estimation.
+
+Updated for new DarwinStore:
+* Loads chunks as dict rows via query_records (partial columns)
+* Passes dicts to extract_graph_from_chunks (no Chunk reconstruction)
+* Saves graph via store.save_graph(nodes, edges) — not GraphData object
 """
 
 import gc
@@ -15,21 +20,16 @@ from typing import List, Dict, Optional, Tuple, Set, Any
 from dataclasses import dataclass, field
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Ingestion.Chunking.lib import Chunk
 from src.features.Knowledge.Graph.GraphUtils import (
     GraphData,
     ConceptNode,
     Relationship,
     normalize_entity,
     lemmatize_verb,
-    detect_communities_louvain,
-    extract_narrative_keyphrase,
-    extract_community_keywords,
-    CommunityCluster,
 )
 from src.features.Knowledge.Graph.GraphConfig import GraphExtractionConfig
-from src.features.Storage.DarwinStore import DarwinStore
-from src.Models import ModelManager, ModelCategory
+from src.core.Storage.DarwinStore import DarwinStore
+from src.core.Models import ModelManager, ModelCategory
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -63,9 +63,9 @@ VERSE_CITATION_RE = re.compile(r'\b\w+\s+\d+:\d+\b')
 CROSS_REF_RE = re.compile(r'\b(?:cf\.|see|compare|v\.|vv\.|verses?|ch\.|chap\.|pp\.|p\.)\b', re.IGNORECASE)
 
 
-def _is_structural_chunk(chunk: Chunk, all_chunks: List[Chunk]) -> bool:
+def _is_structural_chunk(chunk: Dict[str, Any], all_chunks: List[Dict[str, Any]]) -> bool:
     """Detect structural chunks by content — document-agnostic."""
-    text = chunk.clean
+    text = chunk.get("clean", "") or chunk.get("text", "")
     text_lower = text.lower()
     words = set(re.findall(r'\b[a-z]+\b', text_lower))
     lines = [l.strip() for l in text.split('\n') if l.strip()]
@@ -93,11 +93,11 @@ def _is_structural_chunk(chunk: Chunk, all_chunks: List[Chunk]) -> bool:
             return True
 
     text_hash = hash(text_lower[:200])
-    repeat_count = sum(1 for c in all_chunks if hash(c.clean.lower()[:200]) == text_hash)
+    repeat_count = sum(1 for c in all_chunks if hash(c.get("clean", "").lower()[:200]) == text_hash)
     if repeat_count > 2:
         return True
 
-    if chunk.index <= len(all_chunks) * 0.05 and len(words) < 20:
+    if chunk.get("index", 0) <= len(all_chunks) * 0.05 and len(words) < 20:
         return True
 
     section_headers = sum(1 for l in lines if SECTION_PREFIX_RE.match(l))
@@ -109,7 +109,7 @@ def _is_structural_chunk(chunk: Chunk, all_chunks: List[Chunk]) -> bool:
         if toc_entries / len(lines) > 0.40:
             return True
 
-    if chunk.index <= len(all_chunks) * 0.10 and len(lines) > 0:
+    if chunk.get("index", 0) <= len(all_chunks) * 0.10 and len(lines) > 0:
         avg_line_len = sum(len(l) for l in lines) / len(lines)
         if (len(words) > 0 and
             len(structural_found) / len(words) > 0.15 and
@@ -130,9 +130,9 @@ def _is_structural_chunk(chunk: Chunk, all_chunks: List[Chunk]) -> bool:
     return False
 
 
-def _is_obvious_structural(chunk: Chunk, all_chunks: Optional[List[Chunk]] = None) -> bool:
+def _is_obvious_structural(chunk: Dict[str, Any], all_chunks: Optional[List[Dict[str, Any]]] = None) -> bool:
     """Light-mode filter: only obviously structural chunks (>50% signals)."""
-    text = chunk.clean.lower()
+    text = chunk.get("clean", "").lower()
     words = set(re.findall(r'\b[a-z]+\b', text))
     structural_found = words & STRUCTURAL_SIGNALS
     return len(words) > 0 and len(structural_found) / len(words) > 0.5
@@ -825,11 +825,16 @@ def _process_with_dynamic_batch(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def extract_graph_from_chunks(
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     filename: str,
     config: GraphExtractionConfig = None,
     chunk_vectors: Optional[np.ndarray] = None,
 ) -> GraphData:
+    """
+    Extract knowledge graph from chunk dicts.
+    
+    chunks: list of dicts from store.query_records() — must have "clean" or "text" key.
+    """
     if config is None:
         config = GraphExtractionConfig()
 
@@ -870,13 +875,15 @@ def extract_graph_from_chunks(
 
     darwin.log(f"[1/3] Extracting entities and relations...", LogType.INFO)
 
-    texts = [chunk.clean[:5000] for chunk in valid_chunks]
+    # Use dict.get() for text access — no Chunk objects
+    texts = [(chunk.get("clean", "") or chunk.get("text", ""))[:5000] for chunk in valid_chunks]
 
     # Dynamic batch sizing with pre-emptive estimation
     estimated_batch = _estimate_batch_size(texts, config.batch_size_spacy)
     docs = _process_with_dynamic_batch(extractor, texts, estimated_batch)
 
-    valid_index_map = {i: valid_chunks[i].index for i in range(len(valid_chunks))}
+    # Map local array index → original chunk index (from dict)
+    valid_index_map = {i: valid_chunks[i].get("index", i) for i in range(len(valid_chunks))}
 
     for local_idx, (chunk, doc) in enumerate(zip(valid_chunks, docs)):
         original_chunk_idx = valid_index_map[local_idx]
@@ -966,19 +973,39 @@ def run_graph_extraction_pipeline(
     store: DarwinStore,
     config: GraphExtractionConfig = None,
 ) -> Optional[GraphData]:
+    """
+    Run full graph extraction pipeline using lazy store access.
+    """
     if config is None:
         config = GraphExtractionConfig()
 
+    # Check for cached graph
     if not config.rerun and store.is_fresh(filename) and store.has_graph(filename):
         try:
             darwin.log(f"Skipping graph: fresh exists for {filename}", LogType.INFO)
-            return store.load_graph(filename)
+            raw = store.load_graph(filename)
+            # Reconstruct GraphData from dict components
+            if raw and "nodes" in raw and "edges" in raw:
+                # Convert dict nodes back to ConceptNode objects if needed
+                # For now, return as-is or wrap in GraphData
+                return GraphData(
+                    filename=filename,
+                    nodes=[ConceptNode(**n) for n in raw.get("nodes", [])],
+                    edges=[Relationship(**e) for e in raw.get("edges", [])],
+                    chunk_count=raw.get("chunk_count", 0),
+                    total_entities_extracted=raw.get("total_entities_extracted", 0),
+                    total_relations_extracted=raw.get("total_relations_extracted", 0),
+                )
         except Exception as e:
             darwin.log(f"Cached graph corrupted ({e}) — re-extracting...", LogType.WARNING)
 
-    if store.has_chunks(filename):
+    # Load chunks as dict rows — only the columns we need
+    if store.has_records(filename):
         try:
-            chunks = store.load_chunks(filename)
+            chunks = store.query_records(
+                filename,
+                columns=["index", "clean", "text"],  # minimal columns for extraction
+            )
             if not chunks:
                 darwin.log(f"No chunks found for {filename}", LogType.ERROR)
                 return None
@@ -989,13 +1016,15 @@ def run_graph_extraction_pipeline(
         darwin.log(f"No chunks found for {filename}. Run chunking first.", LogType.ERROR)
         return None
 
+    # Load embeddings if available (for centroids)
     vectors = None
     if store.has_embeddings(filename):
         try:
-            vectors, _ = store.load_embeddings(filename)
+            vectors = store.load_embeddings(filename, mmap=True)
         except Exception as e:
             darwin.log(f"Embeddings unavailable ({e}), proceeding without", LogType.WARNING)
 
+    # Extract graph from dict-based chunks
     graph = extract_graph_from_chunks(
         chunks=chunks,
         filename=filename,
@@ -1003,8 +1032,48 @@ def run_graph_extraction_pipeline(
         chunk_vectors=vectors,
     )
 
-    store.save_graph(filename, graph)
+    # Save graph — split into nodes/edges lists for new store API
+    # Convert dataclass objects to dicts for storage
+    node_dicts = [
+        {
+            "id": n.id,
+            "label": n.label,
+            "display_name": n.display_name,
+            "entity_type": n.entity_type,
+            "frequency": n.frequency,
+            "chunk_indices": n.chunk_indices,
+            "first_mention_chunk": n.first_mention_chunk,
+            "mention_forms": n.mention_forms,
+            "centroid": n.centroid,
+        }
+        for n in graph.nodes
+    ]
+    edge_dicts = [
+        {
+            "source": e.source,
+            "target": e.target,
+            "weight": e.weight,
+            "relation_type": e.relation_type,
+            "evidence_chunks": e.evidence_chunks,
+            "surface_forms": e.surface_forms,
+        }
+        for e in graph.edges
+    ]
+
+    store.save_graph(filename, node_dicts, edge_dicts)
     darwin.log(f"Graph saved for {filename}", LogType.SUCCESS)
+
+    # Save metadata
+    store._update_meta(filename, "graph", extras={
+        "graph": {
+            "node_count": len(graph.nodes),
+            "edge_count": len(graph.edges),
+            "chunk_count": graph.chunk_count,
+            "total_entities_extracted": graph.total_entities_extracted,
+            "total_relations_extracted": graph.total_relations_extracted,
+            "built_at": __import__('time').time(),
+        }
+    })
 
     if config.visualize and graph.nodes:
         try:

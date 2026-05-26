@@ -27,7 +27,7 @@ os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 from src.features.Indexing.lib import IndexingArgs
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 from src.lib.Utils import ensure_writable_directory
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 
 from src.features.Indexing.Embedding.lib import EmbeddingArgs
 

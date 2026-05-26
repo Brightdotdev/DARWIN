@@ -11,8 +11,8 @@ import time
 from typing import Optional, Callable
 from dataclasses import dataclass
 
-from src.Models.ModelRegistry import get_spec, REGISTRY
-from src.Models.lib import (IGNORE_PATTERNS, ALLOW_PATTERNS, REQUIRED_FILES, SPACY_URLS, tarball_urls)
+from src.core.Models.ModelRegistry import get_spec, REGISTRY
+from src.core.Models.lib import (IGNORE_PATTERNS, ALLOW_PATTERNS, REQUIRED_FILES, SPACY_URLS, tarball_urls)
 from src.lib.AppPaths import default_models_dir
 
 

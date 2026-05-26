@@ -21,7 +21,7 @@ Everything auto-detects from the currently active model.
 # ── Shorthand for code that only needs chunk sizing ──
 
 def get_chunk_config():
-    from src.Models.EmbeddingConfig import get_preset
+    from src.core.Models.EmbeddingConfig import get_preset
     """Alias — returns the same thing as get_preset()."""
     return get_preset()
 
@@ -30,7 +30,7 @@ def get_chunk_config():
 
 def get_model_config() -> dict:
     """Dict-style access for code expecting get_model_config()["max_tokens"]."""
-    from src.Models.EmbeddingConfig import get_preset
+    from src.core.Models.EmbeddingConfig import get_preset
     preset = get_preset()
     return {
         "max_tokens": preset.max_tokens,
@@ -46,7 +46,7 @@ def get_model_config() -> dict:
 
 def format_passage(text: str) -> str:
     """Apply the model's passage prefix/instruction to text."""
-    from src.Models.EmbeddingConfig import get_preset
+    from src.core.Models.EmbeddingConfig import get_preset
     preset = get_preset()
     
     if preset.is_instruction_tuned and preset.instruction_template:

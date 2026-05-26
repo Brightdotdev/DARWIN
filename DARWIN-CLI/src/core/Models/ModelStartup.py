@@ -7,11 +7,11 @@ Now integrates OS keychain for API key storage.
 """
 
 from typing import Optional
-from src.Models.ModelStore import ModelStore
-from src.Models.ModelLoader import ModelLoader
-from src.Models.ModelRegistry import REGISTRY, TIER_LABELS, get_spec
+from src.core.Models.ModelStore import ModelStore
+from src.core.Models.ModelLoader import ModelLoader
+from src.core.Models.ModelRegistry import REGISTRY, TIER_LABELS, get_spec
 from src.features.Hardware.SystemDetector import detect_system, recommend_defaults, SystemInfo
-from src.Models.ModelSetup import (
+from src.core.Models.ModelSetup import (
     validate_model, calculate_download_size, validate_all_selections,
 )
 from src.core.Logger.DarwinLogger import darwin, LogType

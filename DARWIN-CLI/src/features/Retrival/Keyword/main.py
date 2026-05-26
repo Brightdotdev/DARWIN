@@ -29,7 +29,7 @@ from src.features.Retrival.Keyword.KeywordUtilities import (
     
 )
 from src.lib.Utils import scan_folder
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
@@ -244,7 +244,7 @@ def handle_keyword_search(args: KeywordSearchArgs, store: DarwinStore) -> List[K
 
 async def main() -> int:
     from src.lib.Utils import ensure_writable_directory
-    from src.features.Storage.DarwinStore import DarwinStore
+    from src.core.Storage.DarwinStore import DarwinStore
 
     parser = argparse.ArgumentParser(
         description="BM25 keyword search over indexed documents"

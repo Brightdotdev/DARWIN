@@ -40,26 +40,30 @@ warnings.filterwarnings("ignore", module="litellm")
 os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.lib.Utils import ensure_writable_directory
+
 from src.features.Indexing.BM25.BM25Indexer import (
     run_bm25_indexing_pipeline,
     inspect_bm25_index,
 )
 from src.features.Indexing.BM25.lib import (
+    BM25Data,
     BM25IndexingArgs,
     DOMAIN_STOP_THRESHOLD,
     DEFAULT_IDF_SMOOTHING,
+    
 )
 
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
 # ── Inspection helper ──────────────────────────────────────────────────────────
 
-def _print_inspection(filename: str, store) -> None:
+def _print_inspection(filename: str, store: DarwinStore) -> None:
     try:
         data = store.load_bm25(filename)
-        inspect_bm25_index(data)
+        bm25_data = BM25Data.from_dict(data)
+        inspect_bm25_index(bm25_data)
     except FileNotFoundError:
         darwin.log("Could not load BM25 index for inspection", LogType.ERROR)
 
@@ -81,7 +85,7 @@ def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
     filenames = []
 
     if args.files:
-        filenames = [f for f in args.files if store.has_chunks(f)]
+        filenames = [f for f in args.files if store.has_records(f)]
     else:    
         filenames = [
             fname for fname, info in status.get("files", {}).items()
@@ -104,7 +108,8 @@ def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
             continue
 
         try:
-            chunks = store.load_chunks(filename)
+            chunks_rows = store.query_records(filename=filename, columns=["clean"])
+            
         except FileNotFoundError:
             darwin.log(f"{filename} — no chunks found, skipping", LogType.ERROR)
             failed += 1
@@ -113,7 +118,7 @@ def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
         try:
             data = run_bm25_indexing_pipeline(
                 filename=filename,
-                chunks=chunks,
+                chunks=chunks_rows,
                 store=store,
                 threshold=args.threshold,
                 idf_smoothing=args.idf_smoothing,

@@ -7,9 +7,9 @@ Checks RAM, disk space, and inference viability before downloading.
 
 from dataclasses import dataclass
 from typing import Optional, List
-from src.Models.ModelRegistry import REGISTRY, get_spec
+from src.core.Models.ModelRegistry import REGISTRY, get_spec
 from src.features.Hardware.SystemDetector import SystemInfo
-from src.Models.ModelStore import ModelStore
+from src.core.Models.ModelStore import ModelStore
 
 
 @dataclass
@@ -152,7 +152,7 @@ def validate_all_selections(selections: dict[str, str], system: SystemInfo, stor
 
 def handle_download_error(error: Exception, key: str) -> None:
     """Handle download errors with actionable recovery suggestions."""
-    from src.Models.ModelStore import DownloadError, IntegrityError
+    from src.core.Models.ModelStore import DownloadError, IntegrityError
 
     print(f"\n❌ Error downloading {key}: {error}")
 

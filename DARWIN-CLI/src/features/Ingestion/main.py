@@ -31,7 +31,7 @@ from src.features.Ingestion.Parsing.main import handle_parsing
 from src.features.Ingestion.Chunking.main import handle_chunking
 from src.features.Ingestion.Parsing.lib import ParsingArgs
 from src.features.Ingestion.Chunking.lib import ChunkingArgs
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 from src.lib.Utils import ensure_writable_directory
 

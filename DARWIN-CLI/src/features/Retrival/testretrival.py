@@ -16,7 +16,7 @@ project_root = Path(__file__).parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator, retrieve_for_llm
 from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator, wiki_search_for_llm
 

@@ -3,11 +3,11 @@
 import os
 from typing import Optional
 
-from src.Models.ModelStore import ModelStore
-from src.Models.ModelLoader import ModelLoader
+from src.core.Models.ModelStore import ModelStore
+from src.core.Models.ModelLoader import ModelLoader
 from src.features.Hardware.SystemDetector import detect_system, recommend_defaults
-from src.features.Storage.DarwinStore import DarwinStore
-from src.Models.ModelRegistry import get_spec, REGISTRY
+from src.core.Storage.DarwinStore import DarwinStore
+from src.core.Models.ModelRegistry import get_spec, REGISTRY
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
 
@@ -69,7 +69,7 @@ class ModelManager:
             _PREFERENCES_CACHE = recommend_defaults(_SYSTEM_CACHE)
 
         if not skip_download:
-            from src.Models.ModelStartup import download_required
+            from src.core.Models.ModelStartup import download_required
             download_required(ModelStore(), _PREFERENCES_CACHE, _SYSTEM_CACHE)
 
         if _LOADER_INSTANCE is None:
@@ -93,7 +93,7 @@ class ModelManager:
 
     def switch_embedding(self, new_key: str, migrate: bool = True, file: Optional[str] = None) -> None:
         """Switch embedding model with optional migration."""
-        from src.Models.ModelRegistry import REGISTRY as registry
+        from src.core.Models.ModelRegistry import REGISTRY as registry
 
         resolved = self._resolve_key(new_key, "embedding")
         if not resolved:
@@ -164,7 +164,7 @@ class ModelManager:
 
     def _resolve_key(self, key: str, expected_category: str) -> Optional[tuple]:
         """Resolve model identifier to (registry_key, spec). Returns None on failure."""
-        from src.Models.ModelRegistry import REGISTRY as registry, get_spec
+        from src.core.Models.ModelRegistry import REGISTRY as registry, get_spec
 
         id_to_key = {spec.model_id: k for k, spec in registry.items()}
 
@@ -197,7 +197,7 @@ class ModelManager:
         from src.features.Ingestion.Chunking.lib import ChunkingArgs
         from src.features.Indexing.lib import IndexingArgs
         from src.features.Indexing.main import handle_indexing
-        from src.Models.ModelRegistry import ModelCategory
+        from src.core.Models.ModelRegistry import ModelCategory
 
         store = self._darwin_store
         current_model = self.loader.get_model_key(ModelCategory.EMBEDDING)

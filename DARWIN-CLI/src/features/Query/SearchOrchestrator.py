@@ -9,12 +9,12 @@ Flips between Option A (concepts-first) and Option B (passages-first)
 based on intent.
 """
 
-from typing import List, Dict, Optional, Literal
+from typing import List, Dict, Optional, Literal,Any
 from dataclasses import dataclass, field
 
-from src.features.Storage.DarwinStore import DarwinStore
-from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki
-from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator, WikiContext, WikiConcept
+from src.core.Storage.DarwinStore import DarwinStore
+from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki, WikiPage
+from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator, WikiConcept
 from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator, RetrievalContext, ResolvedPassage
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -38,6 +38,7 @@ class SearchContext:
     passages: List[ResolvedPassage]
     related_topics: List[str]
     merged_prompt: str
+    audit_summary: Dict[str, Any] = field(default_factory=dict)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -82,6 +83,9 @@ def _build_broad_prompt(
 **Pages:** {concept.get_page_range()} | **Score:** {concept.score:.3f} | **Sources:** {concept.source_count}
 **Keywords:** {', '.join(concept.keywords[:5])}
 """
+            if concept.audit and concept.audit.was_penalized:
+                block += f"**Penalty:** {concept.audit.structural_type} factor={concept.audit.penalty_factor} ({concept.audit.raw_score:.3f} → {concept.audit.final_score:.3f})\n"
+
             if concept_passages:
                 block += "\n**Evidence:**\n"
                 for j, p in enumerate(concept_passages[:3], 1):
@@ -168,9 +172,13 @@ def _build_dense_prompt(
             gap_count = len(p.chunk_indices) - len(p.original_results)
             gap_info = f" (includes {gap_count} gap-filled chunks)"
 
+        penalty_info = ""
+        if p.overall_penalty_factor < 1.0:
+            penalty_info = f" [PENALTY: {p.dominant_structural_type} factor={p.overall_penalty_factor}]"
+
         blocks.append(
             f"[Passage {i+1}: Page {p.page_start}-{p.page_end} | "
-            f"{' | '.join(score_parts)}{gap_info}]\n"
+            f"{' | '.join(score_parts)}{gap_info}{penalty_info}]\n"
             f"{p.passage_text}\n"
         )
 
@@ -210,9 +218,12 @@ def _build_combined_prompt(
         for filename, file_concepts in concepts_by_file.items():
             overview_lines.append(f"\n### {filename}")
             for c in file_concepts[:5]:
+                penalty_note = ""
+                if c.audit and c.audit.was_penalized:
+                    penalty_note = f" [penalized: {c.audit.structural_type}]"
                 overview_lines.append(
                     f"- **{c.concept}** ({c.get_page_range()}) — "
-                    f"score: {c.score:.3f}, keywords: {', '.join(c.keywords[:3])}"
+                    f"score: {c.score:.3f}, keywords: {', '.join(c.keywords[:3])}{penalty_note}"
                 )
         overview = "\n".join(overview_lines) + "\n"
 
@@ -225,8 +236,11 @@ def _build_combined_prompt(
             passage_blocks.append(f"\n### Source: {p.source}\n")
 
         concept_tag = f" | Concept: {p.primary_concept}" if p.primary_concept else ""
+        penalty_tag = ""
+        if p.overall_penalty_factor < 1.0:
+            penalty_tag = f" | Penalty: {p.dominant_structural_type}={p.overall_penalty_factor}"
         passage_blocks.append(
-            f"[{len(passage_blocks)}] Page {p.page_start}-{p.page_end}{concept_tag} | "
+            f"[{len(passage_blocks)}] Page {p.page_start}-{p.page_end}{concept_tag}{penalty_tag} | "
             f"Score: {p.avg_score:.3f}\n{p.passage_text[:1000]}"
             f"{'...' if len(p.passage_text) > 1000 else ''}\n"
         )
@@ -292,11 +306,16 @@ class SearchOrchestrator:
         all_concepts: List[WikiConcept] = []
         all_passages: List[ResolvedPassage] = []
         all_related: List[str] = []
+        all_retrieval_contexts: List[RetrievalContext] = []
 
         # ── Search each file independently ──
         for filename in files:
-            wiki = self.store.load_wiki(filename)
-
+            
+            pages_dicts = self.store.load_wiki(filename)
+            wiki = DocumentWiki(
+                filename=filename,
+                pages=[WikiPage.from_dict(p) for p in pages_dicts],
+            )
             if intent == "broad":
                 # Wiki first, then hydrate top concepts with retrieval
                 wiki_ctx = self.wiki_orch.search(
@@ -330,13 +349,15 @@ class SearchOrchestrator:
                 else:
                     ret_ctx = RetrievalContext(
                         query=query, method="hybrid", passages=[],
-                        total_chars=0, filtered_count=0,
+                        total_chars=0, penalized_count=0,
                         fallback_used=False, raw_results=[],
+                        audit_summary={},
                     )
 
                 all_concepts.extend(wiki_ctx.concepts)
                 all_passages.extend(ret_ctx.passages)
                 all_related.extend(wiki_ctx.related_topics)
+                all_retrieval_contexts.append(ret_ctx)
 
             elif intent == "dense":
                 # Retrieval first, then lookup concept headers
@@ -365,6 +386,7 @@ class SearchOrchestrator:
                 all_concepts.extend(wiki_ctx.concepts)
                 all_passages.extend(ret_ctx.passages)
                 all_related.extend(wiki_ctx.related_topics)
+                all_retrieval_contexts.append(ret_ctx)
 
             else:  # both
                 wiki_ctx = self.wiki_orch.search(
@@ -391,6 +413,7 @@ class SearchOrchestrator:
                 all_concepts.extend(wiki_ctx.concepts)
                 all_passages.extend(ret_ctx.passages)
                 all_related.extend(wiki_ctx.related_topics)
+                all_retrieval_contexts.append(ret_ctx)
 
         # Deduplicate related topics
         seen_related = set()
@@ -403,6 +426,28 @@ class SearchOrchestrator:
         # Sort concepts and passages by score
         all_concepts.sort(key=lambda c: c.score, reverse=True)
         all_passages.sort(key=lambda p: p.avg_score, reverse=True)
+
+        # Build audit summary
+        audit_summary = {
+            "wiki": {
+                "total_concepts": len(all_concepts),
+                "penalized_concepts": sum(
+                    1 for c in all_concepts if c.audit and c.audit.was_penalized
+                ),
+            },
+            "retrieval": {},
+            "passages_with_penalties": sum(
+                1 for p in all_passages if p.overall_penalty_factor < 1.0
+            ),
+        }
+        # Merge retrieval audit summaries
+        for ctx in all_retrieval_contexts:
+            if ctx and ctx.audit_summary:
+                for k, v in ctx.audit_summary.items():
+                    if k in audit_summary["retrieval"] and isinstance(v, int):
+                        audit_summary["retrieval"][k] = audit_summary["retrieval"].get(k, 0) + v
+                    else:
+                        audit_summary["retrieval"][k] = v
 
         # Build prompt based on intent
         if intent == "broad":
@@ -420,6 +465,7 @@ class SearchOrchestrator:
             passages=all_passages,
             related_topics=unique_related[:10],
             merged_prompt=prompt,
+            audit_summary=audit_summary,
         )
 
     def search_for_llm(

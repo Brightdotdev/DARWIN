@@ -1,5 +1,5 @@
-from src.Models import get_loader, ModelManager, ModelCategory
-from src.features.Storage.DarwinStore import DarwinStore
+from src.core.Models import get_loader, ModelManager, ModelCategory
+from src.core.Storage.DarwinStore import DarwinStore
 
 store = DarwinStore()
 manager = ModelManager(darwin_store=store)
@@ -57,7 +57,7 @@ manager.list_models(category="embedding")      # List available
 manager.upgrade("BAAI/bge-m3")                 # Force re-download
 
 # Hardware validation
-from src.Models import validate_model, validate_category
+from src.core.Models import validate_model, validate_category
 validate_model("BAAI/bge-m3", system, store).can_run
 validate_category("embedding", system, store)
 

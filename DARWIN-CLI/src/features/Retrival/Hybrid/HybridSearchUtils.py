@@ -9,7 +9,7 @@ from typing import List, Dict, Optional, Any
 from src.features.Retrival.Semantic.SematicSearchUtils import SemanticSearchResult
 from src.features.Retrival.Keyword.KeywordSearch import KeywordSearchResult
 import copy
-from src.features.Retrival.lib import HybridSearchResult,OverlapDirection,ChunkLink
+from src.features.Retrival.lib import HybridSearchResult,OverlapDirection,ChunkLink, SearchAudit
 # ============================================================================
 # Constants
 # ============================================================================
@@ -85,6 +85,7 @@ def build_unified_result(
         links=getattr(result, "links", []),
         matched_terms=set(getattr(result, "matched_terms", [])),
         overlap_direction=getattr(result, "overlap_direction", OverlapDirection.NONE),
+        audit=getattr(result, "audit", None),
     )
 
     
@@ -240,6 +241,7 @@ def apply_hybrid_scoring(
             links=chunk_links,
             matched_terms=data.get("matched_terms", set()),
             overlap_direction=data.get("overlap_direction", OverlapDirection.NONE),
+            audit=data.get("audit"),
         ))
     
     results.sort(key=lambda x: x.final_score, reverse=True)
@@ -270,6 +272,7 @@ def format_hybrid_results(
                 "heading":        r.heading,
                 "matched_terms":  r.matched_terms,
                 "text":           r.text[:500] + "..." if len(r.text) > 500 else r.text,
+                "audit":          r.audit.to_dict() if r.audit else None,
             }
             for r in results
         ], indent=2)
@@ -287,9 +290,13 @@ def format_hybrid_results(
             lines.append(f"    └─ {r.heading}")
         if r.links:
             lines.append(f"    └─ {len(r.links)} link(s)")
+        if r.audit and r.audit.was_penalized:
+            lines.append(
+                f"    └─ PENALTY: {r.audit.structural_type} "
+                f"factor={r.audit.penalty_factor} "
+                f"({r.audit.raw_score:.3f} → {r.audit.final_score:.3f})"
+            )
         preview = r.text[:200].replace("\n", " ").strip()
         lines.append(f"       {preview}...")
         lines.append("")
     return "\n".join(lines)
-
-

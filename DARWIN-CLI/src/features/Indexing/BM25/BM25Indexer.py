@@ -16,8 +16,7 @@ chunks
 """
 
 from collections import Counter
-from typing import  List, Optional
-from src.features.Ingestion.Chunking.lib import Chunk
+from typing import  List, Optional, Any, Dict
 from src.features.Indexing.BM25.lib import (BM25Data, DEFAULT_IDF_SMOOTHING,DOMAIN_STOP_THRESHOLD)
 from src.features.Indexing.BM25.BM25Utils import (
 
@@ -25,12 +24,12 @@ from src.features.Indexing.BM25.BM25Utils import (
     tokenize_text,
     stream_tokenize_chunks,
 )
-from src.features.Storage import DarwinStore
+from src.core.Storage import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 def index_chunks_for_bm25(
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     filename: str,
     threshold: float = DOMAIN_STOP_THRESHOLD,
     idf_smoothing: float = DEFAULT_IDF_SMOOTHING,
@@ -72,7 +71,7 @@ def index_chunks_for_bm25(
                 _accumulate(tokens)
     else:
         for chunk in chunks:
-            tokens = tokenize_text(chunk.clean, domain_stops=domain_stops)
+            tokens = tokenize_text(chunk.get("clean"), domain_stops=domain_stops)
             _accumulate(tokens)
 
     # 3. Package
@@ -104,7 +103,7 @@ def index_chunks_for_bm25(
 
 def run_bm25_indexing_pipeline(
     filename: str,
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     store: DarwinStore,
     threshold: float = DOMAIN_STOP_THRESHOLD,
     idf_smoothing: float = DEFAULT_IDF_SMOOTHING,

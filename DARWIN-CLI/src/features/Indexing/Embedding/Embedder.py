@@ -14,15 +14,15 @@ Model lifecycle
 """
 
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional,Dict,Any
 
-from src.Models.EmbeddingConfig import (
+from src.core.Models.EmbeddingConfig import (
     ModelPreset,
     get_preset,
     get_model_batch_size,
 )
 from src.features.Ingestion.Chunking.lib import Chunk
-from src.Models import ModelCategory, ModelManager
+from src.core.Models import ModelCategory, ModelManager
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
@@ -77,7 +77,7 @@ def prepare_query_text(query: str, preset: ModelPreset | str | None = None) -> s
 # ═══════════════════════════════════════════════════════════════════════════
 
 def embed_chunks(
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     file_name: str,
     batch_size: Optional[int] = None,
     unload_after: bool = False,
@@ -86,7 +86,7 @@ def embed_chunks(
     Embed chunks with model-specific prompting.
 
     Args:
-        chunks:       List of Chunk objects to embed
+        chunks:       List of chunk dictionaries to embed
         file_name:    Display name (used for UI only)
         batch_size:   Override batch size — auto-detected if None
         unload_after: Free the embedding model from RAM after encoding
@@ -114,7 +114,7 @@ def embed_chunks(
 
 
 
-    texts = [prepare_passage_text(c.clean, preset) for c in chunks]
+    texts = [prepare_passage_text(c.get("clean", ""), preset) for c in chunks]
 
     optimal_batch = batch_size or get_model_batch_size(preset=preset)
     n_batches = (len(texts) + optimal_batch - 1) // optimal_batch
@@ -235,7 +235,7 @@ def embed_query(
 
 def run_embedding_pipeline(
     filename: str,
-    chunks: List[Chunk],
+    chunks: List[Dict[str, Any]],
     store,
     rerun: bool = False,
     unload_after: bool = False,
@@ -289,17 +289,13 @@ def run_embedding_pipeline(
     store.save_embeddings(
         filename,
         vectors,
-        chunks,
-        model_name=model_name,
     )
 
     # ── Save USearch index (vectors only, for fast search) ──
-    chunk_ids = [str(c.index) for c in chunks]
+    chunk_ids = [str(c.get("index", "")) for c in chunks]
     store.save_vector(
         filename,
-        model_name,
         vectors,
-        chunk_ids,
     )
 
     return vectors

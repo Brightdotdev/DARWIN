@@ -7,18 +7,18 @@ Returns concept pointers (where concepts live, what they're related to).
 NO passage text assembly — that's RetrievalOrchestrator's domain.
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional,Any
 from dataclasses import dataclass, field
 from collections import Counter
 import re
 
-from src.features.Storage.DarwinStore import DarwinStore
-from src.features.Ingestion.Chunking.lib import Chunk
+from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Indexing.Embedding.Embedder import embed_query
-from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki, WikiSearchResult
+from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki, WikiPage, WikiSearchResult
 from src.features.Knowledge.Wiki.WikiSearch import WikiSearchEngine
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Query.StructuralClassifier import is_structural_chunk
+from src.features.Query.StructuralClassifier import classify_structural_type, get_penalty_factor
+from src.features.Retrival.lib import SearchAudit
 
 
 # =============================================================================
@@ -51,6 +51,7 @@ class WikiConcept:
     source_count: int
     related_topics: List[str] = field(default_factory=list)
     source_file: str = ""  # which file this concept came from
+    audit: Optional[SearchAudit] = None
 
     def get_page_range(self) -> str:
         if self.page_start == self.page_end:
@@ -65,7 +66,7 @@ class WikiContext:
     concepts: List[WikiConcept]
     related_topics: List[str]
     total_concepts: int
-    filtered_count: int
+    penalized_count: int
 
 
 # =============================================================================
@@ -94,7 +95,7 @@ def _fill_gaps(indices: List[int], max_gap: int = MAX_GAP_SIZE) -> List[int]:
 def _should_merge_concepts(
     c1_indices: List[int],
     c2_indices: List[int],
-    chunk_map: Dict[int, Chunk],
+    chunk_map: Dict[int, Dict[str, Any]],
 ) -> bool:
     """Pure proximity check."""
     for i1 in c1_indices:
@@ -104,7 +105,7 @@ def _should_merge_concepts(
             chunk1 = chunk_map.get(i1)
             chunk2 = chunk_map.get(i2)
             if chunk1 and chunk2:
-                if chunk1.page == chunk2.page and chunk1.page > 0:
+                if chunk1.get("page") == chunk2.get("page") and chunk1.get("page") > 0:
                     if abs(i1 - i2) <= 8:
                         return True
     return False
@@ -162,14 +163,26 @@ class WikiOrchestrator:
         if not query.strip():
             return WikiContext(
                 query=query, concepts=[], related_topics=[],
-                total_concepts=0, filtered_count=0,
+                total_concepts=0, penalized_count=0,
             )
 
-        wiki = self.store.load_wiki(filename)
+        pages_dicts = self.store.load_wiki(filename)
+        if not pages_dicts:
+            darwin.log(f"No wiki found for {filename}", LogType.WARNING)
+            return WikiContext(
+                query=query, concepts=[], related_topics=[],
+                total_concepts=0, penalized_count=0,
+            )
+        
+        wiki = DocumentWiki(
+            filename="doc.pdf",
+            pages=[WikiPage.from_dict(p) for p in pages_dicts],
+        )
+
         if not wiki:
             return WikiContext(
                 query=query, concepts=[], related_topics=[],
-                total_concepts=0, filtered_count=0,
+                total_concepts=0, penalized_count=0,
             )
 
         engine = self._get_wiki_search(wiki, filename)
@@ -177,60 +190,89 @@ class WikiOrchestrator:
             query_embedding = embed_query(query)
 
         raw_results: List[WikiSearchResult] = engine.search(
-            query=query, query_embedding=query_embedding, top_k=top_k
+            query=query, query_embedding=query_embedding, top_k=top_k * 2  # larger pool for penalties
         )
 
         if not raw_results:
             return WikiContext(
                 query=query, concepts=[], related_topics=[],
-                total_concepts=0, filtered_count=0,
+                total_concepts=0, penalized_count=0,
             )
 
-        all_chunks = self.store.load_chunks(filename)
-        chunk_map = {c.index: c for c in all_chunks}
+        all_chunks = self.store.query_records(filename, columns=["index", "clean","text", "page", "page_end"])
+
+        chunk_map = {c.get("index", ""): c for c in all_chunks}
 
         # Precompute duplicate chunk hashes for structural detection
         chunk_hashes = Counter()
         for c in all_chunks:
-            chunk_hashes[hash(c.clean.lower()[:200])] += 1
+            chunk_hashes[hash(c.get("clean", "").lower()[:200])] += 1
 
-        # Filter structural concepts
-        filtered_results: List[WikiSearchResult] = []
-        filtered_count = 0
+        # Apply structural penalties instead of hard filtering
+        penalized_results: List[WikiSearchResult] = []
+        penalized_count = 0
 
         for r in raw_results:
-            is_struct = False
+            chunk_types = []
             for idx in r.page.chunk_indices:
                 chunk = chunk_map.get(idx)
-                if chunk and is_structural_chunk(
-                    chunk, all_chunks, chunk_hashes=chunk_hashes, aggressive=True
-                ):
-                    is_struct = True
-                    break
+                if chunk:
+                    stype = classify_structural_type(chunk, all_chunks, chunk_hashes=chunk_hashes, aggressive=True)
+                    if stype:
+                        chunk_types.append(stype)
 
-            if is_struct and filter_structural:
-                filtered_count += 1
+            if chunk_types and filter_structural:
+                factors = [get_penalty_factor(t) for t in chunk_types]
+                factor = min(factors)
+                stype = chunk_types[factors.index(factor)]
+
+                raw_score = r.score
+                r.score = raw_score * factor
+                penalized_count += 1
+
+                audit = SearchAudit(
+                    raw_score=raw_score,
+                    final_score=r.score,
+                    structural_type=stype,
+                    penalty_factor=factor,
+                    was_penalized=True,
+                    penalty_reason=f"concept has {len(chunk_types)} structural chunk(s): {set(chunk_types)}",
+                    concept_source=r.page.concept,
+                )
+                if hasattr(r, 'audit'):
+                    r.audit = audit
+                else:
+                    object.__setattr__(r, 'audit', audit)
+
                 darwin.log(
-                    f"[WikiFilter] Concept '{r.page.concept}' has structural chunks",
+                    f"[WikiPenalty] Concept '{r.page.concept}' {stype} factor={factor} "
+                    f"{raw_score:.3f}→{r.score:.3f}",
                     LogType.INFO,
                 )
-            else:
-                filtered_results.append(r)
 
-        # FALLBACK: if all results were filtered, return raw unfiltered results
-        if not filtered_results and FALLBACK_IF_ALL_FILTERED:
+            penalized_results.append(r)
+
+        # Re-sort after penalties
+        penalized_results.sort(key=lambda x: x.score, reverse=True)
+        penalized_results = penalized_results[:top_k]
+
+        # Note if all top concepts are heavily penalized
+        has_unpenalized = any(
+            getattr(r, 'audit', None) and r.audit.penalty_factor == 1.0
+            for r in penalized_results
+        )
+        if not has_unpenalized and penalized_results:
             darwin.log(
-                "[WikiOrchestrator] All results filtered — falling back",
+                "[WikiOrchestrator] All top concepts are structural; "
+                "returning penalized results.",
                 LogType.WARNING,
             )
-            filtered_results = raw_results
-            filtered_count = 0
 
         # Group concepts by proximity + semantic overlap
-        if merge_sources and len(filtered_results) > 1:
-            groups = self._group_concepts(filtered_results, chunk_map)
+        if merge_sources and len(penalized_results) > 1:
+            groups = self._group_concepts(penalized_results, chunk_map)
         else:
-            groups = [[r] for r in filtered_results]
+            groups = [[r] for r in penalized_results]
 
         # Resolve each group into a WikiConcept (pointers only)
         concepts = []
@@ -260,12 +302,12 @@ class WikiOrchestrator:
                 if contributors:
                     all_pages = []
                     for c in contributors:
-                        if c.page is not None:
-                            all_pages.append(c.page)
-                        if c.page_end is not None:
-                            all_pages.append(c.page_end)
-                    page_start = min(all_pages) if all_pages else contributors[0].page or 0
-                    page_end = max(all_pages) if all_pages else contributors[-1].page_end or 0
+                        if c.get("page") is not None:
+                            all_pages.append(c.get("page"))
+                        if c.get("page_end") is not None:
+                            all_pages.append(c.get("page_end"))
+                    page_start = min(all_pages) if all_pages else contributors[0].get("page") or 0
+                    page_end = max(all_pages) if all_pages else contributors[-1].get("page_end") or 0
 
             # Pick highest-scored concept as primary name
             primary = max(group, key=lambda r: r.score)
@@ -287,6 +329,8 @@ class WikiOrchestrator:
                     _related_flat.extend(r.page.related)
             group_related = list(dict.fromkeys(_related_flat))[:5]
 
+            primary_audit = getattr(primary, 'audit', None)
+
             concept = WikiConcept(
                 concept=concept_name,
                 raw_concept=raw_name,
@@ -298,6 +342,7 @@ class WikiOrchestrator:
                 source_count=len(group),
                 related_topics=group_related,
                 source_file=filename,
+                audit=primary_audit,
             )
             concepts.append(concept)
 
@@ -308,13 +353,13 @@ class WikiOrchestrator:
             concepts=concepts,
             related_topics=related_topics,
             total_concepts=len(concepts),
-            filtered_count=filtered_count,
+            penalized_count=penalized_count,
         )
 
     def _group_concepts(
         self,
         results: List[WikiSearchResult],
-        chunk_map: Dict[int, Chunk],
+        chunk_map: Dict[int, Dict[str, Any]],
     ):
         if not results:
             return []
@@ -358,8 +403,8 @@ class WikiOrchestrator:
         Lazy passage resolution — hydrate a WikiConcept with text on demand.
         Use sparingly; prefer letting RetrievalOrchestrator handle evidence.
         """
-        all_chunks = self.store.load_chunks(filename)
-        chunk_map = {c.index: c for c in all_chunks}
+        all_chunks = self.store.query_records(filename, columns=["index", "clean", "text", "page"])
+        chunk_map = {c.get("index", ""): c for c in all_chunks}
 
         indices = concept.chunk_indices
         if fill_gaps and len(indices) > 1:
@@ -372,9 +417,9 @@ class WikiOrchestrator:
         # Simple stitch (no sentence dedup for lazy load)
         segments = []
         for i, chunk in enumerate(contributors):
-            if i > 0 and chunk.page != contributors[i - 1].page and chunk.page > 0:
-                segments.append(f"\n[Page {chunk.page}]\n")
-            segments.append(getattr(chunk, 'text', getattr(chunk, 'clean', '')))
+            if i > 0 and chunk.get("page") != contributors[i - 1].get("page") and chunk.get("page") > 0:
+                segments.append(f"\n[Page {chunk.get('page')}]\n")
+            segments.append(chunk.get("text", chunk.get('clean', '')))
 
         text = " ".join(segments)
         if len(text) > max_chars:
