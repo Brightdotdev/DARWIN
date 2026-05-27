@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 import threading
@@ -22,12 +23,12 @@ class OutputMode(Enum):
     TERMINAL = "terminal"
     WEBSOCKET = "websocket"
     NONE = "none"
-    AUTO = "auto"  # auto-detect
+    AUTO = "auto"
 
 
 class Verbosity(Enum):
-    NORMAL = "normal"   # all logs
-    QUIET = "quiet"     # only ERROR, WARNING, SUCCESS
+    NORMAL = "normal"
+    QUIET = "quiet"
 
 
 class LogType(Enum):
@@ -45,6 +46,10 @@ class LogEvent:
     style: str = ""
     session: str = ""
     timestamp: float = field(default_factory=time.time)
+    # --- New optional fields for structured logging ---
+    payload: Optional[Any] = None   # Serialised structured data (JSON‑safe)
+    format: str = ""                # "json", "list", etc.
+    schemas: Optional[Dict[str, Any]] = None   # schema definitions
 
 
 @dataclass(frozen=True)
@@ -119,28 +124,20 @@ class SessionEndEvent:
 class EventSubscriber(ABC):
     @abstractmethod
     def on_log(self, event: LogEvent) -> None: ...
-
     @abstractmethod
     def on_progress_start(self, event: ProgressStartEvent) -> None: ...
-
     @abstractmethod
     def on_progress_update(self, event: ProgressUpdateEvent) -> None: ...
-
     @abstractmethod
     def on_progress_end(self, event: ProgressEndEvent) -> None: ...
-
     @abstractmethod
     def on_spinner_start(self, event: SpinnerStartEvent) -> None: ...
-
     @abstractmethod
     def on_spinner_update(self, event: SpinnerUpdateEvent) -> None: ...
-
     @abstractmethod
     def on_spinner_end(self, event: SpinnerEndEvent) -> None: ...
-
     @abstractmethod
     def on_session_start(self, event: SessionStartEvent) -> None: ...
-
     @abstractmethod
     def on_session_end(self, event: SessionEndEvent) -> None: ...
 
@@ -177,7 +174,7 @@ class DarwinLogger:
         # Session context variable
         self._session_var: contextvars.ContextVar[str] = contextvars.ContextVar("darwin_session", default="")
 
-        # CHANGED: multiprocessing support for worker processes
+        # multiprocessing support
         self._mp_queue: Optional[multiprocessing.Queue] = None
         self._mp_listener: Optional[threading.Thread] = None
         self._mp_shutdown: threading.Event = threading.Event()
@@ -238,7 +235,6 @@ class DarwinLogger:
             from src.core.Logger.WebsocketHelpers import WebSocketServer
             self._ws_server = WebSocketServer(host=host, port=port)
             self._ws_server.start()
-            # Bridge will be created per connection inside the server
         except Exception as e:
             self.log(f"Failed to start WebSocket server: {e}", LogType.ERROR)
 
@@ -251,34 +247,24 @@ class DarwinLogger:
             self.log(f"Failed to start history recorder: {e}", LogType.ERROR)
 
     # ------------------------------------------------------------------
-    # Multiprocessing support — NEW
+    # Multiprocessing support
     # ------------------------------------------------------------------
     def _is_worker_process(self) -> bool:
-        """True if we're inside a ProcessPoolExecutor worker."""
         return multiprocessing.current_process().name != "MainProcess"
 
     def _ensure_mp_queue(self) -> multiprocessing.Queue:
-        """Get or create the multiprocessing queue for worker log forwarding."""
         if self._mp_queue is None:
             self._mp_queue = multiprocessing.Queue()
         return self._mp_queue
 
     def start_mp_listener(self) -> None:
-        """
-        Start a background thread that drains worker log messages from the
-        multiprocessing queue and replays them through the real logger.
-        Call this once in the main process before spawning workers.
-        """
         if self._mp_listener is not None:
-            return  # Already running
-
+            return
         queue = self._ensure_mp_queue()
         self._mp_shutdown.clear()
-
         def _drain():
             while not self._mp_shutdown.is_set():
                 try:
-                    # Non-blocking with timeout so we can check shutdown
                     msg = queue.get(timeout=0.1)
                     if msg is None:
                         break
@@ -287,12 +273,10 @@ class DarwinLogger:
                     self.log(message, log_type)
                 except Exception:
                     pass
-
         self._mp_listener = threading.Thread(target=_drain, daemon=True)
         self._mp_listener.start()
 
     def stop_mp_listener(self) -> None:
-        """Stop the background listener thread."""
         self._mp_shutdown.set()
         if self._mp_queue is not None:
             try:
@@ -302,6 +286,19 @@ class DarwinLogger:
         if self._mp_listener is not None:
             self._mp_listener.join(timeout=2.0)
             self._mp_listener = None
+    def set_mp_queue(self, queue: multiprocessing.Queue) -> None:
+        """
+        Set the shared multiprocessing queue to be used by this process.
+        Must be called in worker processes before any logging.
+        """
+        self._mp_queue = queue
+
+    def get_mp_queue(self) -> Optional[multiprocessing.Queue]:
+        """
+        Return the current multiprocessing queue.
+        Used in the main process to obtain the queue for passing to workers.
+        """
+        return self._mp_queue
 
     # ------------------------------------------------------------------
     # Subscriber management with verbosity
@@ -317,7 +314,7 @@ class DarwinLogger:
             self._subscriber_verbosity.pop(subscriber, None)
 
     # ------------------------------------------------------------------
-    # Action registration (kept for any future actions, no prompts)
+    # Action registration
     # ------------------------------------------------------------------
     def register_action(self, name: str, func: Callable[..., Any]) -> None:
         self._actions[name] = func
@@ -326,17 +323,15 @@ class DarwinLogger:
     # Emit helpers
     # ------------------------------------------------------------------
     def _emit(self, event) -> None:
-        # CHANGED: in worker processes, forward to main process via queue
         if self._is_worker_process():
             if isinstance(event, LogEvent):
                 queue = self._ensure_mp_queue()
                 try:
                     queue.put((event.log_type.value, event.message), timeout=0.5)
                 except Exception:
-                    pass  # Queue full or closed — drop silently
+                    pass
             return
 
-        # Main process: normal subscriber dispatch
         session = self._session_var.get()
         if session and hasattr(event, "session"):
             event = event.__class__(**{**event.__dict__, "session": session})
@@ -377,6 +372,38 @@ class DarwinLogger:
     def log(self, message: str, log_type: LogType = LogType.INFO, style: str = "") -> None:
         self._emit(LogEvent(message=message, log_type=log_type, style=style))
 
+    def logjson(self, payload: Any, log_type: LogType = LogType.INFO, style: str = "") -> None:
+        from src.core.Logger.StructuredSerializer import serialize
+        from src.core.Logger.SchemaExtractor import extract_schemas
+        structured = serialize(payload)
+        schemas = extract_schemas(payload)
+        message = json.dumps(structured, indent=2, ensure_ascii=False)
+        self._emit(LogEvent(
+            message=message,
+            log_type=log_type,
+            style=style,
+            payload=structured,
+            format="json",
+            schemas=schemas,
+        ))
+
+    def loglist(self, payload: Any, log_type: LogType = LogType.INFO, style: str = "") -> None:
+        if not isinstance(payload, list):
+            raise TypeError("loglist expects a list payload")
+        from src.core.Logger.StructuredSerializer import serialize
+        from src.core.Logger.SchemaExtractor import extract_schemas
+        structured = serialize(payload)
+        schemas = extract_schemas(payload)
+        message = json.dumps(structured, indent=2, ensure_ascii=False)
+        self._emit(LogEvent(
+            message=message,
+            log_type=log_type,
+            style=style,
+            payload=structured,
+            format="list",
+            schemas=schemas,
+        ))
+
     def progress_start(self, id: str, total: int, label: str) -> None:
         self._emit(ProgressStartEvent(id=id, total=total, label=label))
 
@@ -408,17 +435,8 @@ class DarwinLogger:
         start_time: Optional[float] = None,
         end_time: Optional[float] = None,
         limit: int = 1000,
-        format: str = "human",  # 'human' or 'json'
+        format: str = "human",
     ) -> List[str]:
-        """
-        Return formatted log strings.
-        - session: filter by session name (empty string for no session)
-        - log_types: set of LogType to include (None = all)
-        - start_time / end_time: Unix timestamps or ISO format strings
-        - limit: max number of events to return (most recent)
-        - format: 'human' -> "[YYYY-MM-DD HH:MM:SS] LEVEL: message"
-                  'json' -> JSON string per line
-        """
         if self._history_recorder is None:
             return []
 
@@ -456,15 +474,20 @@ class DarwinLogger:
             dt = datetime.fromtimestamp(ev.timestamp).strftime("%Y-%m-%d %H:%M:%S")
             level = ev.log_type.value.upper()
             if format == "human":
-                result.append(f"[{dt}] {level}: {ev.message}")
+                if ev.payload is not None:
+                    result.append(f"[{dt}] {level} (structured/{ev.format}):\n{ev.message}")
+                else:
+                    result.append(f"[{dt}] {level}: {ev.message}")
             elif format == "json":
-                import json
                 result.append(json.dumps({
                     "timestamp": ev.timestamp,
                     "datetime": dt,
                     "level": level,
                     "message": ev.message,
                     "session": ev.session,
+                    "payload": ev.payload,
+                    "format": ev.format,
+                    "schemas": ev.schemas,
                 }))
             else:
                 raise ValueError("format must be 'human' or 'json'")

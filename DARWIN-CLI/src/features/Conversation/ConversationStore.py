@@ -1,218 +1,405 @@
 """
-Conversation persistence layer.
-Manages JSONL turn storage, thread index, and NPZ embeddings.
+ConversationStore.py
+SQLite-backed conversation persistence with blob attachments, lifecycle management,
+and turn indexing. No DarwinStore dependency.
 """
+
+import sqlite3
 import json
-import shutil
+import uuid
+from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, List, Dict, Any
+from contextlib import contextmanager
+import threading
 
-import numpy as np
 
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Storage.StorePaths import now, read_json, write_json
-from src.core.Embedding.Embedder import get_current_model_name
-from src.features.Conversation.types import ConvoChunk, ConversationThread, Turn
+# Fallback if AppPaths not available
+try:
+    from src.lib.AppPaths import conversation_db_path
+except ImportError:
+    def conversation_db_path() -> Path:
+        return Path("darwin_conversations.db")
+
+
+@dataclass
+class TurnRecord:
+    turn_id: str
+    conv_id: str
+    role: str  # "user" | "assistant" | "system" | "tool"
+    content: str
+    timestamp: str = ""
+    extraction_method: str = "regex"
+    preference_signals: Optional[Dict[str, Any]] = None
+    context_xml: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None  # Holds TurnMetadata, extracted_claims, intent, etc.
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> "TurnRecord":
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class BlobRecord:
+    blob_id: str = ""
+    turn_id: str = ""
+    conv_id: str = ""
+    blob_type: str = "text"  # "text" | "code" | "image" | "file" | "link"
+    content: Optional[str] = None
+    file_path: Optional[str] = None
+    embedding_id: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    timestamp: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ConversationMeta:
+    conv_id: str
+    title: str
+    created_at: str
+    updated_at: str
+    turn_count: int = 0
+    metadata: Optional[Dict[str, Any]] = None
+    schema_version: str = "1.0"
 
 
 class ConversationStore:
-    """Pure persistence for conversations: JSONL, index, embeddings."""
+    """
+    SQLite-backed store. WAL mode. Thread-safe.
+    """
 
-    def __init__(self, base_dir: Path):
-        self.base_dir = Path(base_dir)
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-        self._index_path = self.base_dir / "index.json"
+    SCHEMA = """
+    PRAGMA journal_mode=WAL;
+    PRAGMA foreign_keys=ON;
 
-    # ── Turn persistence (JSONL) ──────────────────────────────────────────
+    CREATE TABLE IF NOT EXISTS conversations (
+        conv_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT 'Untitled',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        metadata TEXT,
+        schema_version TEXT DEFAULT '1.0'
+    );
 
-    def _jsonl_path(self, thread_id: str) -> Path:
-        return self.base_dir / f"{thread_id}.jsonl"
+    CREATE TABLE IF NOT EXISTS turns (
+        turn_id TEXT PRIMARY KEY,
+        conv_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        extraction_method TEXT DEFAULT 'regex',
+        preference_signals TEXT,
+        context_xml TEXT,
+        metadata TEXT,
+        FOREIGN KEY (conv_id) REFERENCES conversations(conv_id) ON DELETE CASCADE
+    );
 
-    def save_turn(self, thread_id: str, turn: Turn) -> None:
-        """Append a single turn to JSONL."""
-        path = self._jsonl_path(thread_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(turn.to_dict()) + "\n")
+    CREATE INDEX IF NOT EXISTS idx_turns_conv ON turns(conv_id, timestamp);
 
-    def save_thread(self, thread: ConversationThread) -> None:
-        """Overwrite entire JSONL with thread turns."""
-        path = self._jsonl_path(thread.thread_id)
-        with open(path, "w", encoding="utf-8") as f:
-            for turn in thread.turns:
-                f.write(json.dumps(turn.to_dict()) + "\n")
+    CREATE TABLE IF NOT EXISTS blobs (
+        blob_id TEXT PRIMARY KEY,
+        turn_id TEXT NOT NULL,
+        conv_id TEXT NOT NULL,
+        blob_type TEXT NOT NULL,
+        content TEXT,
+        file_path TEXT,
+        embedding_id TEXT,
+        metadata TEXT,
+        timestamp TEXT NOT NULL,
+        FOREIGN KEY (turn_id) REFERENCES turns(turn_id) ON DELETE CASCADE,
+        FOREIGN KEY (conv_id) REFERENCES conversations(conv_id) ON DELETE CASCADE
+    );
 
-    def load_turns(self, thread_id: str) -> List[Turn]:
-        """Load all turns from JSONL as Turn objects."""
-        path = self._jsonl_path(thread_id)
-        if not path.exists():
-            return []
-        turns = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    turns.append(Turn.from_dict(json.loads(line)))
-        return turns
+    CREATE INDEX IF NOT EXISTS idx_blobs_conv ON blobs(conv_id, blob_type);
+    CREATE INDEX IF NOT EXISTS idx_blobs_turn ON blobs(turn_id);
+    """
 
-    def load_thread(self, thread_id: str) -> Optional[ConversationThread]:
-        """Reconstruct a ConversationThread from JSONL (without embeddings)."""
-        turns = self.load_turns(thread_id)
-        if not turns:
-            return None
-        # Read last_indexed_turn_count from index if available
-        index = self.read_index()
-        meta = index.get(thread_id, {})
-        return ConversationThread(
-            thread_id=thread_id,
-            turns=turns,
-            created_at=turns[0].timestamp,
-            last_active=turns[-1].timestamp,
-            last_indexed_turn_count=meta.get("last_indexed_turn_count", 0),
-        )
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = Path(db_path) if db_path else conversation_db_path()
+        self._local = threading.local()
+        self._write_lock = threading.Lock()
+        self._init_db()
 
-    # ── Thread index (quick listing) ──────────────────────────────────────
+    def _connection(self) -> sqlite3.Connection:
+        if not hasattr(self._local, "conn") or self._local.conn is None:
+            self._local.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            self._local.conn.row_factory = sqlite3.Row
+        return self._local.conn
 
-    def read_index(self) -> Dict[str, dict]:
-        if not self._index_path.exists():
-            return {}
-        try:
-            with open(self._index_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, Exception):
-            return {}
+    def _init_db(self):
+        with self._write_lock:
+            conn = sqlite3.connect(str(self.db_path))
+            conn.executescript(self.SCHEMA)
+            conn.commit()
+            conn.close()
 
-    def write_index(self, index: Dict[str, dict]) -> None:
-        with open(self._index_path, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2, default=str)
+    @contextmanager
+    def _transaction(self):
+        with self._write_lock:
+            conn = self._connection()
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
-    def update_index(self, thread: ConversationThread) -> None:
-        index = self.read_index()
-        index[thread.thread_id] = {
-            "title": thread.title,
-            "turn_count": len(thread.turns),
-            "last_active": thread.last_active.isoformat(),
-            "state": thread.state.value,
-            "npz_path": str(thread.npz_path) if thread.npz_path else None,
-            "chunk_count": thread.chunk_count,
-            "last_indexed_turn_count": thread.last_indexed_turn_count,   # NEW
-        }
-        self.write_index(index)
+    # ── Conversation Lifecycle ──────────────────────────────
 
-    def list_threads_meta(self) -> List[dict]:
-        """Return all threads from index."""
-        index = self.read_index()
+    def create_conversation(self, title: str = "Untitled",
+                          metadata: Optional[Dict] = None) -> str:
+        conv_id = f"conv_{uuid.uuid4().hex[:12]}"
+        now = datetime.utcnow().isoformat()
+        with self._transaction() as conn:
+            conn.execute(
+                """INSERT INTO conversations (conv_id, title, created_at, updated_at, metadata)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (conv_id, title, now, now, json.dumps(metadata) if metadata else None)
+            )
+        return conv_id
+
+    def list_conversations(self, limit: int = 100, offset: int = 0) -> List[ConversationMeta]:
+        conn = self._connection()
+        rows = conn.execute(
+            """SELECT c.*, COUNT(t.turn_id) as turn_count
+               FROM conversations c
+               LEFT JOIN turns t ON c.conv_id = t.conv_id
+               GROUP BY c.conv_id
+               ORDER BY c.updated_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset)
+        ).fetchall()
         return [
-            {"thread_id": tid, **meta} for tid, meta in index.items()
+            ConversationMeta(
+                conv_id=r["conv_id"], title=r["title"],
+                created_at=r["created_at"], updated_at=r["updated_at"],
+                turn_count=r["turn_count"],
+                metadata=json.loads(r["metadata"]) if r["metadata"] else None,
+                schema_version=r["schema_version"]
+            ) for r in rows
         ]
 
-    # ── Embedding NPZ persistence ─────────────────────────────────────────
-
-    def _npz_path(self, thread_id: str, model_name: Optional[str] = None) -> Path:
-        if model_name is None:
-            model_name = get_current_model_name()
-        safe_model = model_name.replace("/", "_").replace("\\", "_")
-        npz_dir = self.base_dir / thread_id
-        npz_dir.mkdir(parents=True, exist_ok=True)
-        return npz_dir / f"embeddings_{safe_model}.npz"
-
-    def save_embeddings(
-        self,
-        thread_id: str,
-        vectors: np.ndarray,
-        chunks: List[ConvoChunk],
-        model_name: Optional[str] = None,
-    ) -> Path:
-        """Save conversation embeddings to NPZ (overwrites)."""
-        if model_name is None:
-            model_name = get_current_model_name()
-        path = self._npz_path(thread_id, model_name)
-
-        np.savez_compressed(
-            path,
-            vectors=vectors.astype(np.float32),
-            text=np.array([c.text for c in chunks], dtype=object),
-            clean=np.array([c.clean for c in chunks], dtype=object),
-            turn_ids=np.array([json.dumps(c.turn_ids) for c in chunks], dtype=object),
-            roles=np.array([c.role for c in chunks], dtype=object),
-            timestamps=np.array([c.timestamp.isoformat() for c in chunks], dtype=object),
-            sentiments=np.array([c.sentiment for c in chunks], dtype=np.float32),
-            topics=np.array([json.dumps(c.topics) for c in chunks], dtype=object),
-            turn_ranges=np.array([json.dumps(list(c.turn_range)) for c in chunks], dtype=object),
-            is_preference=np.array([c.is_preference_statement for c in chunks], dtype=bool),
-            is_factual=np.array([c.is_factual_claim for c in chunks], dtype=bool),
+    def get_conversation(self, conv_id: str) -> Optional[ConversationMeta]:
+        conn = self._connection()
+        row = conn.execute(
+            """SELECT c.*, COUNT(t.turn_id) as turn_count
+               FROM conversations c
+               LEFT JOIN turns t ON c.conv_id = t.conv_id
+               WHERE c.conv_id = ? GROUP BY c.conv_id""", (conv_id,)
+        ).fetchone()
+        if not row:
+            return None
+        return ConversationMeta(
+            conv_id=row["conv_id"], title=row["title"],
+            created_at=row["created_at"], updated_at=row["updated_at"],
+            turn_count=row["turn_count"],
+            metadata=json.loads(row["metadata"]) if row["metadata"] else None,
+            schema_version=row["schema_version"]
         )
 
-        meta_path = path.with_suffix(".meta.json")
-        write_json(meta_path, {
-            "thread_id": thread_id,
-            "embedding_model": model_name,
-            "dimensions": int(vectors.shape[1]),
-            "chunk_count": len(chunks),
-            "created_at": now(),
-        })
+    def update_title(self, conv_id: str, title: str):
+        now = datetime.utcnow().isoformat()
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE conversations SET title = ?, updated_at = ? WHERE conv_id = ?",
+                (title, now, conv_id)
+            )
 
-        darwin.log(f"Saved convo embeddings: {path.name}", LogType.SUCCESS)
-        return path
+    def delete_conversation(self, conv_id: str) -> bool:
+        with self._transaction() as conn:
+            cur = conn.execute("DELETE FROM conversations WHERE conv_id = ?", (conv_id,))
+            return cur.rowcount > 0
 
-    def load_embeddings(self, thread_id: str) -> Tuple[Optional[np.ndarray], Optional[List[ConvoChunk]]]:
-        """Load NPZ embeddings and reconstruct chunks."""
-        model_name = get_current_model_name()
-        path = self._npz_path(thread_id, model_name)
-        if not path.exists():
-            return None, None
+    def export_conversation(self, conv_id: str, format: str = "json") -> Dict[str, Any]:
+        meta = self.get_conversation(conv_id)
+        if not meta:
+            raise ValueError(f"Conversation {conv_id} not found")
+        turns = self.get_turns(conv_id)
+        blobs = self.get_blobs(conv_id)
+        payload = {
+            "format": format,
+            "exported_at": datetime.utcnow().isoformat(),
+            "conversation": meta.__dict__,
+            "turns": [t.to_dict() for t in turns],
+            "blobs": [b.to_dict() for b in blobs]
+        }
+        if format == "markdown":
+            md_lines = [f"# {meta.title}\n", f"*Exported: {payload['exported_at']}*\n\n"]
+            for t in turns:
+                md_lines.append(f"## {t.role.capitalize()} ({t.timestamp})\n\n{t.content}\n\n")
+                for b in (x for x in blobs if x.turn_id == t.turn_id):
+                    if b.blob_type == "code":
+                        md_lines.append(f"```\n{b.content}\n```\n\n")
+                    elif b.blob_type == "link":
+                        md_lines.append(f"[Link]({b.content})\n\n")
+            payload["markdown"] = "".join(md_lines)
+        return payload
 
-        try:
-            data = np.load(path, allow_pickle=True, mmap_mode='r')
-        except ValueError:
-            data = np.load(path, allow_pickle=True)
+    def import_conversation(self, payload: Dict[str, Any]) -> str:
+        conv_data = payload["conversation"]
+        new_conv_id = self.create_conversation(
+            title=conv_data.get("title", "Imported"),
+            metadata=conv_data.get("metadata")
+        )
+        for t in payload.get("turns", []):
+            turn = TurnRecord.from_dict(t)
+            turn.conv_id = new_conv_id
+            turn.turn_id = f"turn_{uuid.uuid4().hex[:12]}"
+            self.append_turn(turn)
+        for b in payload.get("blobs", []):
+            blob = BlobRecord(**b)
+            blob.conv_id = new_conv_id
+            blob.blob_id = f"blob_{uuid.uuid4().hex[:12]}"
+            self.attach_blob(blob)
+        return new_conv_id
 
-        n = len(data['text'])
-        chunks = []
-        for i in range(n):
-            chunks.append(ConvoChunk(
-                text=str(data['text'][i]),
-                clean=str(data['clean'][i]),
-                index=i,
-                source=thread_id,
-                turn_range=tuple(json.loads(str(data['turn_ranges'][i]))),
-                role=str(data['roles'][i]),
-                thread_id=thread_id,
-                timestamp=datetime.fromisoformat(str(data['timestamps'][i])),
-                sentiment=float(data['sentiments'][i]),
-                topics=json.loads(str(data['topics'][i])),
-                turn_ids=json.loads(str(data['turn_ids'][i])),
-                is_preference_statement=bool(data['is_preference'][i]),
-                is_factual_claim=bool(data['is_factual'][i]),
-            ))
-        return data['vectors'], chunks
+    # ── Turn Management ─────────────────────────────────────
 
-    def get_embedding_metadata(self, thread_id: str) -> Optional[dict]:
-        path = self._npz_path(thread_id)
-        meta_path = path.with_suffix(".meta.json")
-        if not meta_path.exists():
+    def append_turn(self, turn: TurnRecord) -> TurnRecord:
+        now = datetime.utcnow().isoformat()
+        turn.timestamp = now
+        if not turn.turn_id:
+            turn.turn_id = f"turn_{uuid.uuid4().hex[:12]}"
+        with self._transaction() as conn:
+            conn.execute(
+                """INSERT INTO turns
+                   (turn_id, conv_id, role, content, timestamp, extraction_method,
+                    preference_signals, context_xml, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (turn.turn_id, turn.conv_id, turn.role, turn.content, turn.timestamp,
+                 turn.extraction_method,
+                 json.dumps(turn.preference_signals) if turn.preference_signals else None,
+                 turn.context_xml,
+                 json.dumps(turn.metadata) if turn.metadata else None)
+            )
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? WHERE conv_id = ?",
+                (now, turn.conv_id)
+            )
+        return turn
+
+    def get_turns(self, conv_id: str, limit: int = 1000) -> List[TurnRecord]:
+        conn = self._connection()
+        rows = conn.execute(
+            "SELECT * FROM turns WHERE conv_id = ? ORDER BY timestamp ASC LIMIT ?",
+            (conv_id, limit)
+        ).fetchall()
+        return [
+            TurnRecord(
+                turn_id=r["turn_id"], conv_id=r["conv_id"], role=r["role"],
+                content=r["content"], timestamp=r["timestamp"],
+                extraction_method=r["extraction_method"],
+                preference_signals=json.loads(r["preference_signals"]) if r["preference_signals"] else None,
+                context_xml=r["context_xml"],
+                metadata=json.loads(r["metadata"]) if r["metadata"] else None
+            ) for r in rows
+        ]
+
+    def get_turn(self, turn_id: str) -> Optional[TurnRecord]:
+        conn = self._connection()
+        r = conn.execute("SELECT * FROM turns WHERE turn_id = ?", (turn_id,)).fetchone()
+        if not r:
             return None
-        return read_json(meta_path)
+        return TurnRecord(
+            turn_id=r["turn_id"], conv_id=r["conv_id"], role=r["role"],
+            content=r["content"], timestamp=r["timestamp"],
+            extraction_method=r["extraction_method"],
+            preference_signals=json.loads(r["preference_signals"]) if r["preference_signals"] else None,
+            context_xml=r["context_xml"],
+            metadata=json.loads(r["metadata"]) if r["metadata"] else None
+        )
 
-    def list_indexed_threads(self) -> List[str]:
-        if not self.base_dir.exists():
-            return []
-        indexed = []
-        for d in self.base_dir.iterdir():
-            if d.is_dir() and any(d.glob("embeddings_*.npz")):
-                indexed.append(d.name)
-        return indexed
+    def delete_turn(self, turn_id: str) -> bool:
+        with self._transaction() as conn:
+            cur = conn.execute("DELETE FROM turns WHERE turn_id = ?", (turn_id,))
+            return cur.rowcount > 0
 
-    def delete_thread(self, thread_id: str) -> None:
-        jsonl = self._jsonl_path(thread_id)
-        if jsonl.exists():
-            jsonl.unlink()
-        npz_dir = self.base_dir / thread_id
-        if npz_dir.exists():
-            shutil.rmtree(npz_dir)
-        index = self.read_index()
-        if thread_id in index:
-            del index[thread_id]
-            self.write_index(index)
-        darwin.log(f"Deleted thread {thread_id} from store", LogType.WARNING)
+    # ── Blob Management ───────────────────────────────────
+
+    def attach_blob(self, blob: BlobRecord) -> BlobRecord:
+        now = datetime.utcnow().isoformat()
+        blob.timestamp = now
+        if not blob.blob_id:
+            blob.blob_id = f"blob_{uuid.uuid4().hex[:12]}"
+        with self._transaction() as conn:
+            conn.execute(
+                """INSERT INTO blobs
+                   (blob_id, turn_id, conv_id, blob_type, content, file_path,
+                    embedding_id, metadata, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (blob.blob_id, blob.turn_id, blob.conv_id, blob.blob_type,
+                 blob.content, blob.file_path, blob.embedding_id,
+                 json.dumps(blob.metadata) if blob.metadata else None, blob.timestamp)
+            )
+        return blob
+
+    def get_blobs(self, conv_id: str, blob_type: Optional[str] = None) -> List[BlobRecord]:
+        conn = self._connection()
+        if blob_type:
+            rows = conn.execute(
+                "SELECT * FROM blobs WHERE conv_id = ? AND blob_type = ? ORDER BY timestamp",
+                (conv_id, blob_type)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM blobs WHERE conv_id = ? ORDER BY timestamp", (conv_id,)
+            ).fetchall()
+        return [
+            BlobRecord(
+                blob_id=r["blob_id"], turn_id=r["turn_id"], conv_id=r["conv_id"],
+                blob_type=r["blob_type"], content=r["content"], file_path=r["file_path"],
+                embedding_id=r["embedding_id"],
+                metadata=json.loads(r["metadata"]) if r["metadata"] else None,
+                timestamp=r["timestamp"]
+            ) for r in rows
+        ]
+
+    def get_blobs_for_turn(self, turn_id: str) -> List[BlobRecord]:
+        conn = self._connection()
+        rows = conn.execute(
+            "SELECT * FROM blobs WHERE turn_id = ? ORDER BY timestamp", (turn_id,)
+        ).fetchall()
+        return [
+            BlobRecord(
+                blob_id=r["blob_id"], turn_id=r["turn_id"], conv_id=r["conv_id"],
+                blob_type=r["blob_type"], content=r["content"], file_path=r["file_path"],
+                embedding_id=r["embedding_id"],
+                metadata=json.loads(r["metadata"]) if r["metadata"] else None,
+                timestamp=r["timestamp"]
+            ) for r in rows
+        ]
+
+    def delete_blob(self, blob_id: str) -> bool:
+        with self._transaction() as conn:
+            cur = conn.execute("DELETE FROM blobs WHERE blob_id = ?", (blob_id,))
+            return cur.rowcount > 0
+
+    def update_blob_embedding(self, blob_id: str, embedding_id: str):
+        with self._transaction() as conn:
+            conn.execute(
+                "UPDATE blobs SET embedding_id = ? WHERE blob_id = ?",
+                (embedding_id, blob_id)
+            )
+
+    # ── Utility ─────────────────────────────────────────────
+
+    def get_stats(self) -> Dict[str, Any]:
+        conn = self._connection()
+        return {
+            "conversations": conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0],
+            "turns": conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0],
+            "blobs": conn.execute("SELECT COUNT(*) FROM blobs").fetchone()[0],
+            "db_path": str(self.db_path)
+        }
+
+    def close(self):
+        if hasattr(self._local, "conn") and self._local.conn:
+            self._local.conn.close()
+            self._local.conn = None

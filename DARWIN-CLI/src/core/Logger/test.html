@@ -89,7 +89,7 @@
 
         .line {
             white-space: pre-wrap;
-            word-break: break-all;
+            word-break: break-word;
             font-size: 14px;
             line-height: 1.5;
             animation: fadeIn 0.15s ease-out;
@@ -190,6 +190,48 @@
         }
         .prompt-option:hover { background: #1a1a1a; border-color: var(--cyan); }
         .prompt-option:active { background: #222; }
+
+        /* --- structured tree --- */
+        .struct-tree {
+            margin: 4px 0 4px 1.5em;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        .struct-node { margin-left: 1.2em; }
+        .struct-toggle {
+            cursor: pointer;
+            user-select: none;
+            margin-right: 4px;
+            color: var(--cyan);
+        }
+        .struct-type {
+            color: var(--green);
+            font-weight: bold;
+        }
+        .struct-key { color: var(--accent); }
+        .struct-leaf { color: var(--dim); }
+        .struct-list-header { color: var(--cyan); margin: 2px 0; }
+
+        /* --- custom component cards --- */
+        .struct-card {
+            border: 1px solid #333;
+            border-radius: 6px;
+            padding: 8px;
+            margin: 4px 0;
+            background: #1a1a1a;
+        }
+        .struct-card-header {
+            font-weight: bold;
+            color: var(--green);
+            margin-bottom: 4px;
+        }
+        .struct-card-field {
+            margin-left: 1em;
+            color: var(--text);
+        }
+        .struct-card-field-name {
+            color: var(--accent);
+        }
     </style>
 </head>
 <body>
@@ -200,7 +242,6 @@
         <span id="status-text">disconnected</span>
         <input id="ws-url" type="text" value="ws://localhost:8765" placeholder="WebSocket URL">
         <button id="btn-connect">connect</button>
-        <button id="btn-send" style="display:none;">send test prompt</button>
     </div>
 
     <!-- TERMINAL OUTPUT -->
@@ -240,12 +281,16 @@
         btnConnect.textContent = state === 'connected' ? 'disconnect' : 'connect';
     }
 
+    function appendElement(el) {
+        terminal.appendChild(el);
+        terminal.scrollTop = terminal.scrollHeight;
+    }
+
     function appendLine(text, cls = 'system') {
         const div = document.createElement('div');
         div.className = `line ${cls}`;
         div.textContent = text;
-        terminal.appendChild(div);
-        terminal.scrollTop = terminal.scrollHeight;
+        appendElement(div);
     }
 
     // Progress trackers
@@ -274,8 +319,7 @@
         container.appendChild(labelSpan);
         container.appendChild(outer);
         container.appendChild(pctSpan);
-        terminal.appendChild(container);
-        terminal.scrollTop = terminal.scrollHeight;
+        appendElement(container);
 
         progressEls[id] = { outer, inner, pctSpan, total, container };
     }
@@ -308,8 +352,7 @@
         div.className = 'spinner-block';
         div.id = `spinner-${id}`;
         div.innerHTML = `<span class="spinner-icon">⏳</span> ${message}`;
-        terminal.appendChild(div);
-        terminal.scrollTop = terminal.scrollHeight;
+        appendElement(div);
         spinners[id] = div;
     }
 
@@ -329,117 +372,232 @@
         }
     }
 
-    // Prompt
-    function showPrompt(id, message, options) {
-        if (pendingPromptId) hidePrompt();
-        pendingPromptId = id;
-        promptMsg.textContent = message;
-        promptOpts.innerHTML = '';
-        options.forEach((opt, i) => {
-            const btn = document.createElement('button');
-            btn.className = 'prompt-option';
-            btn.textContent = `${i + 1}. ${opt}`;
-            btn.addEventListener('click', () => {
-                sendPromptResponse(id, opt);
-                hidePrompt();
-            });
-            promptOpts.appendChild(btn);
-        });
-        promptOverlay.classList.add('active');
-        setTimeout(() => {
-            if (pendingPromptId === id) {
-                hidePrompt();
-                appendLine('[prompt timed out]', 'system');
-            }
-        }, 60000);
+    // =========================================================================
+    // Schema & Component Registry
+    // =========================================================================
+    const schemaRegistry = {};        // typeName -> schemaDefinition
+    const componentRegistry = {};     // typeName -> renderFunction(data, schema) => HTMLElement
+
+    function registerSchema(typeName, schemaDef) {
+        schemaRegistry[typeName] = schemaDef;
     }
 
-    function hidePrompt() {
-        promptOverlay.classList.remove('active');
-        pendingPromptId = null;
-    }
-
-    function sendPromptResponse(id, choice) {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        ws.send(JSON.stringify({
-            type: 'prompt_response',
-            payload: { id, choice }
-        }));
+    function registerComponent(typeName, renderFunc) {
+        componentRegistry[typeName] = renderFunc;
     }
 
     // =========================================================================
-    // Message handler (updated with spinner, session, history)
+    // Structured rendering with component fallback
+    // =========================================================================
+    function renderStructured(data, container = null, depth = 0) {
+        if (!container) {
+            container = document.createElement('div');
+            container.className = 'struct-tree';
+        }
+
+        if (data === null || data === undefined) {
+            const span = document.createElement('span');
+            span.className = 'struct-leaf';
+            span.textContent = 'null';
+            container.appendChild(span);
+            return container;
+        }
+        if (typeof data !== 'object') {
+            const span = document.createElement('span');
+            span.className = 'struct-leaf';
+            span.textContent = JSON.stringify(data);
+            container.appendChild(span);
+            return container;
+        }
+
+        // Array fallback
+        if (Array.isArray(data)) {
+            const header = document.createElement('div');
+            header.className = 'struct-list-header';
+            header.textContent = `list (${data.length} items)`;
+            container.appendChild(header);
+            data.forEach((item, idx) => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'struct-node';
+                const label = document.createElement('span');
+                label.className = 'struct-key';
+                label.textContent = `[${idx}] `;
+                itemDiv.appendChild(label);
+                renderStructured(item, itemDiv, depth+1);
+                container.appendChild(itemDiv);
+            });
+            return container;
+        }
+
+        const darwinType = data.__darwin_type__;
+        const isList = darwinType === 'list';
+        if (isList) {
+            const items = data.items || [];
+            const header = document.createElement('div');
+            header.className = 'struct-list-header';
+            header.innerHTML = `<span class="struct-type">list</span> (${items.length} items)`;
+            container.appendChild(header);
+            items.forEach((item, idx) => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'struct-node';
+                const label = document.createElement('span');
+                label.className = 'struct-key';
+                label.textContent = `[${idx}] `;
+                itemDiv.appendChild(label);
+                renderStructured(item, itemDiv, depth+1);
+                container.appendChild(itemDiv);
+            });
+            return container;
+        }
+
+        // If we have a registered component for this type, delegate entirely
+        if (darwinType && componentRegistry[darwinType]) {
+            const comp = componentRegistry[darwinType](data, schemaRegistry[darwinType] || null);
+            container.appendChild(comp);
+            return container;
+        }
+
+        // Generic collapsible tree (fallback)
+        const toggle = document.createElement('span');
+        toggle.className = 'struct-toggle';
+        toggle.textContent = '▼';
+        const wrapper = document.createElement('div');
+        wrapper.className = 'struct-node';
+        wrapper.style.display = 'block';
+
+        toggle.addEventListener('click', () => {
+            if (wrapper.style.display === 'none') {
+                wrapper.style.display = 'block';
+                toggle.textContent = '▼';
+            } else {
+                wrapper.style.display = 'none';
+                toggle.textContent = '▶';
+            }
+        });
+        container.appendChild(toggle);
+
+        if (darwinType && darwinType !== 'cycle') {
+            const typeSpan = document.createElement('span');
+            typeSpan.className = 'struct-type';
+            typeSpan.textContent = darwinType;
+            container.appendChild(typeSpan);
+            container.appendChild(document.createTextNode(' '));
+        }
+
+        Object.keys(data).forEach(key => {
+            if (key === '__darwin_type__') return;
+            const row = document.createElement('div');
+            const keySpan = document.createElement('span');
+            keySpan.className = 'struct-key';
+            keySpan.textContent = key + ': ';
+            row.appendChild(keySpan);
+            renderStructured(data[key], row, depth+1);
+            wrapper.appendChild(row);
+        });
+        container.appendChild(wrapper);
+        return container;
+    }
+
+    // =========================================================================
+    // Message handler (updated to store schemas)
     // =========================================================================
     function handleMessage(raw) {
-        let data;
-        try { data = JSON.parse(raw); } catch {
-            appendLine(`[parse error] ${raw}`, 'error');
-            return;
-        }
+        let msg;
+        try { msg = JSON.parse(raw); } catch (e) { return; }
 
-        const { type, payload } = data;
-
-        switch (type) {
+        switch (msg.type) {
             case 'log': {
-                let cls = payload.log_type || 'info';
-                if (payload.style === 'banner') cls = 'banner';
-                // Prefix with session if active
-                const prefix = payload.session ? `[${payload.session}] ` : '';
-                appendLine(prefix + payload.message, cls);
-                break;
-            }
-            case 'progress': {
-                const { event, id, total, label, current, status } = payload;
-                if (event === 'start') {
-                    const displayLabel = (payload.session ? `[${payload.session}] ` : '') + label;
-                    renderProgressStart(id, displayLabel, total);
-                } else if (event === 'update') {
-                    renderProgressUpdate(id, current, status);
-                } else if (event === 'end') {
-                    renderProgressEnd(id);
+                const p = msg.payload || {};
+                // Store schemas if sent
+                if (p.schemas) {
+                    Object.entries(p.schemas).forEach(([name, def]) => {
+                        registerSchema(name, def);
+                    });
                 }
-                break;
-            }
-            case 'prompt': {
-                showPrompt(payload.id, payload.message, payload.options);
-                break;
-            }
-            case 'spinner': {
-                const { event, id, message, success } = payload;
-                const msg = (payload.session ? `[${payload.session}] ` : '') + message;
-                if (event === 'start') {
-                    appendSpinner(id, msg);
-                } else if (event === 'update') {
-                    updateSpinner(id, msg);
-                } else if (event === 'end') {
-                    removeSpinner(id, success);
-                }
-                break;
-            }
-            case 'session': {
-                if (payload.event === 'start') {
-                    currentSession = payload.name;
-                    appendLine(`▶ session started: ${payload.name}`, 'system');
+                const logClass = p.log_type || 'info';
+                if (p.structured_data) {
+                    const container = document.createElement('div');
+                    container.className = `line ${logClass}`;
+                    const header = document.createElement('div');
+                    header.textContent = `[${p.format || 'structured'}]`;
+                    header.style.color = 'var(--cyan)';
+                    container.appendChild(header);
+                    renderStructured(p.structured_data, container);
+                    appendElement(container);
                 } else {
-                    appendLine(`◼ session ended: ${payload.name}`, 'system');
-                    currentSession = '';
+                    appendLine(p.message || '', logClass);
                 }
                 break;
             }
-            case 'history': {
-                // Replay all historical events sequentially
-                payload.forEach(ev => {
-                    handleMessage(JSON.stringify({
-                        type: ev.type,
-                        payload: ev
-                    }));
-                });
+            case 'progress':
+                const pp = msg.payload;
+                if (pp.event === 'start') {
+                    renderProgressStart(pp.id, pp.label, pp.total);
+                } else if (pp.event === 'update') {
+                    renderProgressUpdate(pp.id, pp.current, pp.status);
+                } else if (pp.event === 'end') {
+                    renderProgressEnd(pp.id);
+                }
                 break;
-            }
+            case 'spinner':
+                const sp = msg.payload;
+                if (sp.event === 'start') {
+                    appendSpinner(sp.id, sp.message);
+                } else if (sp.event === 'update') {
+                    updateSpinner(sp.id, sp.message);
+                } else if (sp.event === 'end') {
+                    removeSpinner(sp.id, sp.success);
+                }
+                break;
+            case 'session':
+                const ss = msg.payload;
+                if (ss.event === 'start') {
+                    currentSession = ss.name;
+                    appendLine(`session started: ${ss.name}`, 'system');
+                } else if (ss.event === 'end') {
+                    currentSession = '';
+                    appendLine(`session ended: ${ss.name}`, 'system');
+                }
+                break;
             default:
-                appendLine(`[unknown: ${type}]`, 'warning');
+                appendLine(`unknown message type: ${msg.type}`, 'warning');
         }
     }
+
+    // =========================================================================
+    // Example: register a custom component for "User"
+    // =========================================================================
+    registerComponent('User', (data, schema) => {
+        const card = document.createElement('div');
+        card.className = 'struct-card';
+        const header = document.createElement('div');
+        header.className = 'struct-card-header';
+        header.textContent = 'User Card';
+        card.appendChild(header);
+        if (schema && schema.fields) {
+            schema.fields.forEach(field => {
+                const row = document.createElement('div');
+                row.className = 'struct-card-field';
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'struct-card-field-name';
+                nameSpan.textContent = field.name + ': ';
+                const valSpan = document.createElement('span');
+                valSpan.textContent = data[field.name] !== undefined ? data[field.name] : 'N/A';
+                row.appendChild(nameSpan);
+                row.appendChild(valSpan);
+                card.appendChild(row);
+            });
+        } else {
+            Object.keys(data).forEach(key => {
+                if (key === '__darwin_type__') return;
+                const row = document.createElement('div');
+                row.className = 'struct-card-field';
+                row.textContent = key + ': ' + data[key];
+                card.appendChild(row);
+            });
+        }
+        return card;
+    });
 
     // =========================================================================
     // WebSocket connect / disconnect
@@ -456,7 +614,6 @@
         ws.onopen = () => {
             setStatus('connected');
             appendLine('connected to darwin', 'success');
-            // Request session history
             ws.send(JSON.stringify({ type: 'get_history', payload: { limit: 200 } }));
         };
 
@@ -480,6 +637,34 @@
 
     // Auto-connect on load
     connect();
+
+    // =========================================================================
+    // Prompt modal (kept for future use)
+    // =========================================================================
+    function showPrompt(promptId, message, options) {
+        pendingPromptId = promptId;
+        promptMsg.textContent = message;
+        promptOpts.innerHTML = '';
+        options.forEach((opt, idx) => {
+            const btn = document.createElement('button');
+            btn.className = 'prompt-option';
+            btn.textContent = opt.label || opt;
+            btn.addEventListener('click', () => {
+                ws.send(JSON.stringify({
+                    type: 'prompt_response',
+                    payload: { id: promptId, choice: idx }
+                }));
+                hidePrompt();
+            });
+            promptOpts.appendChild(btn);
+        });
+        promptOverlay.classList.add('active');
+    }
+
+    function hidePrompt() {
+        promptOverlay.classList.remove('active');
+        pendingPromptId = null;
+    }
 </script>
 </body>
 </html>

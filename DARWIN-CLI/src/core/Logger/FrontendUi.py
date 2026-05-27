@@ -1,10 +1,9 @@
-# FrontendUi.py — WebSocket / JSON emitter (the real bridge)
 from __future__ import annotations
 
 import asyncio
 import json
 import sys
-from typing import Optional
+from typing import Optional, Set
 
 from src.core.Logger.DarwinLogger import (
     EventSubscriber,
@@ -34,6 +33,8 @@ class FrontendBridge(EventSubscriber):
         self._fallback = fallback_stdout
         self._logger = logger
         self._loop = loop
+        # Track which schemas have already been sent to this client
+        self._sent_schema_types: Set[str] = set()
 
     def _schedule(self, coro):
         if self._loop and self._loop.is_running():
@@ -67,14 +68,27 @@ class FrontendBridge(EventSubscriber):
 
     # ---------- Event handlers ----------
     def on_log(self, event: LogEvent) -> None:
+        payload = {
+            "message": event.message,
+            "log_type": event.log_type.value,
+            "style": event.style,
+            "session": event.session,
+        }
+        if event.payload is not None:
+            payload["structured_data"] = event.payload
+            payload["format"] = event.format
+        # Only send schemas that haven't been sent yet on this connection
+        if event.schemas is not None:
+            new_schemas = {
+                k: v for k, v in event.schemas.items()
+                if k not in self._sent_schema_types
+            }
+            if new_schemas:
+                payload["schemas"] = new_schemas
+                self._sent_schema_types.update(new_schemas.keys())
         self._schedule(self._send({
             "type": "log",
-            "payload": {
-                "message": event.message,
-                "log_type": event.log_type.value,
-                "style": event.style,
-                "session": event.session,
-            }
+            "payload": payload,
         }))
 
     def on_progress_start(self, event: ProgressStartEvent) -> None:

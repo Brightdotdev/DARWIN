@@ -25,6 +25,11 @@ from src.features.Ingestion.Parsing.lib import (
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
+def _worker_init(mp_queue):
+    """Initialize worker process with the shared logging queue."""
+    from src.core.Logger.DarwinLogger import darwin
+    darwin.set_mp_queue(mp_queue)
+
 
 # ---------------------------------------------------------------------------
 # Worker (unchanged)
@@ -50,10 +55,6 @@ def parse_document(
         )
 
 
-# ---------------------------------------------------------------------------
-# Orchestrator — throttled progress updates
-# ---------------------------------------------------------------------------
-
 def parse_documents(
     files: list[FileWithImages],
     caption_images: bool = False,
@@ -74,11 +75,16 @@ def parse_documents(
     file_errors: dict[str, str] = {}
 
     darwin.progress_start("parsing", total, f"Parsing {total} files")
-    
-    # CHANGED: start MP listener so worker logs are forwarded to main process
+
+    # Start the MP listener and retrieve the queue
     darwin.start_mp_listener()
-    
-    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+    mp_queue = darwin.get_mp_queue()
+
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_worker_init,
+        initargs=(mp_queue,),
+    ) as executor:
         future_to_info = {}
         for orig_idx, fw in indexed_files:
             future = executor.submit(parse_document, fw, caption_images, precise)
@@ -86,7 +92,7 @@ def parse_documents(
 
         processed = 0
         last_update = 0
-        UPDATE_INTERVAL = 5  # update progress bar every N files
+        UPDATE_INTERVAL = 5
 
         for future in as_completed(future_to_info):
             orig_idx, filename = future_to_info[future]
@@ -105,16 +111,14 @@ def parse_documents(
                 )
                 file_errors[filename] = str(e)
 
-            # Throttled progress update
             if processed - last_update >= UPDATE_INTERVAL or processed == total:
                 darwin.progress_update("parsing", processed)
                 last_update = processed
 
     darwin.progress_end("parsing")
-    # CHANGED: stop MP listener after workers are done
     darwin.stop_mp_listener()
 
-    # Summary logs
+    # Summary
     if completed_files:
         darwin.log(f"Parsed: {len(completed_files)} files", LogType.SUCCESS)
     if file_errors:
@@ -125,7 +129,6 @@ def parse_documents(
             darwin.log(f"  … and {len(file_errors) - 5} more", LogType.ERROR)
 
     return [r for r in results if r is not None]
-
 
 # ---------------------------------------------------------------------------
 # handle_parsing (unchanged core, but now logged inside a session)

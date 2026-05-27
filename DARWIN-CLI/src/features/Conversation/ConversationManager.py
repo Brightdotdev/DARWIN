@@ -1,458 +1,387 @@
 """
-src/features/Conversation/ConversationModule.py
-------------------------------------------------
-Thread lifecycle, turn management, working memory, and warm persistence.
-Delegates cold storage (embeddings, search, contradiction) to ConversationRAG.
+ConversationManager.py
+Unified conversation manager. Wires together:
+  - ConversationStore (SQLite persistence)
+  - ConversationCache (tool/query result caching)
+  - QueryOrchestrator (first-bounce extraction + routing)
+  - MemoryRetriever (NPZ embedding index)
+  - TurnExtractor (claim/intent/preference extraction)
+  - ContextAssembler (prompt assembly)
+
+No DarwinStore dependency.
 """
 
-import json
-import threading
 import uuid
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
-from enum import Enum
-from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, Any
+import json
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Optional, List, Dict, Any, Tuple
 
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.lib.AppPaths import default_data_dir
-from src.features.Conversation.types import (ThreadState, Turn, TurnMetadata, ConversationThread)
+# ── Local / project imports with fallbacks ─────────────────
+from src.features.Conversation.ConversationConfig import ConversationConfig
+from src.features.Conversation.ConversationStore import ConversationStore, TurnRecord, BlobRecord
+from src.features.Conversation.ConversationCache import ConversationCache
+
+from src.features.Query.QueryOrchestrator import QueryOrchestrator, DarwinLogger
+from src.features.Conversation.MemoryRetriever import MemoryRetriever
+from src.features.Conversation.TurnExtractor import TurnExtractor
+from src.features.Conversation.ContextAssembler import ContextAssembler
+
+@dataclass
+class ConversationAudit:
+    conversation_id: str
+    total_turns: int
+    indexed_memories: int
+    estimated_context_tokens: int
+    budget_status: str
+    last_intent: Optional[str] = None
+    last_routing_target: Optional[str] = None
+    cache_hit_rate: float = 0.0
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Core types
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Conversation Module
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class ConversationModule:
+class ConversationManager:
     """
-    Manages conversation threads as hot memory.
-    Delegates cold storage (embeddings, search, contradiction) to ConversationRAG.
+    Single entry point for conversation lifecycle.
+
+    Typical flow:
+      1. manager.start_conversation(title) -> conv_id
+      2. plan, messages, user_turn_id = manager.process_user_turn(msg, tools, prompt)
+      3. # ... downstream LLM call using messages ...
+      4. manager.save_assistant_turn(response_payload, plan, turn_metadata)
+      5. manager.flush()
     """
-    
-    _instance = None
-    _lock = threading.Lock()
-    
-    # Hot storage: in-memory active threads
-    _threads: Dict[str, ConversationThread] = {}
-    
-    # Paths
-    _conversations_dir: Path = Path(default_data_dir()) / "conversations"
-    _index_path: Path = _conversations_dir / "index.json"
-    
-    # RAG submodule (injected)
-    _rag = None
-    
-    # Auto-archive timer
-    _auto_archive_minutes: int = 30
-    
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-    
-    @classmethod
-    def initialize(cls, rag_submodule=None, auto_archive_minutes: int = 30) -> None:
-        """Initialize module. Optionally inject ConversationRAG submodule."""
-        cls._conversations_dir.mkdir(parents=True, exist_ok=True)
-        cls._rag = rag_submodule
-        cls._auto_archive_minutes = auto_archive_minutes
-        cls._load_index()
-        darwin.log("ConversationModule initialized", LogType.SUCCESS)
-    
-    # ── Thread lifecycle ─────────────────────────────────────────────────────
-    
-    @classmethod
-    def create_thread(cls, title: Optional[str] = None) -> str:
-        """Create new thread. Auto-generate title after first exchange."""
-        thread_id = str(uuid.uuid4())[:8]
-        thread = ConversationThread(
-            thread_id=thread_id,
-            title=title,
-            created_at=datetime.now(),
-            last_active=datetime.now(),
+
+    def __init__(
+        self,
+        config: Optional[ConversationConfig] = None,
+        db_path: Optional[str] = None,
+        cache_path: Optional[str] = None,
+    ):
+        self.config = config or ConversationConfig()
+        self.store = ConversationStore(db_path=db_path)
+        self.cache = ConversationCache(db_path=cache_path)
+        self.logger = DarwinLogger()
+        self.orchestrator = QueryOrchestrator(
+            self.store, self.cache, self.logger,
+            max_history_for_pushback=5
         )
-        with cls._lock:
-            cls._threads[thread_id] = thread
-            cls._update_index(thread)
-        
-        darwin.log(f"Created thread: {thread_id}", LogType.INFO)
-        return thread_id
-    
-    @classmethod
-    def continue_thread(cls, thread_id: str) -> Optional[ConversationThread]:
-        """Load thread from JSONL into hot memory."""
-        # Check hot memory first
-        if thread_id in cls._threads:
-            cls._threads[thread_id].last_active = datetime.now()
-            return cls._threads[thread_id]
-        
-        # Load from warm storage
-        thread = cls._load_thread_from_jsonl(thread_id)
-        if thread:
-            with cls._lock:
-                cls._threads[thread_id] = thread
-            darwin.log(f"Resumed thread: {thread_id}", LogType.INFO)
-            return thread
-        
-        darwin.log(f"Thread not found: {thread_id}", LogType.ERROR)
-        return None
-    
-    @classmethod
-    def list_threads(cls, limit: int = 10) -> List[Dict[str, Any]]:
-        """List threads sorted by last_active descending."""
-        cls._load_index()
-        
-        # Merge hot + index
-        all_threads = {}
-        for tid, thread in cls._threads.items():
-            all_threads[tid] = {
-                "thread_id": tid,
-                "title": thread.title or "(Untitled)",
-                "turn_count": len(thread.turns),
-                "last_active": thread.last_active.isoformat(),
-                "state": thread.state.value,
-                "is_hot": True,
-            }
-        
-        # Add archived threads from index
-        index = cls._read_index()
-        for tid, meta in index.items():
-            if tid not in all_threads:
-                all_threads[tid] = {
-                    "thread_id": tid,
-                    "title": meta.get("title", "(Archived)"),
-                    "turn_count": meta.get("turn_count", 0),
-                    "last_active": meta.get("last_active", ""),
-                    "state": meta.get("state", "archived"),
-                    "is_hot": False,
-                }
-        
-        # Sort by last_active
-        sorted_threads = sorted(
-            all_threads.values(),
-            key=lambda x: x["last_active"],
-            reverse=True,
-        )
-        return sorted_threads[:limit]
-    
-    @classmethod
-    def archive_thread(cls, thread_id: str) -> bool:
-        """Archive thread to ConversationRAG. Keep JSONL."""
-        thread = cls._threads.get(thread_id)
-        if not thread:
-            thread = cls._load_thread_from_jsonl(thread_id)
-        
-        if not thread:
-            darwin.log(f"Cannot archive: thread {thread_id} not found", LogType.ERROR)
-            return False
-        
-        thread.state = ThreadState.ARCHIVED
-        
-        # Delegate to RAG submodule
-        if cls._rag:
-            try:
-                npz_path = cls._rag.index_thread(thread_id, thread.turns)
-                thread.npz_path = npz_path
-                thread.chunk_count = cls._rag.get_chunk_count(thread_id)
-                darwin.log(f"Thread {thread_id} indexed to {npz_path}", LogType.SUCCESS)
-            except Exception as e:
-                darwin.log(f"RAG indexing failed for {thread_id}: {e}", LogType.ERROR)
-                thread.state = ThreadState.ERROR
-        
-        # Save final state
-        cls._save_thread_to_jsonl(thread)
-        
-        with cls._lock:
-            if thread_id in cls._threads:
-                del cls._threads[thread_id]  # Remove from hot memory
-        
-        cls._update_index(thread)
-        return True
-    
-    @classmethod
-    def delete_thread(cls, thread_id: str) -> bool:
-        """Permanently delete thread and all artifacts."""
-        # Remove from hot memory
-        with cls._lock:
-            cls._threads.pop(thread_id, None)
-        
-        # Delete files
-        jsonl_path = cls._jsonl_path(thread_id)
-        if jsonl_path.exists():
-            jsonl_path.unlink()
-        
-        # Delete NPZ if exists
-        npz_dir = cls._conversations_dir / thread_id
-        if npz_dir.exists():
-            import shutil
-            shutil.rmtree(npz_dir)
-        
-        # Update index
-        index = cls._read_index()
-        index.pop(thread_id, None)
-        cls._write_index(index)
-        
-        darwin.log(f"Deleted thread: {thread_id}", LogType.WARNING)
-        return True
-    
-    # ── Turn management ──────────────────────────────────────────────────────
-    
-    @classmethod
-    def add_turn(
-        cls,
-        thread_id: str,
-        role: str,
-        content: str,
-        metadata: Optional[TurnMetadata] = None,
-    ) -> Turn:
-        """Add turn to thread. Auto-enrich metadata."""
-        thread = cls._ensure_thread_loaded(thread_id)
-        
-        if metadata is None:
-            metadata = TurnMetadata(thread_id=thread_id)
-        
-        turn = Turn(
-            turn_id=str(uuid.uuid4())[:12],
-            role=role,
-            content=content,
-            timestamp=datetime.now(),
-            metadata=metadata,
-        )
-        
-        thread.turns.append(turn)
-        thread.last_active = datetime.now()
-        
-        # Auto-title after first exchange
-        if len(thread.turns) == 2 and not thread.title:
-            thread.title = cls._generate_title(thread)
-        
-        # Auto-enrich (background, non-blocking)
-        cls._enrich_turn_async(turn)
-        
-        # Flush to JSONL periodically
-        if len(thread.turns) % 5 == 0:
-            cls._save_thread_to_jsonl(thread)
-        
-        return turn
-    
-    @classmethod
-    def get_context_window(
-        cls,
-        thread_id: str,
-        max_tokens: int = 4000,
-        tier: str = "normal",
-    ) -> List[Dict[str, str]]:
+        self.memory_retriever = MemoryRetriever(self.config)
+        self.turn_extractor = TurnExtractor(self.config)
+        self.context_assembler = ContextAssembler(self.config)
+
+        self.conversation_id: Optional[str] = None
+        self._turns_cache: List[Dict[str, Any]] = []   # in-memory for fast context assembly
+        self._user_turn_count = 0
+
+    # ── Conversation Lifecycle ──────────────────────────────
+
+    def start_conversation(self, title: str = "Untitled",
+                           metadata: Optional[Dict] = None) -> str:
+        self.conversation_id = self.store.create_conversation(title, metadata)
+        self._turns_cache = []
+        self._user_turn_count = 0
+        self.logger.log("conversation.started", {"title": title}, self.conversation_id)
+        return self.conversation_id
+
+    def load_conversation(self, conv_id: str) -> str:
+        meta = self.store.get_conversation(conv_id)
+        if not meta:
+            raise ValueError(f"Conversation {conv_id} not found")
+        self.conversation_id = conv_id
+        records = self.store.get_turns(conv_id)
+        self._turns_cache = [self._record_to_dict(r) for r in records]
+        self._user_turn_count = sum(1 for t in self._turns_cache if t.get("role") == "user")
+        self.logger.log("conversation.loaded", {"turns": len(self._turns_cache)}, conv_id)
+        return conv_id
+
+    def list_conversations(self, limit: int = 100) -> List[Dict[str, Any]]:
+        return [m.__dict__ for m in self.store.list_conversations(limit)]
+
+    def delete_conversation(self, conv_id: str) -> bool:
+        return self.store.delete_conversation(conv_id)
+
+    # ── Core Turn Flow ──────────────────────────────────────
+
+    def process_user_turn(
+        self,
+        user_message: str,
+        available_tools: List[str],
+        system_prompt: str,
+    ) -> Tuple[Any, List[Dict[str, Any]], str]:
         """
-        Get recent turns formatted for LLM prompt injection.
-        Budget: 60% recent turns, 40% rolling summary.
-        Tier-aware: fast=summaries, smart=full text.
+        First-bounce processing for a user message.
+
+        Returns:
+            (QueryPlan, assembled_messages, user_turn_id)
         """
-        thread = cls._ensure_thread_loaded(thread_id)
-        if not thread:
-            return []
-        
-        messages = []
-        recent_budget = int(max_tokens * 0.6)
-        summary_budget = int(max_tokens * 0.4)
-        
-        # Recent turns (newest first, until budget exhausted)
-        recent_turns = []
-        token_count = 0
-        
-        for turn in reversed(thread.turns):
-            turn_text = cls._format_turn(turn, tier)
-            turn_tokens = len(turn_text) // 4  # Rough estimate
-            
-            if token_count + turn_tokens > recent_budget:
-                break
-            
-            recent_turns.append({
-                "role": turn.role if turn.role != "tool" else "assistant",
-                "content": turn_text,
-            })
-            token_count += turn_tokens
-        
-        # Add in chronological order
-        messages.extend(reversed(recent_turns))
-        
-        # Rolling summary if available and budget allows
-        if thread.summary and token_count < max_tokens - summary_budget:
-            messages.insert(0, {
-                "role": "system",
-                "content": f"[Conversation summary so far]: {thread.summary[:summary_budget * 4]}",
-            })
-        
-        return messages
-    
-    @classmethod
-    def update_summary(cls, thread_id: str) -> Optional[str]:
-        """Generate rolling summary (call after every 10 turns)."""
-        thread = cls._ensure_thread_loaded(thread_id)
-        if not thread or len(thread.turns) < 10:
-            return None
-        
-        # Delegate to smart tier via injected client or caller
-        # This is a hook — actual LLM call happens in AgentBuilder
-        thread.summary = f"({len(thread.turns)} turns discussed: {', '.join(thread.turns[-1].metadata.topics[:3])})"
-        cls._save_thread_to_jsonl(thread)
-        return thread.summary
-    
-    # ── Working memory helpers ───────────────────────────────────────────────
-    
-    @classmethod
-    def get_last_n_turns(cls, thread_id: str, n: int = 5) -> List[Turn]:
-        thread = cls._ensure_thread_loaded(thread_id)
-        return thread.turns[-n:] if thread else []
-    
-    @classmethod
-    def get_turn_by_id(cls, thread_id: str, turn_id: str) -> Optional[Turn]:
-        thread = cls._ensure_thread_loaded(thread_id)
-        if not thread:
-            return None
-        for turn in thread.turns:
-            if turn.turn_id == turn_id:
-                return turn
-        return None
-    
-    @classmethod
-    def get_thread_state(cls, thread_id: str) -> Optional[ThreadState]:
-        thread = cls._threads.get(thread_id)
-        if thread:
-            return thread.state
-        # Check index
-        index = cls._read_index()
-        if thread_id in index:
-            return ThreadState(index[thread_id].get("state", "archived"))
-        return None
-    
-    # ── Internal helpers ─────────────────────────────────────────────────────
-    
-    @classmethod
-    def _ensure_thread_loaded(cls, thread_id: str) -> Optional[ConversationThread]:
-        if thread_id not in cls._threads:
-            return cls.continue_thread(thread_id)
-        return cls._threads[thread_id]
-    
-    @classmethod
-    def _generate_title(cls, thread: ConversationThread) -> str:
-        """Auto-generate title from first exchange (fast-tier hook)."""
-        if len(thread.turns) >= 2:
-            first_user = next((t.content for t in thread.turns if t.role == "user"), "")
-            # Truncate and clean
-            title = first_user[:40].replace("\n", " ").strip()
-            if title:
-                return title + "..." if len(first_user) > 40 else title
-        return f"Conversation {thread.thread_id[:6]}"
-    
-    @classmethod
-    def _enrich_turn_async(cls, turn: Turn) -> None:
-        """Background enrichment: sentiment, topics, turn_type."""
-        # Placeholder — actual implementation uses fast-tier LLM or rules
-        # These are non-blocking; stale values are acceptable
-        if turn.metadata.sentiment is None:
-            turn.metadata.sentiment = 0.0  # Neutral default
-        if not turn.metadata.topics:
-            turn.metadata.topics = []
-    
-    @classmethod
-    def _format_turn(cls, turn: Turn, tier: str) -> str:
-        """Format turn for prompt injection. Tier-aware compression."""
-        if tier == "fast" and len(turn.content) > 200:
-            return turn.content[:200] + "..."
-        return turn.content
-    
-    # ── Persistence ──────────────────────────────────────────────────────────
-    
-    @classmethod
-    def _jsonl_path(cls, thread_id: str) -> Path:
-        return cls._conversations_dir / f"{thread_id}.jsonl"
-    
-    @classmethod
-    def _save_thread_to_jsonl(cls, thread: ConversationThread) -> None:
-        path = cls._jsonl_path(thread.thread_id)
-        with open(path, "w", encoding="utf-8") as f:
-            for turn in thread.turns:
-                f.write(json.dumps(turn.to_dict()) + "\n")
-    
-    @classmethod
-    def _load_thread_from_jsonl(cls, thread_id: str) -> Optional[ConversationThread]:
-        path = cls._jsonl_path(thread_id)
-        if not path.exists():
-            return None
-        
-        turns = []
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    turns.append(Turn.from_dict(json.loads(line)))
-        
-        if not turns:
-            return None
-        
-        return ConversationThread(
-            thread_id=thread_id,
-            turns=turns,
-            created_at=turns[0].timestamp,
-            last_active=turns[-1].timestamp,
-        )
-    
-    @classmethod
-    def _read_index(cls) -> Dict[str, dict]:
-        if not cls._index_path.exists():
-            return {}
-        try:
-            with open(cls._index_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, Exception):
-            return {}
-    
-    @classmethod
-    def _write_index(cls, index: Dict[str, dict]) -> None:
-        with open(cls._index_path, "w", encoding="utf-8") as f:
-            json.dump(index, f, indent=2, default=str)
-    
-    @classmethod
-    def _update_index(cls, thread: ConversationThread) -> None:
-        index = cls._read_index()
-        index[thread.thread_id] = {
-            "title": thread.title,
-            "turn_count": len(thread.turns),
-            "last_active": thread.last_active.isoformat(),
-            "state": thread.state.value,
-            "npz_path": str(thread.npz_path) if thread.npz_path else None,
-            "chunk_count": thread.chunk_count,
+        if not self.conversation_id:
+            raise RuntimeError("No active conversation. Call start_conversation() or load_conversation() first.")
+
+        # 1. Orchestrator: extract blobs, detect pushback, rewrite, route
+        plan = self.orchestrator.process(self.conversation_id, user_message)
+
+        # 2. Prepare turn data for extraction
+        turn_data = {
+            "user_message": plan.rewritten_query or user_message,
+            "assistant_plan": "",
+            "final_response": "",
+            "timestamp": datetime.utcnow().isoformat(),
         }
-        cls._write_index(index)
-    
-    @classmethod
-    def _load_index(cls) -> None:
-        """Load hot threads from index on startup."""
-        index = cls._read_index()
-        for thread_id, meta in index.items():
-            if meta.get("state") == "active":
-                # Only load recent active threads
-                last_active = datetime.fromisoformat(meta["last_active"])
-                if datetime.now() - last_active < timedelta(minutes=cls._auto_archive_minutes):
-                    cls.continue_thread(thread_id)
 
+        # 3. Extract claims, preferences, intent, embedding
+        extracted = self.turn_extractor.extract(turn_data)
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Convenience functions
-# ═══════════════════════════════════════════════════════════════════════════════
+        # 4. Build rich metadata dict (#5 fix — stores EVERYTHING)
+        user_metadata = {
+            "extracted_claims": extracted.get("claims", []),
+            "intent": extracted.get("intent", "general"),
+            "confidence": extracted.get("confidence", 0.0),
+            "extraction_method": extracted.get("extraction_method", "regex"),
+            "original_message": user_message,
+            "rewritten_query": plan.rewritten_query,
+            "routing_target": plan.routing_target,
+            "pushback_detected": plan.pushback_detected,
+            "extracted_links": plan.extracted_links,
+            "blob_count": len(plan.extracted_blobs),
+            "blob_types": list(set(b.blob_type for b in plan.extracted_blobs)),
+        }
 
-def get_conversation_module() -> ConversationModule:
-    return ConversationModule()
+        # 5. Persist user turn to SQLite
+        user_turn = TurnRecord(
+            turn_id="",
+            conv_id=self.conversation_id,
+            role="user",
+            content=plan.rewritten_query or user_message,
+            extraction_method=extracted.get("extraction_method", "regex"),
+            preference_signals=extracted.get("preferences", {}),
+            metadata=user_metadata,
+        )
+        saved_user = self.store.append_turn(user_turn)
 
+        # 6. Persist extracted blobs with correct turn_id
+        for blob in plan.extracted_blobs:
+            blob_record = BlobRecord(
+                blob_id="",
+                turn_id=saved_user.turn_id,
+                conv_id=self.conversation_id,
+                blob_type=blob.blob_type,
+                content=blob.content,
+                metadata={"language": blob.language, "span": blob.span},
+            )
+            self.store.attach_blob(blob_record)
 
-def create_conversation(title: Optional[str] = None) -> str:
-    return ConversationModule.create_thread(title)
+        # 7. Index to NPZ memory (conversation-as-RAG)
+        memory_dict = {
+            "turn_id": saved_user.turn_id,
+            "conversation_id": self.conversation_id,
+            "timestamp": saved_user.timestamp,
+            "extracted_claims": extracted.get("claims", []),
+            "preference_signals": extracted.get("preferences", {}),
+            "intent": extracted.get("intent"),
+            "embedding": extracted.get("embedding"),
+        }
+        self.memory_retriever.index_turn(memory_dict)
 
+        # 8. Update in-memory cache for fast context assembly
+        self._turns_cache.append(self._record_to_dict(saved_user))
+        self._user_turn_count += 1
 
-def continue_conversation(thread_id: str) -> Optional[ConversationThread]:
-    return ConversationModule.continue_thread(thread_id)
+        # 9. Retrieve relevant memories
+        memories = self.memory_retriever.retrieve(
+            query=plan.rewritten_query,
+            conversation_id=self.conversation_id,
+            top_k=self.config.memory_top_k,
+            cross_conversation=self.config.enable_cross_conversation_memory,
+        )
+
+        # 10. Assemble context for downstream LLM
+        messages = self.context_assembler.assemble(
+            system_prompt=system_prompt,
+            memories=memories,
+            turns=self._turns_cache,
+            user_message=plan.rewritten_query,
+            available_tools=available_tools,
+        )
+
+        self.logger.log_stage(
+            "user_turn_complete", "done",
+            {"turn_id": saved_user.turn_id, "routing": plan.routing_target},
+            self.conversation_id, plan.plan_id,
+        )
+
+        return plan, messages, saved_user.turn_id
+
+    def save_assistant_turn(
+        self,
+        response_payload: Any,
+        plan: Any,
+        turn_metadata: Optional[Dict[str, Any]] = None,
+        index_to_memory: bool = False,
+    ) -> TurnRecord:
+        """
+        Persist assistant / system / tool response.
+
+        Args:
+            response_payload: Either a string or a dict with ResponseType fields.
+                              If dict, "content" key is extracted for the main text.
+            plan: The QueryPlan from process_user_turn.
+            turn_metadata: Serialized TurnMetadata from ResponseTypes (tier, model,
+                           token_usage, latency_ms, skills_used, tools_invoked, etc.)
+            index_to_memory: Rarely True. Assistant responses usually not indexed.
+        """
+        if not self.conversation_id:
+            raise RuntimeError("No active conversation.")
+
+        # Normalize payload
+        if isinstance(response_payload, dict):
+            content = response_payload.get("content", "")
+            response_type = response_payload.get("type", "text")
+            blocks = response_payload.get("blocks", [])
+            citations = response_payload.get("citations", [])
+        else:
+            content = str(response_payload)
+            response_type = "text"
+            blocks = []
+            citations = []
+
+        # Merge all metadata (#5 fix — full TurnMetadata lives here)
+        assistant_metadata = {
+            "response_type": response_type,
+            "plan_id": getattr(plan, "plan_id", None),
+            "routing_target": getattr(plan, "routing_target", None),
+            "has_blocks": len(blocks) > 0,
+            "block_types": [b.get("type") for b in blocks] if blocks else [],
+            "citation_count": len(citations),
+            **(turn_metadata or {}),   # ← TurnMetadata.to_dict() goes here
+        }
+
+        assistant_turn = TurnRecord(
+            turn_id="",
+            conv_id=self.conversation_id,
+            role="assistant",
+            content=content,
+            metadata=assistant_metadata,
+        )
+        saved = self.store.append_turn(assistant_turn)
+        self._turns_cache.append(self._record_to_dict(saved))
+
+        if index_to_memory:
+            # Only if you want assistant responses searchable
+            mem_dict = {
+                "turn_id": saved.turn_id,
+                "conversation_id": self.conversation_id,
+                "timestamp": saved.timestamp,
+                "extracted_claims": [content[:200]],
+                "preference_signals": {},
+                "intent": "assistant_response",
+                "embedding": None,  # Would need separate embedding call
+            }
+            # self.memory_retriever.index_turn(mem_dict)
+
+        self.logger.log_stage(
+            "assistant_turn_saved", "done",
+            {"turn_id": saved.turn_id, "content_length": len(content)},
+            self.conversation_id, getattr(plan, "plan_id", None),
+        )
+        return saved
+
+    def save_system_turn(self, content: str,
+                         system_metadata: Optional[Dict[str, Any]] = None) -> TurnRecord:
+        """Persist a system message (config changes, skill loads, etc.)."""
+        if not self.conversation_id:
+            raise RuntimeError("No active conversation.")
+
+        turn = TurnRecord(
+            turn_id="", conv_id=self.conversation_id, role="system",
+            content=content, metadata=system_metadata,
+        )
+        saved = self.store.append_turn(turn)
+        self._turns_cache.append(self._record_to_dict(saved))
+        return saved
+
+    def save_tool_turn(self, tool_name: str, tool_input: Dict[str, Any],
+                       tool_output: Dict[str, Any]) -> TurnRecord:
+        """Persist a tool invocation result."""
+        if not self.conversation_id:
+            raise RuntimeError("No active conversation.")
+
+        content = f"[{tool_name}] Input: {json.dumps(tool_input)}\nOutput: {json.dumps(tool_output, default=str)}"
+        turn = TurnRecord(
+            turn_id="", conv_id=self.conversation_id, role="tool",
+            content=content[:2000],  # cap length
+            metadata={"tool_name": tool_name, "input": tool_input, "output": tool_output},
+        )
+        saved = self.store.append_turn(turn)
+        self._turns_cache.append(self._record_to_dict(saved))
+        return saved
+
+    # ── Context & Audit ─────────────────────────────────────
+
+    def get_turns(self) -> List[Dict[str, Any]]:
+        """Return in-memory turn cache (fast, for context assembly)."""
+        return self._turns_cache
+
+    def get_audit(self) -> ConversationAudit:
+        stats = self.context_assembler.get_stats()
+        cache_stats = self.cache.get_stats()
+        total_hits = sum(t.get("hits", 0) for t in cache_stats.get("top_tools", []))
+        total_entries = cache_stats.get("total_entries", 1)
+
+        last_intent = None
+        last_routing = None
+        if self._turns_cache:
+            last_turn = self._turns_cache[-1]
+            meta = last_turn.get("metadata", {})
+            last_intent = meta.get("intent") if isinstance(meta, dict) else None
+            last_routing = meta.get("routing_target") if isinstance(meta, dict) else None
+
+        return ConversationAudit(
+            conversation_id=self.conversation_id or "",
+            total_turns=len(self._turns_cache),
+            indexed_memories=self.memory_retriever.count_indexed(self.conversation_id or ""),
+            estimated_context_tokens=stats.get("estimated_tokens", 0),
+            budget_status="ok" if stats.get("under_budget") else "compressed",
+            last_intent=last_intent,
+            last_routing_target=last_routing,
+            cache_hit_rate=round(total_hits / max(total_entries, 1), 2),
+        )
+
+    def export_conversation(self, format: str = "json") -> Dict[str, Any]:
+        if not self.conversation_id:
+            raise RuntimeError("No active conversation.")
+        return self.store.export_conversation(self.conversation_id, format)
+
+    # ── Internal ────────────────────────────────────────────
+
+    @staticmethod
+    def _record_to_dict(record: TurnRecord) -> Dict[str, Any]:
+        """
+        Convert TurnRecord -> dict format expected by ContextAssembler.
+        """
+        meta = record.metadata or {}
+        return {
+            "turn_id": record.turn_id,
+            "conversation_id": record.conv_id,
+            "timestamp": record.timestamp,
+            "role": record.role,
+            "content": record.content,
+            # ContextAssembler expects these keys:
+            "user_message": record.content if record.role == "user" else "",
+            "extracted_claims": meta.get("extracted_claims", []),
+            "preference_signals": record.preference_signals or {},
+            "intent": meta.get("intent", "general"),
+            "confidence": meta.get("confidence", 0.0),
+            "extraction_method": record.extraction_method,
+            "metadata": meta,
+        }
+
+    def flush(self) -> None:
+        self.memory_retriever.flush()
+        self.store.close()
+        self.cache.close()
+
+    def __del__(self):
+        try:
+            self.flush()
+        except Exception:
+            pass

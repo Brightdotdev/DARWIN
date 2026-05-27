@@ -226,6 +226,42 @@ def embed_query(
     return model.encode(prepared, **encode_kwargs).astype(np.float32)
 
 
+def embed_text(
+    text: str,
+    preset: ModelPreset | str | None = None,
+) -> np.ndarray:
+    """
+    Embed a search text with model-specific formatting.
+    
+    Never unloads the embedder — queries are too frequent for that overhead.
+    The embedder stays cached in the loader for the lifetime of the session.
+
+    Args:
+        text:  Raw search text string
+        preset: ModelPreset, model key string, or None (auto-detect)
+
+    Returns:
+        numpy array of shape (embedding_dim,) — float32, normalized
+    """
+    preset = get_preset()
+
+    loader = ModelManager.get_loader()
+    
+    model = loader.get(ModelCategory.EMBEDDING)
+    
+    
+    prepared = prepare_passage_text(text, preset)
+
+    encode_kwargs = {
+        "convert_to_numpy": True,
+        "normalize_embeddings": True,
+    }
+    if "bge-m3" in preset.model_name.lower():
+        encode_kwargs["return_dense"] = True
+
+    return model.encode(prepared, **encode_kwargs).astype(np.float32)
+
+
 
 
 
@@ -292,7 +328,6 @@ def run_embedding_pipeline(
     )
 
     # ── Save USearch index (vectors only, for fast search) ──
-    chunk_ids = [str(c.get("index", "")) for c in chunks]
     store.save_vector(
         filename,
         vectors,
