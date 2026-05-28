@@ -117,6 +117,7 @@ def embed_chunks(
     texts = [prepare_passage_text(c.get("clean", ""), preset) for c in chunks]
 
     optimal_batch = batch_size or get_model_batch_size(preset=preset)
+    darwin.log(f"Embedding in {optimal_batch} batches")
     n_batches = (len(texts) + optimal_batch - 1) // optimal_batch
 
     darwin.log(

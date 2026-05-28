@@ -3,6 +3,7 @@ from pathlib import Path
 
 from dataclasses import dataclass
 from typing import Any, List, Optional
+from src.core.Models.ModelStore import get_model_store
 from src.core.Storage.StorePaths import StorePaths, default_darwin_dir
 from src.core.Storage.FileRegistry import FileRegistry, FileRecord
 from src.core.Storage.StoreArtifacts import (
@@ -451,3 +452,66 @@ class DarwinStore(
             TerminalUI.info("file", record.original_name)
             TerminalUI.info("needs", record.missing_stages())
             TerminalUI.blank()
+
+    
+        # ── Disk Treemap API ─────────────────────────────────────────────
+
+    def _build_disk_tree(self):
+        """Return (and cache) the full disk tree of the Darwin directory."""
+        if not hasattr(self, '_cached_disk_tree'):
+
+            from src.core.Storage.DiskUsage import build_tree
+
+            self._cached_disk_tree = build_tree(
+                self._darwin_dir, self.registry, get_model_store()
+            )
+        return self._cached_disk_tree
+
+    def get_treemap(self, subpath: str = None) -> dict:
+        """
+        Return a nested dict representation of disk usage.
+
+        Parameters
+        ----------
+        subpath : str, optional
+            A forward‑slash‑separated path relative to the Darwin directory.
+            Examples: "indexes/abc123def", "/models", "conversations"
+
+        Returns
+        -------
+        dict with keys 'name', 'size', and optionally 'children' and 'label'.
+        Suitable for feeding a React treemap component.
+        """
+        from src.core.Storage.DiskUsage import disk_node_to_dict, find_node
+
+
+        tree = self._build_disk_tree()
+        if subpath:
+            parts = subpath.strip("/").split("/")
+            node = find_node(tree, parts)
+            if node is None:
+                raise ValueError(f"Subpath not found: {subpath}")
+            return disk_node_to_dict(node)
+        return disk_node_to_dict(tree)
+
+    def print_treemap(self, subpath: str = None):
+        """
+        Print an ASCII tree of disk usage to the terminal.
+
+        Parameters
+        ----------
+        subpath : str, optional
+            Same format as `get_treemap`. If omitted, prints the whole Darwin directory.
+        """
+        from src.core.Storage.DiskUsage import print_tree, find_node
+
+        tree = self._build_disk_tree()
+        if subpath:
+            parts = subpath.strip("/").split("/")
+            node = find_node(tree, parts)
+            if node is None:
+                print(f"Path not found: {subpath}")
+                return
+        else:
+            node = tree
+        print_tree(node)

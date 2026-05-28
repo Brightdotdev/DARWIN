@@ -19,7 +19,6 @@ from src.lib.KeyManager import (
 
 
 def handle_models(args):
-    """Main CLI handler for model management commands."""
     store = DarwinStore()
     manager = ModelManager(darwin_store=store)
 
@@ -37,9 +36,8 @@ def handle_models(args):
         if args.model:
             for model in args.model:
                 manager.install(model, force=args.force)
-                # If API model, check key availability
                 spec = get_spec(model)
-                if spec and spec.disk_mb == 0:  # API model
+                if spec and spec.disk_mb == 0:
                     provider = model.split("/")[0]
                     env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
                     if env_var and not __import__("os").getenv(env_var):
@@ -49,7 +47,6 @@ def handle_models(args):
         elif args.category:
             manager.install_category(args.category, tier=getattr(args, "tier", "all") or "all")
         else:
-            # No model or category specified — run smart setup with defaults
             ModelManager.setup()
             loader = ModelManager.get_loader()
             prefs = loader.get_preferences()
@@ -86,10 +83,14 @@ def handle_models(args):
             print("❌ Specify --model or --category to upgrade")
 
     elif args.command == "switch":
-        if not args.category or not args.model:
-            print("❌ Specify both --category and --model to switch")
+        if not args.category:
+            print("❌ Specify --category")
             return
-        manager.switch(args.category, args.model[0])
+        migrate = getattr(args, "migrate", False)
+        if args.interactive or not args.model:
+            interactive_switch(manager, args.category, migrate=migrate)
+        else:
+            manager.switch(args.category, args.model[0], migrate=migrate)
 
     elif args.command == "setup-custom":
         import asyncio
@@ -100,7 +101,6 @@ def handle_models(args):
     elif args.command == "validate":
         from src.core.Models.ModelSetup import validate_model, validate_category
         system = detect_system()
-
         if args.model:
             for key in args.model:
                 result = validate_model(key, system, manager.model_store)
@@ -117,11 +117,64 @@ def handle_models(args):
                     print(f"⚠️  {r.model_key}: {', '.join(r.warnings)}")
 
 
-def handle_keys(args):
-    """Handle API key subcommands."""
-    # Load keys from keychain first to have current state
+def interactive_switch(manager: ModelManager, category: str, migrate: bool = False):
+    import os
+    from src.core.Models.ModelRegistry import REGISTRY
+    from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
+
     load_keys_from_keychain()
-    
+
+    models = [(key, spec) for key, spec in REGISTRY.items() if spec.category == category]
+    if not models:
+        print(f"No models defined for category '{category}'.")
+        return
+
+    tier_order = {"light": 0, "medium": 1, "large": 2, "overkill": 3}
+    models.sort(key=lambda x: tier_order.get(x[1].tier, 99))
+
+    displayed = []
+    for key, spec in models:
+        if spec.disk_mb == 0:                     # API model
+            provider = key.split("/")[0]
+            env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
+            if not env_var or not os.getenv(env_var):
+                continue
+        displayed.append((key, spec))
+
+    if not displayed:
+        print("No models available (local models or API models with valid keys).")
+        return
+
+    print(f"\nAvailable models for {category}:")
+    for i, (key, spec) in enumerate(displayed, 1):
+        installed = manager.model_store.is_downloaded(key)
+        if spec.disk_mb == 0:
+            size = "API"
+            key_icon = "🔑"
+            status = " [key set]" if not installed else " [ready]"
+        else:
+            size = f"{spec.disk_mb}MB"
+            key_icon = ""
+            status = " [installed]" if installed else ""
+        print(f"  [{i}] {key} ({spec.tier}, {size}, RAM {spec.ram_gb}GB) {key_icon}{status}")
+
+    choice = input(f"\nSelect model number (1-{len(displayed)}) or q to cancel: ").strip()
+    if choice.lower() == 'q':
+        return
+
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(displayed):
+            selected_key = displayed[idx][0]
+            manager.switch(category, selected_key, migrate=migrate)
+        else:
+            print("Invalid selection.")
+    except ValueError:
+        print("Invalid input.")
+
+
+def handle_keys(args):
+    load_keys_from_keychain()
     if args.key_command == "set":
         set_api_key(args.provider, args.key_value, validate=not args.no_validate)
         print(f"✅ API key for {args.provider} saved and activated.")
@@ -140,7 +193,6 @@ def handle_keys(args):
 
 
 def create_parser():
-    """Create the argument parser for the models CLI."""
     parser = argparse.ArgumentParser(
         description="🧠 Darwin Model Manager — download, switch, and manage AI models",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -157,85 +209,64 @@ Examples:
   python -m src.Models.cli key list
         """,
     )
-
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
-    # --- Key management ---
-    key_parser = subparsers.add_parser("key", help="Manage API keys (OpenAI, Cohere, etc.)")
+    # key
+    key_parser = subparsers.add_parser("key", help="Manage API keys")
     key_sub = key_parser.add_subparsers(dest="key_command", required=True)
-
     key_set = key_sub.add_parser("set", help="Store an API key in the system keychain")
-    key_set.add_argument("provider", choices=list(PROVIDER_REGISTRY.keys()),
-                         help="Provider name (openai, cohere, voyage, gemini, openrouter)")
+    key_set.add_argument("provider", choices=list(PROVIDER_REGISTRY.keys()))
     key_set.add_argument("key_value", help="The API key string")
-    key_set.add_argument("--no-validate", action="store_true",
-                         help="Skip key validation test")
-
-    key_remove = key_sub.add_parser("remove", help="Remove a stored API key")
-    key_remove.add_argument("provider", choices=list(PROVIDER_REGISTRY.keys()))
-
+    key_set.add_argument("--no-validate", action="store_true")
+    key_sub.add_parser("remove", help="Remove a stored API key").add_argument("provider", choices=list(PROVIDER_REGISTRY.keys()))
     key_sub.add_parser("list", help="List all providers and key presence")
 
-    # status
     subparsers.add_parser("status", help="Show model status and system info")
 
-    # list
     list_parser = subparsers.add_parser("list", help="List available models")
-    list_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory],
-                             help="Filter by category")
+    list_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory])
 
-    # install
     install_parser = subparsers.add_parser("install", help="Install models")
-    install_parser.add_argument("--model", "-m", nargs="+", help="Model key(s) or model_id(s) to install")
-    install_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory],
-                                help="Install all models in category")
-    install_parser.add_argument("--tier", "-t", choices=["light", "medium", "large", "overkill"],
-                                help="Filter category install by tier")
-    install_parser.add_argument("--force", "-f", action="store_true", help="Force re-download")
+    install_parser.add_argument("--model", "-m", nargs="+")
+    install_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory])
+    install_parser.add_argument("--tier", "-t", choices=["light", "medium", "large", "overkill"])
+    install_parser.add_argument("--force", "-f", action="store_true")
 
-    # uninstall
     uninstall_parser = subparsers.add_parser("uninstall", help="Uninstall models")
-    uninstall_parser.add_argument("--model", "-m", nargs="+", required=True,
-                                  help="Model key(s) or model_id(s) to uninstall")
+    uninstall_parser.add_argument("--model", "-m", nargs="+", required=True)
 
-    # upgrade
     upgrade_parser = subparsers.add_parser("upgrade", help="Upgrade models")
-    upgrade_parser.add_argument("--model", "-m", nargs="+", help="Model key(s) to upgrade")
-    upgrade_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory],
-                                help="Upgrade all installed models in category")
+    upgrade_parser.add_argument("--model", "-m", nargs="+")
+    upgrade_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory])
 
-    # switch
     switch_parser = subparsers.add_parser("switch", help="Switch model in a category")
     switch_parser.add_argument("--category", "-c", required=True,
-                               choices=[c.value for c in ModelCategory], help="Category to switch")
-    switch_parser.add_argument("--model", "-m", nargs=1, required=True, help="New model key or model_id")
+                               choices=[c.value for c in ModelCategory])
+    switch_parser.add_argument("--model", "-m", nargs=1, required=False,
+                               help="Model key or model_id (omit for interactive)")
+    switch_parser.add_argument("--interactive", "-i", action="store_true",
+                               help="Choose interactively")
+    switch_parser.add_argument("--migrate", action="store_true",
+                               help="Migrate embeddings after switching (embedding category only)")
 
-    # setup
     setup_parser = subparsers.add_parser("setup", help="Complete setup")
-    setup_parser.add_argument("--profile", "-p", choices=["required", "recommended"],
-                              default="required", help="Setup profile")
+    setup_parser.add_argument("--profile", "-p", choices=["required", "recommended"], default="required")
 
-    # setup-custom
-    subparsers.add_parser("setup-custom", help="Interactive setup with custom model selection")
+    subparsers.add_parser("setup-custom", help="Interactive custom setup")
 
-    # validate
     validate_parser = subparsers.add_parser("validate", help="Check if models can run on your hardware")
-    validate_parser.add_argument("--model", "-m", nargs="+", help="Model key(s) to validate")
-    validate_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory],
-                                 help="Validate all models in category")
+    validate_parser.add_argument("--model", "-m", nargs="+")
+    validate_parser.add_argument("--category", "-c", choices=[c.value for c in ModelCategory])
 
     return parser
 
 
 def main():
-    """Entry point for the models CLI."""
     parser = create_parser()
     args = parser.parse_args()
-
     if not args.command:
         parser.print_help()
         return
-
     try:
         handle_models(args)
     except KeyboardInterrupt:

@@ -211,6 +211,13 @@ def get_files_for_pipeline() -> dict:
     }
 
 
+def handle_disk(args):
+    from src.core.Storage.DarwinStore import DarwinStore
+    store = DarwinStore()
+    import json
+    print(json.dumps(store.get_treemap(args["path"]), indent=2))
+
+
 if __name__ == "__main__":
     # Basic test
     hybrid = test_store()
@@ -234,3 +241,4 @@ if __name__ == "__main__":
         if stage != "total_needing_work" and files:
             print(f"  {stage}: {files}")
     print(f"  Total needing work: {pipeline['total_needing_work']}")
+    handle_disk({"path": "/indexes"})

@@ -91,7 +91,6 @@ def download_required(store, preferences, system):
 # ═══════════════════════════════════════════════════════════════════════════
 # Async onboarding — works with both terminal and frontend
 # ═══════════════════════════════════════════════════════════════════════════
-
 async def run_onboarding_async() -> ModelLoader:
     """
     Interactive first-run setup with custom model selection.
@@ -106,17 +105,32 @@ async def run_onboarding_async() -> ModelLoader:
     load_keys_from_keychain()
 
     darwin.log("")
-    darwin.log("Welcome to Darwin — Let's set up your AI models", LogType.INFO)
-    darwin.log(f"System: {system.ram_gb}GB RAM | {system.cpu_cores} cores | {system.disk_free_gb:.0f}GB free disk",
-               LogType.INFO)
+    darwin.log(
+        "Welcome to Darwin — Let's set up your AI models",
+        LogType.INFO
+    )
+
+    darwin.log(
+        f"System: {system.ram_gb}GB RAM | "
+        f"{system.cpu_cores} cores | "
+        f"{system.disk_free_gb:.0f}GB free disk",
+        LogType.INFO,
+    )
+
     if system.has_gpu:
         darwin.log(f"GPU: {system.gpu_name}", LogType.INFO)
-    darwin.log(f"Best tier for your hardware: {TIER_LABELS[system.tier]}", LogType.INFO)
+
+    darwin.log(
+        f"Best tier for your hardware: {TIER_LABELS[system.tier]}",
+        LogType.INFO,
+    )
+
     darwin.log("")
 
     choices: dict[str, str | None] = {}
 
     # ── STEP 1: Embedding (required) ─────────────────────────────────────
+
     choices["embedding"] = await _onboard_category_async(
         category="embedding",
         title="Embedding model (REQUIRED) — turns documents into searchable vectors",
@@ -127,6 +141,7 @@ async def run_onboarding_async() -> ModelLoader:
     )
 
     # ── STEP 2: Vision (optional) ────────────────────────────────────────
+
     choices["vision"] = await _onboard_category_async(
         category="vision",
         title="Vision model (OPTIONAL) — describes images in PDFs",
@@ -137,6 +152,7 @@ async def run_onboarding_async() -> ModelLoader:
     )
 
     # ── STEP 3: Tokenizer (optional) ─────────────────────────────────────
+
     choices["tokenizer"] = await _onboard_category_async(
         category="tokenizer",
         title="NLP tokenizer (OPTIONAL) — better sentence splitting",
@@ -147,6 +163,7 @@ async def run_onboarding_async() -> ModelLoader:
     )
 
     # ── STEP 4: Reranker (optional) ──────────────────────────────────────
+
     choices["reranker"] = await _onboard_category_async(
         category="reranker",
         title="Reranker model (OPTIONAL) — re-ranks search results",
@@ -157,48 +174,115 @@ async def run_onboarding_async() -> ModelLoader:
     )
 
     # ── Validate and summarize ───────────────────────────────────────────
+
     validation = validate_all_selections(
         {k: v for k, v in choices.items() if v},
-        system, store
+        system,
+        store,
     )
 
     darwin.log("")
     darwin.log("── Summary ──", LogType.INFO)
+
     for cat, key in choices.items():
+
         if key and key in REGISTRY:
             spec = REGISTRY[key]
+
             if spec.disk_mb == 0:
                 # API model
                 provider = key.split("/")[0]
                 api_junkies = _detect_api_junkies()
                 has_key = api_junkies.get(provider, False)
-                status = "🔑 ready" if has_key else "❌ missing key"
+
+                status = (
+                    "🔑 ready"
+                    if has_key
+                    else "❌ missing key"
+                )
+
             else:
-                status = "cached" if store.is_downloaded(key) else f"{spec.disk_mb}MB to download"
-            can = "fits" if system.can_run(spec) else "may not fit"
-            darwin.log(f"  {cat}: {key} ({spec.tier}, {status}, {can})", LogType.INFO)
+                status = (
+                    "cached"
+                    if store.is_downloaded(key)
+                    else f"{spec.disk_mb}MB to download"
+                )
+
+            can = (
+                "fits"
+                if system.can_run(spec)
+                else "may not fit"
+            )
+
+            darwin.log(
+                f"  {cat}: {key} ({spec.tier}, {status}, {can})",
+                LogType.INFO,
+            )
+
         elif key:
             darwin.log(f"  {cat}: {key}", LogType.INFO)
+
         else:
             darwin.log(f"  {cat}: (none)", LogType.INFO)
 
     if validation["rejected"]:
-        darwin.log(f"{len(validation['rejected'])} model(s) rejected (insufficient hardware)", LogType.WARNING)
+        darwin.log(
+            f"{len(validation['rejected'])} model(s) rejected "
+            f"(insufficient hardware)",
+            LogType.WARNING,
+        )
 
-    if validation["download_info"] and validation["download_info"]["total_mb"] > 0:
+    if (
+        validation["download_info"]
+        and validation["download_info"]["total_mb"] > 0
+    ):
         info = validation["download_info"]
-        darwin.log(f"Total to download: ~{info['total_gb']:.1f}GB (free: {system.disk_free_gb:.1f}GB)", LogType.INFO)
 
-    # Download valid local models
+        darwin.log(
+            f"Total to download: ~{info['total_gb']:.1f}GB "
+            f"(free: {system.disk_free_gb:.1f}GB)",
+            LogType.INFO,
+        )
+
+    # ── Download selected models ─────────────────────────────────────────
+
     for category, key in choices.items():
+
         if key and key in REGISTRY:
+
             spec = REGISTRY[key]
-            if spec.disk_mb > 0 and validate_model(key, system, store).can_run and not store.is_downloaded(key):
+
+            should_download = (
+                spec.disk_mb > 0
+                and validate_model(key, system, store).can_run
+                and not store.is_downloaded(key)
+            )
+
+            if should_download:
                 darwin.log(f"Downloading {key}...", LogType.INFO)
                 store.download(key)
 
+    # ── Persist choices to config ────────────────────────────────────────
+
+    from src.core.Models.ModelConfig import save_active_models
+
+    active_config: dict[str, str | None] = {}
+
+    for cat, model in choices.items():
+        active_config[cat] = (
+            model
+            if model and model != "none"
+            else None
+        )
+
+    save_active_models(active_config)
+
     darwin.log("All models ready!", LogType.SUCCESS)
-    return ModelLoader(store, {k: v for k, v in choices.items() if v})
+
+    return ModelLoader(
+        store,
+        {k: v for k, v in choices.items() if v}
+    )
 
 
 async def _onboard_category_async(

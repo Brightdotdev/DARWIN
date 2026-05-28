@@ -16,9 +16,19 @@ from src.core.Models.lib import (IGNORE_PATTERNS, ALLOW_PATTERNS, REQUIRED_FILES
 from src.lib.AppPaths import default_models_dir
 
 
+# ── Singleton management ─────────────────────────────────────────────────
+_STORE_INSTANCE = None
+
+def get_model_store(progress_callback=None) -> 'ModelStore':
+    global _STORE_INSTANCE
+    if _STORE_INSTANCE is None:
+        _STORE_INSTANCE = ModelStore(progress_callback=progress_callback)
+    return _STORE_INSTANCE
+# ────────────────────────────────────────────────────────────────────────
+
+
 @dataclass
 class DownloadProgress:
-    """Track download progress for UI feedback."""
     bytes_downloaded: int = 0
     total_bytes: int = 0
     
@@ -30,7 +40,6 @@ class DownloadProgress:
 
 
 class DownloadError(Exception):
-    """Custom exception for download failures with recovery hints."""
     def __init__(self, message: str, hint: str = "", recoverable: bool = True):
         self.hint = hint
         self.recoverable = recoverable
@@ -38,19 +47,16 @@ class DownloadError(Exception):
 
 
 class IntegrityError(Exception):
-    """Raised when downloaded model fails integrity checks."""
     pass
 
 
 class ModelStore:
-    """Production-ready model storage with robust download/resume/caching."""
-
     def __init__(self, progress_callback: Optional[Callable[[DownloadProgress], None]] = None):
         self.root = default_models_dir()
         self.progress_callback = progress_callback
         self._active_downloads: set[str] = set()
         self.SPACY_URLS = SPACY_URLS
-        
+
     def model_path(self, key: str) -> Path:
         """Get the filesystem path for a model."""
         spec = get_spec(key)
