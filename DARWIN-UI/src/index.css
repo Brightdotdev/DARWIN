@@ -1,0 +1,637 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/figtree";
+@import "@fontsource/jetbrains-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/* =========================================================
+   DARWIN DESIGN SYSTEM
+   ========================================================= */
+
+:root {
+  /* =========================================================
+     FOUNDATION
+     ========================================================= */
+
+  --bg: #0b0f14;
+
+  --surface-1: #0f1620;
+  --surface-2: #121c28;
+  --surface-3: #162230;
+  --surface-4: #1b2a3a;
+
+  /* =========================================================
+     TEXT
+     ========================================================= */
+
+  --text-primary: #e6edf3;
+  --text-secondary: #9fb0c0;
+  --text-muted: #6b7c8f;
+  --text-disabled: #4b5a6a;
+
+  --text-heading: #f4f7fa;
+
+  /* =========================================================
+     BORDERS
+     ========================================================= */
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* =========================================================
+     PRIMARY / BRAND
+     ========================================================= */
+
+  --primary: #2f8f89;
+  --primary-hover: #3aa6a1;
+  --primary-active: #56bbb4;
+
+  --primary-soft: rgba(47, 143, 137, 0.12);
+  --primary-muted: rgba(47, 143, 137, 0.08);
+
+  --primary-border: rgba(47, 143, 137, 0.3);
+  --primary-glow: rgba(47, 143, 137, 0.35);
+
+  /* =========================================================
+     TERMINAL
+     ========================================================= */
+
+  --terminal-bg: #0a1016;
+  --terminal-surface: #0f1722;
+  --terminal-line: #11202b;
+
+  --terminal-text: #b7c9d6;
+  --terminal-muted: #708396;
+
+  --terminal-success: #4ade80;
+  --terminal-warning: #fbbf24;
+  --terminal-error: #f87171;
+  --terminal-info: #38bdf8;
+
+  /* =========================================================
+     FEEDBACK STATES
+     ========================================================= */
+
+  --success: #4ade80;
+  --success-soft: rgba(74, 222, 128, 0.12);
+
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.12);
+
+  --error: #f87171;
+  --error-soft: rgba(248, 113, 113, 0.12);
+
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, 0.12);
+
+  /* =========================================================
+     INTERACTION
+     ========================================================= */
+
+  --hover-overlay: rgba(255, 255, 255, 0.03);
+  --active-overlay: rgba(255, 255, 255, 0.06);
+
+  --focus-ring: rgba(47, 143, 137, 0.45);
+
+  --selection-bg: rgba(47, 143, 137, 0.25);
+
+  /* =========================================================
+     ELEVATION
+     ========================================================= */
+
+  --shadow-xs:
+    0 1px 2px rgba(0, 0, 0, 0.12);
+
+  --shadow-sm:
+    0 2px 6px rgba(0, 0, 0, 0.18);
+
+  --shadow-md:
+    0 8px 24px rgba(0, 0, 0, 0.22);
+
+  --shadow-lg:
+    0 18px 48px rgba(0, 0, 0, 0.28);
+
+  /* =========================================================
+     RADII
+     ========================================================= */
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+
+  /* =========================================================
+     SPACING
+     ========================================================= */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* =========================================================
+     TYPOGRAPHY
+     ========================================================= */
+
+  --font-sans:
+    "Figtree Variable",
+    system-ui,
+    sans-serif;
+
+  --font-heading:
+    "Figtree Variable",
+    system-ui,
+    sans-serif;
+
+  --font-mono:
+    "JetBrains Mono",
+    monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 28px;
+  --text-3xl: 42px;
+
+  /* =========================================================
+     SHADCN SEMANTIC TOKENS
+     ========================================================= */
+
+  --background: var(--bg);
+  --foreground: var(--text-primary);
+
+  --card: var(--surface-1);
+  --card-foreground: var(--text-primary);
+
+  --popover: var(--surface-2);
+  --popover-foreground: var(--text-primary);
+
+  --primary-foreground: #ffffff;
+
+  --secondary: var(--surface-2);
+  --secondary-foreground: var(--text-secondary);
+
+  --muted: var(--surface-2);
+  --muted-foreground: var(--text-muted);
+
+  --accent: var(--primary-soft);
+  --accent-foreground: var(--text-primary);
+
+  --destructive: var(--error);
+
+  --input: var(--surface-2);
+  --ring: var(--focus-ring);
+
+  --sidebar: var(--surface-1);
+  --sidebar-foreground: var(--text-primary);
+
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: #ffffff;
+
+  --sidebar-accent: var(--primary-soft);
+  --sidebar-accent-foreground: var(--text-primary);
+
+  --sidebar-border: var(--border-default);
+  --sidebar-ring: var(--focus-ring);
+
+  /* =========================================================
+     CHARTS
+     ========================================================= */
+
+  --chart-1: #2f8f89;
+  --chart-2: #38bdf8;
+  --chart-3: #818cf8;
+  --chart-4: #fbbf24;
+  --chart-5: #f87171;
+
+  /* =========================================================
+     APP FOUNDATION
+     ========================================================= */
+
+  color-scheme: dark;
+
+  font:
+    var(--text-lg) /
+    1.5
+    var(--font-sans);
+
+  letter-spacing: 0.01em;
+
+  background: var(--bg);
+  color: var(--text-primary);
+
+  text-rendering: optimizeLegibility;
+
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  font-synthesis: none;
+
+  @media (max-width: 1024px) {
+    font-size: 16px;
+  }
+}
+
+/* =========================================================
+   THEME MAPPING
+   ========================================================= */
+
+@theme inline {
+  --font-sans: var(--font-sans);
+  --font-heading: var(--font-heading);
+  --font-mono: var(--font-mono);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+
+  --color-border: var(--border-default);
+  --color-input: var(--input);
+
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground:
+    var(--sidebar-primary-foreground);
+
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground:
+    var(--sidebar-accent-foreground);
+
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+  --radius-2xl: var(--radius-2xl);
+}
+
+/* =========================================================
+   BASE LAYER
+   ========================================================= */
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    font-family: var(--font-sans);
+
+    background: var(--bg);
+    color: var(--text-primary);
+
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+
+    margin: 0;
+    min-height: 100vh;
+
+    background:
+      radial-gradient(
+        circle at top,
+        rgba(47, 143, 137, 0.08),
+        transparent 35%
+      ),
+      var(--bg);
+  }
+
+  #root {
+    min-height: 100vh;
+
+    display: flex;
+    flex-direction: column;
+
+    width: 100%;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: var(--font-heading);
+
+    color: var(--text-heading);
+
+    margin: 0;
+
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+
+  h1 {
+    font-size: var(--text-3xl);
+    font-weight: 600;
+  }
+
+  h2 {
+    font-size: var(--text-2xl);
+    font-weight: 600;
+  }
+
+  h3 {
+    font-size: 22px;
+    font-weight: 550;
+  }
+
+  p {
+    margin: 0;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+
+  small {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+  }
+
+  code,
+  pre {
+    font-family: var(--font-mono);
+  }
+
+  code {
+    background: var(--surface-2);
+
+    border: 1px solid var(--border-subtle);
+
+    border-radius: var(--radius-sm);
+
+    padding:
+      2px
+      6px;
+
+    color: var(--text-primary);
+
+    font-size: 0.92em;
+  }
+
+  pre {
+    background: var(--terminal-bg);
+
+    border: 1px solid var(--terminal-line);
+
+    border-radius: var(--radius-lg);
+
+    padding: var(--space-4);
+
+    overflow-x: auto;
+  }
+
+  a {
+    color: var(--primary);
+
+    text-decoration: none;
+
+    transition:
+      color 180ms ease-out;
+  }
+
+  a:hover {
+    color: var(--primary-hover);
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  ::selection {
+    background: var(--selection-bg);
+  }
+
+  :focus-visible {
+    outline:
+      2px solid
+      var(--focus-ring);
+
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-4);
+
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #27384b;
+  }
+}
+
+/* =========================================================
+   UTILITIES
+   ========================================================= */
+
+@utility panel {
+  background: var(--surface-1);
+
+  border:
+    1px solid
+    var(--border-default);
+
+  border-radius: var(--radius-lg);
+
+  box-shadow: var(--shadow-sm);
+}
+
+@utility panel-deep {
+  background: var(--surface-3);
+
+  border:
+    1px solid
+    var(--border-subtle);
+
+  border-radius: var(--radius-lg);
+}
+
+@utility panel-hover {
+  transition:
+    background 180ms ease-out,
+    border-color 180ms ease-out,
+    transform 180ms ease-out;
+}
+
+@utility panel-hover-hover {
+  background: var(--surface-2);
+
+  border-color: var(--primary-border);
+
+  transform: translateY(-1px);
+}
+
+@utility terminal-panel {
+  background: var(--terminal-bg);
+
+  border:
+    1px solid
+    var(--terminal-line);
+
+  border-radius: var(--radius-lg);
+
+  font-family: var(--font-mono);
+}
+
+@utility glow-primary {
+  box-shadow:
+    0 0 0 1px var(--primary-border),
+    0 0 24px var(--primary-glow);
+}
+
+@utility grid-bg {
+  background-image:
+    linear-gradient(
+      rgba(255,255,255,0.03) 1px,
+      transparent 1px
+    ),
+    linear-gradient(
+      90deg,
+      rgba(255,255,255,0.03) 1px,
+      transparent 1px
+    );
+
+  background-size: 32px 32px;
+}
+
+@utility text-muted {
+  color: var(--text-muted);
+}
+
+@utility text-secondary {
+  color: var(--text-secondary);
+}
+
+@utility text-heading {
+  color: var(--text-heading);
+}
+
+@utility border-soft {
+  border-color: var(--border-subtle);
+}
+
+@utility border-strong {
+  border-color: var(--border-strong);
+}
+
+@utility surface-1 {
+  background: var(--surface-1);
+}
+
+@utility surface-2 {
+  background: var(--surface-2);
+}
+
+@utility surface-3 {
+  background: var(--surface-3);
+}
+
+@utility terminal-success {
+  color: var(--terminal-success);
+}
+
+@utility terminal-warning {
+  color: var(--terminal-warning);
+}
+
+@utility terminal-error {
+  color: var(--terminal-error);
+}
+
+@utility terminal-info {
+  color: var(--terminal-info);
+}
+
+/* =========================================================
+   ANIMATIONS
+   ========================================================= */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@utility animate-fade-in {
+  animation:
+    fade-in
+    180ms
+    ease-out;
+}
+
+@utility animate-slide-up {
+  animation:
+    slide-up
+    220ms
+    ease-out;
+}
