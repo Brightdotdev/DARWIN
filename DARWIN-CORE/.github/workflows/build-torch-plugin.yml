@@ -1,0 +1,43 @@
+name: Build Torch Plugin
+
+on:
+  push:
+    tags:
+      - 'torch-plugin-v*'
+
+jobs:
+  build-cpu:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Build plugin
+        run: python scripts/build_torch_plugin.py
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: torch-plugin-${{ matrix.os }}
+          path: darwin-torch-*.zip
+
+  release:
+    needs: build-cpu
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/download-artifact@v4
+      
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: torch-plugin-*/darwin-torch-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,6 +1,7 @@
 """
 src/Models/vision_loader.py
 Local vision model loading — dispatch by model_type from config.json.
+Requires torch plugin. Fails gracefully if torch is not available.
 """
 
 import json
@@ -8,6 +9,7 @@ from pathlib import Path
 from typing import Any, Tuple
 
 from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Plugins.PluginManager import PluginRequiredError
 
 
 def load_vision_model(path: str) -> Tuple[Any, Any, str]:
@@ -19,8 +21,14 @@ def load_vision_model(path: str) -> Tuple[Any, Any, str]:
     from src.features.Hardware.DeviceManager import DeviceManager
     from src.features.Hardware.SystemDetector import detect_system
 
-
-    import torch
+    # Guard torch import — vision models require torch plugin
+    try:
+        import torch
+    except ImportError:
+        raise PluginRequiredError(
+            "torch",
+            "local vision models (SmolVLM, Moondream, etc.)"
+        )
 
     if DeviceManager._config is None:
         DeviceManager.init(detect_system())

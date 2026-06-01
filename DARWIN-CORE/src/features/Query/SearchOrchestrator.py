@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki, WikiPage
-from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator, WikiConcept
+from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator, WikiConcept,WikiContext
 from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator, RetrievalContext, ResolvedPassage
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -24,9 +24,9 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 from src.features.Query.Response.ResponseTypes import ResolvedQuery
 
 
-# ═══════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 # SearchContext (search-specific, stays here)
-# ════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class SearchContext:
@@ -245,7 +245,7 @@ def _build_combined_prompt(
             f"{'...' if len(p.passage_text) > 1000 else ''}\n"
         )
 
-    evidence_text = "---\n".join(passage_blocks)
+    evidence_text = "\n---\n".join(passage_blocks)
 
     return f"""Answer based on the following document overview and evidence.
 
@@ -280,6 +280,25 @@ class SearchOrchestrator:
         self.wiki_orch = WikiOrchestrator(store)
         self.retrieval_orch = RetrievalOrchestrator(store)
 
+    def _load_wiki_safe(self, filename: str) -> Optional[DocumentWiki]:
+        """Load wiki for a file, return None if missing or empty."""
+        pages_dicts = self.store.load_wiki(filename)
+        if not pages_dicts:
+            # None or empty list → no wiki
+            return None
+        # Ensure it's a list
+        if pages_dicts is None:
+            pages_dicts = []
+        try:
+            wiki = DocumentWiki(
+                filename=filename,
+                pages=[WikiPage.from_dict(p) for p in pages_dicts],
+            )
+            return wiki if wiki.pages else None
+        except Exception as e:
+            darwin.log(f"Failed to load wiki for {filename}: {e}", LogType.WARNING)
+            return None
+
     def search(
         self,
         resolved_query: ResolvedQuery,
@@ -310,12 +329,32 @@ class SearchOrchestrator:
 
         # ── Search each file independently ──
         for filename in files:
-            
-            pages_dicts = self.store.load_wiki(filename)
-            wiki = DocumentWiki(
-                filename=filename,
-                pages=[WikiPage.from_dict(p) for p in pages_dicts],
-            )
+            # Safely load wiki (may be None)
+            wiki = self._load_wiki_safe(filename)
+
+            # For "broad" and "both", we need wiki – if missing, fall back to dense-like behavior
+            if intent in ("broad", "both") and wiki is None:
+                darwin.log(
+                    f"[SearchOrchestrator] No wiki for {filename}, falling back to dense mode for this file",
+                    LogType.WARNING,
+                )
+                # Fallback: treat as dense (retrieval only, no concept grouping)
+                ret_ctx = self.retrieval_orch.retrieve_and_resolve(
+                    query=query,
+                    files=[filename],
+                    method="hybrid",
+                    top_k=top_k,
+                    max_chars=max_chars // len(files),
+                    filter_structural=filter_structural,
+                    merge_sources=merge_sources,
+                    fill_gaps=fill_gaps,
+                    wiki=None,  # no wiki to enrich
+                )
+                all_passages.extend(ret_ctx.passages)
+                all_retrieval_contexts.append(ret_ctx)
+                # No concepts or related topics for this file
+                continue
+
             if intent == "broad":
                 # Wiki first, then hydrate top concepts with retrieval
                 wiki_ctx = self.wiki_orch.search(
@@ -333,6 +372,7 @@ class SearchOrchestrator:
                     for c in wiki_ctx.concepts[:3]:
                         concept_queries.extend(c.keywords[:3])
                     enhanced_query = query + " " + " ".join(concept_queries)
+                    darwin.log(f"Enhanced query {enhanced_query}")
 
                     # RetrievalOrchestrator now handles 'wiki' param internally
                     ret_ctx = self.retrieval_orch.retrieve_and_resolve(
@@ -344,7 +384,7 @@ class SearchOrchestrator:
                         filter_structural=filter_structural,
                         merge_sources=merge_sources,
                         fill_gaps=fill_gaps,
-                        wiki=wiki,
+                        wiki=wiki,  # pass wiki (may be None, but we already ensured it exists)
                     )
                 else:
                     ret_ctx = RetrievalContext(
@@ -370,7 +410,7 @@ class SearchOrchestrator:
                     filter_structural=filter_structural,
                     merge_sources=merge_sources,
                     fill_gaps=fill_gaps,
-                    wiki=wiki,
+                    wiki=wiki,  # wiki may be None – retrieval will work without it
                 )
 
                 # Fetch concepts for context (don't drive the layout)
@@ -381,6 +421,9 @@ class SearchOrchestrator:
                     top_k=top_k,
                     merge_sources=merge_sources,
                     filter_structural=filter_structural,
+                ) if wiki else WikiContext(
+                    query=query, concepts=[], related_topics=[],
+                    total_concepts=0, penalized_count=0,
                 )
 
                 all_concepts.extend(wiki_ctx.concepts)
@@ -396,6 +439,9 @@ class SearchOrchestrator:
                     top_k=top_k,
                     merge_sources=merge_sources,
                     filter_structural=filter_structural,
+                ) if wiki else WikiContext(
+                    query=query, concepts=[], related_topics=[],
+                    total_concepts=0, penalized_count=0,
                 )
 
                 ret_ctx = self.retrieval_orch.retrieve_and_resolve(

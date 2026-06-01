@@ -10,7 +10,7 @@ from typing import Optional, List
 from src.core.Models.ModelRegistry import REGISTRY, get_spec
 from src.features.Hardware.SystemDetector import SystemInfo
 from src.core.Models.ModelStore import ModelStore
-
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 @dataclass
 class ValidationResult:
@@ -154,24 +154,24 @@ def handle_download_error(error: Exception, key: str) -> None:
     """Handle download errors with actionable recovery suggestions."""
     from src.core.Models.ModelStore import DownloadError, IntegrityError
 
-    print(f"\n❌ Error downloading {key}: {error}")
+    darwin.log(f"\n❌ Error downloading {key}: {error}", LogType.ERROR)
 
     # model_path = manager.store.root / key
 
     if isinstance(error, IntegrityError):
-        print("\n🔧 Recovery steps:")
-        print(f"   1. Clear corrupted files: python -m src.Models.cli uninstall --model {key}")
-        print(f"   2. Free up disk space")
-        print(f"   3. Retry: python -m src.Models.cli install --model or use uv (recomended) uv run Main.py install --model {key}")
-        # print(f"\n   Model location: {model_path}")
+        darwin.log("\n🔧 Recovery steps:", LogType.INFO)
+        darwin.log(f"   1. Clear corrupted files: python -m src.Models.cli uninstall --model {key}", LogType.INFO)
+        darwin.log(f"   2. Free up disk space", LogType.INFO)
+        darwin.log(f"   3. Retry: python -m src.Models.cli install --model or use uv (recomended) uv run Main.py install --model {key}", LogType.INFO)
+        # darwin.log(f"\n   Model location: {model_path}", LogType.INFO)
 
     elif isinstance(error, DownloadError):
         if error.recoverable:
-            print(f"\n💡 {error.hint}")
-            print(f"   Partial download saved. Re-run to resume.")
+            darwin.log(f"\n💡 {error.hint}", LogType.INFO)
+            darwin.log(f"   Partial download saved. Re-run to resume.", LogType.INFO)
         else:
-            print(f"\n💡 {error.hint}")
-            print(f"   This is a required dependency. Please install it and try again.")
+            darwin.log(f"\n💡 {error.hint}", LogType.INFO)
+            darwin.log(f"   This is a required dependency. Please install it and try again.", LogType.INFO)
     else:
-        print(f"\n💡 Check your internet connection and disk space.")
-        print(f"   Error details: {str(error)}")
+        darwin.log(f"\n💡 Check your internet connection and disk space.", LogType.INFO)
+        darwin.log(f"   Error details: {str(error)}", LogType.INFO)

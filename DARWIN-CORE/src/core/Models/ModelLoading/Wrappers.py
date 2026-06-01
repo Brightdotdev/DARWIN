@@ -10,11 +10,9 @@ import numpy as np
 os.environ["LITELLM_LOG"] = "ERROR"
 os.environ["LITELLM_SUPPRESS_LOGGING"] = "1"
 
-# Also pre‑emptively kill any bedrock/sagemaker sub‑loggers
 for noisy in ("litellm", "litellm.llms.bedrock", "litellm.llms.sagemaker", "botocore"):
     logging.getLogger(noisy).setLevel(logging.ERROR)
 
-# Generic: no litellm warnings via Python's warnings system either
 warnings.filterwarnings("ignore", module="litellm")
 
 try:
@@ -31,7 +29,6 @@ if litellm is not None:
     litellm.suppress_debug_info = True
     litellm.telemetry = False
     litellm.turn_off_message_logging = True
-
 
 
 def _validate_non_empty_texts(texts: Union[str, List[str]]) -> List[str]:
@@ -53,11 +50,10 @@ class HFEmbeddingWrapper:
 
     def __init__(self, model, tokenizer, device):
         if torch is None:
-            raise ImportError("torch is required for HFEmbeddingWrapper")
+            raise ImportError("torch is required for HFEmbeddingWrapper. Install the torch plugin.")
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
-        # Explicit max length from tokenizer/model config avoids silent truncation
         self.max_length = getattr(tokenizer, "model_max_length", None) or getattr(
             model.config, "max_position_embeddings", None
         )
@@ -90,8 +86,6 @@ class HFEmbeddingWrapper:
             embeddings.append(emb.cpu())
 
         if not embeddings:
-            # Empty input case – return shape (0, hidden_size)
-            # We need hidden_size from model; fallback to 0 dimensions
             hidden_size = self.model.config.hidden_size
             empty = torch.empty((0, hidden_size))
             return empty.numpy() if convert_to_numpy else empty
@@ -148,7 +142,6 @@ class APIEmbeddingWrapper:
                     f"Embedding API call failed for model {self.model_id}: {e}"
                 ) from e
 
-            # litellm returns objects with .embedding attribute, not dicts
             try:
                 batch_embeddings = [d.embedding for d in response.data]
             except AttributeError as e:
@@ -182,12 +175,10 @@ class APIRerankerWrapper:
         if not pairs or not isinstance(pairs, list):
             raise ValueError("pairs must be a non-empty list of (query, document) tuples")
 
-        # Group by query to batch documents in a single API call per unique query
         query_to_indices: dict[str, list[tuple[int, str]]] = {}
         for idx, (query, document) in enumerate(pairs):
             query_to_indices.setdefault(query, []).append((idx, document))
 
-        # scores array maintains original order
         scores = [0.0] * len(pairs)
         for query, indexed_docs in query_to_indices.items():
             indices, documents = zip(*indexed_docs) if indexed_docs else ([], [])
@@ -207,7 +198,6 @@ class APIRerankerWrapper:
                 ) from e
 
             try:
-                # response.results is ordered as the input documents
                 for res, original_idx in zip(response.results, indices):
                     scores[original_idx] = res.relevance_score
             except (AttributeError, IndexError) as e:

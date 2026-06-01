@@ -4,6 +4,10 @@ src/core/Knowledge/Graph/GraphUtils.py
 Data models, constants, and helpers for knowledge graph extraction.
 Updated for spaCy-based entity-relationship extraction + community detection.
 Optimized for new DarwinStore: accepts dict-based chunk rows.
+
+FIXES APPLIED:
+* Bug P: Hoisted node_map before if/else so fallback branch doesn't crash
+* Bug Q: O(1) set lookup for community keywords + original index alignment
 """
 
 from dataclasses import dataclass, field
@@ -216,9 +220,11 @@ def detect_communities_louvain(graph: GraphData, resolution: float = 1.0) -> Lis
     if not graph.nodes:
         return []
 
+    # CHANGED (Bug P): node_map moved BEFORE if/else so fallback branch can use it.
+    node_map = {n.id: n for n in graph.nodes}
+
     if LOUVAIN_AVAILABLE:
         G = nx.Graph()
-        node_map = {n.id: n for n in graph.nodes}
 
         for n in graph.nodes:
             G.add_node(n.id, label=n.label, chunks=n.chunk_indices)
@@ -467,17 +473,18 @@ def extract_community_keywords(
 ) -> List[str]:
     """
     Extract top keywords for a community from its chunk text.
-    
+
     chunk_rows: list of dicts from store.query_records() — NOT Chunk objects.
     Each row must have at least a "clean" or "text" key.
     """
     from collections import Counter as _Counter
 
-    # Build text from chunk rows using dict access
+    # CHANGED (Bug Q): O(N*M) scan → O(N+M) set lookup.
+    # chunk_indices now contain ORIGINAL indices (Bug F), aligning with row["index"].
+    idx_set = set(chunk_indices)
     texts = []
     for row in chunk_rows:
-        idx = row.get("index", -1)
-        if idx in chunk_indices:
+        if row.get("index", -1) in idx_set:
             text = row.get("clean", "") or row.get("text", "")
             if text:
                 texts.append(text)

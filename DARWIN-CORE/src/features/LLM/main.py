@@ -272,10 +272,10 @@ def _remove_provider_interactive():
     if not LLMManager._config or not LLMManager._config.providers:
         darwin.log("No providers to remove.", LogType.WARNING)
         return
-    print("Configured providers:")
+    darwin.log("Configured providers:")
     providers = list(LLMManager.list_providers())
     for i, p in enumerate(providers, 1):
-        print(f"  {i}. {p}")
+        darwin.log(f"  {i}. {p}")
     try:
         idx = int(input("Number to remove: ")) - 1
         provider = providers[idx]
@@ -328,10 +328,10 @@ async def main() -> int:
         # ── Status
         if args.status:
             if LLMManager.initialize():
-                print("Providers:")
+                darwin.log("Providers:")
                 for p in LLMManager.list_providers():
                     key_status = "✓" if get_provider_key_status(p) else "✗"
-                    print(f"  {p}  [{key_status} key]")
+                    darwin.log(f"  {p}  [{key_status} key]")
             else:
                 darwin.log("No configuration found.", LogType.WARNING)
             return 0

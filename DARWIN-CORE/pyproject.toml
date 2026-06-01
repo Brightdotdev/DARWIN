@@ -3,62 +3,71 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "DARWIN"
-version = "0.1.0"
-description = "DARWIN-CLI a SOTA RAG ai agent for your personal and local use, it has both llm api support and bring your own model support too"
-authors = [
-    {name = "Brightdotdev", email = "mail.bright.dev@gmail.com"},
-    {name = "Akinola Bright", email = "iamtherealbright@gmail.com"}
-]
+name = "darwin-core"
+version = "0.2.0"
+description = "DARWIN Core — Local-first RAG engine with API + ONNX embedding support"
+authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
+
 dependencies = [
-    "blingfire==0.1.8",
-    "bs4>=0.0.2",
-    "cachetools>=7.1.2",
-    "cohere>=6.1.0",
-    "hdbscan>=0.8.42",
-    "jinja2>=3.1.6",
-    "keyring",
+    # ── API Routing ──
     "litellm>=1.83.0",
-    "markitdown>=0.1.5",
-    "networkx>=3.6.1",
-    "nltk>=3.9.4",
-    "openpyxl>=3.1.5",
-    "pillow>=12.2.0",
+    "cohere>=6.1.0",
+    # ── ONNX Inference (replaces torch for embeddings) ──
+    "onnxruntime>=1.17.0",
+    "optimum[onnxruntime]>=1.17.0",
+    # ── Array & Data ──
+    "numpy>=1.24.0",
     "polars>=1.41.0",
-    "psutil>=7.2.2",
     "pyarrow>=24.0.0",
-    "pyexcel-ods>=0.6.0",
-    "pymupdf>=1.27.2.2",
-    "pymupdf4llm>=1.27.2.2",
-    "python-louvain>=0.16",
-    "pyvis>=0.3.2",
-    "rank-bm25>=0.2.2",
-    "rich>=14.3.3",
+    # ── ML & Graph ──
     "scikit-learn>=1.8.0",
-    "sentence-transformers>=5.3.0",
-    "spacy>=3.8.14",
-    "sqlite-utils>=3.39",
-    "sqlite-vec>=0.1.9",
-    "tiktoken>=0.12.0",
-    "toml>=0.10.2",
-    "torch>=2.11.0",
-    "trafilatura>=2.0.0",
-    "transformers>=4.49.0,<5.0.0",
+    "networkx>=3.6.1",
+    "hdbscan>=0.8.42",
+    "rank-bm25>=0.2.2",
     "umap-learn>=0.5.12",
+    "python-louvain>=0.16",
+    # ── Vector DB ──
+    "sqlite-vec>=0.1.9",
     "usearch>=2.25.1",
+    # ── NLP (spaCy, no models bundled) ──
+    "spacy>=3.8.14",
+    # ── Document Parsing ──
+    "markitdown>=0.1.5",
+    "pymupdf>=1.27.2.2",
+    "trafilatura>=2.0.0",
+    "openpyxl>=3.1.5",
+    "pyexcel-ods>=0.6.0",
+    "pillow>=12.2.0",
+    # ── Utilities ──
+    "rich>=14.3.3",
+    "psutil>=7.2.2",
+    "cachetools>=7.1.2",
+    "jinja2>=3.1.6",
+    "toml>=0.10.2",
+    "tiktoken>=0.12.0",
+    "blingfire==0.1.8",
+    "beautifulsoup4>=4.12.0",
     "websockets>=16.0",
+    "filelock>=3.13.0",
+    # ── HuggingFace Hub (for downloading ONNX models) ──
+    "huggingface-hub>=0.20.0",
+    # ── GPU Detection (no torch) ──
+    "gputil>=1.4.0",
+    "keyring>=25.7.0",
+    "pip>=26.1.1",
+    "hf-xet>=1.5.0",
+    "pyvis>=0.3.2",
 ]
 
-
-[tool.deptry.package_module_name_map]
-umap-learn = ["umap"]
-
+[project.scripts]
+darwin-core = "src.core.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
 
-[project.scripts]
-darwin = "agent:app"
+[tool.deptry.package_module_name_map]
+umap-learn = ["umap"]
+beautifulsoup4 = ["bs4"]

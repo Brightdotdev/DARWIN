@@ -111,8 +111,9 @@ def _validate_files(
 # ============================================================================
 
 def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List[SemanticSearchResult] | None:
-    config = store.load_config()
-    model_name = config.get("embedding_model", "unknown")
+    from src.core.Models.ModelConfig import get_active_model
+    model_name = get_active_model("embedding")
+
     
     darwin.log("")
     darwin.log("Semantic Search", LogType.INFO)
@@ -152,6 +153,7 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
     if len(tobe_searched) == 1:
         results = search_single_document(
             query=args.query,
+            model_name=model_name,
             filename=tobe_searched[0],
             store=store,
             top_k=args.top_k,
@@ -159,7 +161,9 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
         )
     else:
         results = search_across_documents(
+
             query=args.query,
+            model_name=model_name,
             filenames=tobe_searched,
             store=store,
             top_k=args.top_k,

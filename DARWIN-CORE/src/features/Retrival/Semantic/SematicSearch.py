@@ -66,6 +66,7 @@ def _rows_to_results(rows: List[dict]) -> List[SemanticSearchResult]:
 
 def search_single_document(
     query: str,
+    model_name: str,
     filename: str,
     store: DarwinStore,
     top_k: int = 5,
@@ -74,8 +75,8 @@ def search_single_document(
 ) -> List[SemanticSearchResult]:
     """Search within a single document using the new lazy retrieval pipeline."""
     try:
-        config = store.load_config()
-        model_name = config.get("embedding_model")
+    
+    
         if not model_name:
             darwin.log("No embedding model configured", LogType.ERROR)
             return []
@@ -110,6 +111,7 @@ def search_single_document(
 
 def search_across_documents(
     query: str,
+    model_name: str,
     store: DarwinStore,
     filenames: Optional[List[str]] = None,
     top_k: int = 10,
@@ -120,9 +122,7 @@ def search_across_documents(
     if not filenames:
         darwin.log("No files specified for search", LogType.WARNING)
         return []
-
-    config = store.load_config()
-    model_name = config.get("embedding_model")
+    
     if not model_name:
         darwin.log("No embedding model configured", LogType.ERROR)
         return []

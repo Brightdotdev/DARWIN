@@ -5,25 +5,35 @@ from src.core.Models.ModelStore import get_model_store, ModelStore
 from src.core.Models.ModelLoader import ModelLoader
 from src.features.Hardware.SystemDetector import detect_system, recommend_defaults
 from src.features.Hardware.DeviceManager import DeviceManager
-from src.core.Models.ModelRegistry import get_spec, REGISTRY
+from src.core.Models.ModelRegistry import get_spec, REGISTRY, ModelCategory
 from src.core.Models.ModelConfig import set_active_model, load_active_models
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
+from src.features.Hardware.Capabilities import Capabilities
 
 _LOADER_INSTANCE = None
 _SYSTEM_CACHE = None
 
 
 class ModelManager:
-    def __init__(self, darwin_store = None):
+    def __init__(self, darwin_store=None):
         global _SYSTEM_CACHE
-        load_keys_from_keychain()
+        
+        # Load API keys from keychain (graceful if not set up)
+        try:
+            load_keys_from_keychain()
+        except Exception as e:
+            darwin.log(f"Keychain not available: {e}", LogType.WARNING)
 
         # Ensure DeviceManager is initialised once
         if DeviceManager._config is None:
             if _SYSTEM_CACHE is None:
                 _SYSTEM_CACHE = detect_system()
-            DeviceManager.init(_SYSTEM_CACHE)
+            try:
+                DeviceManager.init(_SYSTEM_CACHE)
+            except RuntimeError:
+                # Already initialized — fine
+                pass
 
         self.model_store = get_model_store()
         if _SYSTEM_CACHE is None:
@@ -31,6 +41,17 @@ class ModelManager:
         self.system = _SYSTEM_CACHE
         self._darwin_store = darwin_store
         self._loader: Optional[ModelLoader] = None
+
+    @staticmethod
+    def get_capabilities() -> Capabilities:
+        """Detect and return current system capabilities."""
+        return Capabilities.detect()
+
+    @staticmethod
+    def emit_capabilities() -> None:
+        """Emit capabilities to stdout for Tauri handshake."""
+        caps = Capabilities.detect()
+        caps.emit()
 
     @staticmethod
     def get_loader() -> ModelLoader:
@@ -43,19 +64,37 @@ class ModelManager:
             prefs = load_active_models()
             if not prefs:
                 prefs = recommend_defaults(_SYSTEM_CACHE)
+                # Save defaults so they're persistent
+                for cat, model in prefs.items():
+                    if model:
+                        set_active_model(cat, model)
             _LOADER_INSTANCE = ModelLoader(store, prefs)
         return _LOADER_INSTANCE
 
     @staticmethod
     def setup(preferences: dict = None, skip_download: bool = False) -> ModelLoader:
         global _LOADER_INSTANCE, _SYSTEM_CACHE
-        load_keys_from_keychain()
+        
+        try:
+            load_keys_from_keychain()
+        except Exception as e:
+            darwin.log(f"Keychain not available: {e}", LogType.WARNING)
+            
         if _SYSTEM_CACHE is None:
             _SYSTEM_CACHE = detect_system()
         if DeviceManager._config is None:
-            DeviceManager.init(_SYSTEM_CACHE)
+            try:
+                DeviceManager.init(_SYSTEM_CACHE)
+            except RuntimeError:
+                pass
+
+        # Emit capabilities for Tauri
+        try:
+            ModelManager.emit_capabilities()
+        except Exception as e:
+            darwin.log(f"Failed to emit capabilities: {e}", LogType.WARNING)
+
         if preferences is not None:
-            # Write to config and use them
             for cat, model in preferences.items():
                 set_active_model(cat, model)
         else:
@@ -63,10 +102,16 @@ class ModelManager:
             if not preferences:
                 preferences = recommend_defaults(_SYSTEM_CACHE)
                 for cat, model in preferences.items():
-                    set_active_model(cat, model)
+                    if model:
+                        set_active_model(cat, model)
+        
         if not skip_download:
-            from src.core.Models.ModelStartup import download_required
-            download_required(get_model_store(), preferences, _SYSTEM_CACHE)
+            try:
+                from src.core.Models.ModelStartup import download_required
+                download_required(get_model_store(), preferences, _SYSTEM_CACHE)
+            except ImportError:
+                darwin.log("ModelStartup not available, skipping auto-download", LogType.WARNING)
+        
         if _LOADER_INSTANCE is None:
             _LOADER_INSTANCE = ModelLoader(get_model_store(), preferences)
         return _LOADER_INSTANCE
@@ -81,7 +126,156 @@ class ModelManager:
         return self.loader.get_all_model_keys()
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Switch methods – no auto‑migration unless requested
+    # NEW: List available models with availability info for UI
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def list_available_models(self, category: Optional[str] = None) -> list[dict]:
+        """
+        Returns a list of models with their availability status.
+        For UI: show (API) tag, (Plugin Required) tag, install status, etc.
+        """
+        
+        
+
+        caps = Capabilities.detect()
+        torch_available = caps.torch_available
+
+        models = []
+        for key, spec in REGISTRY.items():
+            if category and spec.category != category:
+                continue
+
+            # Determine availability
+            status = "unavailable"
+            tags = []
+
+            # API models
+            if spec.loader.startswith("api_"):
+                provider = key.split("/")[0]
+                env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
+                has_key = env_var and bool(os.getenv(env_var))
+                if has_key:
+                    status = "available"
+                    tags.append("API")
+                else:
+                    status = "needs_key"
+                    tags.append("API — key required")
+
+            # ONNX models — always available in lean core
+            elif spec.loader in ("onnx_embedding", "onnx_reranker"):
+                is_cached = self.model_store.is_downloaded(key, "onnx")
+                status = "installed" if is_cached else "available"
+                tags.append("ONNX")
+
+            # PyTorch models — need torch plugin
+            elif spec.requires_plugin == "torch":
+                if torch_available:
+                    is_cached = self.model_store.is_downloaded(key, "pytorch")
+                    status = "installed" if is_cached else "available"
+                    tags.append("PyTorch")
+                else:
+                    status = "needs_plugin"
+                    tags.append("PyTorch — torch plugin required")
+
+            # spaCy models
+            elif spec.loader == "spacy":
+                is_cached = self.model_store.is_downloaded(key)
+                status = "installed" if is_cached else "available"
+                tags.append("Local")
+
+            # Other local models
+            else:
+                is_cached = self.model_store.is_downloaded(key)
+                status = "installed" if is_cached else "available"
+                tags.append("Local")
+
+            models.append({
+                "key": key,
+                "model_id": spec.model_id,
+                "category": spec.category,
+                "tier": spec.tier,
+                "status": status,
+                "tags": tags,
+                "disk_mb": spec.disk_mb,
+                "ram_gb": spec.ram_gb,
+                "requires_plugin": spec.requires_plugin,
+                "notes": spec.notes,
+            })
+
+        return models
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # NEW: Switch with format preference (ONNX vs PyTorch)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def switch_with_format(
+        self,
+        category: str,
+        base_model: str,
+        prefer_format: Optional[str] = None,
+        migrate: bool = False,
+    ) -> str:
+        """
+        Switch to a model, auto-selecting ONNX or PyTorch variant.
+        
+        Args:
+            category: Model category (embedding, reranker, etc.)
+            base_model: Base model name, e.g., "BAAI/bge-m3"
+            prefer_format: "onnx", "pytorch", or None (auto-detect)
+            migrate: Whether to re-embed after switch
+        
+        Returns:
+            The actual model key that was activated
+        
+        Examples:
+            manager.switch_with_format("embedding", "BAAI/bge-m3", "onnx")
+            manager.switch_with_format("embedding", "BAAI/bge-m3")  # Auto-detect
+        """
+        from src.features.Hardware.Capabilities import Capabilities
+
+        # Find all registry entries for this base model
+        variants = {}
+        for key, spec in REGISTRY.items():
+            if spec.model_id == base_model and spec.category == category:
+                if spec.loader in ("onnx_embedding", "onnx_reranker"):
+                    variants["onnx"] = key
+                elif spec.requires_plugin == "torch":
+                    variants["pytorch"] = key
+                else:
+                    variants["other"] = key
+
+        if not variants:
+            raise ValueError(f"No models found for {base_model} in category {category}")
+
+        # Determine which format to use
+        selected_format = prefer_format
+        if selected_format is None:
+            caps = Capabilities.detect()
+            # Prefer ONNX if available (lean core)
+            if "onnx" in variants:
+                selected_format = "onnx"
+            elif "pytorch" in variants and caps.torch_available:
+                selected_format = "pytorch"
+            elif "other" in variants:
+                selected_format = "other"
+            else:
+                # Fallback: try PyTorch even if torch not available (will raise PluginRequiredError)
+                selected_format = "pytorch" if "pytorch" in variants else list(variants.keys())[0]
+
+        selected_key = variants.get(selected_format)
+        if not selected_key:
+            available = ", ".join(variants.keys())
+            raise ValueError(
+                f"Format '{selected_format}' not available for {base_model}. "
+                f"Available: {available}"
+            )
+
+        # Perform the switch
+        self.switch(category, selected_key, migrate=migrate)
+        return selected_key
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Switch methods
     # ═══════════════════════════════════════════════════════════════════════
 
     def switch_embedding(self, new_key: str, migrate: bool = False, file: Optional[str] = None) -> None:
@@ -99,11 +293,10 @@ class ModelManager:
                 darwin.log(f"Download failed: {e}", LogType.ERROR)
                 return
 
-        self.loader.set_preference("embedding", spec.model_id)
+        self.loader.set_preference("embedding", key)
 
         active = load_active_models().get("embedding")
-   
-   
+
         if migrate and self._darwin_store:
             health = self._darwin_store.get_embedding_health(active)
             stale = health.get("needs_reembed", [])
@@ -125,6 +318,19 @@ class ModelManager:
         if not resolved:
             return
         key, spec = resolved
+
+        # Check plugin requirements before downloading
+        if spec.requires_plugin:
+            from src.core.Plugins.TorchPlugin import TorchPlugin
+            torch_plugin = TorchPlugin()
+            if not torch_plugin.ensure_torch():
+                darwin.log(
+                    f"Model {new_key} requires torch plugin but it's not installed. "
+                    f"Install it from Settings first.",
+                    LogType.ERROR
+                )
+                return
+
         if spec.disk_mb > 0 and not self.model_store.is_downloaded(key):
             darwin.log(f"Downloading {new_key} first...", LogType.INFO)
             try:
@@ -132,20 +338,35 @@ class ModelManager:
             except Exception as e:
                 darwin.log(f"Download failed: {e}", LogType.ERROR)
                 return
-        self.loader.set_preference(category, spec.model_id)
-        
+        self.loader.set_preference(category, key)
+
         darwin.log(f"Switched {category} → {new_key}", LogType.SUCCESS)
 
     def _resolve_key(self, key: str, expected_category: str) -> Optional[tuple]:
         from src.core.Models.ModelRegistry import REGISTRY as registry, get_spec
-        id_to_key = {spec.model_id: k for k, spec in registry.items()}
-        if key in id_to_key:
-            registry_key = id_to_key[key]
-        elif key in registry:
+        if key in registry:
             registry_key = key
         else:
-            darwin.log(f"Unknown model: {key}", LogType.ERROR)
-            return None
+            matches = [k for k, spec in registry.items() if spec.model_id == key]
+            if not matches:
+                darwin.log(f"Unknown model: {key}", LogType.ERROR)
+                return None
+            if len(matches) == 1:
+                registry_key = matches[0]
+            else:
+                try:
+                    from src.features.Hardware.Capabilities import Capabilities
+                    caps = Capabilities.detect()
+                    if caps.torch_available:
+                        non_onnx = [k for k in matches if not k.endswith("-onnx")]
+                        registry_key = non_onnx[0] if non_onnx else matches[0]
+                    else:
+                        onnx = [k for k in matches if k.endswith("-onnx")]
+                        registry_key = onnx[0] if onnx else matches[0]
+                except Exception:
+                    non_onnx = [k for k in matches if not k.endswith("-onnx")]
+                    registry_key = non_onnx[0] if non_onnx else matches[0]
+        
         spec = get_spec(registry_key)
         if spec.category != expected_category:
             darwin.log(f"{key} is not a {expected_category} model", LogType.ERROR)
@@ -153,7 +374,7 @@ class ModelManager:
         return registry_key, spec
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Migration (unchanged except using singleton store)
+    # Migration
     # ═══════════════════════════════════════════════════════════════════════
     def migrate_embedding(self, file: Optional[str] = None, force: bool = False) -> dict:
         if not self._darwin_store:
@@ -207,25 +428,40 @@ class ModelManager:
         return stats
 
     # ═══════════════════════════════════════════════════════════════════════
-    # User commands – now using singleton store
+    # User commands
     # ═══════════════════════════════════════════════════════════════════════
     def status(self) -> None:
-        print("\n📊 Model Status\n")
+        darwin.log("\n Model Status\n")
         for key in REGISTRY:
             spec = REGISTRY[key]
             installed = self.model_store.is_downloaded(key)
             size = self.model_store.installed_size(key) if installed else "N/A"
-            status = "✅" if installed else "⬜"
-            print(f"   {key:<25} {spec.model_id:<45} {status} {size}")
+            status = "++" if installed else "XX"
+            # Show format indicator
+            format_tag = ""
+            if spec.loader in ("onnx_embedding", "onnx_reranker"):
+                format_tag = "[ONNX]"
+            elif spec.requires_plugin == "torch":
+                format_tag = "[PyTorch]"
+            elif spec.loader.startswith("api_"):
+                format_tag = "[API]"
+            darwin.log(f"   {key:<30} {spec.model_id:<45} {format_tag:<10} {status} {size}")
 
     def list_models(self, category: Optional[str] = None) -> None:
         models = REGISTRY
         if category:
             models = {k: v for k, v in REGISTRY.items() if v.category == category}
-        print(f"\n📋 Available Models ({category or 'all'}):\n")
+        darwin.log(f"\n Available Models ({category or 'all'}):\n")
         for key, spec in models.items():
-            print(f"   {key:<25} {spec.model_id:<45} {spec.tier:<10} {spec.disk_mb}MB")
-        print()
+            format_tag = ""
+            if spec.loader in ("onnx_embedding", "onnx_reranker"):
+                format_tag = "[ONNX]"
+            elif spec.requires_plugin == "torch":
+                format_tag = "[PyTorch]"
+            elif spec.loader.startswith("api_"):
+                format_tag = "[API]"
+            darwin.log(f"   {key:<30} {spec.model_id:<45} {format_tag:<10} {spec.tier:<10} {spec.disk_mb}MB")
+        darwin.log()
 
     def install_category(self, category: str, tier: str = 'all') -> None:
         models = {k: v for k, v in REGISTRY.items() if v.category == category}
@@ -265,6 +501,19 @@ class ModelManager:
             darwin.log(f"Unknown model: {key}", LogType.ERROR)
             return
         spec = get_spec(key)
+
+        # Check plugin requirements before installing
+        if spec.requires_plugin:
+            from src.core.Plugins.TorchPlugin import TorchPlugin
+            torch_plugin = TorchPlugin()
+            if not torch_plugin.ensure_torch():
+                darwin.log(
+                    f"Model {key} requires torch plugin but it's not installed. "
+                    f"Install it from Settings first.",
+                    LogType.WARNING
+                )
+                return
+
         if spec.disk_mb == 0:
             provider = key.split('/')[0]
             env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
@@ -276,16 +525,19 @@ class ModelManager:
                 )
             darwin.log(f"{key} is an API model – no local download needed.", LogType.INFO)
             return
+
         if not self.system.can_run(spec):
             darwin.log(f"Warning: {key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)", LogType.WARNING)
             response = input("   Continue anyway? [y/N]: ").strip().lower()
             if response != 'y':
                 return
+
         if not self.system.has_disk_space(spec):
             darwin.log("Warning: Not enough disk space.", LogType.WARNING)
             response = input("   Continue anyway? [y/N]: ").strip().lower()
             if response != 'y':
                 return
+
         darwin.log(f"Installing {key} ({spec.disk_mb}MB)...", LogType.INFO)
         self.model_store.download(key, force=force)
         darwin.log(f"{key} installed. Run switch to activate it.", LogType.SUCCESS)
@@ -297,14 +549,13 @@ class ModelManager:
         spec = get_spec(key)
         if spec.disk_mb == 0:
             darwin.log(f"{key} is an API model; nothing to delete locally.", LogType.INFO)
-            # If it was the active model, warn and deactivate
             active = load_active_models().get(spec.category)
             if active == spec.model_id:
                 darwin.log(f"⚠️  {key} is currently the active {spec.category} model.", LogType.WARNING)
                 resp = input("   Deactivate it and clear preference? [y/N]: ").strip().lower()
                 if resp == 'y':
                     set_active_model(spec.category, None)
-                    self.loader.set_preference(spec.category, "")  # clear in-memory
+                    self.loader.set_preference(spec.category, "")
                     darwin.log(f"{key} deactivated.", LogType.SUCCESS)
                 else:
                     darwin.log("No changes made.", LogType.INFO)
@@ -314,7 +565,6 @@ class ModelManager:
             darwin.log(f"{key} is not installed", LogType.WARNING)
             return
 
-        # Check if active
         active = load_active_models().get(spec.category)
         if active == spec.model_id:
             darwin.log(f"⚠️  {key} is the currently active {spec.category} model.", LogType.WARNING)
@@ -327,7 +577,6 @@ class ModelManager:
             if response != 'y':
                 return
 
-        # Check for embedded files (only if darwin_store exists)
         if self._darwin_store and spec.category == "embedding":
             by_model = self._darwin_store.get_embedded_files_by_model()
             entry = by_model["embedding"].get(spec.model_id, {})
@@ -343,7 +592,9 @@ class ModelManager:
                 if response != 'y':
                     return
 
-        self.model_store.delete(key)
+        # FIX: Delete only this format, not the entire parent directory
+        target_format = self.model_store._infer_format(spec)
+        self.model_store.delete(key, format=target_format)
         darwin.log(f"{key} removed.", LogType.SUCCESS)
 
     def switch(self, category: str, model: str, migrate: bool = False) -> None:

@@ -38,22 +38,38 @@ from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 # ── file resolution ───────────────────────────────────────────────────────────
 
-def _resolve_files(raw: list[str], store: DarwinStore) -> list[str]:
+def _resolve_input_files(
+    raw: list[str | Path] | None,
+    store: DarwinStore,
+) -> list[str] | None:
     """
-    Accept paths or bare filenames, return canonical store filenames
-    that actually have chunks ready.
+    Convert user input (paths, Path objects, or bare filenames) into a list of
+    registered filenames that actually have chunks (records). Returns:
+        - None if raw is None (meaning "all files")
+        - empty list if raw is not None but none of the inputs correspond to a valid file
+        - list of canonical filenames (basenames) that have chunks.
     """
+    if raw is None:
+        return None
+
     resolved: list[str] = []
     for r in raw:
-        candidate = Path(r).name
+        # Convert Path to string if needed
+        r_str = str(r)
+        candidate = Path(r_str).name
         if store.has_records(candidate):
             resolved.append(candidate)
         else:
-            darwin.log(f"'{r}' → '{candidate}' has no chunks — skipping", LogType.WARNING)
-    # deduplicate, preserve order
-    seen: set[str] = set()
-    return [f for f in resolved if not seen.add(f) and f not in seen - {f}]
+            darwin.log(f"'{r_str}' → '{candidate}' has no chunks — skipping", LogType.WARNING)
 
+    # Deduplicate while preserving order
+    seen: set[str] = set()
+    unique = []
+    for f in resolved:
+        if f not in seen:
+            seen.add(f)
+            unique.append(f)
+    return unique
 
 def _all_chunked(store: DarwinStore) -> list[str]:
     status = store.status()
@@ -112,7 +128,7 @@ def handle_knowledge(args: KnowledgePipelineArgs, store: DarwinStore) -> None:
 
     # resolve filenames
     if args.files:
-        filenames = _resolve_files(args.files, store)
+        filenames = _resolve_input_files(args.files, store)
     else:
         filenames = _all_chunked(store)
 

@@ -24,7 +24,7 @@ class KnowledgePipelineArgs:
     processing_mode: str = "auto"
     chunk_size: int = 512
     chunk_overlap: float = 0.2
-    relation_threshold: float = 0.0
+    relation_threshold: float = 0.3
     dedup_strategy: str = "svo_canonical"
     max_cooccurrence_edges: int = 500
 
@@ -32,7 +32,7 @@ class KnowledgePipelineArgs:
     threshold: Optional[float] = None
     min_freq: int = 2
     graph_max_concepts: int = 75
-    visualize: bool = False
+    visualize: bool = True
 
     # wiki config
 

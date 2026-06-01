@@ -165,17 +165,21 @@ class WikiOrchestrator:
                 query=query, concepts=[], related_topics=[],
                 total_concepts=0, penalized_count=0,
             )
-
+        
         pages_dicts = self.store.load_wiki(filename)
-        if not pages_dicts:
+        if not pages_dicts:          # pages_dicts may be None or empty list
             darwin.log(f"No wiki found for {filename}", LogType.WARNING)
             return WikiContext(
                 query=query, concepts=[], related_topics=[],
                 total_concepts=0, penalized_count=0,
             )
-        
+
+        # Ensure pages_dicts is a list
+        if pages_dicts is None:
+            pages_dicts = []
+
         wiki = DocumentWiki(
-            filename="doc.pdf",
+            filename=filename,       # use the actual filename, not hardcoded "doc.pdf"
             pages=[WikiPage.from_dict(p) for p in pages_dicts],
         )
 

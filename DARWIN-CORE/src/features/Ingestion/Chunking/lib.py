@@ -51,11 +51,16 @@ class OverlapDirection(str, Enum):
 # Data model
 # ─────────────────────────────────────────────────────────────────────────────
 
-@dataclass
 class ChunkLink:
-    """A hyperlink scoped to a chunk."""
-    url:  str
-    text: str = ""
+    def __init__(self, url: str, text: str):
+        self.url = url
+        self.text = text
+    
+    def to_dict(self):
+        return {"url": self.url, "text": self.text}
+    
+    def __json__(self):  # For json.dumps
+        return self.to_dict()
 
 
 
@@ -128,6 +133,11 @@ class Chunk:
             # Structural type for penalty system
             "structural_type": self.structural_type,
         }
+    
+    
+    def __json__(self):  # For json.dumps
+        return self.to_dict()
+
 
 @dataclass
 class ChunkingArgs:

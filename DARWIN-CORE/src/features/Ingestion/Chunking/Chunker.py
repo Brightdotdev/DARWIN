@@ -10,12 +10,14 @@ embedding model via ChunkConfig. No model names passed anywhere.
 
 from typing import List, Tuple
 
+from src.features.Ingestion.Chunking.lib import OverlapDirection
 from src.features.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     split_into_sections,
     count_page_seps,
     merge_small,
     section_to_chunks,
+    tokens,   
 )
 from src.features.Ingestion.Chunking.ChunkConfig import get_chunk_config
 
@@ -26,16 +28,6 @@ def chunk_document(
 ) -> List[Chunk]:
     """
     Convert parser embedding_text into chunks ready for embedding.
-
-    All parameters (max_tokens, min_tokens, overlap) are auto-detected
-    from the currently loaded embedding model.
-
-    Args:
-        text:   embedding_text from ParsedDocument
-        source: filename — attached to every chunk for citations
-
-    Returns:
-        List[Chunk] ordered and re-indexed from 0.
     """
     if not text or not text.strip():
         return []
@@ -62,11 +54,48 @@ def chunk_document(
 
     all_chunks = merge_small(all_chunks, config.min_tokens, config.max_tokens)
 
-    for i, chunk in enumerate(all_chunks):
+    # CHANGED: Hard ceiling enforcement — split any chunk still over max_tokens
+    final_chunks: List[Chunk] = []
+    for chunk in all_chunks:
+        if chunk.token_count > int(config.max_tokens * 1.1):
+            # Force-split by character boundary
+            char_limit = config.max_tokens * 3
+            pieces = []
+            remaining = chunk.clean
+            while remaining:
+                if tokens(remaining) <= config.max_tokens:
+                    pieces.append(remaining)
+                    break
+                split_point = remaining[:char_limit].rsplit(" ", 1)[0] if len(remaining) > char_limit else remaining
+                if not split_point:
+                    split_point = remaining[:char_limit]
+                pieces.append(split_point)
+                remaining = remaining[len(split_point):].lstrip()
+            
+            for i, piece in enumerate(pieces):
+                final_chunks.append(Chunk(
+                    text=piece,
+                    clean=piece,
+                    index=len(final_chunks),
+                    source=chunk.source,
+                    token_count=tokens(piece),
+                    heading=chunk.heading,
+                    page=chunk.page,
+                    page_end=chunk.page_end,
+                    overlap_direction=OverlapDirection.NONE,
+                    links=chunk.links if i == 0 else [],
+                ))
+        else:
+            chunk.index = len(final_chunks)
+            final_chunks.append(chunk)
+
+    # CHANGED: Absolute floor — drop anything below 20 tokens
+    final_chunks = [c for c in final_chunks if c.token_count >= 20]
+
+    for i, chunk in enumerate(final_chunks):
         chunk.index = i
 
-    return all_chunks
-
+    return final_chunks
 
 def chunk_for_model(
     text:   str,

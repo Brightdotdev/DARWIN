@@ -9,6 +9,12 @@ Updated for new DarwinStore:
 * Loads chunks as dict rows via query_records (partial columns)
 * Passes dicts to extract_graph_from_chunks (no Chunk reconstruction)
 * Saves graph via store.save_graph(nodes, edges) — not GraphData object
+
+FIXES APPLIED:
+* Bug D: Auto-register missing SVO entities so relations aren't silently dropped
+* Bug F: Use original_chunk_idx everywhere for evidence/centroid alignment
+* Bug K: Tighten structural chunk detection to avoid killing valid short chunks
+* Bug L: Centroids computed against correctly-aligned original chunk indices
 """
 
 import gc
@@ -55,7 +61,7 @@ SECTION_PREFIX_RE = re.compile(
 )
 
 TOC_ENTRY_RE = re.compile(
-    r'([\.•\-–—]\s*\d+\s*$)|(^\d+[\.\)]\s+\w+)',
+    r'([\.•\-–—]\s*\d+\s*$)|(^^d+[\.\)]\s+\w+)',
     re.IGNORECASE
 )
 
@@ -69,12 +75,24 @@ def _is_structural_chunk(chunk: Dict[str, Any], all_chunks: List[Dict[str, Any]]
     text_lower = text.lower()
     words = set(re.findall(r'\b[a-z]+\b', text_lower))
     lines = [l.strip() for l in text.split('\n') if l.strip()]
+    n_words_total = len(words)
 
-    if len(text) < 200:
-        return True
+    # CHANGED (Bug K): Was unconditional < 200. Now only kills short chunks if
+    # >50% of words are structural signals. Valid short chunks survive.
+    if len(text) < 120:
+        structural_found = words & STRUCTURAL_SIGNALS
+        if n_words_total > 0 and len(structural_found) / n_words_total > 0.50:
+            return True
+        return False
+
+    # Medium-length: require moderate structural density
+    if 120 <= len(text) < 250:
+        structural_found = words & STRUCTURAL_SIGNALS
+        if n_words_total > 0 and len(structural_found) / n_words_total > 0.40:
+            return True
 
     structural_found = words & STRUCTURAL_SIGNALS
-    if len(words) > 0 and len(structural_found) / len(words) > 0.30:
+    if n_words_total > 0 and len(structural_found) / n_words_total > 0.30:
         return True
 
     if len(lines) > 3:
@@ -97,8 +115,11 @@ def _is_structural_chunk(chunk: Dict[str, Any], all_chunks: List[Dict[str, Any]]
     if repeat_count > 2:
         return True
 
-    if chunk.get("index", 0) <= len(all_chunks) * 0.05 and len(words) < 20:
-        return True
+    # CHANGED (Bug K): Tightened from <=5% & <20 words to <=3% & <15 words,
+    # and now requires structural signal presence.
+    if chunk.get("index", 0) <= len(all_chunks) * 0.03 and n_words_total < 15:
+        if n_words_total > 0 and len(structural_found) / n_words_total > 0.25:
+            return True
 
     section_headers = sum(1 for l in lines if SECTION_PREFIX_RE.match(l))
     if section_headers >= 3:
@@ -111,8 +132,8 @@ def _is_structural_chunk(chunk: Dict[str, Any], all_chunks: List[Dict[str, Any]]
 
     if chunk.get("index", 0) <= len(all_chunks) * 0.10 and len(lines) > 0:
         avg_line_len = sum(len(l) for l in lines) / len(lines)
-        if (len(words) > 0 and
-            len(structural_found) / len(words) > 0.15 and
+        if (n_words_total > 0 and
+            len(structural_found) / n_words_total > 0.15 and
             avg_line_len < 80):
             return True
 
@@ -330,15 +351,29 @@ class RelationAccumulator:
         for (s_canon, v_canon, o_canon), occurrences in self.canonical_relations.items():
             if o_canon == "passive":
                 continue
+
+            # CHANGED (Bug D): Auto-register missing entities so relations aren't
+            # silently dropped when subject/object weren't in top-8 entities.
+            chunk_indices = sorted(list(set(idx for idx, _, _ in occurrences)))
+            first_chunk = chunk_indices[0] if chunk_indices else 0
+
             src_id = entity_registry.canonical_to_id.get(s_canon)
+            if not src_id:
+                src_id = entity_registry.get_or_create(
+                    text=s_canon, entity_type="CONCEPT", chunk_idx=first_chunk
+                )
             tgt_id = entity_registry.canonical_to_id.get(o_canon)
+            if not tgt_id:
+                tgt_id = entity_registry.get_or_create(
+                    text=o_canon, entity_type="CONCEPT", chunk_idx=first_chunk
+                )
+
             if not src_id or not tgt_id:
                 continue
 
             src_node = entity_registry.id_to_node[src_id]
             tgt_node = entity_registry.id_to_node[tgt_id]
 
-            chunk_indices = sorted(list(set(idx for idx, _, _ in occurrences)))
             surface_verbs = sorted(list(set(vb for _, _, vb in occurrences)))
             occurrence_count = len(chunk_indices)
 
@@ -832,7 +867,7 @@ def extract_graph_from_chunks(
 ) -> GraphData:
     """
     Extract knowledge graph from chunk dicts.
-    
+
     chunks: list of dicts from store.query_records() — must have "clean" or "text" key.
     """
     if config is None:
@@ -887,11 +922,13 @@ def extract_graph_from_chunks(
 
     for local_idx, (chunk, doc) in enumerate(zip(valid_chunks, docs)):
         original_chunk_idx = valid_index_map[local_idx]
-        entity_ids = _extract_entities_from_doc(doc, local_idx, registry, config, scorer)
-        chunk_entity_map[local_idx] = entity_ids
+        # CHANGED (Bug F): Use original_chunk_idx everywhere so evidence, centroids,
+        # and downstream wiki/community lookups align with store indices.
+        entity_ids = _extract_entities_from_doc(doc, original_chunk_idx, registry, config, scorer)
+        chunk_entity_map[original_chunk_idx] = entity_ids  # key by ORIGINAL index
 
         if config.require_parser and extractor.has_parser:
-            _extract_svo_from_doc(doc, local_idx, relation_acc)
+            _extract_svo_from_doc(doc, original_chunk_idx, relation_acc)
 
     darwin.log(
         f"[1/3] Done — {len(registry.id_to_node)} raw entities, "
@@ -933,8 +970,10 @@ def extract_graph_from_chunks(
     darwin.log(f"Pruned: {len(pruned_nodes)} nodes, {len(pruned_edges)} edges", LogType.SUCCESS)
 
     if chunk_vectors is not None and len(chunk_vectors) > 0:
+        # CHANGED (Bug L + F): node.chunk_indices now hold ORIGINAL chunk indices.
+        # chunk_vectors from store is indexed by original index — alignment is correct.
         for node in pruned_nodes:
-            valid_indices = [i for i in node.chunk_indices if i < len(chunk_vectors)]
+            valid_indices = [i for i in node.chunk_indices if 0 <= i < len(chunk_vectors)]
             if valid_indices:
                 node.centroid = chunk_vectors[valid_indices].mean(axis=0).tolist()
             else:

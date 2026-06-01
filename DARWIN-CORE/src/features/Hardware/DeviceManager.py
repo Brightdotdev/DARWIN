@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from src.features.Hardware.SystemDetector import SystemInfo
+
 
 @dataclass(frozen=True)
 class DeviceConfig:
@@ -20,11 +22,19 @@ class DeviceManager:
     _config: DeviceConfig | None = None
 
     @classmethod
-    def init(cls, system) -> DeviceConfig:
+    def init(cls, system: SystemInfo) -> DeviceConfig:
         """
         Initialize device config from a SystemInfo object.
-        The system parameter now actually gets used.
+        Type-checked and idempotent.
         """
+        if not isinstance(system, SystemInfo):
+            raise TypeError(f"Expected SystemInfo, got {type(system).__name__}")
+
+        if cls._config is not None:
+            raise RuntimeError(
+                "DeviceManager already initialized. Call reinit() to change configuration."
+            )
+
         cfg = DeviceConfig(
             device=system.device,
             dtype=system.dtype,
@@ -36,7 +46,26 @@ class DeviceManager:
         return cfg
 
     @classmethod
+    def reinit(cls, system: SystemInfo) -> DeviceConfig:
+        """Force re-initialization (e.g., after plugin install or GPU hot-swap)."""
+        if not isinstance(system, SystemInfo):
+            raise TypeError(f"Expected SystemInfo, got {type(system).__name__}")
+
+        cfg = DeviceConfig(
+            device=system.device,
+            dtype=system.dtype,
+            use_gpu=system.has_gpu,
+            gpu_name=system.gpu_name,
+        )
+        cls._config = cfg
+        return cfg
+
+    @classmethod
     def get(cls) -> DeviceConfig:
         if cls._config is None:
             raise RuntimeError("DeviceManager not initialized. Call init(system) at startup.")
         return cls._config
+
+    @classmethod
+    def is_initialized(cls) -> bool:
+        return cls._config is not None

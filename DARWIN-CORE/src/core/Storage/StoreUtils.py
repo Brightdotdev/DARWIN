@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timezone
 import json
 from typing import Optional
+import time
 
 
 import os
@@ -71,16 +72,29 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def write_json(path: Path, data: dict, compact: bool = False) -> None:
-    """Atomic-ish JSON write (write to temp, then rename)."""
+
+def write_json(path: Path, data: Any, compact: bool = False, max_retries: int = 3) -> None:
+    """Write JSON atomically with retry on Windows PermissionError."""
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        if compact:
-            json.dump(data, f, separators=(',', ':'), ensure_ascii=False)
-        else:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-    tmp.replace(path)  # atomic on most OSes
+    json_str = json.dumps(data, indent=None if compact else 2, ensure_ascii=False)
+
+    for attempt in range(max_retries):
+        try:
+            tmp.write_text(json_str, encoding="utf-8")
+            tmp.replace(path)
+            return
+        except (PermissionError, OSError) as e:
+            if attempt == max_retries - 1:
+                # Fallback: direct write (non-atomic but better than failure)
+                from src.core.Logger.DarwinLogger import darwin, LogType
+                darwin.log(f"Atomic replace failed for {path}, using direct write: {e}", LogType.WARNING)
+                path.write_text(json_str, encoding="utf-8")
+                if tmp.exists():
+                    tmp.unlink()
+                return
+            time.sleep(0.1 * (attempt + 1))
 
 
 def read_json(path: Path) -> dict | None:
@@ -95,142 +109,3 @@ def read_json(path: Path) -> dict | None:
 
 
 
-def write_atomic_json(
-    path: str | Path,
-    data: Any,
-    *,
-    indent: int | None = None,
-    ensure_ascii: bool = False,
-) -> None:
-    """
-    Atomically write JSON to disk.
-
-    Guarantees:
-    - avoids partial/corrupt writes
-    - atomic replacement
-    - parent directory creation
-    - UTF-8 encoding
-    - fsync durability
-
-    Args:
-        path:
-            Destination JSON file path.
-
-        data:
-            JSON-serializable object.
-
-        indent:
-            Pretty-print indentation.
-            Use None for compact JSON.
-
-        ensure_ascii:
-            Whether to escape unicode characters.
-    """
-
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    temp_path = None
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            delete=False,
-        ) as tmp:
-
-            json.dump(
-                data,
-                tmp,
-                indent=indent,
-                ensure_ascii=ensure_ascii,
-                separators=(",", ":") if indent is None else None,
-            )
-
-            tmp.flush()
-            os.fsync(tmp.fileno())
-
-            temp_path = Path(tmp.name)
-
-        # Atomic replace
-        os.replace(temp_path, path)
-
-    finally:
-        # Cleanup orphan temp file if something failed
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-
-
-
-def write_atomic_jsonl(
-    path: str | Path,
-    rows: Iterable[Any],
-    *,
-    ensure_ascii: bool = False,
-) -> None:
-    """
-    Atomically write JSONL data to disk.
-
-    Each item in `rows` becomes one JSON line.
-
-    Guarantees:
-    - atomic replacement
-    - UTF-8 encoding
-    - parent directory creation
-    - fsync durability
-    - cleanup on failure
-
-    Args:
-        path:
-            Destination .jsonl file.
-
-        rows:
-            Iterable of JSON-serializable objects.
-
-        ensure_ascii:
-            Whether to escape unicode characters.
-    """
-
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    temp_path = None
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            delete=False,
-        ) as tmp:
-
-            for row in rows:
-                line = json.dumps(
-                    row,
-                    ensure_ascii=ensure_ascii,
-                    separators=(",", ":"),
-                )
-
-                tmp.write(line)
-                tmp.write("\n")
-
-            tmp.flush()
-            os.fsync(tmp.fileno())
-
-            temp_path = Path(tmp.name)
-
-        # Atomic swap
-        os.replace(temp_path, path)
-
-    finally:
-        # Cleanup orphan temp file if write failed
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink(missing_ok=True)
-            except Exception:
-                pass

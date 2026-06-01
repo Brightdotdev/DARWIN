@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import os
+from typing import List
 import warnings
 from pathlib import Path
 
@@ -49,9 +50,31 @@ from src.features.LLM.LLMManager import LLMManager
 from src.features.LLM.LLMTypes import LLMResponse
 
 
+import os
+os.environ["DARWIN_DISABLE_TORCH"] = "1"
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def get_files(dir_path: str) -> List[str]:  # ← string, not List[str]
+    from src.features.Ingestion.Parsing.Parser import scan_directory
+    files = scan_directory(dir_path)  # ← pass the string directly
+
+    return [str(f) for f in files]  # ← RETURN the list!
+
+def get_parsed(dir_path: str) -> List[Path]:
+    from src.features.Ingestion.Parsing.Parser import scan_directory
+    files = scan_directory(dir_path)  # ← pass the string directly
+    print(f"Scanned {len(files)} files in {dir_path}")
+    for f in files:        
+        print(f"  Found file: {f.name}")
+    return [f.name for f in files] 
+
+# Usage:
+directory = "./pdfs/"  # ← string, not list
+TO_BE_PROCESSED = get_files(directory)
+PARSED_FILS = get_parsed(directory)
 
 FILES = ["book_of_enoch.pdf"]
 QUERY = "who are the watchers"
@@ -65,11 +88,10 @@ def main() -> int:
         verbosity_default=Verbosity.NORMAL,
         show_banner=True,
     )
-
     # ── store ──────────────────────────────────────────────────────────────
-    store = DarwinStore()  # or DarwinStore("/path/to/.darwin")
+    store = DarwinStore(Path("./darwin_store_test"))
 
-    with darwin.session("book_of_enoch_pipeline"):
+    with darwin.session("full_pipeline_test"):
         # ── 1. ingestion ─────────────────────────────────────────────────────
         darwin.log("═" * 60, LogType.INFO)
         darwin.log("Stage 1: Ingestion", LogType.INFO)
@@ -77,10 +99,8 @@ def main() -> int:
 
         parsing_args = ParsingArgs(
             target=None,
-            files=FILES,
+            files=TO_BE_PROCESSED,  # test with just the first file for now
             images=True,
-            caption=True,
-            rerun=True,
             precise=False,
             save=True,
         )
@@ -89,10 +109,10 @@ def main() -> int:
             rerun=True,
         )
 
-        # MP listener forwards worker logs from ProcessPoolExecutor
-        darwin.start_mp_listener()
+
         handle_ingestion(parsing_args, chunking_args, store=store)
-        darwin.stop_mp_listener()
+        
+
 
         # ── 2. indexing ──────────────────────────────────────────────────────
         darwin.log("═" * 60, LogType.INFO)
@@ -100,8 +120,8 @@ def main() -> int:
         darwin.log("═" * 60, LogType.INFO)
 
         indexing_args = IndexingArgs(
-            rerun=True,
-            files=FILES,
+            files=PARSED_FILS,
+
             inspect=True,
             threshold=DOMAIN_STOP_THRESHOLD,
             idf_smoothing=DEFAULT_IDF_SMOOTHING,
@@ -114,7 +134,8 @@ def main() -> int:
         darwin.log("═" * 60, LogType.INFO)
 
         knowledge_args = KnowledgePipelineArgs(
-            files=FILES,
+            files=PARSED_FILS,
+
             visualize=True,
             inspect=True,
             rerun=True,
@@ -184,7 +205,7 @@ def main() -> int:
         ]
 
         darwin.log("Calling LLM (RAG context)...", LogType.INFO)
-        rag_resp: LLMResponse = llm.call_smart(rag_messages)
+        rag_resp: LLMResponse = llm.call_small(rag_messages)
         if rag_resp.error:
             darwin.log(f"RAG generation error: {rag_resp.error}", LogType.ERROR)
         else:
@@ -204,7 +225,7 @@ def main() -> int:
         ]
 
         darwin.log("Calling LLM (Wiki context)...", LogType.INFO)
-        wiki_resp: LLMResponse = llm.call_smart(wiki_messages)
+        wiki_resp: LLMResponse = llm.call_small(wiki_messages)
         if wiki_resp.error:
             darwin.log(f"Wiki generation error: {wiki_resp.error}", LogType.ERROR)
         else:

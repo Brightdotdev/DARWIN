@@ -200,7 +200,8 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
 
     # Register all files
     for path in target_paths:
-        store.registry.register(path)
+        darwin.log(f"Registering file: {path.name}")
+        store.register(path)
 
     # Skip already parsed files unless --rerun
     to_process = []

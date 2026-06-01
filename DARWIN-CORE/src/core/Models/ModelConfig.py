@@ -2,19 +2,26 @@
 src/core/Models/ModelConfig.py
 -------------------------------
 Persistent configuration for which model is active per category.
-Stored in ~/.darwin/active_models.json
+Atomic saves with file locking.
 """
 
 import json
 from pathlib import Path
 from typing import Dict, Optional
 
-from src.lib.AppPaths import default_models_config_dir   
+from filelock import FileLock
+from src.lib.AppPaths import default_models_config_dir
+
 
 CONFIG_FILENAME = "models.json"
 
+
 def _config_path() -> Path:
     return default_models_config_dir() / CONFIG_FILENAME
+
+
+def _lock_path() -> Path:
+    return default_models_config_dir() / (CONFIG_FILENAME + ".lock")
 
 
 def load_active_models() -> Dict[str, Optional[str]]:
@@ -22,23 +29,31 @@ def load_active_models() -> Dict[str, Optional[str]]:
     path = _config_path()
     if not path.exists():
         return {}
+
+    lock = FileLock(str(_lock_path()))
     try:
-        data = json.loads(path.read_text())
-        # Ensure all expected categories exist
-        from src.core.Models.ModelRegistry import ModelCategory
-        config = {}
-        for cat in ModelCategory:
-            config[cat.value] = data.get(cat.value, None)
-        return config
+        with lock:
+            try:
+                data = json.loads(path.read_text())
+                from src.core.Models.ModelRegistry import ModelCategory
+                config = {}
+                for cat in ModelCategory:
+                    config[cat.value] = data.get(cat.value, None)
+                return config
+            except Exception:
+                return {}
     except Exception:
         return {}
 
 
 def save_active_models(config: Dict[str, Optional[str]]) -> None:
-    """Write the full active models config to disk."""
+    """Write the full active models config to disk atomically."""
     path = _config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config, indent=2))
+
+    lock = FileLock(str(_lock_path()))
+    with lock:
+        path.write_text(json.dumps(config, indent=2))
 
 
 def set_active_model(category: str, model_id: Optional[str]) -> None:
@@ -53,7 +68,5 @@ def get_active_model(category: str) -> Optional[str]:
     return load_active_models().get(category)
 
 
-
-if __name__ == "__main__":
-    # Quick test: print current config
-    print(load_active_models())
+# if __name__ == "__main__":
+#     print(load_active_models())

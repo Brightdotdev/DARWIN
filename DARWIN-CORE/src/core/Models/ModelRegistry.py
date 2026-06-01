@@ -1,7 +1,7 @@
 # src/core/Models/ModelRegistry.py
 
-from dataclasses import dataclass
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Literal, Optional
 from enum import Enum
 
 
@@ -19,14 +19,21 @@ class ModelSpec:
     tier: Literal["light", "medium", "large", "overkill"]
     ram_gb: int
     disk_mb: int
-    loader: Literal["sentence_transformers", "cross_encoder", "transformers", "spacy", "none", "embedding_hf", "embedding_st"]
+    loader: Literal[
+        "sentence_transformers", "cross_encoder", "transformers", "spacy",
+        "none", "embedding_hf", "embedding_st", "onnx_embedding",
+        "api_embedding", "api_reranker", "api_vision"
+    ]
     required: bool = True
     experimental: bool = False
     notes: str = ""
+    requires_plugin: Optional[str] = None  # NEW: e.g., "torch"
+    onnx_available: bool = False           # NEW: true if ONNX export exists
+
 
 REGISTRY: dict[str, ModelSpec] = {
     # ═══════════════════════════════════════════════════════════════════════
-    # Embedding (required)
+    # Embedding (required) — ONNX versions added
     # ═══════════════════════════════════════════════════════════════════════
     "intfloat/e5-small-v2": ModelSpec(
         model_id="intfloat/e5-small-v2",
@@ -57,7 +64,32 @@ REGISTRY: dict[str, ModelSpec] = {
         loader="sentence_transformers",
         required=False,
         experimental=True,
+        requires_plugin="torch",
         notes="7B LLM repurposed as embedder. 4096-dim. GPU strongly recommended; CPU inference will be prohibitively slow (hours per document)."
+    ),
+
+    # ── ONNX Embedding Models (lean core, no torch) ──
+    "BAAI/bge-m3-onnx": ModelSpec(
+        model_id="BAAI/bge-m3",
+        category="embedding",
+        tier="medium",
+        ram_gb=4,
+        disk_mb=400,
+        loader="onnx_embedding",
+        required=False,
+        onnx_available=True,
+        notes="BGE-M3 via ONNX Runtime. 1024-dim, multilingual. ~4x faster than PyTorch on CPU.",
+    ),
+    "intfloat/e5-small-v2-onnx": ModelSpec(
+        model_id="intfloat/e5-small-v2",
+        category="embedding",
+        tier="light",
+        ram_gb=2,
+        disk_mb=100,
+        loader="onnx_embedding",
+        required=False,
+        onnx_available=True,
+        notes="E5-small via ONNX Runtime. 384-dim, English-only. Extremely fast.",
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -74,8 +106,21 @@ REGISTRY: dict[str, ModelSpec] = {
         notes="33MB, ~50ms CPU. Perfect for everyone. Always installed.",
     ),
 
+    # ── ONNX Reranker ──
+    "cross-encoder/ms-marco-MiniLM-L-6-v2-onnx": ModelSpec(
+        model_id="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        category="reranker",
+        tier="light",
+        ram_gb=1,
+        disk_mb=25,
+        loader="onnx_reranker",
+        required=False,
+        onnx_available=True,
+        notes="MiniLM cross-encoder via ONNX. Faster than PyTorch on CPU.",
+    ),
+
     # ═══════════════════════════════════════════════════════════════════════
-    # Vision (optional)
+    # Vision (optional) — ALL require torch plugin
     # ═══════════════════════════════════════════════════════════════════════
     "HuggingFaceTB/SmolVLM-256M-Instruct": ModelSpec(
         model_id="HuggingFaceTB/SmolVLM-256M-Instruct",
@@ -85,6 +130,7 @@ REGISTRY: dict[str, ModelSpec] = {
         disk_mb=500,
         loader="transformers",
         required=False,
+        requires_plugin="torch",
         notes="256M params. Fast captions, low memory. Good enough for most docs. swiss army knife of vision models.",
     ),
     "vikhyatk/moondream2": ModelSpec(
@@ -95,6 +141,7 @@ REGISTRY: dict[str, ModelSpec] = {
         disk_mb=1400,
         loader="transformers",
         required=False,
+        requires_plugin="torch",
         notes="1.8B params. Better caption quality, understands charts/diagrams.",
     ),
 
@@ -122,13 +169,9 @@ REGISTRY: dict[str, ModelSpec] = {
         notes="Large English model. Better accuracy, word vectors. 560MB.",
     ),
 
-
-
-
-
-# api based models
-
-
+    # ═══════════════════════════════════════════════════════════════════════
+    # API-based Embedding (zero local compute)
+    # ═══════════════════════════════════════════════════════════════════════
     "openai/text-embedding-3-small": ModelSpec(
         model_id="openai/text-embedding-3-small",
         category="embedding",
@@ -197,8 +240,7 @@ REGISTRY: dict[str, ModelSpec] = {
         required=False,
         notes="Google Gemini Flash vision. Requires GEMINI_API_KEY.",
     ),
-
-     "openrouter/openai/gpt-4o": ModelSpec(
+    "openrouter/openai/gpt-4o": ModelSpec(
         model_id="openrouter/openai/gpt-4o",
         category="vision",
         tier="large",
@@ -260,7 +302,8 @@ def by_category(category: str) -> dict[str, ModelSpec]:
 _VALID_LOADERS = {
     "sentence_transformers", "cross_encoder", "transformers",
     "spacy", "none", "embedding_hf", "embedding_st",
-    "api_embedding", "api_reranker", "api_vision",  # ← new
+    "onnx_embedding",  "onnx_reranker", 
+    "api_embedding", "api_reranker", "api_vision",
 }
 
 

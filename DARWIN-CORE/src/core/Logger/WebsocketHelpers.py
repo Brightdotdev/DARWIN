@@ -118,4 +118,4 @@ class WebSocketServer:
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=timeout)
         if self._thread.is_alive():
-            print("[WebSocket] Server thread did not terminate in time")
+            darwin.log("[WebSocket] Server thread did not terminate in time", LogType.ERROR)

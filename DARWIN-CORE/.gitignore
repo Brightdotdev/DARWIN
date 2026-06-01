@@ -15,6 +15,9 @@ build/
 # Virtual Environment & Dependencies
 # ──────────────────────────────────────────
 .venv/
+pdfs/
+darwin_store_test/
+./darwin_store_test/
 venv/
 env/
 .uv/

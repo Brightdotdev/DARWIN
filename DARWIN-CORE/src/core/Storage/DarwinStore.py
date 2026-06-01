@@ -8,7 +8,6 @@ from src.core.Storage.StorePaths import StorePaths, default_darwin_dir
 from src.core.Storage.FileRegistry import FileRegistry, FileRecord
 from src.core.Storage.StoreArtifacts import (
     MetaMixin,
-    ConfigMixin,
     MarkdownMixin,
     VectorMixin,
     RecordsMixin,
@@ -24,7 +23,6 @@ from src.lib.Terminal import TerminalUI
 
 class DarwinStore(
     MetaMixin,
-    ConfigMixin,
     MarkdownMixin,
     VectorMixin,
     RecordsMixin,

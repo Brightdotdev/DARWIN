@@ -83,13 +83,20 @@ ARTIFACT_MANIFEST = {
 # Schema-agnostic normalization helpers
 # ═══════════════════════════════════════════════════════════════════════════
 
+
 def normalize_record(obj: Any) -> dict[str, Any]:
     """
     Convert any object to a plain dict without importing Chunk, dataclasses,
     pydantic, or attrs.  Duck-typing keeps the storage layer fully decoupled.
+
+    FIX: Added handling for objects with __slots__ (no __dict__) by iterating
+    over all slot names and extracting values.
     """
     if isinstance(obj, dict):
         return dict(obj)
+    
+    if hasattr(obj, "to_dict") and callable(obj.to_dict):
+        return obj.to_dict()
 
     # Pydantic v2
     if hasattr(obj, "model_dump") and callable(obj.model_dump):
@@ -116,14 +123,46 @@ def normalize_record(obj: Any) -> dict[str, Any]:
             for a in attrs_attrs
         }
 
-    # Generic Python object
+    # FIX: Handle objects with __slots__ (no __dict__)
+    if hasattr(obj, "__slots__"):
+        slots = obj.__slots__
+        # __slots__ can be a string or a list/tuple of strings
+        if isinstance(slots, str):
+            slots = [slots]
+        result = {}
+        for slot in slots:
+            if not slot.startswith("_"):
+                try:
+                    result[slot] = getattr(obj, slot)
+                except AttributeError:
+                    pass
+        if result:
+            return result
+
+    # Generic Python object with __dict__
     if hasattr(obj, "__dict__"):
         return vars(obj)
 
     raise TypeError(
         f"Cannot normalize object of type {type(obj).__name__} to dict. "
-        "Expected dict, dataclass, pydantic model, attrs, or object with __dict__."
+        "Expected dict, dataclass, pydantic model, attrs, or object with __dict__ or __slots__."
     )
+
+
+def _deep_serialize(obj: Any) -> Any:
+    """Recursively convert any object to a JSON‑serializable type."""
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, (list, tuple, set)):
+        return [_deep_serialize(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _deep_serialize(v) for k, v in obj.items()}
+    try:
+        # Try duck‑typing with normalize_record (handles dataclasses, etc.)
+        return _deep_serialize(normalize_record(obj))
+    except TypeError:
+        # Last resort: string representation
+        return str(obj)
 
 
 def reconstruct_records(rows: list[dict[str, Any]], cls: Any = None) -> list[Any]:
@@ -179,32 +218,29 @@ def reconstruct_records(rows: list[dict[str, Any]], cls: Any = None) -> list[Any
     except (ValueError, TypeError):
         pass
 
-    # Last resort
+    # Last resort: pass all kwargs and hope for the best
     return [cls(**row) for row in rows]
 
 
 def records_to_table(records: list[dict[str, Any]]) -> pa.Table:
     """
-    Convert plain dicts to an Arrow Table.  PyArrow's from_pylist infers nested
-    LIST and STRUCT types automatically, which is ideal for links, keywords, etc.
+    Convert plain dicts to an Arrow Table.
+    If schema inference fails, convert **every** value to a JSON string.
     """
     if not records:
         return pa.Table.from_pydict({})
     try:
         return pa.Table.from_pylist(records)
     except (pa.ArrowInvalid, pa.ArrowTypeError) as exc:
-        # Fallback: coerce nested structures to JSON strings so the write
-        # never fails because of mixed-type ragged columns.
-        darwin.log(f"Parquet schema inference failed ({exc}); coercing nested fields to JSON", LogType.WARNING)
-        normalized: list[dict[str, Any]] = []
-        for record in records:
-            row: dict[str, Any] = {}
-            for k, v in record.items():
-                if isinstance(v, (list, dict)) and not isinstance(v, str):
-                    row[k] = json.dumps(v)
-                else:
-                    row[k] = v
-            normalized.append(row)
+        darwin.log(
+            f"Parquet schema inference failed ({exc}); coercing ALL fields to JSON strings",
+            LogType.WARNING,
+        )
+
+        def to_json_string(obj: Any) -> str:
+            return json.dumps(_deep_serialize(obj))
+
+        normalized = [{k: to_json_string(v) for k, v in record.items()} for record in records]
         return pa.Table.from_pylist(normalized)
 
 
@@ -430,35 +466,6 @@ class MetaMixin(_PathResolverMixin):
         return read_json(meta_path).get("file_hash", "") == file_hash(source)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Mixin: Config
-# ═══════════════════════════════════════════════════════════════════════════
-
-class ConfigMixin:
-    """Handles config.json (global user preferences)."""
-
-    def load_config(self) -> dict:
-        return read_json(self.paths.config_path) or {}
-
-    def save_config(self, config: dict) -> None:
-        write_json(self.paths.config_path, config)
-
-    def update_config(self, **kwargs) -> None:
-        config = self.load_config()
-        config.update(kwargs)
-        self.save_config(config)
-
-    def get_user_embedding_model(self) -> str:
-        return self.load_config().get("embedding_model", "unknown")
-
-    def set_user_embedding_model(self, model_name: str) -> None:
-        self.update_config(embedding_model=model_name)
-        darwin.log(
-            f"Embedding model updated — new files will use {model_name}. "
-            "Existing files may need re-embedding.",
-            LogType.INFO,
-        )
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: Markdown
@@ -506,11 +513,14 @@ class MarkdownMixin(_PathResolverMixin):
 
             record = self._record_for(filename)
             if record:
-                self.registry.update_pipeline(
-                    record.last_seen_path or filename,
-                    "markdown",
-                    **extras,
-                )
+                try:
+                    self.registry.update_pipeline(
+                        record.last_seen_path or filename,
+                        "markdown",
+                        **extras,
+                    )
+                except Exception as reg_err:
+                    darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
 
             self.invalidate(filename)
             darwin.log(f"Saved markdown for {filename}", LogType.SUCCESS)
@@ -532,8 +542,6 @@ class MarkdownMixin(_PathResolverMixin):
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: Records 
 # ═══════════════════════════════════════════════════════════════════════════
-
-
 
 
 class RecordsMixin(_PathResolverMixin):
@@ -589,11 +597,14 @@ class RecordsMixin(_PathResolverMixin):
 
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(
-                record.last_seen_path or filename,
-                "chunks",
-                **extras,
-            )
+            try:
+                self.registry.update_pipeline(
+                    record.last_seen_path or filename,
+                    "chunks",
+                    **extras,
+                )
+            except Exception as reg_err:
+                darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
 
         self.invalidate(filename)
         darwin.log(f"Records saved: {path.name} ({len(records)} rows)", LogType.SUCCESS)
@@ -764,6 +775,7 @@ class RecordsMixin(_PathResolverMixin):
         rows = self.query_records(filename, columns=columns, **filters)
         return reconstruct_records(rows, cls=cls)
 
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: Embeddings (float16 .npy, zero metadata duplication)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -808,12 +820,15 @@ class EmbeddingsMixin(_PathResolverMixin):
 
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(
-                record.last_seen_path or filename,
-                "embeddings",
-                embedding_model=model_name,
-                embedding_dimensions=dim,
-            )
+            try:
+                self.registry.update_pipeline(
+                    record.last_seen_path or filename,
+                    "embeddings",
+                    embedding_model=model_name,
+                    embedding_dimensions=dim,
+                )
+            except Exception as reg_err:
+                darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
 
         self.invalidate(filename)
         darwin.log(
@@ -953,7 +968,10 @@ class VectorMixin(_PathResolverMixin):
 
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(record.last_seen_path or filename, "vector")
+            try:
+                self.registry.update_pipeline(record.last_seen_path or filename, "vector")
+            except Exception as reg_err:
+                darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
 
         self.invalidate(filename)
         darwin.log(f"Vector index saved: {n} vectors, {dim}d", LogType.SUCCESS)
@@ -1136,12 +1154,16 @@ class BM25Mixin(_PathResolverMixin):
             self._update_meta(filename, "bm25")
             record = self._record_for(filename)
             if record:
-                self.registry.update_pipeline(
-                    record.last_seen_path or filename,
-                    "bm25",
-                    chunk_count=chunk_count,
-                    vocab_size=vocab_size,
-                )
+                try:
+                    self.registry.update_pipeline(
+                        record.last_seen_path or filename,
+                        "bm25",
+                        chunk_count=chunk_count,
+                        vocab_size=vocab_size,
+                    )
+                except Exception as reg_err:
+                    darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
+
             self.invalidate(filename)
             darwin.log(f"Saved BM25 index: {npz_path.name} + {tokens_path.name}", LogType.SUCCESS)
 
@@ -1219,7 +1241,10 @@ class StopwordsMixin(_PathResolverMixin):
         self._update_meta(filename, "stopwords")
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(record.last_seen_path or filename, "stopwords")
+            try:
+                self.registry.update_pipeline(record.last_seen_path or filename, "stopwords")
+            except Exception as reg_err:
+                darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
         self.invalidate(filename)
 
     def load_stopwords(self, filename: str) -> set[str]:
@@ -1268,12 +1293,16 @@ class GraphMixin(_PathResolverMixin):
 
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(
-                record.last_seen_path or filename,
-                "graph",
-                node_count=len(nodes),
-                edge_count=len(edges),
-            )
+            try:
+                self.registry.update_pipeline(
+                    record.last_seen_path or filename,
+                    "graph",
+                    node_count=len(nodes),
+                    edge_count=len(edges),
+                )
+            except Exception as reg_err:
+                darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
+
         self.invalidate(filename)
         darwin.log(f"Graph saved: {len(nodes)} nodes, {len(edges)} edges", LogType.SUCCESS)
 
@@ -1288,7 +1317,10 @@ class GraphMixin(_PathResolverMixin):
         self._update_meta(filename, "graph_vis")
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(record.last_seen_path or filename, "graph_vis")
+            try:
+                self.registry.update_pipeline(record.last_seen_path or filename, "graph_vis")
+            except Exception as reg_err:
+                darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
         self.invalidate(filename)
 
     def load_graph(self, filename: str) -> dict:
@@ -1335,11 +1367,15 @@ class WikiMixin(_PathResolverMixin):
 
         record = self._record_for(filename)
         if record:
-            self.registry.update_pipeline(
-                record.last_seen_path or filename,
-                "wiki",
-                page_num=len(pages),
-            )
+            try:
+                self.registry.update_pipeline(
+                    record.last_seen_path or filename,
+                    "wiki",
+                    page_num=len(pages),
+                )
+            except Exception as reg_err:
+                darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
+
         self.invalidate(filename)
         darwin.log(f"Wiki saved: {len(pages)} pages", LogType.SUCCESS)
 
@@ -1616,4 +1652,3 @@ class MigrationMixin(_PathResolverMixin):
         except Exception as e:
             darwin.log(f"wiki.json migration failed: {e}", LogType.WARNING)
             return False
-

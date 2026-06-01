@@ -17,8 +17,8 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from src.core.Storage.DarwinStore import DarwinStore
-from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator, retrieve_for_llm
-from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator, wiki_search_for_llm
+from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator
+from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator
 
 
 FILENAME = "book_of_enoch.pdf"  
@@ -58,7 +58,7 @@ def main():
         )
 
         print(f"    Raw results: {len(context.raw_results)}")
-        print(f"    Filtered structural: {context.filtered_count}")
+        print(f"    Filtered structural: {context.penalized_count}")
         print(f"    Final Sources: {len(context.passages)}")
 
         for i, p in enumerate(context.passages):
@@ -76,24 +76,31 @@ def main():
         print(f"  {'─' * 50}")
 
         wiki_orch = WikiOrchestrator(store)
-        wiki_context = wiki_orch.search(
+        wiki_result = wiki_orch.search(
             query=query,
             filename=FILENAME,
             top_k=5,
             merge_sources=True,
             fill_gaps=True,
         )
-
-        print(f"    Total concepts: {wiki_context.total_concepts}")
-        print(f"    Filtered structural: {wiki_context.filtered_count}")
-        print(f"    Related topics: {wiki_context.related_topics[:5]}")
-
-        for i, c in enumerate(wiki_context.concepts):
-            print(f"\n    [Concept {i+1}] {c.concept}")
-            print(f"      Page {c.page_start}-{c.page_end} | "
-                  f"Chunks: {c.chunk_indices} | "
-                  f"Merged from: {c.source_count} concepts")
-            print(f"      Passage: {c.passage_text[:150]}...")
+        
+        # WikiOrchestrator likely returns a WikiContext object
+        print(f"Query: {wiki_result.query}")
+        print(f"Total concepts: {wiki_result.total_concepts}")
+        print(f"Penalized count: {wiki_result.penalized_count}")
+        print(f"Related topics: {wiki_result.related_topics}")
+        
+        for i, concept in enumerate(wiki_result.concepts):
+            print(f"\n    [Concept {i+1}] {concept.concept}")
+            print(f"      Raw concept: {concept.raw_concept}")
+            print(f"      Page {concept.page_start}-{concept.page_end} | "
+                  f"Chunks: {concept.chunk_indices} | "
+                  f"Merged from: {concept.source_count} concepts")
+            print(f"      Score: {concept.score}")
+            print(f"      Keywords: {', '.join(concept.keywords[:5])}")
+            print(f"      Related topics: {concept.related_topics}")
+            print(f"      Source file: {concept.source_file}")
+            print(f"      Audit: {concept.audit}")
 
     print("\n" + "✅" * 25)
     print("  BOTH ORCHESTRATORS TEST COMPLETE")

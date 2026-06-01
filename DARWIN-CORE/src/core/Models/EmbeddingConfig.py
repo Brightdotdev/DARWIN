@@ -30,9 +30,11 @@ class ModelPreset:
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Registry — keyed by canonical model_id (from ModelRegistry REGISTRY keys)
+# NEW: Added ONNX variants
 # ═══════════════════════════════════════════════════════════════════════════
 
 PRESETS: dict[str, ModelPreset] = {
+    # ── PyTorch models ──
     "intfloat/e5-small-v2": ModelPreset(
         max_tokens=480,
         min_tokens=120,
@@ -61,7 +63,29 @@ PRESETS: dict[str, ModelPreset] = {
         instruction_template="<|user|>\nRepresent this passage for retrieval: {text}\n<|assistant|>\n",
         model_name="GritLM/GritLM-7B",
     ),
-     "openai/text-embedding-3-small": ModelPreset(
+    
+    # ── ONNX variants (same behavior as PyTorch counterparts) ──
+    "intfloat/e5-small-v2-onnx": ModelPreset(
+        max_tokens=480,
+        min_tokens=120,
+        overlap=3,
+        category="plain_text",
+        needs_prefix=True,
+        passage_prefix="passage: ",
+        query_prefix="query: ",
+        model_name="intfloat/e5-small-v2",
+    ),
+    "BAAI/bge-m3-onnx": ModelPreset(
+        max_tokens=8000,
+        min_tokens=400,
+        overlap=5,
+        category="semantic_markdown",
+        needs_prefix=False,
+        model_name="BAAI/bge-m3",
+    ),
+    
+    # ── API models ──
+    "openai/text-embedding-3-small": ModelPreset(
         max_tokens=8000,
         min_tokens=400,
         overlap=5,
@@ -107,6 +131,8 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
     Returns the full ModelPreset for a given model_key, or the
     CURRENTLY ACTIVE embedding model if none is provided.
     
+    Handles ONNX variants by looking up the base model preset.
+    
     Args:
         model_key: Canonical model_id (e.g., 'BAAI/bge-m3') or None
                    to auto-detect from the active loader.
@@ -115,14 +141,21 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
         ModelPreset matching the model, or DEFAULT_PRESET if unknown.
     """
     if model_key is not None:
-        return PRESETS.get(model_key, DEFAULT_PRESET)
+        # Direct lookup
+        if model_key in PRESETS:
+            return PRESETS[model_key]
+        # Try stripping -onnx suffix for fallback
+        if model_key.endswith("-onnx"):
+            base_key = model_key[:-5]
+            if base_key in PRESETS:
+                return PRESETS[base_key]
+        return DEFAULT_PRESET
     
     try:
         from src.core.Models import ModelManager, ModelCategory
         loader = ModelManager.get_loader()
-        # get_model_key() now returns canonical model_id via _resolve_key()
         model_key = loader.get_model_key(ModelCategory.EMBEDDING)
-        return PRESETS.get(model_key, DEFAULT_PRESET)
+        return get_preset(model_key)  # Recursive with the key
     except (RuntimeError, ValueError, ImportError):
         return DEFAULT_PRESET
 
@@ -130,7 +163,6 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
 # ═══════════════════════════════════════════════════════════════════════════
 # Hardware-aware batch sizing
 # ═══════════════════════════════════════════════════════════════════════════
-
 
 def get_optimal_batch_size(requested_size: int = 32) -> int:
     """
@@ -140,7 +172,11 @@ def get_optimal_batch_size(requested_size: int = 32) -> int:
     from src.features.Hardware.DeviceManager import DeviceManager
     import psutil
 
-    cfg = DeviceManager.get()
+    try:
+        cfg = DeviceManager.get()
+    except RuntimeError:
+        # DeviceManager not initialized — use safe defaults
+        return min(requested_size, 16)
 
     # GPU path
     if cfg.use_gpu:
@@ -169,6 +205,7 @@ def get_optimal_batch_size(requested_size: int = 32) -> int:
         return 64
 
     return requested_size
+
 
 def get_model_batch_size(preset: Optional[ModelPreset] = None, requested_size: int = 32) -> int:
     """

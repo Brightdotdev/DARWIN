@@ -11,7 +11,7 @@ from typing import List, Optional
 from src.core.Logger.DarwinLogger import (
     EventSubscriber, LogEvent, ProgressStartEvent, ProgressUpdateEvent, ProgressEndEvent,
     SpinnerStartEvent, SpinnerUpdateEvent, SpinnerEndEvent,
-    SessionStartEvent, SessionEndEvent, darwin,
+    SessionStartEvent, SessionEndEvent, darwin,LogType
 )
 
 _HISTORY_DIR = Path(".darwin_logs")
@@ -82,7 +82,7 @@ class HistoryRecorder(EventSubscriber):
                         d["log_type"] = d["log_type"].value
                     f.write(json.dumps(d) + "\n")
         except Exception as e:
-            print(f"[History] Failed to write session log: {e}")
+            darwin.log(f"[History] Failed to write session log: {e}", LogType.ERROR)
 
     def _start_cleanup_thread(self) -> None:
         def _cleanup_loop():

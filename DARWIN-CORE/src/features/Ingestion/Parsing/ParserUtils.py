@@ -22,11 +22,9 @@ from src.features.Ingestion.Parsing.lib import (
     NON_LATIN_ASCII_FLOOR,
     IMAGE_SLOT_RE,
     LARGE_PDF_CHUNK_PAGES,
-    LARGE_PDF_PAGE_THRESHOLD,
-    CPU_COUNT,
-    PARSE_TIMEOUT_SECONDS,
+    LARGE_PDF_PAGE_THRESHOLD
 )
-from src.features.Ingestion.Parsing.PdfExtractors import fitz_extract, pymupdf4llm_extract
+from src.features.Ingestion.Parsing.PDFExtractors import fitz_extract, pymupdf4llm_extract
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

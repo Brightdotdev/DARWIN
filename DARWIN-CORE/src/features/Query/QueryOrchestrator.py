@@ -12,10 +12,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pathlib import Path
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 # Local imports (assumes Darwin project structure)
-from ConversationStore import ConversationStore, TurnRecord, BlobRecord
-from ConversationCache import ConversationCache
+from src.features.Conversation.ConversationStore import ConversationStore, TurnRecord, BlobRecord
+from src.features.Conversation.ConversationCache import ConversationCache
 
 
 @dataclass
@@ -64,7 +65,7 @@ class DarwinLogger:
             "payload": payload
         }
         line = json.dumps(event, default=str)
-        print(line, flush=True)
+        darwin.log(line, flush=True)
         if self.log_file:
             with open(self.log_file, "a") as f:
                 f.write(line + "\n")

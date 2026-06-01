@@ -214,7 +214,13 @@ def _make_chunk(
 
     # Auto-detect cleaning mode from active model
     clean = prepare_embedding_text(text)
-    if len(clean.split()) < 4:
+    
+    # CHANGED: Token-based minimum instead of word count
+    # For e5-small-v2 (max 480, min 120): reject chunks < 30 tokens
+    config = get_chunk_config()
+    min_acceptable_tokens = max(4, config.min_tokens // 4)  # 30 for e5-small-v2
+    
+    if tokens(clean) < min_acceptable_tokens:
         return None
 
     caption_patterns = [
@@ -226,7 +232,7 @@ def _make_chunk(
     for pattern in caption_patterns:
         if re.match(pattern, clean, re.IGNORECASE):
             remaining = re.sub(pattern, '', clean, flags=re.IGNORECASE).strip()
-            if len(remaining.split()) < 3:
+            if tokens(remaining) < min_acceptable_tokens // 2:
                 return None
 
     return Chunk(
@@ -242,9 +248,6 @@ def _make_chunk(
         links       = links if links is not None else [],
     )
 
-
-
-
 def _split_with_overlap(
     text:        str,
     source:      str,
@@ -254,7 +257,11 @@ def _split_with_overlap(
     max_tokens:  int,
     overlap:     int,
 ) -> List["Chunk"]:
-    """Split text into sentence-windowed chunks with overlap."""
+    """Split text into sentence-windowed chunks with overlap.
+    
+    GUARANTEE: No output chunk exceeds max_tokens * 1.1 (10% tolerance).
+    Single sentences longer than max_tokens are force-split by character boundary.
+    """
     links = extract_links(text)
 
     orig_sents  = _split_sentences(text)
@@ -269,12 +276,58 @@ def _split_with_overlap(
     window_clean: List[str]     = []
     window_has_left_overlap: bool = False
 
+    def _force_split_oversized(sent_orig: str, sent_clean: str) -> List[Tuple[str, str]]:
+        """Split a single sentence that exceeds max_tokens into pieces."""
+        if tokens(sent_clean) <= max_tokens:
+            return [(sent_orig, sent_clean)]
+        
+        # Split by character count approximation (4 chars ≈ 1 token)
+        char_limit = max_tokens * 3  # conservative: 3 chars per token
+        pieces: List[Tuple[str, str]] = []
+        
+        # Try to split at word boundaries first
+        words_orig = sent_orig.split()
+        words_clean = sent_clean.split()
+        
+        if len(words_orig) != len(words_clean):
+            words_clean = sent_clean.split()  # fallback
+        
+        buf_orig: List[str] = []
+        buf_clean: List[str] = []
+        buf_toks = 0
+        
+        for wo, wc in zip(words_orig, words_clean):
+            word_toks = tokens(wc)
+            if buf_toks + word_toks > max_tokens and buf_clean:
+                pieces.append((" ".join(buf_orig), " ".join(buf_clean)))
+                buf_orig = [wo]
+                buf_clean = [wc]
+                buf_toks = word_toks
+            else:
+                buf_orig.append(wo)
+                buf_clean.append(wc)
+                buf_toks += word_toks
+        
+        if buf_clean:
+            pieces.append((" ".join(buf_orig), " ".join(buf_clean)))
+        
+        return pieces
+
     def _flush(will_continue: bool) -> None:
         nonlocal window_orig, window_clean, window_has_left_overlap
         if not window_orig:
             return
+        
         raw_text   = " ".join(window_orig)
         clean_join = " ".join(window_clean)
+        
+        # HARD CAP: If somehow we still exceeded max_tokens, force-truncate
+        if tokens(clean_join) > int(max_tokens * 1.1):
+            # Truncate clean_join to fit, then mirror truncation on raw_text
+            target_chars = max_tokens * 3  # rough char-to-token ratio
+            clean_join = clean_join[:target_chars].rsplit(" ", 1)[0]
+            raw_text = raw_text[:target_chars].rsplit(" ", 1)[0]
+        
         has_left  = window_has_left_overlap
         has_right = will_continue and overlap > 0 and len(window_orig) > overlap
         if has_left and has_right:
@@ -285,15 +338,30 @@ def _split_with_overlap(
             direction = OverlapDirection.RIGHT
         else:
             direction = OverlapDirection.NONE
+            
         c = Chunk(
             text=raw_text, clean=clean_join, index=index + len(chunks),
             source=source, token_count=tokens(clean_join), heading=heading,
             page=page, page_end=page, overlap_direction=direction, links=links,
         )
-        if len(clean_join.split()) >= 4:
+        # CHANGED: Token-based minimum, not word count
+        if tokens(clean_join) >= max(4, max_tokens // 10):  # min 4 tokens or 10% of max
             chunks.append(c)
 
     for i, (sent_orig, sent_clean) in enumerate(zip(orig_sents, clean_sents)):
+        # CHANGED: Handle oversized single sentences
+        if tokens(sent_clean) > max_tokens:
+            _flush(will_continue=True)
+            for piece_orig, piece_clean in _force_split_oversized(sent_orig, sent_clean):
+                window_orig = [piece_orig]
+                window_clean = [piece_clean]
+                window_has_left_overlap = False
+                _flush(will_continue=True)
+                window_orig = window_orig[-overlap:] if overlap else []
+                window_clean = window_clean[-overlap:] if overlap else []
+                window_has_left_overlap = bool(overlap and window_orig)
+            continue
+        
         trial_clean = window_clean + [sent_clean]
         if tokens(" ".join(trial_clean)) > max_tokens and window_clean:
             _flush(will_continue=True)
@@ -304,7 +372,6 @@ def _split_with_overlap(
         window_clean.append(sent_clean)
     _flush(will_continue=False)
     return chunks
-
 
 # ── Update section_to_chunks — no model_name ──
 
@@ -433,31 +500,20 @@ def merge_small(
 ) -> List[Chunk]:
     """
     Merge consecutive undersized chunks.
-
-    Normal case  (both small, same heading): merge if combined fits.
-    Cross-heading (both tiny, < min_tokens/2): merge ONLY if fits AND the
-    heading difference is minor (one of them has no heading) to avoid silently
-    destroying citation metadata across unrelated sections.
-
-    When chunks are merged:
-    - The combined overlap_direction is the union of both directions, so no
-      overlap information is silently lost.
-    - Token counts are re-estimated after merge to account for the joining
-      whitespace (naive addition would undercount slightly).
+    
+    CHANGED: 
+    - tiny_threshold lowered to min_tokens // 3 (was // 2)
+    - Cross-heading merge allowed for any tiny chunk, not just unheaded ones
+    - Final pass: drop any chunk still below absolute minimum
     """
     if not chunks:
         return []
 
-    tiny_threshold = min_tokens // 2
+    tiny_threshold = min_tokens // 3   # CHANGED: was // 2. For e5-small-v2: 40 tokens
     merged: List[Chunk]     = []
     buf:    Optional[Chunk] = None
 
     def _merge_directions(a: OverlapDirection, b: OverlapDirection) -> OverlapDirection:
-        """
-        Union the overlap directions of two chunks being merged.
-        We keep LEFT from `a` (it opened with borrowed sentences) and
-        RIGHT from `b` (it donated its tail forward).
-        """
         has_left  = a in (OverlapDirection.LEFT,  OverlapDirection.BOTH)
         has_right = b in (OverlapDirection.RIGHT, OverlapDirection.BOTH)
         if has_left and has_right:
@@ -478,13 +534,12 @@ def merge_small(
         combined_toks  = tokens(combined_clean)
 
         fits       = combined_toks <= max_tokens
-        both_small = buf.token_count < min_tokens  and chunk.token_count < min_tokens
+        both_small = buf.token_count < min_tokens and chunk.token_count < min_tokens
         both_tiny  = buf.token_count < tiny_threshold and chunk.token_count < tiny_threshold
         same_sec   = buf.heading == chunk.heading
 
-        # Cross-heading tiny merge: only allow when at least one side has no
-        # heading (e.g. a preamble paragraph), not between two named sections.
-        cross_heading_ok = both_tiny and (not buf.heading or not chunk.heading)
+        # CHANGED: Cross-heading merge allowed for any tiny pair
+        cross_heading_ok = both_tiny
 
         should_merge = fits and ((both_small and same_sec) or cross_heading_ok)
 
@@ -508,5 +563,9 @@ def merge_small(
 
     if buf:
         merged.append(buf)
+
+    # CHANGED: Final filter — drop any chunk still below absolute floor
+    absolute_floor = max(4, min_tokens // 4)  # 30 for e5-small-v2
+    merged = [c for c in merged if c.token_count >= absolute_floor]
 
     return merged

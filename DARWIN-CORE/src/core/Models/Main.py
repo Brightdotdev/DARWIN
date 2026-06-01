@@ -4,9 +4,8 @@ import argparse
 import sys
 from typing import Optional
 
-from src.features.Hardware.SystemDetector import detect_system, recommend_defaults
-from src.features.Hardware.DeviceManager import DeviceManager
-from src.core.Models.ModelRegistry import ModelCategory, by_category, get_spec
+from src.features.Hardware.SystemDetector import detect_system
+from src.core.Models.ModelRegistry import ModelCategory, by_category, get_spec, REGISTRY
 from src.core.Models.ModelManager import ModelManager
 from src.core.Models.ModelSetup import handle_download_error
 from src.core.Storage.DarwinStore import DarwinStore
@@ -16,10 +15,17 @@ from src.lib.KeyManager import (
     load_keys_from_keychain,
     PROVIDER_REGISTRY,
 )
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 def handle_models(args):
-    store = DarwinStore()
+    # Graceful store initialization
+    try:
+        store = DarwinStore()
+    except Exception:
+        store = None
+        darwin.log("⚠️  DarwinStore not available — migration features disabled", LogType.WARNING)
+
     manager = ModelManager(darwin_store=store)
 
     if args.command == "key":
@@ -41,18 +47,22 @@ def handle_models(args):
                     provider = model.split("/")[0]
                     env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
                     if env_var and not __import__("os").getenv(env_var):
-                        print(f"⚠️  API key for {provider} is not set. "
-                              f"Use 'python -m src.Models.cli key set {provider} YOUR_KEY' "
-                              f"or the onboarding wizard.")
+                        darwin.log(f"⚠️  API key for {provider} is not set. "
+                                   f"Use 'python -m src.Models.cli key set {provider} YOUR_KEY' "
+                                   f"or the onboarding wizard.", LogType.WARNING)
         elif args.category:
             manager.install_category(args.category, tier=getattr(args, "tier", "all") or "all")
         else:
-            ModelManager.setup()
-            loader = ModelManager.get_loader()
-            prefs = loader.get_preferences()
-            print("\n✅ Installed recommended models:")
-            for category, model_id in prefs.items():
-                print(f"   {category}: {model_id}")
+            try:
+                ModelManager.setup()
+                loader = ModelManager.get_loader()
+                prefs = loader.get_preferences()
+                darwin.log("\n✅ Installed recommended models:")
+                for category, model_id in prefs.items():
+                    darwin.log(f"   {category}: {model_id}")
+            except Exception as e:
+                darwin.log(f"❌ Setup failed: {e}", LogType.ERROR)
+                darwin.log("💡 Try running 'python -m src.core.Models.cli setup-custom' instead", LogType.INFO)
 
     elif args.command == "setup":
         if args.profile == "required":
@@ -64,7 +74,7 @@ def handle_models(args):
 
     elif args.command == "uninstall":
         if not args.model:
-            print("❌ Specify --model to uninstall")
+            darwin.log("❌ Specify --model to uninstall", LogType.ERROR)
             return
         for model in args.model:
             manager.uninstall(model)
@@ -78,13 +88,13 @@ def handle_models(args):
             for key in cat_models:
                 if manager.model_store.is_downloaded(key):
                     manager.upgrade(key)
-            print(f"✅ Upgraded all {args.category} models.")
+            darwin.log(f"✅ Upgraded all {args.category} models.")
         else:
-            print("❌ Specify --model or --category to upgrade")
+            darwin.log("❌ Specify --model or --category to upgrade", LogType.ERROR)
 
     elif args.command == "switch":
         if not args.category:
-            print("❌ Specify --category")
+            darwin.log("❌ Specify --category", LogType.ERROR)
             return
         migrate = getattr(args, "migrate", False)
         if args.interactive or not args.model:
@@ -92,11 +102,31 @@ def handle_models(args):
         else:
             manager.switch(args.category, args.model[0], migrate=migrate)
 
+    elif args.command == "switch-format":
+        # NEW: Switch with format preference
+        if not args.category or not args.base_model:
+            darwin.log("❌ Specify --category and --base-model", LogType.ERROR)
+            return
+        try:
+            selected = manager.switch_with_format(
+                args.category,
+                args.base_model,
+                prefer_format=getattr(args, "format", None),
+                migrate=getattr(args, "migrate", False),
+            )
+            darwin.log(f"✅ Switched to {selected}")
+        except ValueError as e:
+            darwin.log(f"❌ {e}", LogType.ERROR)
+
     elif args.command == "setup-custom":
-        import asyncio
-        from src.core.Models.ModelStartup import run_onboarding_async
-        asyncio.run(run_onboarding_async())
-        print("✅ Custom setup complete. Run 'status' to see your models.")
+        try:
+            import asyncio
+            from src.core.Models.ModelStartup import run_onboarding_async
+            asyncio.run(run_onboarding_async())
+            darwin.log("✅ Custom setup complete. Run 'status' to see your models.")
+        except ImportError:
+            darwin.log("❌ ModelStartup not available. Run setup instead:", LogType.ERROR)
+            darwin.log("   python -m src.core.Models.cli setup --profile recommended", LogType.INFO)
 
     elif args.command == "validate":
         from src.core.Models.ModelSetup import validate_model, validate_category
@@ -105,91 +135,144 @@ def handle_models(args):
             for key in args.model:
                 result = validate_model(key, system, manager.model_store)
                 if result.can_run:
-                    print(f"✅ {key} — OK")
+                    darwin.log(f"✅ {key} — OK")
                 else:
-                    print(f"❌ {key}: {', '.join(result.warnings)}")
+                    darwin.log(f"❌ {key}: {', '.join(result.warnings)}", LogType.ERROR)
         elif args.category:
             results = validate_category(args.category, system, manager.model_store)
             for r in results:
                 if r.can_run:
-                    print(f"✅ {r.model_key} — OK")
+                    darwin.log(f"✅ {r.model_key} — OK")
                 else:
-                    print(f"⚠️  {r.model_key}: {', '.join(r.warnings)}")
+                    darwin.log(f"⚠️  {r.model_key}: {', '.join(r.warnings)}", LogType.WARNING)
 
 
 def interactive_switch(manager: ModelManager, category: str, migrate: bool = False):
+    """
+    Interactive model selection with registry-based filtering.
+    Shows availability status, format tags, and handles API key requirements.
+    """
     import os
     from src.core.Models.ModelRegistry import REGISTRY
     from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
+    from src.features.Hardware.Capabilities import Capabilities
 
-    load_keys_from_keychain()
+    try:
+        load_keys_from_keychain()
+    except Exception:
+        pass  # Graceful — API models just won't show as available
 
+    caps = Capabilities.detect()
+    torch_available = caps.torch_available
+
+    # Get models from registry for this category
     models = [(key, spec) for key, spec in REGISTRY.items() if spec.category == category]
     if not models:
-        print(f"No models defined for category '{category}'.")
+        darwin.log(f"No models defined for category '{category}'.")
         return
 
+    # Sort by tier
     tier_order = {"light": 0, "medium": 1, "large": 2, "overkill": 3}
     models.sort(key=lambda x: tier_order.get(x[1].tier, 99))
 
+    # Filter and annotate
     displayed = []
     for key, spec in models:
-        if spec.disk_mb == 0:                     # API model
+        # Skip PyTorch models if torch plugin not installed
+        if spec.requires_plugin == "torch" and not torch_available:
+            continue
+
+        # Skip API models if key not set
+        if spec.loader.startswith("api_"):
             provider = key.split("/")[0]
             env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
-            if not env_var or not os.getenv(env_var):
+            if env_var and not os.getenv(env_var):
                 continue
+
         displayed.append((key, spec))
 
     if not displayed:
-        print("No models available (local models or API models with valid keys).")
+        darwin.log("\nNo models available.")
+        if not torch_available:
+            darwin.log("💡 Install torch plugin for local vision/PyTorch models.")
+        darwin.log("💡 Set API keys for cloud models:")
+        darwin.log("   python -m src.core.Models.cli key set <provider> <key>")
         return
 
-    print(f"\nAvailable models for {category}:")
-    for i, (key, spec) in enumerate(displayed, 1):
-        installed = manager.model_store.is_downloaded(key)
-        if spec.disk_mb == 0:
-            size = "API"
-            key_icon = "🔑"
-            status = " [key set]" if not installed else " [ready]"
-        else:
-            size = f"{spec.disk_mb}MB"
-            key_icon = ""
-            status = " [installed]" if installed else ""
-        print(f"  [{i}] {key} ({spec.tier}, {size}, RAM {spec.ram_gb}GB) {key_icon}{status}")
+    # Group by base model for format selection
+    base_models = {}
+    for key, spec in displayed:
+        base = spec.model_id
+        if base not in base_models:
+            base_models[base] = []
+        base_models[base].append((key, spec))
 
-    choice = input(f"\nSelect model number (1-{len(displayed)}) or q to cancel: ").strip()
+    darwin.log(f"\n{'='*60}")
+    darwin.log(f"Available models for {category}")
+    darwin.log(f"{'='*60}")
+
+    idx = 1
+    index_map = {}
+    for base, variants in sorted(base_models.items()):
+        darwin.log(f"\n📦 {base}")
+        for key, spec in variants:
+            installed = manager.model_store.is_downloaded(key)
+            size = f"{spec.disk_mb}MB" if spec.disk_mb > 0 else "API"
+
+            # Build status indicator
+            if spec.loader.startswith("api_"):
+                status = "🔑 API"
+            elif spec.loader in ("onnx_embedding", "onnx_reranker"):
+                status = "⚡ ONNX"
+            elif spec.requires_plugin == "torch":
+                status = "🔥 PyTorch"
+            else:
+                status = "📦 Local"
+
+            install_marker = " ✅" if installed else ""
+
+            darwin.log(f"  [{idx}] {status:<12} {key:<30} ({spec.tier}, {size}, RAM {spec.ram_gb}GB){install_marker}")
+            index_map[idx] = key
+            idx += 1
+
+    darwin.log(f"\n{'='*60}")
+    choice = input(f"Select model number (1-{len(index_map)}) or q to cancel: ").strip()
     if choice.lower() == 'q':
         return
 
     try:
-        idx = int(choice) - 1
-        if 0 <= idx < len(displayed):
-            selected_key = displayed[idx][0]
+        idx = int(choice)
+        if idx in index_map:
+            selected_key = index_map[idx]
+            darwin.log(f"Switching to {selected_key}...")
             manager.switch(category, selected_key, migrate=migrate)
         else:
-            print("Invalid selection.")
+            darwin.log("Invalid selection.", LogType.ERROR)
     except ValueError:
-        print("Invalid input.")
+        darwin.log("Invalid input.", LogType.ERROR)
 
 
 def handle_keys(args):
-    load_keys_from_keychain()
+    try:
+        load_keys_from_keychain()
+    except Exception as e:
+        darwin.log(f"⚠️  Could not load keychain: {e}", LogType.WARNING)
+
     if args.key_command == "set":
         set_api_key(args.provider, args.key_value, validate=not args.no_validate)
-        print(f"✅ API key for {args.provider} saved and activated.")
+        darwin.log(f"✅ API key for {args.provider} saved and activated.")
     elif args.key_command == "remove":
         clear_api_key(args.provider)
-        print(f"✅ API key for {args.provider} removed.")
+        darwin.log(f"✅ API key for {args.provider} removed.")
     elif args.key_command == "list":
         import os
-        print("Providers and key status:")
+        darwin.log("Providers and key status:")
         for provider, (env_var, _) in PROVIDER_REGISTRY.items():
             key_set = bool(os.getenv(env_var))
             status = "🔑 set" if key_set else "❌ missing"
-            print(f"  {provider}: {status}")
+            darwin.log(f"  {provider}: {status}")
     else:
-        print("Unknown key command.")
+        darwin.log("Unknown key command.", LogType.ERROR)
 
 
 def create_parser():
@@ -199,12 +282,12 @@ def create_parser():
         epilog="""
 Examples:
   python -m src.Models.cli status
-  python -m src.Models.cli install --tokenizer
-  python -m src.Models.cli install --category embedding --tier light
-  python -m src.Models.cli install --caption
-  python -m src.Models.cli switch --category embedding --model BAAI/bge-m3
+  python -m src.Models.cli list --category embedding
+  python -m src.Models.cli install --model BAAI/bge-m3-onnx
+  python -m src.Models.cli switch --category embedding
+  python -m src.Models.cli switch-format --category embedding --base-model BAAI/bge-m3 --format onnx
   python -m src.Models.cli upgrade --category embedding
-  python -m src.Models.cli uninstall --model intfloat/e5-small-v2
+  python -m src.Models.cli uninstall --model intfloat/e5-small-v2-onnx
   python -m src.Models.cli key set openai sk-... --no-validate
   python -m src.Models.cli key list
         """,
@@ -249,6 +332,16 @@ Examples:
     switch_parser.add_argument("--migrate", action="store_true",
                                help="Migrate embeddings after switching (embedding category only)")
 
+    # NEW: switch-format command
+    switch_fmt_parser = subparsers.add_parser("switch-format", help="Switch model with format preference (ONNX/PyTorch)")
+    switch_fmt_parser.add_argument("--category", "-c", required=True,
+                                   choices=[c.value for c in ModelCategory])
+    switch_fmt_parser.add_argument("--base-model", "-b", required=True,
+                                   help="Base model name, e.g., 'BAAI/bge-m3'")
+    switch_fmt_parser.add_argument("--format", "-f", choices=["onnx", "pytorch"],
+                                   help="Preferred format (auto-detect if omitted)")
+    switch_fmt_parser.add_argument("--migrate", action="store_true")
+
     setup_parser = subparsers.add_parser("setup", help="Complete setup")
     setup_parser.add_argument("--profile", "-p", choices=["required", "recommended"], default="required")
 
@@ -270,16 +363,16 @@ def main():
     try:
         handle_models(args)
     except KeyboardInterrupt:
-        print("\n\n⚠️  Operation cancelled by user")
-        print("   Partial downloads are saved and will resume on next run.")
+        darwin.log("\n\n⚠️  Operation cancelled by user", LogType.WARNING)
+        darwin.log("   Partial downloads are saved and will resume on next run.", LogType.WARNING)
         sys.exit(1)
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        darwin.log(f"\n❌ Error: {e}", LogType.ERROR)
         if args.command == "install" and hasattr(args, "model") and args.model:
             for model in args.model:
                 handle_download_error(e, model)
         else:
-            print("\n💡 Try running with --help for usage information.")
+            darwin.log("\n💡 Try running with --help for usage information.", LogType.INFO)
         sys.exit(1)
 
 

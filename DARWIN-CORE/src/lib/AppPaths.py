@@ -50,3 +50,7 @@ def conversation_db_path() -> Path:
     """Platform-appropriate global models directory."""
     return  default_conversations_dir() / "darwin_conversations.db"
 
+
+def default_plugins_dir() -> Path:
+    """Platform-appropriate global plugins directory."""
+    return get_darwin_dir() / "plugins"
