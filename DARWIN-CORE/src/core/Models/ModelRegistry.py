@@ -21,7 +21,7 @@ class ModelSpec:
     disk_mb: int
     loader: Literal[
         "sentence_transformers", "cross_encoder", "transformers", "spacy",
-        "none", "embedding_hf", "embedding_st", "onnx_embedding",
+        "embedding_hf", "embedding_st", "onnx_embedding",
         "api_embedding", "api_reranker", "api_vision"
     ]
     required: bool = True
@@ -301,7 +301,7 @@ def by_category(category: str) -> dict[str, ModelSpec]:
 
 _VALID_LOADERS = {
     "sentence_transformers", "cross_encoder", "transformers",
-    "spacy", "none", "embedding_hf", "embedding_st",
+    "spacy","embedding_hf", "embedding_st",
     "onnx_embedding",  "onnx_reranker", 
     "api_embedding", "api_reranker", "api_vision",
 }

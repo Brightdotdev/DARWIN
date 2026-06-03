@@ -13,11 +13,8 @@ from typing import Optional
 import time
 
 
-import os
-import tempfile
 from pathlib import Path
-from typing import Any,Iterable
-
+from typing import Any
 
 
 
@@ -72,6 +69,64 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def reconstruct_records(rows: list[dict[str, Any]], cls: Any = None) -> list[Any]:
+    """
+    Reconstruct objects from plain dict rows using duck typing.
+    Runtime reconstruction happens OUTSIDE the storage layer, but this helper
+    is provided for convenience in the retrieval pipeline.
+    """
+    if cls is None or not rows:
+        return rows
+
+    # Pydantic v2
+    if hasattr(cls, "model_validate") and callable(cls.model_validate):
+        return [cls.model_validate(row) for row in rows]
+
+    # Pydantic v1
+    if hasattr(cls, "parse_obj") and callable(cls.parse_obj):
+        return [cls.parse_obj(row) for row in rows]
+
+    # Dataclass
+    dc_fields = getattr(cls, "__dataclass_fields__", None)
+    if dc_fields is not None:
+        valid = set(dc_fields)
+        return [
+            cls(**{k: v for k, v in row.items() if k in valid})
+            for row in rows
+        ]
+
+    # attrs
+    attrs_attrs = getattr(cls, "__attrs_attrs__", None)
+    if attrs_attrs is not None:
+        valid = {a.name for a in attrs_attrs}
+        return [
+            cls(**{k: v for k, v in row.items() if k in valid})
+            for row in rows
+        ]
+
+    # Generic fallback: inspect __init__ signature to avoid passing unknown kwargs
+    import inspect
+    try:
+        sig = inspect.signature(cls.__init__)
+        valid = {
+            p.name for p in sig.parameters.values()
+            if p.name != "self" and p.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.KEYWORD_ONLY,
+            )
+        }
+        return [
+            cls(**{k: v for k, v in row.items() if k in valid})
+            for row in rows
+        ]
+    except (ValueError, TypeError):
+        pass
+
+    # Last resort: pass all kwargs and hope for the best
+    return [cls(**row) for row in rows]
+
+
+
 
 def write_json(path: Path, data: Any, compact: bool = False, max_retries: int = 3) -> None:
     """Write JSON atomically with retry on Windows PermissionError."""
@@ -106,6 +161,4 @@ def read_json(path: Path) -> dict | None:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
-
-
 

@@ -1,19 +1,26 @@
+"""
+src/core/Models/EmbeddingConfig.py
+-----------------------------------
+Model presets for chunking, prompting, and batch sizing.
+Covers embedding models, reranker models, and API-based variants.
+"""
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Model preset — complete config for one embedding model
+# Model preset — complete config for one embedding/reranker model
 # ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class ModelPreset:
-    """Complete configuration for a specific embedding model."""
+    """Complete configuration for a specific embedding or reranker model."""
     # ── Chunking ──
     max_tokens: int
     min_tokens: int
     overlap: int
-    category: Literal["plain_text", "semantic_markdown"]
+    category: Literal["plain_text", "semantic_markdown", "reranker"]
     
     # ── Prompting ──
     needs_prefix: bool = True
@@ -30,11 +37,12 @@ class ModelPreset:
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Registry — keyed by canonical model_id (from ModelRegistry REGISTRY keys)
-# NEW: Added ONNX variants
 # ═══════════════════════════════════════════════════════════════════════════
 
 PRESETS: dict[str, ModelPreset] = {
-    # ── PyTorch models ──
+    # ──────────────────────────────────────────────────────────────────
+    # Embedding — PyTorch
+    # ──────────────────────────────────────────────────────────────────
     "intfloat/e5-small-v2": ModelPreset(
         max_tokens=480,
         min_tokens=120,
@@ -63,8 +71,10 @@ PRESETS: dict[str, ModelPreset] = {
         instruction_template="<|user|>\nRepresent this passage for retrieval: {text}\n<|assistant|>\n",
         model_name="GritLM/GritLM-7B",
     ),
-    
-    # ── ONNX variants (same behavior as PyTorch counterparts) ──
+
+    # ──────────────────────────────────────────────────────────────────
+    # Embedding — ONNX
+    # ──────────────────────────────────────────────────────────────────
     "intfloat/e5-small-v2-onnx": ModelPreset(
         max_tokens=480,
         min_tokens=120,
@@ -83,8 +93,10 @@ PRESETS: dict[str, ModelPreset] = {
         needs_prefix=False,
         model_name="BAAI/bge-m3",
     ),
-    
-    # ── API models ──
+
+    # ──────────────────────────────────────────────────────────────────
+    # Embedding — API
+    # ──────────────────────────────────────────────────────────────────
     "openai/text-embedding-3-small": ModelPreset(
         max_tokens=8000,
         min_tokens=400,
@@ -117,6 +129,42 @@ PRESETS: dict[str, ModelPreset] = {
         needs_prefix=False,
         model_name="voyage/voyage-3-lite",
     ),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Reranker — Local
+    # ──────────────────────────────────────────────────────────────────
+    "cross-encoder/ms-marco-MiniLM-L-12-v2": ModelPreset(
+        max_tokens=512,
+        min_tokens=10,
+        overlap=0,
+        category="reranker",
+        needs_prefix=False,
+        model_name="cross-encoder/ms-marco-MiniLM-L-12-v2",
+    ),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Reranker — ONNX
+    # ──────────────────────────────────────────────────────────────────
+    "cross-encoder/ms-marco-MiniLM-L-6-v2-onnx": ModelPreset(
+        max_tokens=512,
+        min_tokens=10,
+        overlap=0,
+        category="reranker",
+        needs_prefix=False,
+        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+    ),
+
+    # ──────────────────────────────────────────────────────────────────
+    # Reranker — API
+    # ──────────────────────────────────────────────────────────────────
+    "cohere/rerank-english-v3.0": ModelPreset(
+        max_tokens=512,
+        min_tokens=10,
+        overlap=0,
+        category="reranker",
+        needs_prefix=False,
+        model_name="cohere/rerank-english-v3.0",
+    ),
 }
 
 # Fallback for unknown models
@@ -144,11 +192,7 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
         # Direct lookup
         if model_key in PRESETS:
             return PRESETS[model_key]
-        # Try stripping -onnx suffix for fallback
-        if model_key.endswith("-onnx"):
-            base_key = model_key[:-5]
-            if base_key in PRESETS:
-                return PRESETS[base_key]
+    
         return DEFAULT_PRESET
     
     try:
@@ -232,5 +276,7 @@ def get_model_batch_size(preset: Optional[ModelPreset] = None, requested_size: i
         return base_size
     elif "e5-small" in model_name or "e5" in model_name:
         return base_size * 2
+    elif "minilm" in model_name:
+        return base_size * 4  # Tiny model — can handle large batches
 
     return base_size

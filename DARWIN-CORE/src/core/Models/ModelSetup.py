@@ -1,53 +1,40 @@
-"""
-src/core/Models/ModelSetup.py
--------------------------------
-Custom model selection with hardware validation.
-Checks RAM, disk space, and inference viability before downloading.
-"""
 
+# src/core/Models/ModelSetup.py
 from dataclasses import dataclass
 from typing import Optional, List
 from src.core.Models.ModelRegistry import REGISTRY, get_spec
 from src.features.Hardware.SystemDetector import SystemInfo
 from src.core.Models.ModelStore import ModelStore
 from src.core.Logger.DarwinLogger import darwin, LogType
+from src.lib.KeyManager import is_key_set
 
 @dataclass
 class ValidationResult:
-    """Result of checking if a model can run on this hardware."""
     model_key: str
     can_run: bool
     ram_ok: bool
     disk_ok: bool
     warnings: List[str]
 
-
 def validate_model(key: str, system: SystemInfo, store: Optional[ModelStore] = None) -> ValidationResult:
-    """
-    Check if a model can run on this system.
-    Returns a ValidationResult with details about each constraint.
-    """
-    from src.lib.KeyManager import PROVIDER_REGISTRY
-    import os
     if key not in REGISTRY:
         return ValidationResult(key, False, False, False, [f"Unknown model: {key}"])
-    
+
     spec = get_spec(key)
     warnings = []
     ram_ok = system.can_run(spec)
     disk_ok = system.has_disk_space(spec) if not (store and store.is_downloaded(key)) else True
-    
+
     if not ram_ok:
         warnings.append(f"Needs {spec.ram_gb}GB RAM (you have {system.ram_gb}GB)")
     if not disk_ok:
         needed_gb = spec.disk_mb / 1024
         warnings.append(f"Needs {needed_gb:.1f}GB disk (you have {system.disk_free_gb:.1f}GB free)")
     if spec.disk_mb == 0:  # API model
-        provider = key.split('/')[0]
-        env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
-        if env_var and not os.getenv(env_var):
+        provider = key.split("/")[0]
+        if not is_key_set(provider):
             warnings.append(f"API key for {provider} not set; model won't work until key is provided")
- 
+
     return ValidationResult(
         model_key=key,
         can_run=(ram_ok and disk_ok),
@@ -56,32 +43,17 @@ def validate_model(key: str, system: SystemInfo, store: Optional[ModelStore] = N
         warnings=warnings,
     )
 
-
 def validate_category(category: str, system: SystemInfo, store: Optional[ModelStore] = None) -> List[ValidationResult]:
-    """Validate all models in a category. Returns list of results for each model."""
-    return [
-        validate_model(key, system, store)
-        for key, spec in REGISTRY.items()
-        if spec.category == category
-    ]
-
+    return [validate_model(key, system, store) for key, spec in REGISTRY.items() if spec.category == category]
 
 def select_best_for_category(category: str, system: SystemInfo) -> Optional[str]:
-    """
-    Pick the best model for a category given hardware constraints.
-    Returns the best model key that CAN run, or None if nothing fits.
-    """
-    candidates = [
-        (key, spec) for key, spec in REGISTRY.items()
-        if spec.category == category and system.can_run(spec)
-    ]
+    candidates = [(key, spec) for key, spec in REGISTRY.items() if spec.category == category and system.can_run(spec)]
     if not candidates:
         return None
-    
-    # Sort by tier (best first), then by RAM requirement (lowest first as tiebreaker)
     tier_order = {"overkill": 4, "large": 3, "medium": 2, "light": 1}
     candidates.sort(key=lambda x: (tier_order.get(x[1].tier, 0), -x[1].ram_gb), reverse=True)
     return candidates[0][0]
+
 
 
 def calculate_download_size(selected_models: dict[str, str], store: ModelStore) -> dict:

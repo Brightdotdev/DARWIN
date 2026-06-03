@@ -1,319 +1,485 @@
-```markdown
-# Darwin Model Manager
+# Darwin Model Management System
 
-A complete CLI and Python API for managing AI models in the Darwin ecosystem. Download, switch, and uninstall local models; configure API providers; and maintain a persistent, config‑driven active‑model state per category.
-
----
-
-## Table of Contents
-
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [CLI Commands](#cli-commands)
-- [Python API](#python-api)
-- [Config File](#config-file)
-- [Workflows](#workflows)
-- [FAQ](#faq)
+A modular, production‑grade system for downloading, caching, verifying, and loading AI models. Supports local PyTorch, ONNX, spaCy, and API‑based models with automatic hardware validation, plugin management, and a CLI for full control.
 
 ---
 
-## Architecture
+## Architecture Overview
 
 ```
-┌──────────────┐       ┌──────────────────┐       ┌─────────────────┐
-│   cli.py     │──────▶│  ModelManager    │──────▶│  ModelConfig    │
-│  (argparse)  │       │  (orchestrator)  │       │  (JSON on disk) │
-└──────────────┘       └────────┬─────────┘       └─────────────────┘
-                                │
-                   ┌────────────┼────────────┐
-                   │            │            │
-              ModelStore   ModelLoader   DarwinStore
-              (downloads)  (inference)   (migration)
+┌─────────────────────────────────────────────────┐
+│                    ModelManager                  │
+│  (orchestrator, user-facing API & CLI backend)   │
+└──────────┬──────────┬──────────────┬────────────┘
+           │          │              │
+    ┌──────▼──────┐ ┌─▼──────────┐ ┌▼─────────────────┐
+    │ ModelLoader │ │ ModelStore │ │ PluginManager     │
+    │(caching,     │ │(download,  │ │(torch plugin, etc)│
+    │ loading,     │ │ verify,    │ └───────────────────┘
+    │ fallback)    │ │ delete)    │
+    └──────┬───────┘ └─┬──────────┘
+           │           │
+    ┌──────▼───────┐ ┌─▼──────────────────────┐
+    │  Wrappers    │ │  Downloaders            │
+    │  (ONNX, HF,  │ │  (PyTorch, ONNX, spaCy) │
+    │   API)       │ └─────────────────────────┘
+    └──────────────┘
 ```
 
-- **`ModelStore`** – Singleton that downloads/verifies/deletes model files on disk.  
-- **`ModelLoader`** – Lazily loads models into memory, wrapping them for unified inference.  
-- **`ModelConfig`** – Persists `{category: active_model_id}` to `~/.darwin/active_models.json`.  
-- **`ModelManager`** – User‑facing orchestrator; handles switching, installing, uninstalling, and migration.  
-- **`DarwinStore`** – Tracks which files were embedded with which model (only needed for migration).
+- **ModelRegistry** – static definitions of all supported models (`ModelSpec`).
+- **ModelPreset** – chunking & prompting parameters per model (in `EmbeddingConfig`).
+- **ModelStore** – manages disk storage, downloads, and verification; delegates to specialised downloaders.
+- **ModelLoader** – loads models on‑demand with LRU cache, plugin checks, and ONNX fallback.
+- **ModelManager** – high‑level API for setup, switching, migrating, and status.
+- **PluginManager / TorchPlugin** – optional heavy dependency installation (PyTorch, transformers).
+- **CLI** – command‑line interface to all functionality.
 
 ---
 
-## Quick Start
+## 1. Model Registry (`ModelSpec`)
 
-### 1. First‑time Setup (Interactive)
+Every model is defined in `REGISTRY` (in `ModelRegistry.py`). Key fields:
+
+```python
+@dataclass
+class ModelSpec:
+    model_id: str          # HuggingFace ID, e.g. "BAAI/bge-m3"
+    category: str          # "embedding", "reranker", "vision", "tokenizer"
+    tier: str              # "light", "medium", "large", "overkill"
+    ram_gb: int            # required system RAM
+    disk_mb: int           # download size (0 for API models)
+    loader: str            # e.g. "onnx_embedding", "embedding_hf", "api_embedding"
+    required: bool         # always installed?
+    experimental: bool
+    notes: str
+    requires_plugin: str   # e.g. "torch"
+    onnx_available: bool
+    min_length: int        # tokeniser minimum
+    max_length: int        # tokeniser maximum
+    normalize: bool        # L2‑normalise embeddings
+```
+
+
+
+## 2. Model Presets (`EmbeddingConfig`)
+
+Defines chunking strategy, prompting prefixes, and instruction templates for each embedding model.
+
+```python
+from src.core.Models.EmbeddingConfig import get_preset
+
+preset = get_preset("BAAI/bge-m3-onnx")
+print(preset.max_tokens, preset.overlap, preset.category)
+# 8000, 5, "semantic_markdown"
+```
+
+Used by the chunking pipeline to pre‑split documents before embedding.
+
+---
+
+## 3. ModelStore (download, cache, verify)
+
+Singleton: `get_model_store()`.  
+Handles all storage operations – never need to instantiate manually.
+
+### Public API
+
+| Method | Description |
+|--------|-------------|
+| `store.model_path(key, format=None)` | Get canonical disk path for a model. |
+| `store.is_downloaded(key, format=None)` | `True` if model is fully cached and valid. |
+| `store.ensure(key, force=False)` | Download if missing; returns the local `Path`. |
+| `store.download(key, force=False, minimal=True)` | Trigger download for a model. |
+| `store.delete(key, format=None)` | Remove a model from disk. |
+| `store.list_installed()` | List keys of all cached models. |
+| `store.installed_size(key)` | Human‑readable size of installed model. |
+| `store.get_format(key)` | Return storage format (`"onnx"`, `"pytorch"`, `"spacy"`). |
+
+### Usage
+
+```python
+from src.core.Models.ModelStore import get_model_store
+
+store = get_model_store()
+
+# Ensure a model is ready
+path = store.ensure("BAAI/bge-m3-onnx")  # downloads if not cached
+
+# Check status
+if store.is_downloaded("intfloat/e5-small-v2"):
+    print("Cached")
+
+# Delete a model
+store.delete("intfloat/e5-small-v2", format="onnx")
+
+# List all installed
+print(store.list_installed())
+```
+
+---
+
+## 4. ModelLoader (load models into memory)
+
+Uses the store to get local paths, wraps models into a uniform interface, caches loaded objects (LRU).
+
+### Public API
+
+| Method | Description |
+|--------|-------------|
+| `loader.get(category: ModelCategory)` | Load the active model for a category. |
+| `loader.preferences` | Dict of category → model key currently set. |
+| `loader.set_preference(category, key)` | Switch the active model for a category. |
+| `loader.resolve_key(key, category)` | Resolve a user‑facing key to a registry key. |
+| `loader.unload(category)` | Remove a model from memory (and clear GPU cache if applicable). |
+| `loader.ensure_ready(category)` | Return the loaded model or `None` if not ready. |
+
+### Usage
+
+```python
+from src.core.Models.ModelLoader import ModelLoader
+from src.core.Models.ModelRegistry import ModelCategory
+
+loader = ModelLoader()  # auto-loads preferences from config
+
+# Get the active embedding model
+embedder = loader.get(ModelCategory.EMBEDDING)
+# embedder is an ONNXEmbeddingWrapper, SentenceTransformer, or API wrapper
+
+# Use it directly
+vectors = embedder.encode(["Hello world"])  # numpy array
+
+# Get reranker
+reranker = loader.get(ModelCategory.RERANKER)
+scores = reranker.predict([("query", "document")])
+
+# Switch embedding model
+loader.set_preference("embedding", "BAAI/bge-m3-onnx")
+# Next call to loader.get(EMBEDDING) will use the new model.
+
+# Unload to free memory
+loader.unload(ModelCategory.EMBEDDING)
+```
+
+**Important:** `ModelLoader` does **not** download plugins automatically. If a model requires `torch` and it’s missing, a `PluginRequiredError` is raised. The user must install the plugin manually (see Section 7).
+
+---
+
+## 5. ModelManager (high‑level orchestration)
+
+Wraps `ModelLoader` and `ModelStore`, adds setup wizards, migration, and model listing.
+
+### Public API
+
+| Method | Description |
+|--------|-------------|
+| `manager.status()` | Print installed model status. |
+| `manager.list_models(category=None)` | Print available models. |
+| `manager.list_available_models(category=None)` | Return detailed list for UI. |
+| `manager.install(key, force=False)` | Download and cache a model. |
+| `manager.uninstall(key)` | Remove a model (with safety checks). |
+| `manager.switch(category, model, migrate=False)` | Switch the active model in a category. |
+| `manager.switch_with_format(category, base_model, prefer_format=None, migrate=False)` | Switch and auto‑select ONNX or PyTorch variant. |
+| `manager.setup(preferences, skip_download=False)` | Complete first‑time setup (downloads). |
+| `manager.migrate_embedding(file=None, force=False)` | Re‑embed all files with the current embedding model. |
+| `manager.get_loader()` | Return the global `ModelLoader` singleton. |
+
+### Usage
+
+```python
+from src.core.Models.ModelManager import ModelManager
+
+manager = ModelManager()
+
+# Setup from defaults (interactive onboarding via CLI)
+manager.setup_recommended()
+
+# Switch to ONNX variant of BGE-M3 with auto‑migration
+manager.switch_with_format("embedding", "BAAI/bge-m3", prefer_format="onnx", migrate=True)
+
+# List available embedding models for UI
+models = manager.list_available_models("embedding")
+for m in models:
+    print(m["key"], m["status"], m["tags"])
+
+# Get active model keys
+print(manager.get_active_models())
+```
+
+**Note:** `manager.setup()` internally calls `ModelManager.setup()` static method which downloads all required local models based on hardware and preferences.
+
+---
+
+## 6. Plugin Management (TorchPlugin)
+
+Heavy PyTorch‑dependent models require the `torch` plugin. The plugin is **never auto‑installed** by the loader/manager; the user must explicitly trigger installation.
+
+### Check if torch is available
+
+```python
+from src.core.Plugins.TorchPlugin import TorchPlugin
+
+tp = TorchPlugin()
+if tp.is_installed():
+    print("Torch ready")
+else:
+    print("Torch plugin missing – install from Settings or CLI")
+```
+
+### Install the plugin manually
+
+```python
+tp.install_if_needed()  # downloads and installs from GitHub Releases
+```
+
+### CLI equivalent
 
 ```bash
-python -m src.core.Models.cli setup-custom
+python -m src.core.Plugins.cli install torch   # if a plugin CLI exists
 ```
 
-You'll be guided through choosing models for each category. Your selections are saved to the config file and any required local models are downloaded automatically.
+When a model that needs torch is requested and the plugin is missing, a `PluginRequiredError` is raised:
 
-### 2. Add API Keys (Optional)
-
-```bash
-python -m src.core.Models.cli key set openai sk-your-key-here
-python -m src.core.Models.cli key set cohere your-cohere-key
-python -m src.core.Models.cli key list
+```
+PluginRequiredError: Plugin 'torch' is required for model BAAI/bge-m3. Install it from Settings.
 ```
 
-Keys are stored in your system keychain and loaded into environment variables when the manager starts.
-
-### 3. See What's Installed
-
-```bash
-python -m src.core.Models.cli status
-```
+This error can be caught by the frontend to show an “Install Plugin” button.
 
 ---
 
-## CLI Commands
+## 7. CLI – Full Command Reference
 
-All commands are run from the project root.
+All commands are run from the project root:
 
-```
+```bash
 python -m src.core.Models.cli <command> [options]
 ```
 
-### `key` – Manage API Keys
+### 7.1 Status & Listing
 
-| Subcommand | Options | Description |
-|------------|---------|-------------|
-| `set <provider> <key>` | `--no-validate` | Store an API key |
-| `remove <provider>` | | Remove a stored key |
-| `list` | | Show all providers and key status |
-
-**Providers:** `openai`, `cohere`, `voyage`, `gemini`, `openrouter`
-
-### `status`
-
-Show every model in the registry with installation status and size.
-
-```
+```bash
+# Show all installed models and system info
 python -m src.core.Models.cli status
-```
 
-### `list`
-
-List available models, optionally filtered by category.
-
-```
+# List all models (or filter by category)
+python -m src.core.Models.cli list
 python -m src.core.Models.cli list --category embedding
 ```
 
-### `install`
-
-Download one or more models. Does **not** activate them.
-
-| Option | Description |
-|--------|-------------|
-| `--model`, `-m` | Model key(s) or model_id(s) |
-| `--category`, `-c` | Install all models in a category |
-| `--tier`, `-t` | Filter category install by tier (`light`, `medium`, `large`, `overkill`) |
-| `--force`, `-f` | Re‑download even if already installed |
+### 7.2 Installation
 
 ```bash
-python -m src.core.Models.cli install --model BAAI/bge-m3
-python -m src.core.Models.cli install --category vision --tier light
+# Install specific models
+python -m src.core.Models.cli install --model BAAI/bge-m3-onnx
+python -m src.core.Models.cli install --model intfloat/e5-small-v2-onnx --force
+
+# Install all models of a category
+python -m src.core.Models.cli install --category reranker
+
+# Install only 'light' tier models
+python -m src.core.Models.cli install --category embedding --tier light
+
+# Install the recommended defaults for your hardware
+python -m src.core.Models.cli setup --profile recommended
+
+# Or install only required models
+python -m src.core.Models.cli setup --profile required
 ```
 
-### `switch`
-
-Change the active model for a category.
-
-| Option | Description |
-|--------|-------------|
-| `--category`, `-c` | **Required.** Category to switch |
-| `--model`, `-m` | Model key or model_id (omit for interactive selection) |
-| `--interactive`, `-i` | Force interactive mode |
-| `--migrate` | Re‑embed files after switching (embedding only) |
+### 7.3 Switching Models
 
 ```bash
-# Interactive (recommended)
-python -m src.core.Models.cli switch --category embedding
+# Interactive switch (shows available models with format tags)
+python -m src.core.Models.cli switch --category embedding --interactive
 
-# Direct switch
-python -m src.core.Models.cli switch --category embedding --model BAAI/bge-m3
+# Direct switch by registry key
+python -m src.core.Models.cli switch --category embedding --model BAAI/bge-m3-onnx
 
-# Direct switch with embedding migration
+# Switch with format preference (auto‑select ONNX/PyTorch variant)
+python -m src.core.Models.cli switch-format --category embedding --base-model BAAI/bge-m3 --format onnx
+
+# Switch and migrate embeddings (re‑index all files)
 python -m src.core.Models.cli switch --category embedding --model BAAI/bge-m3 --migrate
 ```
 
-**Interactive mode** shows only:
-
-- Local models (always)
-- API models (only if their key is set)
-
-Each entry is numbered – type the number to select it.
-
-### `uninstall`
-
-Remove a model from disk. **Cannot uninstall the currently active model.**
+### 7.4 Uninstalling
 
 ```bash
-python -m src.core.Models.cli uninstall --model intfloat/e5-small-v2
+python -m src.core.Models.cli uninstall --model intfloat/e5-small-v2-onnx
 ```
 
-For API models, you'll be asked if you want to deactivate it.
-
-### `upgrade`
-
-Force re‑download a model (or all installed in a category).
+### 7.5 Upgrading
 
 ```bash
-python -m src.core.Models.cli upgrade --model BAAI/bge-m3
+# Upgrade a specific model
+python -m src.core.Models.cli upgrade --model BAAI/bge-m3-onnx
+
+# Upgrade all installed models in a category
 python -m src.core.Models.cli upgrade --category embedding
 ```
 
-### `validate`
+### 7.6 Validation
 
-Check hardware compatibility.
+Check if a model can run on your hardware:
 
 ```bash
 python -m src.core.Models.cli validate --model GritLM/GritLM-7B
 python -m src.core.Models.cli validate --category vision
 ```
 
-### `setup`
-
-Install required or recommended models without interaction.
+### 7.7 API Key Management
 
 ```bash
-python -m src.core.Models.cli setup --profile recommended
+# Set an API key (saved to OS keychain)
+python -m src.core.Models.cli key set openai sk-...
+
+# Remove a key
+python -m src.core.Models.cli key remove openai
+
+# List configured providers and key presence
+python -m src.core.Models.cli key list
 ```
+
+### 7.8 Custom Onboarding (interactive, cross‑platform)
+
+```bash
+python -m src.core.Models.cli setup-custom
+```
+
+This launches the async onboarding wizard (works in terminal and browser via Darwin WebSocket).
 
 ---
 
-## Python API
+## 8. Full Workflow Examples
+
+### First‑time user (automatic setup)
+
+```bash
+# 1. Run interactive setup (selects models, prompts for API keys)
+python -m src.core.Models.cli setup-custom
+
+# 2. Verify
+python -m src.core.Models.cli status
+
+# 3. Index some documents (example)
+python -m src.features.Ingestion.main --target ./docs
+```
+
+### Switching to ONNX for faster CPU inference
+
+```bash
+# Switch embedding to ONNX variant
+python -m src.core.Models.cli switch --category embedding --model BAAI/bge-m3-onnx
+
+# Re‑embed existing files with the new model
+python -m src.core.Models.cli switch --category embedding --model BAAI/bge-m3-onnx --migrate
+```
+
+### Adding a new model programmatically
 
 ```python
-from src.core.Models.ModelManager import ModelManager
-from src.core.Models.ModelRegistry import ModelCategory
 from src.core.Models.ModelStore import get_model_store
+from src.core.Models.ModelLoader import ModelLoader
+from src.core.Models.ModelRegistry import ModelCategory
 
-# ── Manager ────────────────────────────────────────────────────────
-manager = ModelManager()
-
-# See active models
-active = manager.get_active_models()
-# {'embedding': 'BAAI/bge-m3', 'reranker': '...', ...}
-
-# Switch embedding (no migration)
-manager.switch("embedding", "intfloat/e5-small-v2")
-
-# Switch embedding with migration
-manager.switch_embedding("BAAI/bge-m3", migrate=True)
-
-# Install a model without activating
-manager.install("vikhyatk/moondream2")
-
-# Uninstall (won't work if it's the active model)
-manager.uninstall("intfloat/e5-small-v2")
-
-# ── Store (singleton) ──────────────────────────────────────────────
 store = get_model_store()
-installed = store.list_installed()
-size_info = store.get_size_info()
+loader = ModelLoader(store)
 
-# ── Loader ─────────────────────────────────────────────────────────
-loader = ModelManager.get_loader()
+# Download if not cached
+store.ensure("HuggingFaceTB/SmolVLM-256M-Instruct")
 
-# Load the active embedding model
-embed_model = loader.get(ModelCategory.EMBEDDING)
+# Activate as vision model
+loader.set_preference("vision", "HuggingFaceTB/SmolVLM-256M-Instruct")
 
-# Load the active reranker
-reranker = loader.get(ModelCategory.RERANKER)
-
-# Check if a category is ready
-loader.ensure_ready(ModelCategory.EMBEDDING)
-
-# Unload to free memory
-loader.unload(ModelCategory.EMBEDDING)
+# Use
+vision = loader.get(ModelCategory.VISION)
+caption = vision.caption("image.jpg")
 ```
 
-All switches are immediately persisted to the config file and survive restarts.
+### Listing models for a custom UI
+
+```python
+manager = ModelManager()
+models = manager.list_available_models("embedding")
+# returns list of dicts with 'key', 'status', 'tags', etc.
+```
 
 ---
 
-## Config File
+## 9. Error Handling & Recovery
 
-**Location:** `~/.darwin/active_models.json`
+| Error | Cause | Action |
+|-------|-------|--------|
+| `PluginRequiredError` | A required plugin (torch) is not installed. | Install plugin manually or via Settings. |
+| `DownloadError` | Network issue or corrupt download. | The CLI automatically retries; you can also resume later. |
+| `IntegrityError` | Cached model is incomplete or corrupted. | Delete the model (`uninstall`) and re‑download. |
+| `ValueError` with "Unknown model" | The model key is not in the registry. | Check spelling or use `list` to see available keys. |
+| `KeyError` in `get_spec` | Registry key mismatch (e.g., using model_id instead of key). | Use `resolve_key` or the full registry key (e.g., `"BAAI/bge-m3-onnx"`). |
 
-**Format:**
+### Recovery helpers
 
-```json
-{
-  "embedding": "BAAI/bge-m3",
-  "reranker": "cross-encoder/ms-marco-MiniLM-L-12-v2",
-  "vision": null,
-  "tokenizer": "en_core_web_md"
-}
+```python
+from src.core.Models.ModelSetup import handle_download_error
+
+try:
+    store.download("some-model")
+except Exception as e:
+    handle_download_error(e, "some-model")  # prints actionable steps
 ```
-
-- Written automatically by `switch`, `setup-custom`, and any `set_preference` call.  
-- Read by `ModelLoader` on instantiation if no explicit preferences are passed.  
-- `null` means no model is active for that category.  
-- You can manually edit it, but the recommended way is through the CLI or Python API.
 
 ---
 
-## Workflows
+## 10. Extending the System
 
-### Workflow 1: First Run
+### Adding a new model
 
-1. `setup-custom` – pick models, download them.  
-2. `key set openai ...` – add any API keys you plan to use.  
-3. `status` – verify everything is installed.
+1. Add an entry to `REGISTRY` in `ModelRegistry.py` with appropriate `loader` and `requires_plugin`.
+2. If it’s an embedding model, add a `ModelPreset` in `EmbeddingConfig.py`.
+3. If it requires a new type of loader, implement a wrapper in `ModelLoading/Wrappers.py` and register the loader type in `ModelLoader`.
 
-### Workflow 2: Switching Between Local Models
+### Adding a new plugin
 
-You have `intfloat/e5-small-v2` and `BAAI/bge-m3` installed.
-
-- Work on general documents → `switch -c embedding` → choose `BAAI/bge-m3`.  
-- Work on NDA documents where you want a specific model → `switch -c embedding` → choose `intfloat/e5-small-v2`.  
-- No migration needed because each file already knows which embedding model was used.
-
-### Workflow 3: Trying an API Model
-
-1. `key set openai sk-...`  
-2. `switch -c embedding` → the OpenAI model now appears in the list.  
-3. Select it. No download occurs; the config is updated.  
-4. Search/embed calls will now use the API wrapper.
-
-### Workflow 4: Migrating After Embedding Switch
-
-1. `switch -c embedding --model BAAI/bge-m3 --migrate`  
-2. All files embedded with the previous model are re‑ingested and re‑indexed.  
-3. Progress is logged; failed files are reported.
-
-### Workflow 5: Cleaning Up
-
-1. `uninstall --model intfloat/e5-small-v2`  
-   - If it's the active model → command aborts.  
-   - Switch to another model first, then uninstall.
+1. Create a ZIP containing a virtualenv’s `site-packages` (see `scripts/build_torch_plugin.py` as example).
+2. Add detection logic in a plugin class similar to `TorchPlugin`.
+3. Add the download URL to GitHub Releases.
+4. The `ModelManager` and `ModelLoader` will automatically check `spec.requires_plugin` and raise `PluginRequiredError`.
 
 ---
 
-## FAQ
+## 11. Development & Testing
 
-**Q: I already have models downloaded. How do I tell the system to use them?**  
-A: Just run `switch --category <category>` and pick the model from the list. If it's already on disk, switching is instant.
+### Running the test suite (if available)
 
-**Q: How do I know which model is currently active?**  
-A: Check `~/.darwin/active_models.json` or call `manager.get_active_models()` in Python.
-
-**Q: Can I use an API model for embedding and a local model for vision?**  
-A: Yes. Each category is independent. The config file stores one model per category.
-
-**Q: Why can't I uninstall my active model?**  
-A: To prevent accidentally breaking search/indexing. Switch to another model first.
-
-**Q: What happens if I switch to an API model but haven't set the key?**  
-A: The model won't appear in the interactive list. If you force it via direct switch, you'll get a warning and the loader will fail at inference time.
-
-**Q: Does switching automatically re‑embed my files?**  
-A: No. Migration is opt‑in via `--migrate`. Files retain metadata about which embedding model was used.
-
-**Q: Where are models stored on disk?**  
-A: Under the directory returned by `default_models_dir()` (typically `~/.darwin/models/`).
+```bash
+pytest tests/core/Models/
 ```
+
+### Simulating missing torch
+
+```python
+# Before importing, mock the plugin check
+import src.core.Plugins.TorchPlugin as tp
+tp.TorchPlugin.is_installed = lambda self: False
+```
+
+### Inspecting cache
+
+```python
+store = get_model_store()
+print(store.resolver.root)  # ~/.darwin/models/
+```
+
+All model files are stored under `~/.darwin/models/{category}/{org}/{name}/{format}/`.
+
+---
+
+## Summary
+
+This system gives you:
+- **Zero‑install** for ONNX and API models.
+- **One‑click plugin** for heavy PyTorch models.
+- **Hardware‑aware** model recommendations.
+- **Full CLI** for scripting and automation.
+- **Clean separation** of concerns for maintainability.
+
+Use `ModelManager` for everyday tasks, `ModelLoader` for programmatic loading, and the CLI for administration. All components are thread‑safe and emit progress via the Darwin event system.

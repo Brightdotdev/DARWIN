@@ -1,23 +1,28 @@
 import shutil
 from pathlib import Path
 
-from dataclasses import dataclass
-from typing import Any, List, Optional
 from src.core.Models.ModelStore import get_model_store
 from src.core.Storage.StorePaths import StorePaths, default_darwin_dir
 from src.core.Storage.FileRegistry import FileRegistry, FileRecord
+from src.core.Storage.RetrivalArtifacts import (
+    VectorMixin,
+    EmbeddingsMixin,
+    SearchMixin,)
+
+from src.core.Storage.KnowledgeArtifacts import (
+        GraphMixin,
+        WikiMixin,
+)
 from src.core.Storage.StoreArtifacts import (
     MetaMixin,
     MarkdownMixin,
-    VectorMixin,
     RecordsMixin,
-    EmbeddingsMixin,
     BM25Mixin,
-    StopwordsMixin,
-    GraphMixin,
-    SearchMixin,
-    WikiMixin)
-from src.core.Storage.StoreUtils import  now, read_json, write_json, invalidate_model_cache
+    StopwordsMixin
+    )
+
+
+from src.core.Storage.StoreUtils import  now
 from src.lib.Terminal import TerminalUI
 
 

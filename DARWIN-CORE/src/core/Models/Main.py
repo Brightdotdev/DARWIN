@@ -1,11 +1,11 @@
 # src/core/Models/cli.py
-
 import argparse
 import sys
+import os
 from typing import Optional
 
 from src.features.Hardware.SystemDetector import detect_system
-from src.core.Models.ModelRegistry import ModelCategory, by_category, get_spec, REGISTRY
+from src.core.Models.ModelRegistry import ModelCategory, get_spec, REGISTRY
 from src.core.Models.ModelManager import ModelManager
 from src.core.Models.ModelSetup import handle_download_error
 from src.core.Storage.DarwinStore import DarwinStore
@@ -15,10 +15,17 @@ from src.lib.KeyManager import (
     load_keys_from_keychain,
     PROVIDER_REGISTRY,
 )
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin, LogType,Verbosity
+from src.core.Plugins.PluginManager import PluginRequiredError
 
 
 def handle_models(args):
+    darwin.configure(
+        enable_websocket=False,
+        enable_history=True,
+        verbosity_default=Verbosity.NORMAL,
+        show_banner=True,
+    )
     # Graceful store initialization
     try:
         store = DarwinStore()
@@ -41,18 +48,29 @@ def handle_models(args):
     elif args.command == "install":
         if args.model:
             for model in args.model:
-                manager.install(model, force=args.force)
+                try:
+                    manager.install(model, force=args.force)
+                except PluginRequiredError as e:
+                    darwin.log(f"❌ {e}", LogType.ERROR)
+                    darwin.log("   Install the required plugin from Settings or run:", LogType.INFO)
+                    darwin.log("   python -m src.core.Plugins.cli install torch", LogType.INFO)
+                    continue
+                except Exception as e:
+                    handle_download_error(e, model)
+
+                # API key reminder for API models
                 spec = get_spec(model)
                 if spec and spec.disk_mb == 0:
                     provider = model.split("/")[0]
                     env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
-                    if env_var and not __import__("os").getenv(env_var):
+                    if env_var and not os.getenv(env_var):
                         darwin.log(f"⚠️  API key for {provider} is not set. "
-                                   f"Use 'python -m src.Models.cli key set {provider} YOUR_KEY' "
-                                   f"or the onboarding wizard.", LogType.WARNING)
+                                   f"Use 'python -m src.core.Models.cli key set {provider} YOUR_KEY'",
+                                   LogType.WARNING)
         elif args.category:
             manager.install_category(args.category, tier=getattr(args, "tier", "all") or "all")
         else:
+            # Install recommended defaults
             try:
                 ModelManager.setup()
                 loader = ModelManager.get_loader()
@@ -84,7 +102,9 @@ def handle_models(args):
             for model in args.model:
                 manager.upgrade(model)
         elif args.category:
-            cat_models = by_category(args.category)
+            cat_models = {
+                k: v for k, v in REGISTRY.items() if v.category == args.category
+            }
             for key in cat_models:
                 if manager.model_store.is_downloaded(key):
                     manager.upgrade(key)
@@ -100,10 +120,13 @@ def handle_models(args):
         if args.interactive or not args.model:
             interactive_switch(manager, args.category, migrate=migrate)
         else:
-            manager.switch(args.category, args.model[0], migrate=migrate)
+            try:
+                manager.switch(args.category, args.model[0], migrate=migrate)
+            except PluginRequiredError as e:
+                darwin.log(f"❌ {e}", LogType.ERROR)
+                darwin.log("   Install the required plugin before switching.", LogType.INFO)
 
     elif args.command == "switch-format":
-        # NEW: Switch with format preference
         if not args.category or not args.base_model:
             darwin.log("❌ Specify --category and --base-model", LogType.ERROR)
             return
@@ -115,7 +138,7 @@ def handle_models(args):
                 migrate=getattr(args, "migrate", False),
             )
             darwin.log(f"✅ Switched to {selected}")
-        except ValueError as e:
+        except (ValueError, PluginRequiredError) as e:
             darwin.log(f"❌ {e}", LogType.ERROR)
 
     elif args.command == "setup-custom":
@@ -125,7 +148,7 @@ def handle_models(args):
             asyncio.run(run_onboarding_async())
             darwin.log("✅ Custom setup complete. Run 'status' to see your models.")
         except ImportError:
-            darwin.log("❌ ModelStartup not available. Run setup instead:", LogType.ERROR)
+            darwin.log("❌ Onboarding module not available. Use setup instead:", LogType.ERROR)
             darwin.log("   python -m src.core.Models.cli setup --profile recommended", LogType.INFO)
 
     elif args.command == "validate":
@@ -149,90 +172,39 @@ def handle_models(args):
 
 def interactive_switch(manager: ModelManager, category: str, migrate: bool = False):
     """
-    Interactive model selection with registry-based filtering.
-    Shows availability status, format tags, and handles API key requirements.
+    Interactive model selection using the same listing logic as the frontend.
     """
-    import os
-    from src.core.Models.ModelRegistry import REGISTRY
-    from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
-    from src.features.Hardware.Capabilities import Capabilities
+    models = manager.list_available_models(category)
 
-    try:
-        load_keys_from_keychain()
-    except Exception:
-        pass  # Graceful — API models just won't show as available
-
-    caps = Capabilities.detect()
-    torch_available = caps.torch_available
-
-    # Get models from registry for this category
-    models = [(key, spec) for key, spec in REGISTRY.items() if spec.category == category]
     if not models:
-        darwin.log(f"No models defined for category '{category}'.")
+        darwin.log(f"No models available for {category}.")
         return
-
-    # Sort by tier
-    tier_order = {"light": 0, "medium": 1, "large": 2, "overkill": 3}
-    models.sort(key=lambda x: tier_order.get(x[1].tier, 99))
-
-    # Filter and annotate
-    displayed = []
-    for key, spec in models:
-        # Skip PyTorch models if torch plugin not installed
-        if spec.requires_plugin == "torch" and not torch_available:
-            continue
-
-        # Skip API models if key not set
-        if spec.loader.startswith("api_"):
-            provider = key.split("/")[0]
-            env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
-            if env_var and not os.getenv(env_var):
-                continue
-
-        displayed.append((key, spec))
-
-    if not displayed:
-        darwin.log("\nNo models available.")
-        if not torch_available:
-            darwin.log("💡 Install torch plugin for local vision/PyTorch models.")
-        darwin.log("💡 Set API keys for cloud models:")
-        darwin.log("   python -m src.core.Models.cli key set <provider> <key>")
-        return
-
-    # Group by base model for format selection
-    base_models = {}
-    for key, spec in displayed:
-        base = spec.model_id
-        if base not in base_models:
-            base_models[base] = []
-        base_models[base].append((key, spec))
 
     darwin.log(f"\n{'='*60}")
     darwin.log(f"Available models for {category}")
     darwin.log(f"{'='*60}")
 
+    # Group by base model (model_id) to show variants together
+    base_groups = {}
+    for m in models:
+        base = m["model_id"]
+        if base not in base_groups:
+            base_groups[base] = []
+        base_groups[base].append(m)
+
     idx = 1
     index_map = {}
-    for base, variants in sorted(base_models.items()):
+    for base, variants in sorted(base_groups.items()):
         darwin.log(f"\n📦 {base}")
-        for key, spec in variants:
-            installed = manager.model_store.is_downloaded(key)
-            size = f"{spec.disk_mb}MB" if spec.disk_mb > 0 else "API"
-
-            # Build status indicator
-            if spec.loader.startswith("api_"):
-                status = "🔑 API"
-            elif spec.loader in ("onnx_embedding", "onnx_reranker"):
-                status = "⚡ ONNX"
-            elif spec.requires_plugin == "torch":
-                status = "🔥 PyTorch"
-            else:
-                status = "📦 Local"
-
-            install_marker = " ✅" if installed else ""
-
-            darwin.log(f"  [{idx}] {status:<12} {key:<30} ({spec.tier}, {size}, RAM {spec.ram_gb}GB){install_marker}")
-            index_map[idx] = key
+        for m in variants:
+            status = m["status"]
+            tags = ", ".join(m["tags"])
+            install_marker = " ✅" if status == "installed" else ""
+            darwin.log(
+                f"  [{idx}] {tags:<25} {m['key']:<30} "
+                f"({m['tier']}, {m['disk_mb']}MB, RAM {m['ram_gb']}GB){install_marker}"
+            )
+            index_map[idx] = m["key"]
             idx += 1
 
     darwin.log(f"\n{'='*60}")
@@ -265,7 +237,6 @@ def handle_keys(args):
         clear_api_key(args.provider)
         darwin.log(f"✅ API key for {args.provider} removed.")
     elif args.key_command == "list":
-        import os
         darwin.log("Providers and key status:")
         for provider, (env_var, _) in PROVIDER_REGISTRY.items():
             key_set = bool(os.getenv(env_var))
@@ -332,7 +303,6 @@ Examples:
     switch_parser.add_argument("--migrate", action="store_true",
                                help="Migrate embeddings after switching (embedding category only)")
 
-    # NEW: switch-format command
     switch_fmt_parser = subparsers.add_parser("switch-format", help="Switch model with format preference (ONNX/PyTorch)")
     switch_fmt_parser.add_argument("--category", "-c", required=True,
                                    choices=[c.value for c in ModelCategory])
@@ -365,6 +335,11 @@ def main():
     except KeyboardInterrupt:
         darwin.log("\n\n⚠️  Operation cancelled by user", LogType.WARNING)
         darwin.log("   Partial downloads are saved and will resume on next run.", LogType.WARNING)
+        sys.exit(1)
+    except PluginRequiredError as e:
+        darwin.log(f"\n❌ {e}", LogType.ERROR)
+        darwin.log("   Install the required plugin from Settings or run:", LogType.INFO)
+        darwin.log("   python -m src.core.Plugins.cli install torch", LogType.INFO)
         sys.exit(1)
     except Exception as e:
         darwin.log(f"\n❌ Error: {e}", LogType.ERROR)
