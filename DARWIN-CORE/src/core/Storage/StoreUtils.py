@@ -9,40 +9,11 @@ import hashlib
 import re
 from datetime import datetime, timezone
 import json
-from typing import Optional
 import time
 
 
 from pathlib import Path
 from typing import Any
-
-
-
-# ── Model name cache ───────────────────────────────────────────────────────
-
-_model_name_cache: Optional[str] = None
-
-
-def get_current_model_name() -> str:
-    """Resolve the currently active embedding model name (full model_id)."""
-    global _model_name_cache
-    if _model_name_cache is not None:
-        return _model_name_cache
-    try:
-        from src.core.Models import ModelManager, ModelCategory
-        loader = ModelManager.get_loader()
-        _model_name_cache = loader.get_model_key(ModelCategory.EMBEDDING)
-        return _model_name_cache
-    except Exception as e:
-        from src.core.Logger.DarwinLogger import darwin, LogType
-        darwin.log(f"Failed to detect current model: {e}", LogType.ERROR)
-        return "unknown"
-
-
-def invalidate_model_cache() -> None:
-    """Clear the cached model name so the next call re-detects."""
-    global _model_name_cache
-    _model_name_cache = None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -162,3 +133,18 @@ def read_json(path: Path) -> dict | None:
     except (json.JSONDecodeError, OSError):
         return None
 
+
+
+ARTIFACT_MANIFEST = {
+    "images": {"dir": "images/"},
+    "markdown": {"source": "markdown.md", "display": "display-markdown.md"},
+    "chunks": {"file": "chunks.parquet"},
+    "vector": {"index": "vectors/vector.usearch", "meta": "vectors/vector.meta.json"},
+    "embeddings": {"file": "vectors/embeddings.f16.npy", "index_map": "vectors/embeddings.index_map.json"},
+    "bm25": {"index": "bm25.npz", "meta": "bm25_meta.json", "tokens": "bm25_tokens.parquet"},
+    "stopwords": {"file": "stopwords.json"},
+    "graph": {"nodes": "graph/nodes.parquet", "edges": "graph/edges.parquet"},
+    "graph_vis": {"file": "graph/graph.html"},
+    "wiki": {"file": "wiki/wiki.parquet"},
+    "meta": {"file": "meta.json"},
+}

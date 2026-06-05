@@ -15,23 +15,12 @@ import polars as pl
     
 from src.core.Storage.PathResolverMixin import PathResolverMixin
 from src.core.Storage.StoreUtils import (
-    file_hash,
-    now,
     reconstruct_records,
     read_json,
     write_json,
 )
 from src.core.Logger.DarwinLogger import darwin, LogType
 
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Artifact manifest — single source of truth for integrity checks
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Schema-agnostic normalization helpers
-# ═══════════════════════════════════════════════════════════════════════════
 
 
 def normalize_record(obj: Any) -> dict[str, Any]:
@@ -143,87 +132,6 @@ def table_to_records(table: pa.Table) -> list[dict[str, Any]]:
 
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Base mixin — filename → hash → directory resolution + artifact checks
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Mixin: Meta / freshness
-# ═══════════════════════════════════════════════════════════════════════════
-
-class MetaMixin(PathResolverMixin):
-    """Handles meta.json read/write and file freshness checks."""
-
-    def _update_meta(self, filename: str, component: str, extras: dict | None = None) -> None:
-        fh, d = self._resolve(filename)
-        if d is None:
-            return
-        meta_path = d / "meta.json"
-        meta = read_json(meta_path) or {
-            "filename": filename,
-            "created_at": now(),
-            "updates": {},
-        }
-
-        meta.setdefault("updates", {})
-        timestamp = now()
-        meta["updates"][component] = timestamp
-        meta["updated_at"] = timestamp
-
-        if extras:
-            for key, value in extras.items():
-                if isinstance(value, dict) and isinstance(meta.get(key), dict):
-                    meta[key].update(value)
-                else:
-                    meta[key] = value
-
-        write_json(meta_path, meta)
-
-    def _batch_meta_update(self, filename: str, updates: dict[str, dict]) -> None:
-        """Write meta.json once for multiple component updates."""
-        fh, d = self._resolve(filename)
-        if d is None:
-            return
-        meta_path = d / "meta.json"
-        meta = read_json(meta_path) or {
-            "filename": filename,
-            "created_at": now(),
-            "updates": {},
-        }
-        meta.setdefault("updates", {})
-        timestamp = now()
-
-        for component, extras in updates.items():
-            meta["updates"][component] = timestamp
-            if extras:
-                for key, value in extras.items():
-                    if isinstance(value, dict) and isinstance(meta.get(key), dict):
-                        meta[key].update(value)
-                    else:
-                        meta[key] = value
-
-        meta["updated_at"] = timestamp
-        write_json(meta_path, meta)
-
-    def load_meta(self, filename: str) -> dict:
-        return read_json(self._dir_for(filename) / "meta.json") or {}
-
-    def is_fresh(self, filename: str) -> bool:
-        fh, d = self._resolve(filename)
-        if d is None:
-            return False
-        meta_path = d / "meta.json"
-        if not meta_path.exists():
-            return False
-
-        source = self._source_path_for(filename)
-        if source is None or not source.exists():
-            return False
-
-        return read_json(meta_path).get("file_hash", "") == file_hash(source)
-
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: Markdown
@@ -255,8 +163,11 @@ class MarkdownMixin(PathResolverMixin):
         d = self._dir_for(filename)
         if d is None:
             return
-        md_path = d / "markdown.md"
-        display_md_path = d / "display-markdown.md"
+
+        md_path = self.paths.markdown_path(self._hash_for(filename))
+        display_md_path = self.paths.display_markdown_path(self._hash_for(filename))
+
+
 
         try:
             display_md_path.write_text(display_text, encoding="utf-8")
@@ -274,8 +185,7 @@ class MarkdownMixin(PathResolverMixin):
                 try:
                     self.registry.update_pipeline(
                         record.last_seen_path or filename,
-                        "markdown",
-                        **extras,
+                        "markdown"
                     )
                 except Exception as reg_err:
                     darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
@@ -286,7 +196,9 @@ class MarkdownMixin(PathResolverMixin):
             darwin.log(f"Failed to save markdown for {filename}: {e}", LogType.ERROR)
 
     def load_markdown(self, filename: str) -> str | None:
-        md_path = self._dir_for(filename) / "markdown.md"
+        
+        md_path = self.paths.markdown_path(self._hash_for(filename))
+
         if not md_path.exists():
             darwin.log(f"Markdown not found for {filename}", LogType.ERROR)
             return None
@@ -341,7 +253,8 @@ class RecordsMixin(PathResolverMixin):
         dicts = [normalize_record(r) for r in records]
         table = records_to_table(dicts)
 
-        path = d / "chunks.parquet"
+        path = self.paths.chunks_path(self._hash_for(filename))
+
         pq.write_table(
             table,
             path,
@@ -358,8 +271,7 @@ class RecordsMixin(PathResolverMixin):
             try:
                 self.registry.update_pipeline(
                     record.last_seen_path or filename,
-                    "chunks",
-                    **extras,
+                    "chunks"
                 )
             except Exception as reg_err:
                 darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
@@ -381,7 +293,9 @@ class RecordsMixin(PathResolverMixin):
             if set(columns).issubset(set(available)):
                 return cached.select(columns)
 
-        path = self._dir_for(filename) / "chunks.parquet"
+
+        path = self.paths.chunks_path(self._hash_for(filename))
+
         if not path.exists():
             return pa.table({})
 
@@ -479,7 +393,9 @@ class RecordsMixin(PathResolverMixin):
             store.query_records("doc.pdf", page__in=[1, 3, 5])
             store.query_records("doc.pdf", overlap_direction="left")
         """
-        path = self._dir_for(filename) / "chunks.parquet"
+        
+        path = self.paths.chunks_path(self._hash_for(filename))
+
         if not path.exists():
             return []
 
@@ -505,7 +421,7 @@ class RecordsMixin(PathResolverMixin):
         """
         Memory-efficient iterator over Parquet batches.
         """
-        path = self._dir_for(filename) / "chunks.parquet"
+        path = self.paths.chunks_path(self._hash_for(filename))
         if not path.exists():
             return iter([])
 
@@ -586,22 +502,23 @@ class BM25Mixin(PathResolverMixin):
             return
 
         try:
-            # Numerical arrays → npz (no object arrays, no pickle)
-            npz_path = d / "bm25.npz"
+            
+            
+            npz_path = self.paths.bm25_path(self._hash_for(filename))
+            meta_path = self.paths.bm25_meta_path(self._hash_for(filename))
+            tokens_path = self.paths.bm25_tokens_path(self._hash_for(filename))
+
+
             np.savez_compressed(
                 npz_path,
                 doc_lengths=np.array(doc_lengths, dtype=np.int32),
             )
+            
 
-            # Tokens → parquet list<string>.  Avoids numpy object arrays entirely
-            # and gives us dictionary compression on repeated tokens.
-            tokens_path = d / "bm25_tokens.parquet"
             tokens_records = [{"tokens": list(tok_list)} for tok_list in tokens]
             tokens_table = records_to_table(tokens_records)
             pq.write_table(tokens_table, tokens_path, compression="zstd")
-
-            # Scalar metadata → json
-            meta_path = d / "bm25_meta.json"
+            
             write_json(meta_path, {
                 "avgdl": avgdl,
                 "chunk_count": chunk_count,
@@ -619,9 +536,7 @@ class BM25Mixin(PathResolverMixin):
                 try:
                     self.registry.update_pipeline(
                         record.last_seen_path or filename,
-                        "bm25",
-                        chunk_count=chunk_count,
-                        vocab_size=vocab_size,
+                        "bm25"
                     )
                 except Exception as reg_err:
                     darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
@@ -645,9 +560,9 @@ class BM25Mixin(PathResolverMixin):
         if d is None:
             return None
 
-        npz_path = d / "bm25.npz"
-        meta_path = d / "bm25_meta.json"
-        tokens_path = d / "bm25_tokens.parquet"
+        npz_path = self.paths.bm25_path(self._hash_for(filename))
+        meta_path = self.paths.bm25_meta_path(self._hash_for(filename))
+        tokens_path = self.paths.bm25_tokens_path(self._hash_for(filename))
 
         if not npz_path.exists() or not meta_path.exists() or not tokens_path.exists():
             return None
@@ -698,8 +613,9 @@ class StopwordsMixin(PathResolverMixin):
             return
         d = self._dir_for(filename)
         if d is None:
+            darwin.log(f"Cannot save stopwords for {filename}: source file not found", LogType.ERROR) 
             return
-        write_json(d / "stopwords.json", {"stopwords": sorted(stopwords)})
+        write_json(self.paths.stopwords_path(self._hash_for(filename)), {"stopwords": sorted(stopwords)})
         self._update_meta(filename, "stopwords")
         record = self._record_for(filename)
         if record:
@@ -710,8 +626,9 @@ class StopwordsMixin(PathResolverMixin):
         self.invalidate(filename)
 
     def load_stopwords(self, filename: str) -> set[str]:
-        path = self._dir_for(filename) / "stopwords.json"
+        path = self.paths.stopwords_path(self._hash_for(filename))
         if not path.exists():
+            darwin.log(f"Stopwords not found for {filename}", LogType.ERROR)
             return set()
         return set(read_json(path).get("stopwords", []))
 

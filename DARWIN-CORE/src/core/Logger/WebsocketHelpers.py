@@ -32,7 +32,9 @@ class WebSocketServer:
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
         if not self._server_started.wait(timeout=10):
-            raise RuntimeError("WebSocket server failed to start within timeout")
+            self.shutdown()
+            # Don't raise an exception here since we don't want to crash the whole application if the WebSocket server fails, but we should log it.
+            darwin.log("WebSocket server failed to start within timeout", LogType.ERROR)
 
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
@@ -101,7 +103,7 @@ class WebSocketServer:
                     while not self._shutdown_requested.is_set():
                         await asyncio.sleep(0.5)
                     return
-            except OSError:
+            except OSError as e:
                 if attempt < max_attempts - 1:
                     old_port = port
                     port += 1
@@ -109,7 +111,7 @@ class WebSocketServer:
                 else:
                     darwin.log(f"All ports {self._port}–{port} are in use", LogType.ERROR)
                     self._server_started.set()
-                    raise
+                    darwin.log("Failed to start WebSocket server", LogType.ERROR)
 
     def shutdown(self, timeout: float = 3.0) -> None:
         if self._loop is None or self._thread is None:

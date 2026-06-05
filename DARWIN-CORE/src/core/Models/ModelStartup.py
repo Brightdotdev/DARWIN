@@ -76,9 +76,9 @@ async def run_onboarding_async() -> ModelLoader:
 
     choices: dict[str, Optional[str]] = {}
     choices["embedding"] = await _onboard_category("embedding", "Embedding model (REQUIRED)", recommended["embedding"], system, store, required=True)
-    choices["vision"] = await _onboard_category("vision", "Vision model (OPTIONAL)", recommended.get("vision"), system, store, required=False)
-    choices["tokenizer"] = await _onboard_category("tokenizer", "NLP tokenizer (OPTIONAL)", recommended.get("tokenizer"), system, store, required=False)
-    choices["reranker"] = await _onboard_category("reranker", "Reranker model (OPTIONAL)", recommended.get("reranker"), system, store, required=False)
+    choices["vision"] = await _onboard_category("vision", "Vision model (OPTIONAL)(REQUIRES PYTOCH RUNTIME)", recommended.get("vision"), system, store, required=False)
+    choices["tokenizer"] = await _onboard_category("tokenizer", "NLP tokenizer (OPTIONAL)(IF YOU NEED ENTITY GRAPH AND WIKI KNOWLEDGE OF YOUR DOCUMENT)", recommended.get("tokenizer"), system, store, required=False)
+    choices["reranker"] = await _onboard_category("reranker", "Reranker model (OPTIONAL)(ONE MORE STEP BEFORE FINAL RESULTS RECOMENDED BUT OPTIONAL)", recommended.get("reranker"), system, store, required=False)
 
     validation = validate_all_selections({k: v for k, v in choices.items() if v}, system, store)
 

@@ -3,26 +3,18 @@ src/core/Storage/StorePaths.py
 ------------------------------
 Content-addressed storage paths. Same PDF → same index folder, always.
 Nothing here touches file content — it only knows where things live.
+Directory creation is opt-in via ensure_* methods.
 """
 
-from pathlib import Path
+from __future__ import annotations
+
 import hashlib
-import platform
-import os
+from functools import cached_property
+from pathlib import Path
 
+from src.core.Storage.StoreUtils import ARTIFACT_MANIFEST
 
-def default_darwin_dir() -> Path:
-    """Platform-appropriate global Darwin directory for ALL data."""
-    system = platform.system()
-    if system == "Windows":
-        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-    elif system == "Darwin":
-        base = Path.home() / "Library" / "Application Support"
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
-    return base / "Darwin"
-
-
+# ── Free functions ────────────────────────────────────────────────────────
 
 def hash_file(file_path: str | Path) -> str:
     """SHA-256 of file contents. Same file → same hash, always."""
@@ -38,65 +30,73 @@ def is_file_hash(value: str) -> bool:
     return len(value) == 64 and all(c in "0123456789abcdef" for c in value.lower())
 
 
+
+
+# ── Class ─────────────────────────────────────────────────────────────────
+
 class StorePaths:
-    
-    def __init__(self, darwin_dir: Path = None):
-        self.root = darwin_dir or default_darwin_dir()
-        self.root.mkdir(parents=True, exist_ok=True)
+
+    def __init__(self, darwin_dir: str | Path):
+        if darwin_dir is None:
+            raise ValueError("darwin_dir cannot be None")
+        if isinstance(darwin_dir, str) and darwin_dir.strip() == "":
+            raise ValueError("darwin_dir cannot be an empty string")
+
+        darwin_dir = Path(darwin_dir)
+
+        if darwin_dir.exists() and not darwin_dir.is_dir():
+            raise NotADirectoryError(f"{darwin_dir} exists and is not a directory")
+
+        darwin_dir.mkdir(parents=True, exist_ok=True)
+        self.root = darwin_dir.resolve()
 
     # ── Top-level paths ───────────────────────────────────────────────────
-
-    @property
-    def models_dir(self) -> Path:
-        return self.root / "models"
-
-    @property
-    def config_path(self) -> Path:
-        return self.root / "config.json"
 
     @property
     def file_registry_path(self) -> Path:
         """Global tracker of ALL indexed files."""
         return self.root / "file_registry.json"
 
-    @property
+    @cached_property
     def indexes_dir(self) -> Path:
-        path = self.root / "indexes"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
+        """Directory containing all hash-indexed subdirectories."""
+        return self.root / "indexes"
 
-    @property
+
+
+
+    @cached_property
     def checkpoints_dir(self) -> Path:
-        path = self.root / "checkpoints"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    
-    @property
+        """Directory for pipeline checkpoint files."""
+        return self.root / "checkpoints"
+
+    @cached_property
     def conversations_dir(self) -> Path:
-        """Directory for conversation storage."""
-        path = self.root / "conversations"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    # ── Core resolution ───────────────────────────────────────────────────
+        """Directory for conversation history storage."""
+        return self.root / "conversations"
+
+    # ── Path existence helper (convenience) ───────────────────────────────
+
+    def exists(self, file_hash: str) -> bool:
+        """Check if an index directory exists for a given file hash."""
+        return self.dir_for_hash(file_hash).exists()
+    # ── Core resolution (pure) ────────────────────────────────────────────
+
+    def dir_for_hash(self, file_hash: str) -> Path:
+        """
+        Pure path resolution for a known file hash.
+        Does NOT touch the filesystem.
+        """
+        if not is_file_hash(file_hash):
+            raise ValueError(f"Invalid file hash: {file_hash}")
+        return self.indexes_dir / file_hash
 
     def file_hash(self, file_path: str | Path) -> str:
         """SHA-256 of the file. Deterministic, content-based."""
         return hash_file(file_path)
 
-    def dir_for_hash(self, file_hash: str) -> Path:
-        """
-        Return (and create) the index directory for a known file hash.
-        This is the single canonical way to get the index dir from a hash.
-        """
-        path = self.indexes_dir / file_hash
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-
     def file_dir(self, file_path: str | Path) -> Path:
-        """
-        Return the index directory for a file, hashing its contents.
-        Only use this when you have the actual file on disk.
-        """
+        """Return the index directory path for a file, hashing its contents."""
         fh = self.file_hash(file_path)
         return self.dir_for_hash(fh)
 
@@ -104,124 +104,70 @@ class StorePaths:
         """Alias for dir_for_hash — kept for back-compat."""
         return self.dir_for_hash(file_hash)
 
-    # ── ensure_* helpers (all hash-based) ────────────────────────────────
+    # ── Core resolution (side effects) ────────────────────────────────────
+
+    def ensure_dir_for_hash(self, file_hash: str) -> Path:
+        """Create and return the index directory for a known hash."""
+        path = self.dir_for_hash(file_hash)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def ensure_file_dir(self, file_hash: str) -> Path:
-        """
-        Create and return index directory for a known hash.
-        Mixins call this — they always pass a hash, never a raw file path.
-        """
-        return self.dir_for_hash(file_hash)
-
-    def ensure_vector_dir(self, file_hash: str) -> Path:
-        """Vector index lives alongside other artifacts in the same dir."""
-        return self.dir_for_hash(file_hash)
-
-    def ensure_graph_dir(self, file_hash: str) -> Path:
-        d = self.dir_for_hash(file_hash) / "graph"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def ensure_wiki_dir(self, file_hash: str) -> Path:
-        d = self.dir_for_hash(file_hash) / "wiki"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        """Create and return index directory for a known hash."""
+        return self.ensure_dir_for_hash(file_hash)
 
     def ensure_image_dir(self, file_hash: str) -> Path:
-        d = self.dir_for_hash(file_hash) / "images"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+        """Create and return the image subdirectory for a known hash."""
+        path = self.ensure_dir_for_hash(file_hash) / ARTIFACT_MANIFEST["images"]["dir"]
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
-    # ── Per-file artifact paths (all hash-based) ──────────────────────────
-    # These all take a file_hash string, not a file path.
+    # ── Per-file artifact paths (pure, hash-based) ────────────────────────
 
     def meta_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / "meta.json"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["meta"]["file"]
 
     def markdown_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / "markdown.md"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["markdown"]["source"]
+
+    def display_markdown_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["markdown"]["display"]
 
     def chunks_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / "chunks.json"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["chunks"]["file"]
 
-    def npz_path(self, file_hash: str, model_name: str) -> Path:
-        model_slug = model_name.split("/")[-1].replace("-", "_")
-        return self.dir_for_hash(file_hash) / f"embeddings_{model_slug}.npz"
+    def embedding_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["embeddings"]["file"]
+
+    def embedding_index_map_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["embeddings"]["index_map"]
 
     def vector_index_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / "vector.usearch"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["vector"]["index"]
 
     def vector_json_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / "vector.json"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["vector"]["meta"]
 
     def bm25_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / "bm25.npz"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["bm25"]["index"]
+
+    def bm25_meta_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["bm25"]["meta"]
+
+    def bm25_tokens_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["bm25"]["tokens"]
 
     def stopwords_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / "stopwords.json"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["stopwords"]["file"]
 
-    def graph_dir(self, file_hash: str) -> Path:
-        d = self.dir_for_hash(file_hash) / "graph"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+    def graph_nodes_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["graph"]["nodes"]
 
-    def graph_json_path(self, file_hash: str) -> Path:
-        return self.graph_dir(file_hash) / "graph.json"
+    def graph_edges_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["graph"]["edges"]
 
     def graph_html_path(self, file_hash: str) -> Path:
-        return self.graph_dir(file_hash) / "graph.html"
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["graph_vis"]["file"]
 
-    def wiki_dir(self, file_hash: str) -> Path:
-        d = self.dir_for_hash(file_hash) / "wiki"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    def wiki_json_path(self, file_hash: str) -> Path:
-        return self.wiki_dir(file_hash) / "wiki.json"
-
-    def image_dir(self, file_hash: str) -> Path:
-        d = self.dir_for_hash(file_hash) / "images"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    # ── Checkpoint paths (also hash-based) ───────────────────────────────
-
-    def parsing_checkpoint_path(self, file_hash: str) -> Path:
-        return self.checkpoints_dir / f"{file_hash}.parse_checkpoint.json"
-
-    def embed_checkpoint_path(self, file_hash: str) -> Path:
-        return self.checkpoints_dir / f"{file_hash}.embed_checkpoint.npz"
-
-    def raw_extraction_path(self, file_hash: str) -> Path:
-        return self.checkpoints_dir / f"{file_hash}.raw_extraction.json"
-
-    def raw_parsing_extraction(self, file_hash: str) -> Path:
-        """Alias for raw_extraction_path — used by CheckpointMixin."""
-        return self.raw_extraction_path(file_hash)
-
-    # ── Back-compat: old *_by_hash methods ───────────────────────────────
-    # Kept so any existing callers don't break.
-
-    def meta_path_by_hash(self, file_hash: str) -> Path:
-        return self.meta_path(file_hash)
-
-    def markdown_path_by_hash(self, file_hash: str) -> Path:
-        return self.markdown_path(file_hash)
-
-    def chunks_path_by_hash(self, file_hash: str) -> Path:
-        return self.chunks_path(file_hash)
-
-    def npz_path_by_hash(self, file_hash: str, model_name: str) -> Path:
-        return self.npz_path(file_hash, model_name)
-
-    def vector_index_path_by_hash(self, file_hash: str) -> Path:
-        return self.vector_index_path(file_hash)
-
-    def vector_json_path_by_hash(self, file_hash: str) -> Path:
-        return self.vector_json_path(file_hash)
-
-    def bm25_path_by_hash(self, file_hash: str) -> Path:
-        return self.bm25_path(file_hash)
-
-    def stopwords_path_by_hash(self, file_hash: str) -> Path:
-        return self.stopwords_path(file_hash)
+    def wiki_path(self, file_hash: str) -> Path:
+        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["wiki"]["file"]

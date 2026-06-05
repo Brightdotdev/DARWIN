@@ -9,21 +9,40 @@ class ModelPathResolver:
     def __init__(self, root: Path):
         self.root = root
 
+   
     def model_path(self, spec, format: Optional[str] = None) -> Path:
         """Return the canonical nested path for a model."""
         if spec.loader.startswith("api_"):
             return Path("__api__")
 
-        if spec.loader == "spacy":
-            base = self.root / spec.category / spec.model_id
-            return base / format if format else base
+        # Strip format-related suffixes from model name for clean directory paths
+        def strip_suffix(name: str) -> str:
+            
+            for suffix in ["-onnx", "_onnx", "-quantized", "_quantized"]:
+                if name.lower().endswith(suffix):
+                    return name[: -len(suffix)]
+            return name
 
         model_id = spec.model_id
+
+        if spec.loader == "spacy":
+            if "/" in model_id:
+                org, name = model_id.split("/", 1)
+                clean_name = strip_suffix(name)
+                base = self.root / spec.category / org / clean_name
+            else:
+                clean_name = strip_suffix(model_id)
+                base = self.root / spec.category / clean_name
+            return base / format if format else base
+
+        # Standard nested: category / org / clean_name / format
         if "/" in model_id:
             org, name = model_id.split("/", 1)
-            base = self.root / spec.category / org / name
+            clean_name = strip_suffix(name)
+            base = self.root / spec.category / org / clean_name
         else:
-            base = self.root / spec.category / model_id
+            clean_name = strip_suffix(model_id)
+            base = self.root / spec.category / clean_name
 
         if format:
             return base / format
@@ -31,9 +50,24 @@ class ModelPathResolver:
 
     def legacy_model_path(self, spec) -> Path:
         """Old flat structure for backward compatibility."""
+        # Strip format-related suffixes for clean legacy paths
+        model_id = spec.model_id
+        org, name = model_id.split("/", 1) if "/" in model_id else ("", model_id)
+        
+        base_name = name
+        for suffix in ["-onnx", "_onnx", "-quantized", "_quantized"]:
+            if base_name.lower().endswith(suffix):
+                base_name = base_name[: -len(suffix)]
+                break
+        
         if spec.loader == "spacy":
-            return self.root / spec.category / spec.model_id
-        return self.root / spec.category / spec.model_id.split("/")[-1]
+            # Spacy models: category / org / base_name (or just base_name if no org)
+            if org:
+                return self.root / spec.category / org / base_name
+            return self.root / spec.category / base_name
+        
+        # Default legacy: category / base_name (flat, no org)
+        return self.root / spec.category / base_name
 
     @staticmethod
     def infer_format(spec) -> str:

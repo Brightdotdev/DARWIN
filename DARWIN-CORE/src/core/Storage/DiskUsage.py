@@ -3,18 +3,20 @@ Disk usage tree (JSON exportable) for the Darwin data directory.
 Labels hashed directories with original filenames from the file registry.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 from typing import Optional
 
-from src.core.Storage.StorePaths import StorePaths
+from src.core.Storage.StorePaths import StorePaths, ARTIFACT_MANIFEST
 from src.core.Storage.FileRegistry import FileRegistry
 from src.core.Models.ModelRegistry import REGISTRY
-from src.core.Models.ModelStore import get_model_store
+from src.lib.AppPaths import default_models_dir
 
 # ── size helpers ─────────────────────────────────────────────────────────
 
 def dir_size(path: Path) -> int:
-    """Total bytes of all files under `path`. Returns 0 if path doesn’t exist."""
+    """Total bytes of all files under `path`. Returns 0 if path doesn't exist."""
     if not path.exists():
         return 0
     if path.is_file():
@@ -23,7 +25,7 @@ def dir_size(path: Path) -> int:
 
 
 def _format_size(n: int) -> str:
-    """Human‑readable size string."""
+    """Human-readable size string."""
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024.0:
             return f"{n:.1f} {unit}"
@@ -56,8 +58,8 @@ def build_tree(darwin_dir: Path, registry: FileRegistry, model_store) -> DiskNod
         return ""
 
     # ── Models ────────────────────────────────────────────────────────
-    models_node = DiskNode("models", paths.models_dir)
-    if paths.models_dir.exists():
+    models_node = DiskNode("models", default_models_dir())
+    if default_models_dir().exists():
         for key in model_store.list_installed():
             model_path = model_store.model_path(key)
             size = dir_size(model_path)
@@ -67,7 +69,7 @@ def build_tree(darwin_dir: Path, registry: FileRegistry, model_store) -> DiskNod
             models_node.children.append(child)
         models_node.size = sum(c.size for c in models_node.children)
 
-    # ── Indexes (content‑hashed directories) ──────────────────────────
+    # ── Indexes (content-hashed directories) ──────────────────────────
     indexes_node = DiskNode("indexes", paths.indexes_dir)
     if paths.indexes_dir.exists():
         for hash_dir in paths.indexes_dir.iterdir():
@@ -76,13 +78,22 @@ def build_tree(darwin_dir: Path, registry: FileRegistry, model_store) -> DiskNod
             total = dir_size(hash_dir)
             label = _label_from_hash(hash_dir.name)
             child = DiskNode(hash_dir.name, hash_dir, total, label=label)
-            # Optionally add sub-children for major artifacts
-            for artifact in ["chunks.json", "meta.json", "markdown.md",
-                              "embeddings_*.npz", "bm25.npz", "vector.usearch",
-                              "graph", "wiki", "images"]:
-                for found in hash_dir.glob(artifact):
-                    art_size = dir_size(found)
-                    child.children.append(DiskNode(found.name, found, art_size))
+
+            # Enumerate artifacts from the canonical manifest
+            for stage, spec in ARTIFACT_MANIFEST.items():
+                for key, rel_path in spec.items():
+                    artifact_path = hash_dir / rel_path
+                    if artifact_path.exists():
+                        art_size = dir_size(artifact_path)
+                        child.children.append(
+                            DiskNode(
+                                artifact_path.name,
+                                artifact_path,
+                                art_size,
+                                label=stage,
+                            )
+                        )
+
             indexes_node.children.append(child)
         indexes_node.size = sum(c.size for c in indexes_node.children)
 
@@ -154,7 +165,7 @@ def find_node(root: DiskNode, parts: list) -> Optional[DiskNode]:
 # ── Terminal tree printer ────────────────────────────────────────────────
 
 def print_tree(node: DiskNode, indent: str = "", is_last: bool = True):
-    """Pretty‑print a tree to the console with sizes."""
+    """Pretty-print a tree to the console with sizes."""
     connector = "└── " if is_last else "├── "
     name = node.name
     if node.label:

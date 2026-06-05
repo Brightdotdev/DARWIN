@@ -1,46 +1,46 @@
-from src.core.Logger.DarwinLogger import darwin, LogType
+# src/core/Storage/RetrievalArtifacts.py
+# ──────────────────────────────────────────────────────────────────────────────
 
+from __future__ import annotations
+
+from pathlib import Path
 from typing import Any, List, Optional
 
 import numpy as np
 
+from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Storage.StoreUtils import now, read_json, write_json
 from src.core.Storage.PathResolverMixin import PathResolverMixin
-from src.core.Storage.StoreUtils import (
-    reconstruct_records,
-    now,
-    read_json,
-    write_json,
-    get_current_model_name,
-)
 
-def _normalize_model_name(name: str) -> str:
-    """Convert any model identifier to the canonical model_id."""
-    from src.core.Models.ModelRegistry import REGISTRY
 
-    if name in REGISTRY:
-        return REGISTRY[name].model_id
+# ── Model helpers ─────────────────────────────────────────────────────────
 
-    id_to_key = {spec.model_id: key for key, spec in REGISTRY.items()}
-    if name in id_to_key:
-        return name
-
-    return name
+def _get_current_embedding_model() -> str:
+    from src.core.Models import ModelManager, ModelCategory
+    loader = ModelManager.get_loader()
+    return loader.get_model_key(ModelCategory.EMBEDDING)
 
 
 def _get_current_model_dimensions() -> int:
     """Expected embedding dimensions for the active model. Safe fallback."""
     try:
-        from src.core.Models import ModelManager, ModelCategory
-        loader = ModelManager.get_loader()
-        key = loader.get_model_key(ModelCategory.EMBEDDING)
-        dims = {
+        
+        from src.core.Models.EmbeddingConfig import get_preset
+        key = _get_current_embedding_model()
+        presets = get_preset(key)
+        if presets:
+            return presets.dimensions
+        # Fallback lookup table — should migrate to ModelRegistry specs
+        _DIMENSIONS = {
             "intfloat/e5-small-v2": 384,
             "BAAI/bge-m3": 1024,
             "GritLM/GritLM-7B": 4096,
         }
-        return dims.get(key, 0)
+        return _DIMENSIONS.get(key, 0)
     except Exception:
         return 0
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Mixin: Embeddings (float16 .npy, zero metadata duplication)
@@ -58,31 +58,37 @@ class EmbeddingsMixin(PathResolverMixin):
     def has_embeddings(self, filename: str) -> bool:
         return self._has_artifact(filename, "embeddings")
 
-    def save_embeddings(self, filename: str, vectors: np.ndarray, indices: Optional[List[int]] = None):
+
+    def save_embeddings(
+        self,
+        filename: str,
+        vectors: np.ndarray,
+        indices: Optional[List[int]] = None,
+    ) -> None:
         if vectors is None or len(vectors) == 0:
             darwin.log(f"No vectors to save for {filename}", LogType.ERROR)
             return
 
         d = self._dir_for(filename)
-        if d is None:
-            return
+        d.mkdir(parents=True, exist_ok=True)
 
-        path = d / "embeddings.f16.npy"
+        fh = self._hash_for(filename)
+        embedding_path = self.paths.embedding_path(fh)
+        embedding_path.parent.mkdir(parents=True, exist_ok=True)
 
         # C-contiguous float16: optimal for both disk layout and mmap paging
         vectors = np.ascontiguousarray(vectors.astype(np.float16))
-        np.save(path, vectors)
+        np.save(embedding_path, vectors)
 
         dim = vectors.shape[1]
         count = vectors.shape[0]
-        model_name = _normalize_model_name(get_current_model_name())
+        model_name = _get_current_embedding_model()
 
-        # NEW: Save chunk index map alongside embeddings
+        # Save chunk index map alongside embeddings
         if indices is not None:
-            map_path = d / "embeddings.index_map.json"
-            import json
-            with open(map_path, "w") as f:
-                json.dump(indices, f)
+            map_path = self.paths.embedding_index_map_path(self._hash_for(filename))
+            map_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(map_path, indices)
 
         # Global meta.json is the ONLY place embedding metadata lives
         self._update_meta(filename, "embeddings", extras={
@@ -95,17 +101,17 @@ class EmbeddingsMixin(PathResolverMixin):
         if record:
             try:
                 self.registry.update_pipeline(
-                    record.last_seen_path or filename,
-                    "embeddings",
-                    embedding_model=model_name,
-                    embedding_dimensions=dim,
+                    file_hash=record.file_hash,
+                    stage="embeddings",
                 )
             except Exception as reg_err:
                 darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
 
-        self.invalidate(filename)
+        if hasattr(self, "invalidate"):
+            self.invalidate(filename)
+
         darwin.log(
-            f"Embeddings saved: {path.name} ({count} vectors, {dim}d, float16)",
+            f"Embeddings saved: {embedding_path.name} ({count} vectors, {dim}d, float16)",
             LogType.SUCCESS,
         )
 
@@ -120,15 +126,20 @@ class EmbeddingsMixin(PathResolverMixin):
             return self._artifact_cache[cache_key]
 
         d = self._dir_for(filename)
-        if d is None:
+        if not d.exists():
+            darwin.log(
+                f"{filename} does not exist on disk or is not indexed. Cannot load embeddings.",
+                LogType.ERROR,
+            )
             return None
-        path = d / "embeddings.f16.npy"
 
-        # ── Model compatibility check (file missing path) ─────────────────
-        if not path.exists():
+        fh = self._hash_for(filename)
+        embedding_path = self.paths.embedding_path(fh)
+
+        if not embedding_path.exists():
             meta = self.load_meta(filename)
             stored_model = meta.get("embedding_model", "unknown")
-            current_model = get_current_model_name()
+            current_model = _get_current_embedding_model()
             if stored_model not in ("unknown", current_model):
                 darwin.log(
                     f"Embeddings for '{filename}' were built with '{stored_model}', "
@@ -142,10 +153,10 @@ class EmbeddingsMixin(PathResolverMixin):
                 )
             return None
 
-        # ── Model compatibility check (file exists path) ──────────────────
+        # Model compatibility check
         meta = self.load_meta(filename)
         stored_model = meta.get("embedding_model", "unknown")
-        current_model = get_current_model_name()
+        current_model = _get_current_embedding_model()
         if stored_model not in ("unknown", current_model):
             darwin.log(
                 f"Embeddings for '{filename}' were built with '{stored_model}' "
@@ -155,20 +166,20 @@ class EmbeddingsMixin(PathResolverMixin):
             )
             return None
 
-        # ── Dimension sanity check ────────────────────────────────────────
+        # Dimension sanity check — peek header without full load
         expected_dim = meta.get("embedding_dimensions")
-        if expected_dim and path.stat().st_size > 0:
-            # Quick header read: np.load with mmap to avoid full load for dim check
-            header = np.load(path, mmap_mode="r")
+        if expected_dim:
+            header = np.load(embedding_path, mmap_mode="r")
             if header.shape[1] != expected_dim:
                 darwin.log(
                     f"Embedding dimension mismatch on disk: expected {expected_dim}, got {header.shape[1]}.",
                     LogType.WARNING,
                 )
+            del header  # Release mmap peek immediately
 
-        # mmap_mode='r' → read-only memory map.  No RAM consumed until touched.
+        # mmap_mode='r' → read-only memory map. No RAM consumed until touched.
         mode = "r" if mmap else None
-        vectors = np.load(path, mmap_mode=mode)
+        vectors = np.load(embedding_path, mmap_mode=mode)
 
         if hasattr(self, "_artifact_cache") and mmap:
             self._artifact_cache[cache_key] = vectors
@@ -181,32 +192,10 @@ class EmbeddingsMixin(PathResolverMixin):
 
     def load_embedding_index_map(self, filename: str) -> Optional[List[int]]:
         """Return the chunk index map for embedding vectors, or None for identity mapping."""
-        d = self._dir_for(filename)
-        if d is None:
-            return None
-        map_path = d / "embeddings.index_map.json"
+        map_path = self.paths.embedding_index_map_path(self._hash_for(filename))
         if not map_path.exists():
             return None
-        import json
-        with open(map_path) as f:
-            return json.load(f)
-
-    def get_embedding_metadata(self, filename: str) -> dict | None:
-        """Return embedding metadata from global meta.json (single source of truth)."""
-        meta = self.load_meta(filename)
-        return {
-            "embedding_model": meta.get("embedding_model"),
-            "dimensions": meta.get("embedding_dimensions"),
-            "count": meta.get("embedding_count"),
-            "updated_at": meta.get("updates", {}).get("embeddings"),
-        }
-
-    def is_embedding_compatible(self, filename: str) -> bool:
-        try:
-            v = self.load_embeddings(filename, mmap=True)
-            return v is not None
-        except (FileNotFoundError, OSError, ValueError):
-            return False
+        return read_json(map_path)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -225,8 +214,7 @@ class VectorMixin(PathResolverMixin):
 
     def save_vector(self, filename: str, vectors: np.ndarray) -> None:
         d = self._dir_for(filename)
-        if d is None:
-            return
+        d.mkdir(parents=True, exist_ok=True)
 
         from usearch.index import Index
 
@@ -235,10 +223,16 @@ class VectorMixin(PathResolverMixin):
         index = Index(ndim=dim, metric="cos", dtype="f32")
         keys = np.arange(n, dtype=np.int64)
         index.add(keys=keys, vectors=vectors.astype(np.float32))
-        index.save(str(d / "vector.usearch"))
+
+        fh = self._hash_for(filename)
+        index_path = self.paths.vector_index_path(fh)
+        meta_path = self.paths.vector_json_path(fh)
+
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        index.save(str(index_path))
 
         # vector.meta.json: index-only metadata (no embedding model info — that's in meta.json)
-        write_json(d / "vector.meta.json", {
+        write_json(meta_path, {
             "dimension": dim,
             "count": n,
             "metric": "cos",
@@ -254,11 +248,16 @@ class VectorMixin(PathResolverMixin):
         record = self._record_for(filename)
         if record:
             try:
-                self.registry.update_pipeline(record.last_seen_path or filename, "vector")
+                self.registry.update_pipeline(
+                    file_hash=record.file_hash,
+                    stage="vector",
+                )
             except Exception as reg_err:
                 darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
 
-        self.invalidate(filename)
+        if hasattr(self, "invalidate"):
+            self.invalidate(filename)
+
         darwin.log(f"Vector index saved: {n} vectors, {dim}d", LogType.SUCCESS)
 
     def load_vector(self, filename: str):
@@ -267,18 +266,20 @@ class VectorMixin(PathResolverMixin):
             return self._artifact_cache[cache_key]
 
         d = self._dir_for(filename)
-        if d is None:
+        if not d.exists():
             return None
-        index_path = d / "vector.usearch"
-        meta_path = d / "vector.meta.json"
+
+        fh = self._hash_for(filename)
+        index_path = self.paths.vector_index_path(fh)
+        meta_path = self.paths.vector_json_path(fh)
 
         if not index_path.exists() or not meta_path.exists():
             return None
 
-        # ── Model compatibility check ─────────────────────────────────────
+        # Model compatibility check
         global_meta = self.load_meta(filename)
         stored_model = global_meta.get("embedding_model", "unknown")
-        current_model = get_current_model_name()
+        current_model = _get_current_embedding_model()
         if stored_model not in ("unknown", current_model):
             darwin.log(
                 f"Vector index for '{filename}' was built with '{stored_model}' "
@@ -288,7 +289,7 @@ class VectorMixin(PathResolverMixin):
             )
             return None
 
-        # ── Dimension compatibility check ─────────────────────────────────
+        # Dimension compatibility check
         vector_meta = read_json(meta_path)
         stored_dim = vector_meta.get("dimension", 0)
         expected_dim = _get_current_model_dimensions()
@@ -330,7 +331,7 @@ class VectorMixin(PathResolverMixin):
         if matches is None:
             return results
 
-        # NEW: Load index map to translate row positions → chunk indices
+        # Load index map to translate row positions → chunk indices
         index_map = self.load_embedding_index_map(filename)
 
         if hasattr(matches, "keys") and hasattr(matches, "distances"):
@@ -349,10 +350,11 @@ class VectorMixin(PathResolverMixin):
         return results
 
     def load_vector_metadata(self, filename: str) -> Optional[dict]:
-        path = self._dir_for(filename) / "vector.meta.json"
-        if not path.exists():
+        fh = self._hash_for(filename)
+        meta_path = self.paths.vector_json_path(fh)
+        if not meta_path.exists():
             return None
-        return read_json(path)
+        return read_json(meta_path)
 
     def is_vector_compatible(self, filename: str) -> bool:
         try:
@@ -390,13 +392,9 @@ class SearchMixin(PathResolverMixin):
         if not matches:
             return []
 
-        indices, scores = zip(*matches)
+        indices, _scores = zip(*matches)
 
-        table = self.load_records(filename, columns=columns)
-        if table.num_rows == 0:
-            return []
-
-        # NEW: Fetch by chunk index (not row position) using index__in filter
+        # Fetch by chunk index using index__in filter
         rows = self.query_records(
             filename,
             columns=columns,
@@ -409,6 +407,7 @@ class SearchMixin(PathResolverMixin):
             row["_score"] = score_by_index.get(row.get("index", -1), 0.0)
 
         if cls is not None:
+            from src.core.Storage.StoreUtils import reconstruct_records
             return reconstruct_records(rows, cls=cls)
         return rows
 
@@ -428,14 +427,15 @@ class SearchMixin(PathResolverMixin):
         if vectors is None or vectors.shape[0] == 0:
             return []
 
-        # NEW: Load index map to translate positions → chunk indices
+        # Load index map to translate positions → chunk indices
         index_map = self.load_embedding_index_map(filename)
 
         # Cosine similarity via dot product (assumes L2-normalized embeddings)
         similarities = np.dot(vectors.astype(np.float32), query_vec.astype(np.float32))
 
-        if k >= len(similarities):
-            top_positions = np.argsort(similarities)[::-1]
+        n = len(similarities)
+        if k >= n:
+            top_positions = np.argsort(similarities)[::-1][:k]
         else:
             top_positions = np.argpartition(similarities, -k)[-k:]
             top_positions = top_positions[np.argsort(similarities[top_positions])[::-1]]
@@ -459,6 +459,7 @@ class SearchMixin(PathResolverMixin):
             row["_score"] = score_by_index.get(row.get("index", -1), 0.0)
 
         if cls is not None:
+            from src.core.Storage.StoreUtils import reconstruct_records
             return reconstruct_records(rows, cls=cls)
         return rows
 
@@ -513,10 +514,13 @@ class SearchMixin(PathResolverMixin):
         if not filenames:
             return []
 
-        all_results: list[dict] = []
-        per_doc_k = max(5, top_k // len(filenames) + 1)
+        # Deduplicate filenames to avoid redundant work
+        unique_filenames = list(dict.fromkeys(filenames))
 
-        for filename in filenames:
+        all_results: list[dict] = []
+        per_doc_k = max(5, top_k // len(unique_filenames) + 1)
+
+        for filename in unique_filenames:
             rows = self.search_single(
                 query_vec, filename, k=per_doc_k,
                 min_score=min_score, columns=columns,

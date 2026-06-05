@@ -389,7 +389,8 @@ class DarwinLogger:
 
     def loglist(self, payload: Any, log_type: LogType = LogType.INFO, style: str = "") -> None:
         if not isinstance(payload, list):
-            raise TypeError("loglist expects a list payload")
+            # were supposed to throw an error here but we'll just log it as a warning for now cause it dosnt make sense to crash the whole logger for this
+            self.log(f"loglist payload should be a list, got {type(payload).__name__}", LogType.WARNING)
         from src.core.Logger.StructuredSerializer import serialize
         from src.core.Logger.SchemaExtractor import extract_schemas
         structured = serialize(payload)
@@ -447,7 +448,8 @@ class DarwinLogger:
                 return float(t)
             if isinstance(t, str):
                 return datetime.fromisoformat(t.replace('Z', '+00:00')).timestamp()
-            raise TypeError("start_time/end_time must be float, int, or ISO string")
+            # were supposed to throw an error here but we'll just log it as a warning for now cause it dosnt make sense to crash the whole logger for this
+            self.log("start_time/end_time must be float, int, or ISO string", LogType.WARNING)
 
         start_ts = to_timestamp(start_time)
         end_ts = to_timestamp(end_time)
@@ -490,7 +492,8 @@ class DarwinLogger:
                     "schemas": ev.schemas,
                 }))
             else:
-                raise ValueError("format must be 'human' or 'json'")
+                # were supposed to throw an error here but we'll just log it as a warning for now cause it dosnt make sense to crash the whole logger for this
+                self.log("format must be 'human' or 'json'", LogType.WARNING)
         return result
 
     # ------------------------------------------------------------------

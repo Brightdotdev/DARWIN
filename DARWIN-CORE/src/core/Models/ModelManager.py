@@ -13,7 +13,6 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
 from src.features.Hardware.Capabilities import Capabilities
 from src.core.Plugins.TorchPlugin import TorchPlugin, PluginRequiredError
-from src.core.Models.ModelUtils import HardwareInsufficientError
 
 _LOADER_INSTANCE = None
 _SYSTEM_CACHE = None
@@ -255,11 +254,13 @@ class ModelManager:
         try:
             resolved_key = self.loader.resolve_key(new_key, "embedding")
             spec = get_spec(resolved_key)
-            self._check_plugin_and_download(resolved_key, spec)
+            is_ready =self._check_plugin_and_download(resolved_key, spec)
+            if not is_ready:
+                return          
             self.loader.set_preference("embedding", resolved_key)
-        except HardwareInsufficientError as e:
-            darwin.log(str(e), LogType.ERROR)
-            return
+  
+  
+
         except PluginRequiredError as e:
             darwin.log(str(e), LogType.ERROR)
             return
@@ -284,18 +285,17 @@ class ModelManager:
         try:
             resolved_key = self.loader.resolve_key(new_key, category)
             spec = get_spec(resolved_key)
-            self._check_plugin_and_download(resolved_key, spec)
+            is_ready = self._check_plugin_and_download(resolved_key, spec)
+            if not is_ready:
+                return
             self.loader.set_preference(category, resolved_key)
             darwin.log(f"Switched {category} → {new_key}", LogType.SUCCESS)
-        except HardwareInsufficientError as e:
-            darwin.log(str(e), LogType.ERROR)
         except PluginRequiredError as e:
             darwin.log(str(e), LogType.ERROR)
 
     # ── Helper: plugin check + download with hardware validation ─────
-    def _check_plugin_and_download(self, key: str, spec) -> None:
-        """Raise PluginRequiredError if plugin missing, or HardwareInsufficientError if
-        hardware cannot run the model. Otherwise download if not cached."""
+    def _check_plugin_and_download(self, key: str, spec) -> bool:
+        """Raise PluginRequiredError if plugin missing,        hardware cannot run the model. Otherwise download if not cached."""
         # Plugin check
         if spec.requires_plugin:
             torch_plugin = TorchPlugin()
@@ -305,19 +305,22 @@ class ModelManager:
         # Hardware check before attempting download
         if spec.disk_mb > 0:
             if not self.system.can_run(spec):
-                raise HardwareInsufficientError(
-                    key,
-                    f"Needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)"
-                )
+               darwin.log(
+                    f"{key} Needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)"
+            ,LogType.ERROR)
+               return False
             if not self.system.has_disk_space(spec):
-                raise HardwareInsufficientError(
-                    key,
-                    f"Needs {spec.disk_mb}MB disk (you have {self.system.disk_free_gb*1024:.0f}MB free)"
-                )
+                darwin.log(
+                    f"{key} Needs {spec.disk_mb}MB disk (you have {self.system.disk_free_gb*1024:.0f}MB free)", LogType.ERROR
+            ,LogType.ERROR)
+                return False
+     
 
             if not self.model_store.is_downloaded(key):
                 darwin.log(f"Downloading {key}...", LogType.INFO)
                 self.model_store.download(key)
+
+        return True
 
     # ── Migration ────────────────────────────────────────────────────
     def migrate_embedding(self, file: Optional[str] = None, force: bool = False) -> dict:
@@ -379,10 +382,11 @@ class ModelManager:
 
         # Plugin + hardware validation
         try:
-            self._check_plugin_and_download(key, spec)
-        except HardwareInsufficientError as e:
-            darwin.log(str(e), LogType.ERROR)
-            return
+            is_ready = self._check_plugin_and_download(key, spec)
+            if not is_ready:
+                return
+      
+      
         except PluginRequiredError as e:
             darwin.log(str(e), LogType.ERROR)
             return
@@ -410,52 +414,59 @@ class ModelManager:
         self.model_store.download(key, force=force)
         darwin.log(f"{key} installed. Run switch to activate it.", LogType.SUCCESS)
 
-    def uninstall(self, key: str) -> None:
+    def uninstall(self, key: str, force: bool = False) -> bool:
+        """
+        Uninstall a model. Returns True if something was removed or deactivated.
+        
+        Args:
+            key: Registry key of the model to uninstall.
+            force: If True, bypass the required-model guard.
+        """
         if key not in REGISTRY:
             darwin.log(f"Unknown model: {key}", LogType.ERROR)
-            return
+            return False
+
         spec = get_spec(key)
+
+        # ── API models: no disk files, just deactivate ──────────────────────
         if spec.disk_mb == 0:
-            darwin.log(f"{key} is an API model; nothing to delete locally.", LogType.INFO)
-            active = load_active_models().get(spec.category)
-            if active == spec.model_id:
-                darwin.log(f"⚠️  {key} is currently the active {spec.category} model.", LogType.WARNING)
-                if input("   Deactivate it and clear preference? [y/N]: ").strip().lower() == 'y':
-                    set_active_model(spec.category, None)
-                    self.loader.set_preference(spec.category, "")
-                    darwin.log(f"{key} deactivated.", LogType.SUCCESS)
-            return
+            active_key = self.loader.get_preference(spec.category)
+            if active_key == key:
+                self.loader.set_preference(spec.category, None)
+                darwin.log(f"{key} deactivated (API model)..it is no longer your prefrence...but to delete your api key you should use the 'delete api key feature'", LogType.SUCCESS)
+                return True
+            darwin.log(f"{key} is an API model; not active, nothing to do.", LogType.INFO)
+            return False
 
+        # ── Guard: required models ──────────────────────────────────────────
+        if spec.required and not force:
+            darwin.log(
+                f"{key} is required. Uninstalling will break functionality. "
+                f"Use force=True to override.",
+                LogType.WARNING,
+            )
+            return False
+
+        # ── Guard: currently active ─────────────────────────────────────────
+        active_key = self.loader.get_preference(spec.category)
+        if active_key == key:
+            darwin.log(
+                f"{key} is the currently active {spec.category} model. "
+                f"Switch to another model first.",
+                LogType.ERROR,
+            )
+            return False
+
+        # ── Guard: not installed ────────────────────────────────────────────
         if not self.model_store.is_downloaded(key):
-            darwin.log(f"{key} is not installed", LogType.WARNING)
-            return
+            darwin.log(f"{key} is not installed.", LogType.WARNING)
+            return False
 
-        active = load_active_models().get(spec.category)
-        if active == spec.model_id:
-            darwin.log(f"⚠️  {key} is the currently active {spec.category} model. Switch first.", LogType.ERROR)
-            return
-
-        if spec.required:
-            darwin.log(f"{key} is required. Uninstalling may break functionality.", LogType.WARNING)
-            if input("   Continue? [y/N]: ").strip().lower() != 'y':
-                return
-
-        if self._darwin_store and spec.category == "embedding":
-            by_model = self._darwin_store.get_embedded_files_by_model()
-            entry = by_model["embedding"].get(spec.model_id, {})
-            affected = entry.get("files", [])
-            if affected:
-                darwin.log(f"{len(affected)} file(s) were embedded with this model.", LogType.WARNING)
-                for f in affected[:5]:
-                    darwin.log(f"   • {f}", LogType.WARNING)
-                if len(affected) > 5:
-                    darwin.log(f"   ... and {len(affected) - 5} more", LogType.WARNING)
-                if input("   Continue? [y/N]: ").strip().lower() != 'y':
-                    return
-
+        # ── Execute deletion ────────────────────────────────────────────────
         target_format = self.model_store.get_format(key)
         self.model_store.delete(key, format=target_format)
         darwin.log(f"{key} removed.", LogType.SUCCESS)
+        return True
 
     # ── Batch operations ─────────────────────────────────────────────
     def install_category(self, category: str, tier: str = 'all') -> None:

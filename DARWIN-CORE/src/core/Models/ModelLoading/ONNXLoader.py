@@ -25,7 +25,7 @@ class ONNXLoader:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
-    def load(self, key: str) -> Union[ONNXEmbeddingWrapper, ONNXRerankerWrapper]:
+    def load(self, key: str,auto_download) -> Union[ONNXEmbeddingWrapper, ONNXRerankerWrapper]:
         """
         Ensure model is cached (download if needed), then load into a wrapper.
 
@@ -40,10 +40,16 @@ class ONNXLoader:
 
         if self.downloader.is_cached(key, "onnx"):
             model_dir = self.downloader.get_model_path(key, "onnx")
+            print(model_dir)
             darwin.log(f"ONNX model {key} found in cache ({model_dir})")
-        else:
+        elif auto_download:
             darwin.log(f"ONNX model {key} not cached – downloading …")
             model_dir = self.downloader.download_onnx(key)   # raises on failure
+        else:
+            model_dir = self.downloader.get_model_path(key, "onnx")
+
+        if model_dir is None:
+            darwin.log(f"Model directory for {key} not found either enable auto download or retry")
 
         # Extract params from spec with safe defaults
         max_length = spec.max_tokens

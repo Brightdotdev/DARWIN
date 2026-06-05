@@ -5,6 +5,8 @@ Model presets for chunking, prompting, and batch sizing.
 Covers embedding models, reranker models, and API-based variants.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -19,6 +21,7 @@ class ModelPreset:
     # ── Chunking ──
     max_tokens: int
     min_tokens: int
+    dimensions: int
     overlap: int
     category: Literal["plain_text", "semantic_markdown", "reranker"]
     
@@ -46,6 +49,7 @@ PRESETS: dict[str, ModelPreset] = {
     "intfloat/e5-small-v2": ModelPreset(
         max_tokens=480,
         min_tokens=120,
+        dimensions=384,
         overlap=3,
         category="plain_text",
         needs_prefix=True,
@@ -56,6 +60,7 @@ PRESETS: dict[str, ModelPreset] = {
     "BAAI/bge-m3": ModelPreset(
         max_tokens=8000,
         min_tokens=400,
+        dimensions=1024,
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
@@ -64,11 +69,12 @@ PRESETS: dict[str, ModelPreset] = {
     "GritLM/GritLM-7B": ModelPreset(
         max_tokens=3800,
         min_tokens=300,
+        dimensions=4096,
         overlap=4,
         category="semantic_markdown",
         needs_prefix=False,
         is_instruction_tuned=True,
-        instruction_template="<|user|>\nRepresent this passage for retrieval: {text}\n<|assistant|>\n",
+        instruction_template="|<|user|>\nRepresent this passage for retrieval: {text}\n<|<|assistant|>\n",
         model_name="GritLM/GritLM-7B",
     ),
 
@@ -78,6 +84,7 @@ PRESETS: dict[str, ModelPreset] = {
     "intfloat/e5-small-v2-onnx": ModelPreset(
         max_tokens=480,
         min_tokens=120,
+        dimensions=384,
         overlap=3,
         category="plain_text",
         needs_prefix=True,
@@ -88,6 +95,7 @@ PRESETS: dict[str, ModelPreset] = {
     "BAAI/bge-m3-onnx": ModelPreset(
         max_tokens=8000,
         min_tokens=400,
+        dimensions=1024,
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
@@ -100,6 +108,7 @@ PRESETS: dict[str, ModelPreset] = {
     "openai/text-embedding-3-small": ModelPreset(
         max_tokens=8000,
         min_tokens=400,
+        dimensions=1536,
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
@@ -108,6 +117,7 @@ PRESETS: dict[str, ModelPreset] = {
     "openai/text-embedding-3-large": ModelPreset(
         max_tokens=8000,
         min_tokens=400,
+        dimensions=3072,
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
@@ -116,6 +126,7 @@ PRESETS: dict[str, ModelPreset] = {
     "cohere/embed-english-v3.0": ModelPreset(
         max_tokens=512,
         min_tokens=100,
+        dimensions=1024,
         overlap=3,
         category="plain_text",
         needs_prefix=False,
@@ -124,6 +135,7 @@ PRESETS: dict[str, ModelPreset] = {
     "voyage/voyage-3-lite": ModelPreset(
         max_tokens=4000,
         min_tokens=200,
+        dimensions=512,
         overlap=4,
         category="semantic_markdown",
         needs_prefix=False,
@@ -136,6 +148,7 @@ PRESETS: dict[str, ModelPreset] = {
     "cross-encoder/ms-marco-MiniLM-L-12-v2": ModelPreset(
         max_tokens=512,
         min_tokens=10,
+        dimensions=384,
         overlap=0,
         category="reranker",
         needs_prefix=False,
@@ -148,6 +161,7 @@ PRESETS: dict[str, ModelPreset] = {
     "cross-encoder/ms-marco-MiniLM-L-6-v2-onnx": ModelPreset(
         max_tokens=512,
         min_tokens=10,
+        dimensions=384,
         overlap=0,
         category="reranker",
         needs_prefix=False,
@@ -160,6 +174,7 @@ PRESETS: dict[str, ModelPreset] = {
     "cohere/rerank-english-v3.0": ModelPreset(
         max_tokens=512,
         min_tokens=10,
+        dimensions=1,  # Reranker returns scalar score, not a vector
         overlap=0,
         category="reranker",
         needs_prefix=False,
@@ -169,8 +184,12 @@ PRESETS: dict[str, ModelPreset] = {
 
 # Fallback for unknown models
 DEFAULT_PRESET = ModelPreset(
-    max_tokens=480, min_tokens=120, overlap=3,
-    category="plain_text", model_name="unknown",
+    max_tokens=480,
+    min_tokens=120,
+    dimensions=384,
+    overlap=3,
+    category="plain_text",
+    model_name="unknown",
 )
 
 

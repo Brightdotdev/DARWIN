@@ -44,13 +44,13 @@ class SpacyModelDownloader:
                 result = strategy()
                 if result and self._verify_spacy_model(target_path):
                     self._optimize_model(target_path)
-                    darwin.spinner_end(progress_id, success=True)
+                    darwin.spinner_stop(progress_id, success=True)
                     return target_path
                 errors.append(f"{name}: verification failed")
             except Exception as e:
                 errors.append(f"{name}: {e}")
 
-        darwin.spinner_end(progress_id, success=False)
+        darwin.spinner_stop(progress_id, success=False)
         raise DownloadError(
             f"Failed to download spaCy model '{model_name}'.\n" +
             "Errors:\n  " + "\n  ".join(errors),

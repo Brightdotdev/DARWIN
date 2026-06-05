@@ -104,7 +104,7 @@ class OnnxModelDownloader:
             model_path = self._retry_download(
                 key, repo_candidates, target, download_id
             )
-            darwin.spinner_end(download_id, success=True)
+            darwin.spinner_stop(download_id, success=True)
             darwin.log(f"ONNX model cached at {model_path}", log_type=LogType.SUCCESS)
 
             # Optional validation
@@ -115,22 +115,12 @@ class OnnxModelDownloader:
             return model_path
 
         except Exception as exc:
-            darwin.spinner_end(download_id, success=False)
+            darwin.spinner_stop(download_id, success=False)
             darwin.log("Download failed: {exc}", log_type=LogType.ERROR)
             raise
 
-    def download_pytorch(self, key: str) -> Path:
-        """Downloads the full PyTorch model repo (snapshot)."""
-        spec = get_spec(key)
-        target = self._model_dir(spec.model_id, spec.category, "pytorch")
-        target.mkdir(parents=True, exist_ok=True)
-        snapshot_download(repo_id=spec.model_id, local_dir=target)
-        return target
 
-    def download_spacy(self, key: str) -> Path:
-        """Placeholder – spaCy models are handled externally."""
-        spec = get_spec(key)
-        return self._model_dir(spec.model_id, spec.category, "spacy")
+
 
     def delete_model(self, key: str, format: str = "onnx") -> bool:
         """Remove a cached model from disk."""
@@ -148,19 +138,41 @@ class OnnxModelDownloader:
     # ------------------------------------------------------------------ #
     # Internal helpers
     # ------------------------------------------------------------------ #
+
     def _model_dir(self, model_id: str, category: str, format: str) -> Path:
         org, name = model_id.split("/", 1)
-        return self.cache_root / category / org / name / format
+        
+        # Strip format-related suffixes from the model name for clean directory paths
+        base_name = name
+        for suffix in ["-onnx", "_onnx", "-quantized", "_quantized"]:
+            if base_name.lower().endswith(suffix):
+                base_name = base_name[: -len(suffix)]
+                break
+        
+        return self.cache_root / category / org / base_name / format
 
     def _repo_candidates(self, spec, custom_repo: Optional[str]) -> List[str]:
         """Prioritised list of Hugging Face repos to try."""
         candidates = []
         if custom_repo:
             candidates.append(custom_repo)
-        # Common ONNX export repos: Xenova/{model_name}
-        model_name = spec.model_id.split("/")[-1]
-        candidates.append(f"Xenova/{model_name}")
-        candidates.append(spec.model_id)  # original PyTorch repo (rarely has ONNX)
+        
+        # Derive base model name (strip -onnx suffix if present)
+        model_id = spec.model_id  # e.g. "intfloat/e5-small-v2-onnx"
+        org, name = model_id.split("/", 1)
+        
+        # Strip common ONNX suffixes to get base model name
+        base_name = name
+        for suffix in ["-onnx", "_onnx"]:
+            if base_name.lower().endswith(suffix):
+                base_name = base_name[: -len(suffix)]
+                break
+        
+        # Xenova exports: Xenova/{base_name}
+        candidates.append(f"Xenova/{base_name}")
+        # Original PyTorch repo (fallback)
+        candidates.append(f"{org}/{base_name}")
+        
         return candidates
 
     def _retry_download(
@@ -193,6 +205,7 @@ class OnnxModelDownloader:
                             "special_tokens_map.json",
                             "vocab.txt",
                             "preprocessor_config.json",
+                            "*.txt",
                         ],
                         ignore_patterns=["*.safetensors", "*.bin", "*.pt"],  # safety
                     )

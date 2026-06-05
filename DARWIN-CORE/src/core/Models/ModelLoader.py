@@ -17,7 +17,6 @@ from src.core.Models.ModelLoading.vision_loader import load_vision_model
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Plugins.PluginManager import PluginManager, PluginRequiredError
 from src.core.Plugins.TorchPlugin import TorchPlugin
-from src.core.Models.ModelUtils import HardwareInsufficientError
 from src.features.Hardware.SystemDetector import SystemInfo
 
 
@@ -105,7 +104,7 @@ class ModelLoader:
         registry_key = self._resolve_key(key)
         spec = get_spec(registry_key)
         if spec.category != category:
-            raise ValueError(f"Model '{key}' is not a {category} model")
+            darwin.log(f"Model '{key}' is not a {category} model", LogType.ERROR)
         return registry_key
 
     # ── Preferences ────────────────────────────────────────────────────
@@ -139,15 +138,18 @@ class ModelLoader:
         return {cat.value: self.get_model_key(cat) for cat in ModelCategory}
 
     # ── Main load ─────────────────────────────────────────────────────
-    def get(self, category: ModelCategory, auto_download: bool = True) -> Any:
+    def get(self, category: ModelCategory, auto_download: bool = True) -> Any | None:
         cat_str = category.value if isinstance(category, ModelCategory) else category
         key = self._preferences.get(cat_str)
         if not key:
-            raise ValueError(f"No model set for '{cat_str}'. Run darwin setup first.")
+            darwin.log(f"No model set for '{cat_str}'. Run darwin setup first.", LogType.ERROR)
+            return None
+
 
         registry_key = self._resolve_key(key)
         if registry_key not in REGISTRY:
-            raise ValueError(f"Unknown model '{key}' for '{cat_str}'.")
+            darwin.log(f"Unknown model '{key}' for '{cat_str}'.", LogType.ERROR)
+            return None
 
         cached = self._cache.get(registry_key)
         if cached is not None:
@@ -165,21 +167,17 @@ class ModelLoader:
         # Hardware validation before any download
         if spec.disk_mb > 0 and self.system_info is not None:
             if not self.system_info.can_run(spec):
-                raise HardwareInsufficientError(
-                    registry_key,
-                    f"Needs {spec.ram_gb}GB RAM (you have {self.system_info.ram_gb}GB)"
+               darwin.log(f"{registry_key} Needs {spec.ram_gb}GB RAM (you have {self.system_info.ram_gb}GB)",LogType.ERROR
                 )
+               return None
             if not self.system_info.has_disk_space(spec):
-                raise HardwareInsufficientError(
-                    registry_key,
-                    f"Needs {spec.disk_mb}MB disk (you have {self.system_info.disk_free_gb*1024:.0f}MB free)"
+               darwin.log(f"{registry_key} Needs {spec.disk_mb}MB disk (you have {self.system_info.disk_free_gb*1024:.0f}MB free)",LogType.ERROR
                 )
 
-        # If not cached and auto_download is False, raise
+
         if not auto_download and spec.disk_mb > 0 and not self.store.is_downloaded(registry_key):
-            raise FileNotFoundError(
-                f"Model '{registry_key}' is not downloaded and auto_download is disabled."
-            )
+            darwin.log(f"Model '{registry_key}' is not downloaded and auto_download is disabled.", LogType.ERROR)
+            return None
 
         # API models – no local path
         if spec.loader in ("api_embedding", "api_reranker", "api_vision"):
@@ -197,7 +195,8 @@ class ModelLoader:
         elif spec.loader in ("embedding_st", "embedding_hf", "cross_encoder", "transformers"):
             model = self._load_torch_model(spec, local_path)
         else:
-            raise ValueError(f"Unknown loader type: {spec.loader}")
+            darwin.log(f"Unknown loader type: {spec.loader}", LogType.ERROR)
+            model = None
 
         self._cache.set(registry_key, model)
         return model
@@ -216,13 +215,13 @@ class ModelLoader:
         elif spec.loader == "api_vision":
             return APIVisionWrapper(model_id)
         else:
-            raise ValueError(f"Unknown API loader: {spec.loader}")
+            darwin.log(f"Unknown API loader: {spec.loader}")
 
     def _load_onnx_model(self, registry_key: str, local_path: str):
         # ONNXLoader needs the registry key for spec lookup
         from src.core.Models.ModelLoading.ONNXLoader import ONNXLoader
         loader = ONNXLoader()  # ONNXLoader will use its own downloader if needed, but store already downloaded
-        return loader.load(registry_key)
+        return loader.load(registry_key,False)
 
     def _load_spacy_model(self, spec, local_path: str):
         from src.core.Models.ModelLoading.SpacyConceptExtractor import SpacyConceptExtractor
@@ -257,7 +256,7 @@ class ModelLoader:
         elif loader == "transformers":
             return load_vision_model(local_path)
         else:
-            raise ValueError(f"Unknown PyTorch loader: {loader}")
+            darwin.log(f"Unknown PyTorch loader: {loader}")
 
     # ── Unload ─────────────────────────────────────────────────────────
     def unload(self, category: ModelCategory) -> None:

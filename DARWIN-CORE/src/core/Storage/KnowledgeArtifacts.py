@@ -134,17 +134,20 @@ class GraphMixin(PathResolverMixin):
             darwin.log(f"No graph data to save for {filename}", LogType.ERROR)
             return
 
-        d = self._dir_for(filename) / "graph"
-        d.mkdir(parents=True, exist_ok=True)
+
+        graph_nodes_path = self.paths.graph_nodes_path(self.hash_for(filename))
+        graph_edges_path = self.paths.graph_edges_path(self.hash_for(filename))
+
+
 
         # Write nodes and edges as separate parquet files for modular access.
         # Callers can load only nodes if they don't need edge traversal.
         if nodes:
             nodes_table = records_to_table([normalize_record(n) for n in nodes])
-            pq.write_table(nodes_table, d / "nodes.parquet", compression="zstd")
+            pq.write_table(nodes_table, graph_nodes_path, compression="zstd")
         if edges:
             edges_table = records_to_table([normalize_record(e) for e in edges])
-            pq.write_table(edges_table, d / "edges.parquet", compression="zstd")
+            pq.write_table(edges_table,graph_edges_path, compression="zstd")
 
         self._update_meta(filename, "graph", extras={
             "graph": {
@@ -159,9 +162,7 @@ class GraphMixin(PathResolverMixin):
             try:
                 self.registry.update_pipeline(
                     record.last_seen_path or filename,
-                    "graph",
-                    node_count=len(nodes),
-                    edge_count=len(edges),
+                    "graph"
                 )
             except Exception as reg_err:
                 darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
@@ -174,9 +175,8 @@ class GraphMixin(PathResolverMixin):
             darwin.log(f"No graph HTML to save for {filename}", LogType.ERROR)
             return
 
-        d = self._dir_for(filename) / "graph"
-        d.mkdir(parents=True, exist_ok=True)
-        (d / "graph.html").write_text(html, encoding="utf-8")
+        graph_html = self.paths.graph_html_path(self.hash_for(filename))
+        (graph_html).write_text(html, encoding="utf-8")
         self._update_meta(filename, "graph_vis")
         record = self._record_for(filename)
         if record:
@@ -192,15 +192,18 @@ class GraphMixin(PathResolverMixin):
         if hasattr(self, "_artifact_cache") and cache_key in self._artifact_cache:
             return self._artifact_cache[cache_key]
 
-        d = self._dir_for(filename) / "graph"
-        nodes_path = d / "nodes.parquet"
-        edges_path = d / "edges.parquet"
+        
+        graph_nodes_path = self.paths.graph_nodes_path(self.hash_for(filename))
+        graph_edges_path = self.paths.graph_edges_path(self.hash_for(filename))
+
+
+
 
         result: dict[str, list] = {"nodes": [], "edges": []}
-        if nodes_path.exists():
-            result["nodes"] = table_to_records(pq.read_table(nodes_path))
-        if edges_path.exists():
-            result["edges"] = table_to_records(pq.read_table(edges_path))
+        if graph_nodes_path.exists():
+            result["nodes"] = table_to_records(pq.read_table(graph_nodes_path))
+        if graph_edges_path.exists():
+            result["edges"] = table_to_records(pq.read_table(graph_edges_path))
 
         if hasattr(self, "_artifact_cache"):
             self._artifact_cache[cache_key] = result
@@ -221,20 +224,19 @@ class WikiMixin(PathResolverMixin):
             darwin.log(f"No wiki pages to save for {filename}", LogType.ERROR)
             return
 
-        d = self._dir_for(filename) / "wiki"
-        d.mkdir(parents=True, exist_ok=True)
+        wiki_path = self.paths.wiki_path(self.hash_for(filename))
+        
 
         dicts = [normalize_record(p) for p in pages]
         table = records_to_table(dicts)
-        pq.write_table(table, d / "wiki.parquet", compression="zstd")
+        pq.write_table(table,wiki_path, compression="zstd")
 
         record = self._record_for(filename)
         if record:
             try:
                 self.registry.update_pipeline(
                     record.last_seen_path or filename,
-                    "wiki",
-                    page_num=len(pages),
+                    "wiki"
                 )
             except Exception as reg_err:
                 darwin.log(f"Failed to update registry for {filename}: {reg_err}", LogType.WARNING)
@@ -243,9 +245,10 @@ class WikiMixin(PathResolverMixin):
         darwin.log(f"Wiki saved: {len(pages)} pages", LogType.SUCCESS)
 
     def load_wiki(self, filename: str) -> list[dict] | None:
-        path = self._dir_for(filename) / "wiki" / "wiki.parquet"
-        if not path.exists():
+        wiki_path = self.paths.wiki_path(self.hash_for(filename))
+        
+        if not wiki_path.exists():
             return None
-        return table_to_records(pq.read_table(path))
+        return table_to_records(pq.read_table(wiki_path))
 
 
