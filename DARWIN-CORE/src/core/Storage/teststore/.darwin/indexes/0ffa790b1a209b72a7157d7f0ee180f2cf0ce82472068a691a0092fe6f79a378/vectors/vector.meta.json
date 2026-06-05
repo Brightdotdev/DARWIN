@@ -1,7 +1,0 @@
-{
-  "dimension": 384,
-  "count": 10,
-  "metric": "cos",
-  "dtype": "f32",
-  "created_at": "2026-06-05T03:14:00.375229+00:00"
-}
