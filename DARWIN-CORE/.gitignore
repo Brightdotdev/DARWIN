@@ -11,6 +11,20 @@ build/
 *.so
 .eggs/
 
+/test-store
+/teststore
+teststore/
+**/teststore/**
+**/teststore/
+**/test_output/
+/test_output/**
+/darwinstoretest/**
+/darwinstoretest
+darwinstoretest/
+**/darwinstoretest/
+
+.exe
+*.exe
 # ──────────────────────────────────────────
 # Virtual Environment & Dependencies
 # ──────────────────────────────────────────

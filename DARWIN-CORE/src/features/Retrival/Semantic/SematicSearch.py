@@ -1,5 +1,5 @@
 """
-src/core/Search/Sematic/SematicSearch.py
+src/core/Search/Semantic/SemanticSearch.py
 -----------------------------------------
 Semantic search using the new DarwinStore lazy retrieval pipeline.
 
@@ -14,6 +14,7 @@ from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Indexing.Embedding.Embedder import embed_query
 from src.features.Retrival.Semantic.SematicSearchUtils import SemanticSearchResult
 from src.core.Logger.DarwinLogger import darwin, LogType
+from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 
 # Columns needed to populate a SemanticSearchResult.
 # These must match the field names produced by normalize_record(Chunk).
@@ -27,6 +28,7 @@ _RESULT_COLUMNS = [
     "index",
     "links",
     "overlap_direction",
+    "structural_type",  # NEW
 ]
 
 
@@ -46,9 +48,13 @@ def _embed_query_safe(query: str, model_name: str) -> Optional[np.ndarray]:
 
 
 def _rows_to_results(rows: List[dict]) -> List[SemanticSearchResult]:
-    """Map raw storage dicts (with '_score') to SemanticSearchResult objects."""
+    """Map raw storage dicts to SemanticSearchResult objects, filtering structural chunks."""
     results = []
     for row in rows:
+        # NEW: Hard gate — skip structural chunks at result build time
+        if is_structural_for_embedding(row.get("structural_type")):
+            continue
+            
         results.append(SemanticSearchResult(
             text=row.get("text", ""),
             clean=row.get("clean", ""),
@@ -57,7 +63,7 @@ def _rows_to_results(rows: List[dict]) -> List[SemanticSearchResult]:
             page=row.get("page", 0),
             page_end=row.get("page_end", 0),
             heading=row.get("heading", ""),
-            chunk_index=row.get("index", 0),  # Chunk field 'index' → result field 'chunk_index'
+            chunk_index=row.get("index", 0),
             links=row.get("links", []),
             overlap_direction=row.get("overlap_direction", None),
         ))
@@ -75,8 +81,6 @@ def search_single_document(
 ) -> List[SemanticSearchResult]:
     """Search within a single document using the new lazy retrieval pipeline."""
     try:
-    
-    
         if not model_name:
             darwin.log("No embedding model configured", LogType.ERROR)
             return []

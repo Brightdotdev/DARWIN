@@ -1,5 +1,5 @@
 """
-main.py - Document chunking pipeline entry point
+main.py - Document chunking pipeline entry point (DarwinStore v2)
 
 Usage:
   uv run src/core/Ingestion/Chunking/main.py                        # chunk all parsed files
@@ -25,6 +25,7 @@ if __name__ == "__main__":
 from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Ingestion.Chunking.Chunker import chunk_for_model
 from src.features.Ingestion.Chunking.lib import Chunk, ChunkingArgs
+from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 
 
@@ -89,11 +90,17 @@ def _print_inspection(chunks: list[Chunk], filename: str) -> None:
     min_tok      = min(c.token_count for c in chunks)
     max_tok      = max(c.token_count for c in chunks)
     with_heading = sum(1 for c in chunks if c.heading)
-    tables       = sum(1 for c in chunks if "[Table]" in c.text)
-    captions     = sum(1 for c in chunks if "[Caption:" in c.text)
+    tables       = sum(1 for c in chunks if c.structural_type == "table")
+    captions     = sum(1 for c in chunks if c.structural_type == "caption")
     overlaps     = sum(1 for c in chunks if c.is_overlap)
     with_links   = sum(1 for c in chunks if c.links)
     total_links  = sum(len(c.links) for c in chunks)
+
+    # structural type distribution
+    structural_counts: dict[str, int] = {}
+    for c in chunks:
+        st = c.structural_type or "unknown"
+        structural_counts[st] = structural_counts.get(st, 0) + 1
 
     darwin.log("  metric              value", LogType.INFO)
     darwin.log("  ──────────────────  ─────", LogType.INFO)
@@ -108,6 +115,13 @@ def _print_inspection(chunks: list[Chunk], filename: str) -> None:
     darwin.log(f"  overlap chunks      {overlaps}", LogType.INFO)
     darwin.log(f"  chunks w/ links     {with_links}", LogType.INFO)
     darwin.log(f"  total links         {total_links}", LogType.INFO)
+    darwin.log("")
+
+    # print structural breakdown
+    darwin.log("  structural breakdown", LogType.INFO)
+    for st, count in sorted(structural_counts.items()):
+        pct = count / total * 100
+        darwin.log(f"  {st:18}  {count:3} ({pct:5.1f}%)", LogType.INFO)
     darwin.log("")
 
     preview_count = min(3, total)
@@ -131,12 +145,13 @@ def _print_chunk(chunk: Chunk) -> None:
     overlap_str = getattr(chunk, "overlap_direction", None)
     overlap_val = overlap_str.value if overlap_str else "none"
 
-    darwin.log(f"  index:     {chunk.index}", LogType.INFO)
-    darwin.log(f"  heading:   {chunk.heading or '(none)'}", LogType.INFO)
-    darwin.log(f"  page:      {chunk.page}–{chunk.page_end}", LogType.INFO)
-    darwin.log(f"  tokens:    {chunk.token_count}", LogType.INFO)
-    darwin.log(f"  overlap:   {overlap_val}", LogType.INFO)
-    darwin.log(f"  links:     {len(chunk.links) if chunk.links else 0}", LogType.INFO)
+    darwin.log(f"  index:      {chunk.index}", LogType.INFO)
+    darwin.log(f"  heading:    {chunk.heading or '(none)'}", LogType.INFO)
+    darwin.log(f"  page:       {chunk.page}–{chunk.page_end}", LogType.INFO)
+    darwin.log(f"  tokens:     {chunk.token_count}", LogType.INFO)
+    darwin.log(f"  overlap:    {overlap_val}", LogType.INFO)
+    darwin.log(f"  structural: {chunk.structural_type}", LogType.INFO)
+    darwin.log(f"  links:      {len(chunk.links) if chunk.links else 0}", LogType.INFO)
     darwin.log("")
 
     text = chunk.text or ""
@@ -188,19 +203,17 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
     succeeded = failed = 0
 
     for filename in filenames:
-        try:
-            record = store.registry._find_by_name(filename)
-        except AttributeError:
-            darwin.log(f"{filename} — registry method unavailable", LogType.ERROR)
-            failed += 1
-            continue
-
-        if record is None:
+        # ── v2 API: resolve name → source → content hash ─────────────────
+        source = store._sources.find_by_name(filename)
+        if source is None:
             darwin.log(f"{filename} — not registered, run parsing first", LogType.ERROR)
             failed += 1
             continue
 
-        if not args.rerun and store.has_records(filename):
+        content_hash = source.content_hash
+        content_status = store._contents.get_status(content_hash)
+
+        if not args.rerun and content_status.stages.get("chunks", False):
             darwin.log(f"{filename} — already chunked (use --rerun to rechunk)", LogType.INFO)
             succeeded += 1
             continue
@@ -242,10 +255,18 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
 
             total_links = sum(len(c.links) for c in chunks)
 
+            # split for downstream indexing
+            content_chunks = [c for c in chunks if not is_structural_for_embedding(c.structural_type)]
+            structural_chunks = [c for c in chunks if is_structural_for_embedding(c.structural_type)]
+
+            # Save ALL chunks for citation / page resolution
             store.save_records(
                 filename=filename,
                 records=chunks,
             )
+
+            # TODO: If your store supports a content-only index table, also save:
+            # store.save_content_records(filename, records=content_chunks)
 
             avg_tokens = sum(c.token_count for c in chunks) // len(chunks)
             darwin.log(
@@ -254,6 +275,13 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
                 f"{total_links} links distributed",
                 LogType.SUCCESS,
             )
+
+            if structural_chunks:
+                darwin.log(
+                    f"{filename} — {len(structural_chunks)} structural chunks "
+                    f"(toc/copyright/cover/index) excluded from embedding/BM25 index",
+                    LogType.INFO,
+                )
 
             succeeded += 1
 
@@ -293,7 +321,6 @@ async def main() -> int:
 
     args = parser.parse_args()
 
-    # CHANGED: use darwin.configure() — no manual WebSocket or history imports
     verbosity = Verbosity.NORMAL if args.verbosity == "normal" else Verbosity.QUIET
     darwin.configure(
         enable_websocket=not args.no_ws,
@@ -304,7 +331,6 @@ async def main() -> int:
     )
 
     try:
-        # CHANGED: wrap in session context manager
         with darwin.session("chunking"):
             chunking_args = ChunkingArgs(
                 files=args.files,
@@ -312,7 +338,6 @@ async def main() -> int:
                 rerun=args.rerun,
             )
 
-            
             if args.store_dir and ensure_writable_directory(args.store_dir):
                 store = DarwinStore(args.store_dir)
             else:

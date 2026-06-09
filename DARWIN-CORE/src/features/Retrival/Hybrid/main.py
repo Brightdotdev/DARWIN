@@ -119,7 +119,10 @@ def _validate_files(
 
 def handle_hybrid_search(args: HybridSearchArgs, store: DarwinStore) -> List[HybridSearchResult] | None:
     """Main handler for hybrid search CLI."""
+    from src.core.Models.ModelConfig import get_active_model
+    model_name = get_active_model("embedding")
     status = store.status()
+
     tobe_searched = []
 
 
@@ -159,6 +162,7 @@ def handle_hybrid_search(args: HybridSearchArgs, store: DarwinStore) -> List[Hyb
     if len(tobe_searched) == 1:
         results = search_single_document_hybrid(
             query=args.query,
+            model_name=model_name,
             filename=tobe_searched[0],
             store=store,
             top_k=args.top_k,
@@ -172,6 +176,7 @@ def handle_hybrid_search(args: HybridSearchArgs, store: DarwinStore) -> List[Hyb
     else:
         results = search_across_documents_hybrid(
             query=args.query,
+            model_name=model_name,
             store=store,
             filenames=tobe_searched if tobe_searched else None,
             top_k=args.top_k,

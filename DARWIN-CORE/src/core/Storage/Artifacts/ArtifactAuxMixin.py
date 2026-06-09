@@ -21,11 +21,8 @@ class ArtifactAuxMixin:
             darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
             return False
         return self._artifacts.has_artifact(h, "stopwords")
-
     def save_stopwords(self, filename: str, stopwords: set[str]) -> None:
-        if not stopwords:
-            darwin.log(f"No stopwords to save for {filename}", LogType.ERROR)
-            return
+        """Persist stopwords. Empty sets are allowed (clears saved stopwords)."""
         h = self._resolve_hash(filename)
         if h is None:
             darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
@@ -38,10 +35,11 @@ class ArtifactAuxMixin:
         self._cache.invalidate(f"stopwords:{h}")
 
     def load_stopwords(self, filename: str) -> set[str]:
+        """Load persisted stopwords. Always returns a set, never None."""
         h = self._resolve_hash(filename)
         if h is None:
             darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
-            return None
+            return set()  # FIX: was returning None, which breaks set unions
         path = self.paths.stopwords_path(h)
         if not path.exists():
             return set()
@@ -177,11 +175,13 @@ class ArtifactAuxMixin:
     # ── Wiki ────────────────────────────────────────────────────────────
 
     def has_wiki(self, filename: str) -> bool:
-        if self._resolve_hash(filename) is None:
-            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+        h = self._resolve_hash(filename)
+        if h is None:
             return False
-        return self._artifacts.has_artifact(self._resolve_hash(filename), "wiki")
-
+        # Keep old artifact check, but also validate the file
+        if not self._artifacts.has_artifact(h, "wiki"):
+            return False
+        return self.paths.wiki_path(h).exists()
     def save_wiki(self, filename: str, wiki: dict) -> None:
         if not wiki:
             darwin.log(f"No wiki pages to save for {filename}", LogType.ERROR)

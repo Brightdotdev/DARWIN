@@ -1,3 +1,4 @@
+# .github/workflows/torch-plugin.yml
 name: Build Torch Plugin
 
 on:
@@ -6,38 +7,49 @@ on:
       - 'torch-plugin-v*'
 
 jobs:
-  build-cpu:
-    runs-on: ${{ matrix.os }}
+  build:
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    
+        os: [ubuntu-22.04, windows-2022, macos-13, macos-14]   # macos-14 is Apple Silicon
+        cuda: [false]
+        include:
+          # CUDA builds only for Linux + Windows (optional)
+          - os: ubuntu-22.04
+            cuda: true
+          - os: windows-2022
+            cuda: true
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
-      
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
+
+      - name: Install zip requirements (Python built-in zipfile OK)
+
       - name: Build plugin
-        run: python scripts/build_torch_plugin.py
-      
+        run: python scripts/build_torch_plugin.py --cuda=${{ matrix.cuda }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: torch-plugin-${{ matrix.os }}
+          name: torch-plugin-${{ matrix.os }}-${{ matrix.cuda && 'cuda' || 'cpu' }}
           path: darwin-torch-*.zip
 
   release:
-    needs: build-cpu
+    needs: build
     runs-on: ubuntu-latest
-    
     steps:
-      - uses: actions/download-artifact@v4
-      
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: torch-plugin-*/darwin-torch-*.zip
+          files: "**/darwin-torch-*.zip"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

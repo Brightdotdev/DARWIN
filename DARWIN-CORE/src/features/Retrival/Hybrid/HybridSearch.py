@@ -102,6 +102,7 @@ def hybrid_search(
 
 def search_single_document_hybrid(
     query: str,
+    model_name: str,
     filename: str,
     store: DarwinStore,
     top_k: int = DEFAULT_TOP_K,
@@ -118,7 +119,7 @@ def search_single_document_hybrid(
     """
     darwin.log(f"searching semantics... ({filename})", LogType.INFO)
     semantic_results = semantic_search_single(
-        query=query, filename=filename, store=store, top_k=pool_size
+        query=query,model_name=model_name, filename=filename, store=store, top_k=pool_size
     )
     darwin.log(f"semantic — {len(semantic_results)} candidates", LogType.INFO)
 
@@ -156,6 +157,7 @@ def search_single_document_hybrid(
 
 def search_across_documents_hybrid(
     query: str,
+    model_name: str,
     store: DarwinStore,
     filenames: Optional[List[str]] = None,
     top_k: int = DEFAULT_TOP_K,
@@ -177,7 +179,7 @@ def search_across_documents_hybrid(
 
     darwin.log(f"searching semantics across {len(filenames)} document(s)...", LogType.INFO)
     semantic_results = semantic_search_all(
-        query=query, store=store, filenames=filenames, top_k=pool_size
+        query=query,model_name=model_name, store=store, filenames=filenames, top_k=pool_size
     )
     darwin.log(f"semantic — {len(semantic_results)} candidates", LogType.INFO)
 

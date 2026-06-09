@@ -6,6 +6,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Registry integration – single source of truth for model metadata
+# ═══════════════════════════════════════════════════════════════════════════
+from src.core.Models.ModelRegistry import get_spec
+
 
 @dataclass
 class SystemInfo:
@@ -21,13 +26,13 @@ class SystemInfo:
     def tier(self) -> str:
         """Auto-detect best tier for this hardware."""
         if self.ram_gb >= 32:
-            return "overkill"
+            return "whale"
         elif self.ram_gb >= 16:
-            return "large"
+            return "orca"
         elif self.ram_gb >= 8:
-            return "medium"
+            return "dolphin"
         else:
-            return "light"
+            return "minnow"
 
     def can_run(self, spec) -> bool:
         """Can this system comfortably run the given ModelSpec?"""
@@ -107,7 +112,7 @@ def detect_system() -> SystemInfo:
     )
 
 
-def _detect_api_junkies() -> dict[str, bool]:
+def _detect_api_keys() -> dict[str, bool]:
     """Check which API keys are available in environment."""
     import os
 
@@ -125,63 +130,122 @@ def _detect_api_junkies() -> dict[str, bool]:
 
 def recommend_defaults(system: SystemInfo) -> dict[str, str]:
     """
-    Recommend models based on system + available API keys.
+    Recommend models based on system hardware + available API keys.
+    All model references are validated against the central ModelRegistry.
     """
     recommendations = {}
-    api_junkies = _detect_api_junkies()
+    api_keys = _detect_api_keys()
 
     # ═══════════════════════════════════════════════════════════════
-    # Reranker
+    # Embedding – preference order: API → high‑end local → ONNX → small ONNX
     # ═══════════════════════════════════════════════════════════════
-    if api_junkies.get("cohere"):
-        recommendations["reranker"] = "cohere/rerank-english-v3.0"
-    elif api_junkies.get("openrouter"):
-        recommendations["reranker"] = "openrouter/cohere/rerank-english-v3.0"
-    else:
-        recommendations["reranker"] = "cross-encoder/ms-marco-MiniLM-L-12-v2"
+    embedding_candidates = []
+
+    if api_keys["openai"]:
+        embedding_candidates.append("openai/text-embedding-3-small")
+    if api_keys["openrouter"]:
+        embedding_candidates.append("openrouter/openai/text-embedding-3-small")
+    if api_keys["cohere"]:
+        embedding_candidates.append("cohere/embed-english-v3.0")
+    if api_keys["voyage"]:
+        embedding_candidates.append("voyage/voyage-3-lite")
+
+    # GPU‑accelerated heavy lifter (only if RAM >= 32 GB and a real GPU)
+    if system.ram_gb >= 32 and system.has_gpu:
+        embedding_candidates.append("GritLM/GritLM-7B")
+
+    # ONNX BGE‑M3 – sweet spot for most users
+    if system.ram_gb >= 8:
+        embedding_candidates.append("BAAI/bge-m3-onnx")
+
+    # Ultimate fallback – runs on anything with 2 GB RAM
+    embedding_candidates.append("intfloat/e5-small-v2-onnx")
+
+    for model_id in embedding_candidates:
+        try:
+            spec = get_spec(model_id)
+        except KeyError:
+            continue  # model removed from registry – skip gracefully
+
+        # Extra GPU requirement for GritLM (not encoded in spec)
+        if model_id == "GritLM/GritLM-7B" and not system.has_gpu:
+            continue
+
+        if not spec.loader.startswith("api_"):
+            if not system.can_run(spec) or not system.has_disk_space(spec):
+                continue
+
+        recommendations["embedding"] = model_id
+        break
 
     # ═══════════════════════════════════════════════════════════════
-    # Embedding — prefer ONNX over PyTorch for local
+    # Reranker – Cohere API (or OpenRouter) → local MiniLM cross‑encoder
     # ═══════════════════════════════════════════════════════════════
-    if api_junkies.get("openai"):
-        recommendations["embedding"] = "openai/text-embedding-3-small"
-    elif api_junkies.get("openrouter"):
-        recommendations["embedding"] = "openrouter/openai/text-embedding-3-small"
-    elif api_junkies.get("cohere"):
-        recommendations["embedding"] = "cohere/embed-english-v3.0"
-    elif api_junkies.get("voyage"):
-        recommendations["embedding"] = "voyage/voyage-3-lite"
-    elif system.ram_gb >= 32 and system.has_gpu:
-        # Only recommend GritLM if GPU + torch plugin will be installed
-        recommendations["embedding"] = "GritLM/GritLM-7B"
-    elif system.ram_gb >= 8:
-        # ONNX BGE-M3 is the sweet spot for most users
-        recommendations["embedding"] = "BAAI/bge-m3-onnx"
-    else:
-        recommendations["embedding"] = "intfloat/e5-small-v2-onnx"
+    reranker_candidates = []
+    if api_keys["cohere"]:
+        reranker_candidates.append("cohere/rerank-english-v3.0")
+    if api_keys["openrouter"]:
+        reranker_candidates.append("openrouter/cohere/rerank-english-v3.0")
+    reranker_candidates.append("cross-encoder/ms-marco-MiniLM-L-12-v2")
+
+    for model_id in reranker_candidates:
+        try:
+            spec = get_spec(model_id)
+        except KeyError:
+            continue
+        if not spec.loader.startswith("api_"):
+            if not system.can_run(spec) or not system.has_disk_space(spec):
+                continue
+        recommendations["reranker"] = model_id
+        break
 
     # ═══════════════════════════════════════════════════════════════
-    # Vision
+    # Vision – API first, then local with GPU, then tiny local
     # ═══════════════════════════════════════════════════════════════
-    if api_junkies.get("openai"):
-        recommendations["vision"] = "openai/gpt-4o"
-    elif api_junkies.get("openrouter"):
-        recommendations["vision"] = "openrouter/meta-llama/llama-4-maverick"
-    elif api_junkies.get("gemini"):
-        recommendations["vision"] = "gemini/gemini-2.0-flash"
-    elif system.ram_gb >= 16 and system.has_gpu:
-        recommendations["vision"] = "vikhyatk/moondream2"
-    elif system.ram_gb >= 4:
-        recommendations["vision"] = "HuggingFaceTB/SmolVLM-256M-Instruct"
-    else:
+    vision_candidates = []
+    if api_keys["openai"]:
+        vision_candidates.append("openai/gpt-4o")
+    if api_keys["openrouter"]:
+        vision_candidates.append("openrouter/meta-llama/llama-4-maverick")
+    if api_keys["gemini"]:
+        vision_candidates.append("gemini/gemini-2.0-flash")
+
+    if system.ram_gb >= 16 and system.has_gpu:
+        vision_candidates.append("vikhyatk/moondream2")
+    if system.ram_gb >= 4:
+        vision_candidates.append("HuggingFaceTB/SmolVLM-256M-Instruct")
+
+    for model_id in vision_candidates:
+        try:
+            spec = get_spec(model_id)
+        except KeyError:
+            continue
+        if not spec.loader.startswith("api_"):
+            if not system.can_run(spec) or not system.has_disk_space(spec):
+                continue
+        recommendations["vision"] = model_id
+        break
+
+    # No vision model found at all
+    if "vision" not in recommendations:
         recommendations["vision"] = None
 
     # ═══════════════════════════════════════════════════════════════
-    # Tokenizer (always local spaCy — no API equivalent)
+    # Tokenizer – large spaCy model if plenty of RAM+disk, else medium
     # ═══════════════════════════════════════════════════════════════
+    # Heuristic: prefer en_core_web_lg only on comfortably large machines
     if system.ram_gb >= 16 and system.disk_free_gb > 2:
-        recommendations["tokenizer"] = "en_core_web_lg"
+        tokenizer_id = "en_core_web_lg"
     else:
-        recommendations["tokenizer"] = "en_core_web_md"
+        tokenizer_id = "en_core_web_md"
 
+    # Final validation – if the chosen tokenizer can’t actually run, fall back to medium
+    try:
+        tok_spec = get_spec(tokenizer_id)
+        if not system.can_run(tok_spec) or not system.has_disk_space(tok_spec):
+            tokenizer_id = "en_core_web_md"
+    except KeyError:
+        tokenizer_id = "en_core_web_md"
+
+    recommendations["tokenizer"] = tokenizer_id
     return recommendations

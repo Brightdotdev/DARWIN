@@ -24,6 +24,7 @@ from src.features.Indexing.BM25.BM25Utils import (
     tokenize_text,
     stream_tokenize_chunks,
 )
+from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 from src.core.Storage import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -87,6 +88,8 @@ def index_chunks_for_bm25(
         chunk_count=len(valid_tokens),
         vocab_size=len(doc_freqs),
         idf_smoothing=idf_smoothing,
+        # NEW: chunk index map so BM25 corpus positions align with store chunk indices
+        chunk_indices=[c.get("index") for c in chunks],
     )
     darwin.progress_update(f"bm25_{filename}", 3, "Finishing Up..")
     darwin.progress_end(f"bm25_{filename}")
@@ -115,8 +118,21 @@ def run_bm25_indexing_pipeline(
         darwin.log(f"No chunks to index for {filename}", LogType.WARNING)
         return None
 
+    # Gate: exclude structural chunks from BM25 index
+    content_chunks = [c for c in chunks if not is_structural_for_embedding(c.get("structural_type"))]
+    n_structural = len(chunks) - len(content_chunks)
+    if n_structural > 0:
+        darwin.log(
+            f"{filename}: {n_structural}/{len(chunks)} structural chunks excluded from BM25",
+            LogType.INFO,
+        )
+
+    if not content_chunks:
+        darwin.log(f"No content chunks to index for {filename}", LogType.WARNING)
+        return None
+
     data = index_chunks_for_bm25(
-        chunks, filename, threshold=threshold, idf_smoothing=idf_smoothing
+        content_chunks, filename, threshold=threshold, idf_smoothing=idf_smoothing
     )
 
     if data:

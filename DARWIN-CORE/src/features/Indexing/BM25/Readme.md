@@ -284,7 +284,7 @@ It works best when combined with embeddings.
 
 ---
 
-## ✅ Summary
+##   Summary
 
 This module:
 

@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union
 from src.features.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     OverlapDirection,
-    _split_sentences,
+    split_sentences,
 )
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -35,8 +35,8 @@ def _normalise(s: str) -> str:
 
 
 def _find_overlap_count(donor_text: str, receiver_text: str) -> int:
-    donor_sents = _split_sentences(donor_text)
-    receiver_sents = _split_sentences(receiver_text)
+    donor_sents = split_sentences(donor_text)
+    receiver_sents = split_sentences(receiver_text)
     cap = min(_OVERLAP_SEARCH_CAP, len(donor_sents), len(receiver_sents))
     for k in range(cap, 0, -1):
         donor_tail = [_normalise(s) for s in donor_sents[-k:]]
@@ -174,7 +174,7 @@ def get_full_context(
 
     # Deduplicate seams
     sentence_windows: List[List[str]] = [
-        _split_sentences(c.text) for c in contributors
+        split_sentences(c.text) for c in contributors
     ]
     for i in range(len(sentence_windows) - 1):
         k = _find_overlap_count(contributors[i].text, contributors[i + 1].text)

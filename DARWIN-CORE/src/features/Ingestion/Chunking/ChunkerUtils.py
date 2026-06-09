@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple
 from src.features.Ingestion.Chunking.ChunkConfig import get_chunk_config
 from src.features.Ingestion.Chunking.ChunkCleaners import prepare_embedding_text
 from src.features.Ingestion.Chunking.lib import (OverlapDirection, ChunkLink, Chunk,count_page_seps, TABLE_OPEN_TOKEN, TABLE_EMB_TOKEN, CAPTION_TOKEN)
+from src.features.Ingestion.Chunking.StructuralClassifier import classify_structural_type
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Link extraction
@@ -48,7 +49,7 @@ def _init_blingfire() -> bool:
     return _BLINGFIRE_AVAILABLE
 
 
-def _split_sentences(text: str) -> List[str]:
+def split_sentences(text: str) -> List[str]:
     if _init_blingfire():
         from blingfire import text_to_sentences
         result = text_to_sentences(text).strip()
@@ -203,6 +204,7 @@ def _make_chunk(
     page_end:         int,
     overlap_direction: "OverlapDirection" = None,
     links:            Optional[List["ChunkLink"]] = None,
+    total_pages:      int = 0,  # NEW
 ) -> Optional["Chunk"]:
     """Build one Chunk. Returns None if text has no real content."""
     if overlap_direction is None:
@@ -235,6 +237,9 @@ def _make_chunk(
             if tokens(remaining) < min_acceptable_tokens // 2:
                 return None
 
+    # NEW: structural classification during chunk creation
+    structural_type = classify_structural_type(text, heading, page, total_pages)
+
     return Chunk(
         text        = text,
         clean       = clean,
@@ -246,6 +251,7 @@ def _make_chunk(
         page_end    = page_end,
         overlap_direction = overlap_direction,
         links       = links if links is not None else [],
+        structural_type = structural_type,
     )
 
 def _split_with_overlap(
@@ -256,6 +262,7 @@ def _split_with_overlap(
     page:        int,
     max_tokens:  int,
     overlap:     int,
+    total_pages: int = 0,  # NEW
 ) -> List["Chunk"]:
     """Split text into sentence-windowed chunks with overlap.
     
@@ -264,9 +271,9 @@ def _split_with_overlap(
     """
     links = extract_links(text)
 
-    orig_sents  = _split_sentences(text)
+    orig_sents  = split_sentences(text)
     clean_text  = prepare_embedding_text(text)
-    clean_sents = _split_sentences(clean_text)
+    clean_sents = split_sentences(clean_text)
 
     if len(orig_sents) != len(clean_sents):
         clean_sents = [prepare_embedding_text(s) for s in orig_sents]
@@ -275,6 +282,9 @@ def _split_with_overlap(
     window_orig:  List[str]     = []
     window_clean: List[str]     = []
     window_has_left_overlap: bool = False
+
+    # NEW: classify once — all pieces from the same paragraph share the type
+    structural_type = classify_structural_type(text, heading, page, total_pages)
 
     def _force_split_oversized(sent_orig: str, sent_clean: str) -> List[Tuple[str, str]]:
         """Split a single sentence that exceeds max_tokens into pieces."""
@@ -343,6 +353,7 @@ def _split_with_overlap(
             text=raw_text, clean=clean_join, index=index + len(chunks),
             source=source, token_count=tokens(clean_join), heading=heading,
             page=page, page_end=page, overlap_direction=direction, links=links,
+            structural_type=structural_type,  # NEW
         )
         # CHANGED: Token-based minimum, not word count
         if tokens(clean_join) >= max(4, max_tokens // 10):  # min 4 tokens or 10% of max
@@ -384,6 +395,7 @@ def section_to_chunks(
     max_tokens:  int,
     min_tokens:  int,
     overlap:     int,
+    total_pages: int = 0,  # NEW
 ) -> List["Chunk"]:
     """Convert one (heading, body) section into one or more chunks."""
     if not body.strip():
@@ -397,6 +409,7 @@ def section_to_chunks(
             body, source, index, heading,
             page, page + count_page_seps(body),
             links=body_links,
+            total_pages=total_pages,
         )
         return [c] if c else []
 
@@ -411,13 +424,17 @@ def section_to_chunks(
             return
         merged_orig  = "\n\n".join(pending_orig)
         merged_clean = " ".join(pending_clean)
+        # NEW: classify merged paragraph batch
+        st = classify_structural_type(merged_orig, heading, page, total_pages)
         c = Chunk(
             text=merged_orig, clean=merged_clean, index=index + len(chunks),
             source=source, token_count=tokens(merged_clean), heading=heading,
             page=page, page_end=current_page,
             overlap_direction=OverlapDirection.NONE, links=body_links,
+            structural_type=st,  # NEW
         )
-        if len(merged_clean.split()) >= 4:
+        # CHANGED: token-based minimum (consistent with _make_chunk / _split_with_overlap)
+        if tokens(merged_clean) >= max(4, min_tokens // 4):
             chunks.append(c)
         pending_orig.clear()
         pending_clean.clear()
@@ -431,8 +448,18 @@ def section_to_chunks(
                 para, source, index + len(chunks),
                 heading, current_page, current_page,
                 links=extract_links(para),
+                total_pages=total_pages,
             )
             if c:
+                # Override: table blocks are always "table"
+                c = Chunk(
+                    text=c.text, clean=c.clean, index=c.index,
+                    source=c.source, token_count=c.token_count,
+                    heading=c.heading, page=c.page, page_end=c.page_end,
+                    overlap_direction=c.overlap_direction,
+                    links=c.links,
+                    structural_type="table",
+                )
                 chunks.append(c)
             continue
 
@@ -448,14 +475,24 @@ def section_to_chunks(
                         heading=last.heading, page=last.page, page_end=current_page,
                         overlap_direction=last.overlap_direction,
                         links=last.links + extract_links(para),
+                        structural_type=last.structural_type,  # preserve
                     )
                     continue
             c = _make_chunk(
                 para, source, index + len(chunks),
                 heading, current_page, current_page,
                 links=extract_links(para),
+                total_pages=total_pages,
             )
             if c:
+                c = Chunk(
+                    text=c.text, clean=c.clean, index=c.index,
+                    source=c.source, token_count=c.token_count,
+                    heading=c.heading, page=c.page, page_end=c.page_end,
+                    overlap_direction=c.overlap_direction,
+                    links=c.links,
+                    structural_type="caption",
+                )
                 chunks.append(c)
             continue
 
@@ -467,6 +504,7 @@ def section_to_chunks(
             sub = _split_with_overlap(
                 para, source, index + len(chunks),
                 heading, current_page, max_tokens, overlap,
+                total_pages=total_pages,
             )
             chunks.extend(sub)
             continue
@@ -503,7 +541,7 @@ def merge_small(
     
     CHANGED: 
     - tiny_threshold lowered to min_tokens // 3 (was // 2)
-    - Cross-heading merge allowed for any tiny chunk, not just unheaded ones
+    - Cross-heading merge allowed only for content chunks or same structural type
     - Final pass: drop any chunk still below absolute minimum
     """
     if not chunks:
@@ -538,8 +576,15 @@ def merge_small(
         both_tiny  = buf.token_count < tiny_threshold and chunk.token_count < tiny_threshold
         same_sec   = buf.heading == chunk.heading
 
-        # CHANGED: Cross-heading merge allowed for any tiny pair
-        cross_heading_ok = both_tiny
+        # NEW: Prevent structural chunks from merging with content chunks
+        both_content = (
+            buf.structural_type in ("body", "table", "caption")
+            and chunk.structural_type in ("body", "table", "caption")
+        )
+        same_structural = buf.structural_type == chunk.structural_type
+
+        # CHANGED: Cross-heading merge only for tiny content chunks or same type
+        cross_heading_ok = both_tiny and (both_content or same_structural)
 
         should_merge = fits and ((both_small and same_sec) or cross_heading_ok)
 
@@ -556,6 +601,7 @@ def merge_small(
                 overlap_direction = _merge_directions(buf.overlap_direction,
                                                       chunk.overlap_direction),
                 links            = buf.links + chunk.links,
+                structural_type  = buf.structural_type,  # NEW: preserve type
             )
         else:
             merged.append(buf)

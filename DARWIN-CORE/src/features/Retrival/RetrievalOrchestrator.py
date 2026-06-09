@@ -2,23 +2,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from collections import defaultdict
-from typing import List, Dict, Optional, Tuple, Any
+from typing import List, Dict, Optional, Any
 
-from src.features.Retrival.main import handle_retrieval
-from src.features.Retrival.RetrivalUtils import RetrievalArgs, RetrievalMethod
-from src.features.Retrival.RetrievalResult import RetrievalResult, SearchAudit
-
-from src.features.Ingestion.Chunking.lib import Chunk
-from src.features.Ingestion.Chunking.ChunkerUtils import _split_sentences
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Query.StructuralClassifier import (
-    classify_structural_type,
+from src.features.Ingestion.Chunking.StructuralClassifier import (
     get_penalty_factor,
 )
-from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki
-from src.features.Ingestion.Chunking.ContextResolver import get_full_context
+from src.features.Retrival.main import handle_retrieval
+from src.features.Retrival.RetrivalUtils import RetrievalArgs, RetrievalMethod
+from src.features.Retrival.RetrievalResult import (
+    RetrievalResult,
+    SearchAudit,
+)
 
+from src.features.Ingestion.Chunking.ChunkerUtils import split_sentences
+from src.core.Storage.DarwinStore import DarwinStore
+from src.core.Logger.DarwinLogger import darwin, LogType
+
+from src.features.Ingestion.Chunking.ContextResolver import get_full_context
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Tunables
@@ -28,7 +28,6 @@ MAX_GAP_SIZE = 2
 MAX_PASSAGE_CHUNKS = 12
 MAX_PASSAGE_CHARS = 6000
 FALLBACK_MIN_SCORE = 0.3
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Result types
@@ -56,7 +55,6 @@ class ResolvedPassage:
     dominant_structural_type: Optional[str] = None
     overall_penalty_factor: float = 1.0
 
-
 @dataclass
 class RetrievalContext:
     query: str
@@ -68,39 +66,30 @@ class RetrievalContext:
     raw_results: List[RetrievalResult]
     audit_summary: Dict[str, Any] = field(default_factory=dict)
 
-
 # ═══════════════════════════════════════════════════════════════════════════
-# Internal helpers — work with dicts (fast, no reconstruction overhead)
+# Internal helpers
 # ═══════════════════════════════════════════════════════════════════════════
-
-def _chunk_from_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a storage row dict for internal use. No-op if already normalized."""
-    return row
-
 
 def _get_index(row: dict[str, Any]) -> int:
     return row.get("index", -1)
 
-
 def _get_page(row: dict[str, Any]) -> int:
     return row.get("page", 0) or 0
-
 
 def _get_page_end(row: dict[str, Any]) -> int:
     return row.get("page_end", 0) or 0
 
-
 def _get_text(row: dict[str, Any]) -> str:
     return row.get("text", "") or row.get("clean", "") or ""
-
 
 def _should_merge_rows(
     r1: RetrievalResult,
     r2: RetrievalResult,
     chunk_map: Dict[int, dict[str, Any]],
-    wiki: Optional[DocumentWiki] = None,
+    max_gap: int = MAX_GAP_SIZE,
+    max_same_page_gap: int = 8,
 ) -> bool:
-    """Dict-based merge decision — no Chunk reconstruction needed."""
+    """Dict-based merge decision."""
     c1 = chunk_map.get(r1.chunk_index)
     c2 = chunk_map.get(r2.chunk_index)
     if not c1 or not c2:
@@ -111,10 +100,10 @@ def _should_merge_rows(
     pe1, pe2 = _get_page_end(c1), _get_page_end(c2)
 
     # Standard proximity
-    if abs(idx1 - idx2) <= MAX_GAP_SIZE:
+    if abs(idx1 - idx2) <= max_gap:
         return True
     if p1 == p2 and p1 > 0:
-        if abs(idx1 - idx2) <= 8:
+        if abs(idx1 - idx2) <= max_same_page_gap:
             return True
     if pe1 and p2:
         if abs(pe1 - p2) <= 1:
@@ -123,23 +112,14 @@ def _should_merge_rows(
         if abs(pe2 - p1) <= 1:
             return True
 
-    # WIKI HINT: same concept gets larger merge tolerance
-    if wiki is not None:
-        for page in wiki.pages:
-            indices = set(page.chunk_indices)
-            if r1.chunk_index in indices and r2.chunk_index in indices:
-                if abs(idx1 - idx2) <= 8:
-                    return True
-
     return False
-
 
 def _fill_gaps(
     chunk_indices: List[int],
     index_set: set[int],
     max_gap: int = MAX_GAP_SIZE,
 ) -> List[int]:
-    """Fill gaps using a set of available indices (no Chunk objects needed)."""
+    """Fill gaps using a set of available indices (must include candidate gaps)."""
     if len(chunk_indices) < 2:
         return chunk_indices
     sorted_indices = sorted(chunk_indices)
@@ -155,7 +135,6 @@ def _fill_gaps(
         filled.append(curr)
     return filled
 
-
 def _stitch_texts(texts: List[str], pages: List[int]) -> str:
     """Stitch text segments with page breaks. Pure strings, no Chunk objects."""
     if not texts:
@@ -166,7 +145,7 @@ def _stitch_texts(texts: List[str], pages: List[int]) -> str:
             segments.append(f"\n[Page {page}]\n")
         segments.append(text)
     combined = " ".join(segments)
-    sentences = _split_sentences(combined)
+    sentences = split_sentences(combined)
     deduped = []
     for s in sentences:
         norm = " ".join(s.split())
@@ -174,7 +153,6 @@ def _stitch_texts(texts: List[str], pages: List[int]) -> str:
             continue
         deduped.append(s)
     return " ".join(deduped)
-
 
 def _smart_truncate(text: str, max_len: int) -> str:
     if len(text) <= max_len:
@@ -186,52 +164,48 @@ def _smart_truncate(text: str, max_len: int) -> str:
             return text[:idx + 1]
     return text
 
-
-def _resolve_concepts_for_passage(
-    chunk_indices: List[int],
-    wiki: Optional[DocumentWiki],
-) -> Tuple[Optional[str], List[str]]:
-    if not wiki:
-        return None, []
-    concept_hits: Dict[str, int] = {}
-    for idx in chunk_indices:
-        for page in wiki.pages:
-            if idx in page.chunk_indices:
-                concept_hits[page.concept] = concept_hits.get(page.concept, 0) + 1
-    if not concept_hits:
-        return None, []
-    primary = max(concept_hits.items(), key=lambda x: x[1])[0]
-    related = [c for c in concept_hits.keys() if c != primary]
-    return primary, related
-
-
 def _group_results_for_merging(
     results: List[RetrievalResult],
     chunk_map: Dict[int, dict[str, Any]],
-    wiki: Optional[DocumentWiki] = None,
+    max_gap: int = MAX_GAP_SIZE,
+    max_same_page_gap: int = 8,
 ) -> List[List[RetrievalResult]]:
+    """
+    Group results using connected components (not a chain).
+    Only results that are directly or transitively mergeable end up together.
+    """
     if not results:
         return []
-    sorted_results = sorted(results, key=lambda r: r.chunk_index)
+
+    # Build adjacency list
+    n = len(results)
+    adj = {i: [] for i in range(n)}
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _should_merge_rows(results[i], results[j], chunk_map,
+                                  max_gap, max_same_page_gap):
+                adj[i].append(j)
+                adj[j].append(i)
+
+    visited = set()
     groups = []
-    current_group = [sorted_results[0]]
-    for r in sorted_results[1:]:
-        should_merge = any(
-            _should_merge_rows(r, existing_r, chunk_map, wiki=wiki)
-            for existing_r in current_group
-        )
-        if should_merge:
-            current_group.append(r)
-        else:
-            groups.append(current_group)
-            current_group = [r]
-    if current_group:
-        groups.append(current_group)
+    for i in range(n):
+        if i not in visited:
+            stack = [i]
+            visited.add(i)
+            comp = []
+            while stack:
+                cur = stack.pop()
+                comp.append(results[cur])
+                for nb in adj[cur]:
+                    if nb not in visited:
+                        visited.add(nb)
+                        stack.append(nb)
+            groups.append(comp)
     return groups
 
-
 # ═══════════════════════════════════════════════════════════════════════════
-# Passage resolution — dict-based for speed, Chunk-based only when needed
+# Passage resolution
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _build_chunk_map(
@@ -239,26 +213,32 @@ def _build_chunk_map(
     source: str,
     indices: List[int],
 ) -> Dict[int, dict[str, Any]]:
-    """Fetch minimal chunk data as dicts. No Chunk reconstruction."""
+    """Fetch minimal chunk data as dicts."""
     if not indices:
         return {}
-
     rows = store.query_records(
         filename=source,
         columns=["index", "text", "clean", "page", "page_end", "overlap_direction"],
-        index__in=list(set(indices)),  # dedupe
+        index__in=list(set(indices)),
     )
     return {_get_index(r): r for r in rows if _get_index(r) >= 0}
 
+def _build_chunk_map_range(
+    store: DarwinStore,
+    source: str,
+    min_idx: int,
+    max_idx: int,
+) -> Dict[int, dict[str, Any]]:
+    """Fetch chunk data for a continuous index range."""
+    indices = list(range(min_idx, max_idx + 1))
+    return _build_chunk_map(store, source, indices)
 
 def _resolve_single_chunk_passage(
     result: RetrievalResult,
     store: DarwinStore,
     source: str,
-    wiki: Optional[DocumentWiki],
 ) -> Optional[ResolvedPassage]:
-    """Single-chunk passage using ContextResolver (handles Chunk or dict)."""
-    # Fetch the chunk row
+    """Single-chunk passage using ContextResolver."""
     rows = store.query_records(
         filename=source,
         columns=["index", "text", "clean", "page", "page_end", "overlap_direction", "links"],
@@ -269,8 +249,6 @@ def _resolve_single_chunk_passage(
 
     chunk_row = rows[0]
     context = get_full_context(chunk_row, store, source, deduplicate=True)
-
-    primary, related = _resolve_concepts_for_passage(context.contributing_indices, wiki)
 
     audit = getattr(result, 'audit', None)
     audits = [audit] if audit else []
@@ -292,20 +270,20 @@ def _resolve_single_chunk_passage(
         rrf_score=getattr(result, 'rrf_score', None),
         rerank_score=getattr(result, 'rerank_score', None),
         matched_terms=list(result.matched_terms) if result.matched_terms else [],
-        primary_concept=primary,
-        related_concepts=related,
+        primary_concept=None,
+        related_concepts=[],
         audits=audits,
         dominant_structural_type=dominant_type,
         overall_penalty_factor=overall_factor,
     )
-
 
 def _resolve_merged_passage(
     group: List[RetrievalResult],
     store: DarwinStore,
     source: str,
     fill_gaps: bool,
-    wiki: Optional[DocumentWiki],
+    chunk_map: Optional[Dict[int, dict[str, Any]]] = None,
+    max_gap: int = MAX_GAP_SIZE,
 ) -> ResolvedPassage:
     """Multi-chunk merged passage — dict-based stitch, no Chunk reconstruction."""
     sorted_results = sorted(group, key=lambda r: r.score, reverse=True)
@@ -313,23 +291,29 @@ def _resolve_merged_passage(
 
     group_indices = sorted(set(r.chunk_index for r in group))
 
-    # Build chunk map for merge decision + gap filling
-    chunk_map = _build_chunk_map(store, source, group_indices)
+    # Use provided chunk_map or build it
+    if chunk_map is None:
+        chunk_map = _build_chunk_map(store, source, group_indices)
 
     if fill_gaps and len(group_indices) > 1:
-        index_set = set(chunk_map.keys())
-        filled_indices = _fill_gaps(group_indices, index_set, max_gap=MAX_GAP_SIZE)
+        # Extend map to include all indices that could fill gaps
+        min_idx = min(group_indices) - max_gap
+        max_idx = max(group_indices) + max_gap
+        extended_map = _build_chunk_map_range(store, source, min_idx, max_idx)
+        # Merge with existing chunk_map (priority to existing)
+        merged_map = {**extended_map, **chunk_map}
+        index_set = set(merged_map.keys())
+        filled_indices = _fill_gaps(group_indices, index_set, max_gap=max_gap)
     else:
         filled_indices = group_indices
+        merged_map = chunk_map
 
     if len(filled_indices) > MAX_PASSAGE_CHUNKS:
         filled_indices = filled_indices[:MAX_PASSAGE_CHUNKS]
 
-    # Fetch full texts for stitching
-    text_rows = _build_chunk_map(store, source, filled_indices)
-    contributors = [text_rows[idx] for idx in filled_indices if idx in text_rows]
+    # Fetch full texts for stitching using merged_map (which includes gaps)
+    contributors = [merged_map[idx] for idx in filled_indices if idx in merged_map]
 
-    # Stitch texts directly
     texts = [_get_text(r) for r in contributors]
     pages = [_get_page(r) for r in contributors]
     passage_text = _stitch_texts(texts, pages) if contributors else ""
@@ -337,7 +321,7 @@ def _resolve_merged_passage(
     # Page span
     all_pages = []
     for idx in filled_indices:
-        r = text_rows.get(idx)
+        r = merged_map.get(idx)
         if r:
             all_pages.extend([p for p in [_get_page(r), _get_page_end(r)] if p > 0])
 
@@ -345,9 +329,7 @@ def _resolve_merged_passage(
     page_end = max(all_pages) if all_pages else _get_page_end(contributors[-1]) if contributors else 0
 
     matched = list(anchor.matched_terms) if anchor.matched_terms else []
-    primary, related = _resolve_concepts_for_passage(filled_indices, wiki)
 
-    # Aggregate audits from all results in the group
     audits = []
     types = []
     factors = []
@@ -379,21 +361,27 @@ def _resolve_merged_passage(
         rrf_score=getattr(anchor, 'rrf_score', None),
         rerank_score=getattr(anchor, 'rerank_score', None),
         matched_terms=matched,
-        primary_concept=primary,
-        related_concepts=related,
+        primary_concept=None,
+        related_concepts=[],
         audits=audits,
         dominant_structural_type=dominant_type,
         overall_penalty_factor=overall_factor,
     )
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Core orchestrator
 # ═══════════════════════════════════════════════════════════════════════════
 
 class RetrievalOrchestrator:
-    def __init__(self, store: DarwinStore):
+    def __init__(
+        self,
+        store: DarwinStore,
+        max_gap_size: int = MAX_GAP_SIZE,
+        max_same_page_gap: int = 8,
+    ):
         self.store = store
+        self.max_gap_size = max_gap_size
+        self.max_same_page_gap = max_same_page_gap
 
     def retrieve(self, query, files=None, method="hybrid", top_k=5, **kwargs):
         if isinstance(files, str):
@@ -407,23 +395,32 @@ class RetrievalOrchestrator:
         )
         return handle_retrieval(args, self.store)
 
-    def penalize_structural(self, results, chunk_rows, aggressive=True):
+    def penalize_structural(self, results, chunk_rows):
         """
-        Apply structural score penalties instead of filtering.
-        Attaches SearchAudit to each result explaining the penalty.
+        Apply structural score penalties using pre-computed chunk metadata.
+        FIX: uses r.chunk_index (not r.index) and always attaches an audit.
         """
         penalized = []
         penalty_count = 0
+        chunk_map = {_get_index(c): c for c in chunk_rows}
 
         for r in results:
-            chunk_row = next((c for c in chunk_rows if _get_index(c) == r.chunk_index), None)
-            if not chunk_row:
+            chunk = chunk_map.get(r.chunk_index)
+            if not chunk:
+                # Create a default audit treating the chunk as body
+                audit = SearchAudit(
+                    raw_score=r.score,
+                    final_score=r.score,
+                    structural_type="body",
+                    penalty_factor=1.0,
+                    was_penalized=False,
+                )
+                r.audit = audit
                 penalized.append(r)
                 continue
 
-            stype = classify_structural_type(chunk_row, chunk_rows, aggressive=aggressive)
+            stype = chunk.get("structural_type", "body")
             factor = get_penalty_factor(stype)
-
             raw_score = r.score
             new_score = raw_score * factor
 
@@ -433,18 +430,13 @@ class RetrievalOrchestrator:
                 structural_type=stype,
                 penalty_factor=factor,
                 was_penalized=(factor < 1.0),
-                penalty_reason=f"structural_type={stype}" if stype else None,
+                penalty_reason=f"structural_type={stype}" if factor < 1.0 else None,
             )
             r.audit = audit
             r.score = new_score
 
             if factor < 1.0:
                 penalty_count += 1
-                darwin.log(
-                    f"[Penalty] Chunk {r.chunk_index} {stype} factor={factor} "
-                    f"{raw_score:.3f}→{new_score:.3f}",
-                    LogType.INFO,
-                )
 
             penalized.append(r)
 
@@ -457,7 +449,6 @@ class RetrievalOrchestrator:
         max_chars=MAX_PASSAGE_CHARS,
         merge_sources=True,
         fill_gaps=True,
-        wiki: Optional[DocumentWiki] = None,
     ):
         passages, total_chars = [], 0
         if not results:
@@ -469,22 +460,30 @@ class RetrievalOrchestrator:
 
         for source, source_results in by_source.items():
             if merge_sources and len(source_results) > 1:
-                # Build minimal chunk map for merge decisions
                 all_indices = list(set(r.chunk_index for r in source_results))
                 chunk_map = _build_chunk_map(self.store, source, all_indices)
-                groups = _group_results_for_merging(source_results, chunk_map, wiki=wiki)
+                groups = _group_results_for_merging(
+                    source_results,
+                    chunk_map,
+                    max_gap=self.max_gap_size,
+                    max_same_page_gap=self.max_same_page_gap,
+                )
             else:
                 groups = [[r] for r in source_results]
+                chunk_map = None   # single result, no need to pass
 
             for group in groups:
                 if merge_sources and len(group) > 1:
+                    # Pass cached chunk_map to avoid duplicate queries
                     passage = _resolve_merged_passage(
                         group, self.store, source,
-                        fill_gaps=fill_gaps, wiki=wiki,
+                        fill_gaps=fill_gaps,
+                        chunk_map=chunk_map,
+                        max_gap=self.max_gap_size,
                     )
                 else:
                     passage = _resolve_single_chunk_passage(
-                        group[0], self.store, source, wiki=wiki,
+                        group[0], self.store, source,
                     )
 
                 if not passage:
@@ -511,10 +510,8 @@ class RetrievalOrchestrator:
         top_k=5,
         max_chars=MAX_PASSAGE_CHARS,
         filter_structural=True,
-        aggressive_filter=True,
         merge_sources=True,
         fill_gaps=True,
-        wiki: Optional[DocumentWiki] = None,
         **kwargs
     ):
         darwin.log(f"[RetrievalOrchestrator] '{query}' [{method}]", LogType.INFO)
@@ -522,7 +519,6 @@ class RetrievalOrchestrator:
         if isinstance(files, str):
             files = [files]
 
-        # Retrieve larger pool so body chunks can surface after penalty
         pool_multiplier = 3 if filter_structural else 1
         results = self.retrieve(query, files, method, top_k * pool_multiplier, **kwargs)
         raw_results = list(results)
@@ -543,21 +539,21 @@ class RetrievalOrchestrator:
 
             penalized_results = []
             for source, source_results in by_source.items():
-                # Load minimal rows for structural penalty
                 indices = list(set(r.chunk_index for r in source_results))
+                # FIX: add "structural_type" column
                 chunk_rows = self.store.query_records(
                     source,
-                    columns=["index", "text", "clean", "heading", "page", "token_count"],
+                    columns=["index", "text", "clean", "heading", "page", "token_count", "structural_type"],
                     index__in=indices,
                 )
-                res, rem = self.penalize_structural(source_results, chunk_rows, aggressive=aggressive_filter)
+                res, rem = self.penalize_structural(source_results, chunk_rows)
                 penalized_results.extend(res)
                 penalized_count += rem
             results = penalized_results
 
-        # Truncate to top_k after penalty application
         results = results[:top_k]
 
+        # Fallback detection: true if NO result has an audit with penalty_factor == 1.0
         has_body = any(
             getattr(r, 'audit', None) and r.audit.penalty_factor == 1.0
             for r in results
@@ -588,7 +584,6 @@ class RetrievalOrchestrator:
         passages = self.resolve_passages(
             results, max_chars=max_chars,
             merge_sources=merge_sources, fill_gaps=fill_gaps,
-            wiki=wiki,
         )
         total_chars = sum(len(p.passage_text) for p in passages)
 
@@ -649,45 +644,35 @@ Passages:
 Answer:"""
 
     def diagnose_structural_chunks(self, filename, sample_size=20):
-        """Fetch sample chunks as dicts, reconstruct only those being diagnosed."""
+        """Fetch sample chunks and report structural metadata."""
+        from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
+        
         rows = self.store.query_records(
             filename,
-            columns=["index", "text", "clean", "heading", "page", "token_count"],
+            columns=["index", "text", "clean", "heading", "page", "structural_type"],
         )[:sample_size]
-
-        # For is_structural_chunk, we need Chunk objects and the full list
-        # Reconstruct all sample chunks at once (small batch)
-        chunks = self.store.reconstruct_records(
-            filename,
-            cls=Chunk,
-            columns=["index", "text", "clean", "heading", "page", "token_count"],
-            index__in=[_get_index(r) for r in rows],
-        )
 
         return [
             {
-                "index": c.index,
-                "is_structural": classify_structural_type(c, chunks, aggressive=True) is not None,
-                "structural_type": classify_structural_type(c, chunks, aggressive=True),
-                "length": len(c.clean or c.text),
-                "preview": (c.clean or c.text)[:100].replace("\n", " ")
+                "index": r.get("index"),
+                "is_structural": is_structural_for_embedding(r.get("structural_type")),
+                "structural_type": r.get("structural_type"),
+                "length": len(r.get("clean", "") or r.get("text", "")),
+                "preview": (r.get("clean", "") or r.get("text", ""))[:100].replace("\n", " ")
             }
-            for c in chunks[:sample_size]
+            for r in rows
         ]
-
 
 def retrieve_for_llm(
     query, files, store, method="hybrid", top_k=5,
     max_chars=MAX_PASSAGE_CHARS, filter_structural=True,
     merge_sources=True, fill_gaps=True,
-    wiki: Optional[DocumentWiki] = None,
 ):
     orch = RetrievalOrchestrator(store)
     context = orch.retrieve_and_resolve(
         query=query, files=files, method=method, top_k=top_k,
         max_chars=max_chars, filter_structural=filter_structural,
         merge_sources=merge_sources, fill_gaps=fill_gaps,
-        wiki=wiki,
     )
     prompt = orch.build_llm_prompt(context)
     return prompt, context

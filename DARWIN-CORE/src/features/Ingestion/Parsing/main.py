@@ -255,6 +255,12 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
                 else:
                     darwin.log(f"Loading vision model '{vision_key}'...", LogType.INFO)
                     loaded = loader.get(ModelCategory.VISION)
+                    if loaded is None:
+                        darwin.log("Failed to load vision model", LogType.ERROR)
+                        darwin.log("The operation will contiune without vision")
+                        darwin.log("[HELP]  try setting up your vision model / dowloading one locally or managing your defaults")
+                        return None
+                                    
                     is_api_model = hasattr(loaded, 'caption')
                     processor = model = device = None
 
@@ -304,7 +310,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
         for img in imgs:
             # Determine slot index from img.index (or img_dict 'slot')
             idx = img.index
-            rel_path = normalize_image_path(img.path, store.image_dir(fname) if args.images else None)
+            rel_path = normalize_image_path(img.path, store.ensure_image_dir(fname) if args.images else None)
             slot_map[idx] = {
                 "caption": img.caption,
                 "rel_path": rel_path,
@@ -333,7 +339,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
             if not doc.error:
                 matching_path = next((p for p in to_process if p.name == doc.filename), None)
                 if matching_path:
-                    store.registry.register(matching_path, page_count=doc.page_count)
+                    store.register(matching_path, page_count=doc.page_count)
                 store.save_markdown(doc.filename, doc)
 
     return parsed_docs

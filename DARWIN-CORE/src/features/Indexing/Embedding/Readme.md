@@ -331,7 +331,7 @@ Together they form a **hybrid retrieval system**.
 
 ---
 
-## ✅ Summary
+##   Summary
 
 This module:
 

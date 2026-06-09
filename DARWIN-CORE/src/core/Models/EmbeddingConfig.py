@@ -24,6 +24,8 @@ class ModelPreset:
     max_tokens: int
     min_tokens: int
     dimensions: int
+    loader :  Literal["embedding",  "reranker"] 
+    
     overlap: int
     category: Literal["plain_text", "semantic_markdown", "reranker"]
 
@@ -57,6 +59,8 @@ PRESETS: dict[str, ModelPreset] = {
         needs_prefix=True,
         passage_prefix="passage: ",
         query_prefix="query: ",
+            loader="embedding",
+
         model_name="intfloat/e5-small-v2",
     ),
     "BAAI/bge-m3": ModelPreset(
@@ -66,7 +70,9 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
-        model_name="BAAI/bge-m3",
+     
+         loader="embedding",
+   model_name="BAAI/bge-m3",
     ),
     "GritLM/GritLM-7B": ModelPreset(
         max_tokens=3800,
@@ -77,6 +83,8 @@ PRESETS: dict[str, ModelPreset] = {
         needs_prefix=False,
         is_instruction_tuned=True,
         instruction_template="|<|user|>\nRepresent this passage for retrieval: {text}\n<|<|assistant|>\n",
+
+    loader="embedding",
         model_name="GritLM/GritLM-7B",
     ),
 
@@ -92,6 +100,8 @@ PRESETS: dict[str, ModelPreset] = {
         needs_prefix=True,
         passage_prefix="passage: ",
         query_prefix="query: ",
+            loader="embedding",
+
         model_name="intfloat/e5-small-v2-onnx",
     ),
     "BAAI/bge-m3-onnx": ModelPreset(
@@ -101,6 +111,8 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
+
+    loader="embedding",
         model_name="BAAI/bge-m3-onnx",
     ),
 
@@ -114,6 +126,8 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
+            loader="embedding",
+
         model_name="openai/text-embedding-3-small",
     ),
     "openai/text-embedding-3-large": ModelPreset(
@@ -123,6 +137,8 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
+            loader="embedding",
+
         model_name="openai/text-embedding-3-large",
     ),
     "cohere/embed-english-v3.0": ModelPreset(
@@ -132,6 +148,8 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=3,
         category="plain_text",
         needs_prefix=False,
+            loader="embedding",
+
         model_name="cohere/embed-english-v3.0",
     ),
     "voyage/voyage-3-lite": ModelPreset(
@@ -141,6 +159,8 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=4,
         category="semantic_markdown",
         needs_prefix=False,
+            loader="embedding",
+
         model_name="voyage/voyage-3-lite",
     ),
 
@@ -154,6 +174,9 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=0,
         category="reranker",
         needs_prefix=False,
+        loader="reranker",
+
+
         model_name="cross-encoder/ms-marco-MiniLM-L-12-v2",
     ),
 
@@ -166,6 +189,8 @@ PRESETS: dict[str, ModelPreset] = {
         dimensions=384,
         overlap=0,
         category="reranker",
+        loader="reranker",
+
         needs_prefix=False,
         model_name="cross-encoder/ms-marco-MiniLM-L-6-v2-onnx",
     ),
@@ -179,6 +204,8 @@ PRESETS: dict[str, ModelPreset] = {
         dimensions=1,  # Reranker returns scalar score, not a vector
         overlap=0,
         category="reranker",
+    loader="reranker",
+
         needs_prefix=False,
         model_name="cohere/rerank-english-v3.0",
     ),
@@ -189,6 +216,7 @@ DEFAULT_PRESET = ModelPreset(
     max_tokens=480,
     min_tokens=120,
     dimensions=384,
+    loader="embedding",
     overlap=3,
     category="plain_text",
     model_name="unknown",

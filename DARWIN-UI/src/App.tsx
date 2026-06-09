@@ -1,4 +1,5 @@
 import FolderPicker from './components/utilities/FolderPicker'
+import { PromptInputBox } from './components/utilities/PromptBox'
 
 function App() {
   return (
@@ -8,6 +9,22 @@ function App() {
         color="#5227FF"
         onSelectionChange={(files) => console.log('Selected:', files)}
       />
+
+
+
+    <div className="flex w-full h-screen items-center justify-center bg-[#0a0a0a]">
+      <div className="p-4 w-[500px]">
+        <PromptInputBox
+          onSend={(msg, files) => {
+            alert(`"[Darwin] Submit:", ${msg}, ${files}`);
+          }}
+          isLoading={false}
+          placeholder="Ask Darwin anything..."
+        />
+      </div>
+    </div>
+
+
     </div>
   )
 }

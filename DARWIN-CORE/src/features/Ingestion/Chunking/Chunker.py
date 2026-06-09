@@ -1,5 +1,5 @@
 """
-src/core/Chunker.py
+Chunker.py
 -------------------
 Converts parser output (embedding_text) into overlapping chunks
 ready for embedding.
@@ -34,20 +34,24 @@ def chunk_document(
 
     config = get_chunk_config()
 
+    # NEW: estimate total pages for front/back matter detection
+    total_pages = max(1, count_page_seps(text) + 1)
+
     sections    = split_into_sections(text)
     all_chunks: List[Chunk] = []
     current_page = 1
 
     for heading, body, _level in sections:
         new_chunks = section_to_chunks(
-            heading    = heading,
-            body       = body,
-            source     = source or "unknown",
-            index      = len(all_chunks),
-            page       = current_page,
-            max_tokens = config.max_tokens,
-            min_tokens = config.min_tokens,
-            overlap    = config.overlap,
+            heading     = heading,
+            body        = body,
+            source      = source or "unknown",
+            index       = len(all_chunks),
+            page        = current_page,
+            max_tokens  = config.max_tokens,
+            min_tokens  = config.min_tokens,
+            overlap     = config.overlap,
+            total_pages = total_pages,  # NEW
         )
         all_chunks.extend(new_chunks)
         current_page += count_page_seps(heading) + count_page_seps(body)
@@ -72,6 +76,8 @@ def chunk_document(
                 pieces.append(split_point)
                 remaining = remaining[len(split_point):].lstrip()
             
+            # NEW: preserve structural_type across forced splits
+            st = chunk.structural_type or "body"
             for i, piece in enumerate(pieces):
                 final_chunks.append(Chunk(
                     text=piece,
@@ -84,6 +90,7 @@ def chunk_document(
                     page_end=chunk.page_end,
                     overlap_direction=OverlapDirection.NONE,
                     links=chunk.links if i == 0 else [],
+                    structural_type=st,  # NEW
                 ))
         else:
             chunk.index = len(final_chunks)

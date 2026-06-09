@@ -64,6 +64,7 @@ class BM25Data:
     chunk_count:      int
     vocab_size:       int
     idf_smoothing:    float                      = DEFAULT_IDF_SMOOTHING
+    chunk_indices:    List[int]                  = field(default_factory=list)  # NEW
     precomputed_idfs: Optional[Dict[str, float]] = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
@@ -83,6 +84,7 @@ class BM25Data:
             "idf_smoothing":    self.idf_smoothing,
             "doc_freqs":        self.doc_freqs,
             "doc_lengths":      self.doc_lengths,
+            "chunk_indices":    self.chunk_indices,  # NEW
             "precomputed_idfs": self.precomputed_idfs or {},
         }
       
@@ -91,22 +93,7 @@ class BM25Data:
     def from_dict(cls, data: dict) -> "BM25Data":
         """
         Reconstruct BM25Data from a storage-layer dictionary.
-
-        Expected schema:
-        {
-            "tokens": List[List[str]],
-            "doc_freqs": Dict[str, int],
-            "avgdl": float,
-            "doc_lengths": List[int],
-            "domain_stopwords": set[str] | list[str],
-            "threshold": float,
-            "chunk_count": int,
-            "vocab_size": int,
-            "idf_smoothing": float,
-            "precomputed_idfs": Optional[Dict[str, float]]
-        }
         """
-
         return cls(
             tokens=[
                 list(toks)
@@ -152,6 +139,11 @@ class BM25Data:
                     DEFAULT_IDF_SMOOTHING
                 )
             ),
+
+            chunk_indices=[
+                int(x)
+                for x in data.get("chunk_indices", [])
+            ],  # NEW
 
             precomputed_idfs=(
                 {

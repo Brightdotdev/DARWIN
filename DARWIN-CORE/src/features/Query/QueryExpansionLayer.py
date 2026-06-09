@@ -34,6 +34,11 @@ class SpacyLoader:
                 from src.core.Models import ModelManager, ModelCategory
                 loader = ModelManager.get_loader()
                 spacy_wrapper = loader.get(ModelCategory.TOKENIZER)
+                if spacy_wrapper is None:
+                    darwin.log("Spacy not availabe", LogType.ERROR)
+                    return None
+
+                
                 cls._nlp = spacy_wrapper.nlp
             except Exception as e:
                 darwin.log(f"[QueryExpansion] spaCy load failed: {e}", LogType.ERROR)

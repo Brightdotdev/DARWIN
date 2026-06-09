@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-test_both_orchestrators.py
---------------------------
-Compare RetrievalOrchestrator vs WikiOrchestrator
-with source merging and gap filling.
-
+test_orchestrator_detailed.py
+-----------------------------
+Comprehensive test that logs every single retrieval detail into a JSON file.
 Run:
-    uv run python test_both_orchestrators.py
+    python test_orchestrator_detailed.py
 """
-
 import sys
+import json
 from pathlib import Path
+from dataclasses import asdict
+from typing import Any, Dict, List
 
 project_root = Path(__file__).parent
 if str(project_root) not in sys.path:
@@ -18,94 +18,108 @@ if str(project_root) not in sys.path:
 
 from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator
-from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator
+
+STORE_DIR = "../../darwin_store_test"
+
+# ----------------------------------------------------------------------
+# Helper: convert RetrievalContext + inner objects to a JSON-friendly dict
+# ----------------------------------------------------------------------
+def _make_json_safe(obj: Any) -> Any:
+    """Recursively convert dataclasses, enums, and non-serialisable types."""
+    if hasattr(obj, "__dataclass_fields__"):
+        return {k: _make_json_safe(v) for k, v in asdict(obj).items()}
+    if isinstance(obj, (list, tuple)):
+        return [_make_json_safe(v) for v in obj]
+    if isinstance(obj, dict):
+        return {k: _make_json_safe(v) for k, v in obj.items()}
+    if hasattr(obj, "value"):  # enums
+        return obj.value
+    if isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    return str(obj)
 
 
-FILENAME = "book_of_enoch.pdf"  
-STORE_DIR = None
+def context_to_dict(ctx) -> Dict[str, Any]:
+    """Convert a RetrievalContext (and all nested objects) to a plain dict."""
+    return _make_json_safe(ctx)
 
 
+# ----------------------------------------------------------------------
+# Main test runner
+# ----------------------------------------------------------------------
 def main():
-    print("\n" + "🔗" * 25)
-    print("  BOTH ORCHESTRATORS — Merge + Gap Fill Test")
-    print("🔗" * 25)
+    print("\n" + "="*70)
+    print("   DETAILED ORCHESTRATOR TEST – saving to test_orchestrator_results.json")
+    print("="*70)
 
-    store = DarwinStore()
+    store = DarwinStore(STORE_DIR)
+    orch = RetrievalOrchestrator(store)
 
-    queries = [
-        "who are the watchers",
-        "what is azazel",
-        "giants evidence",
+    results_log = {}          # query description -> full context dict
+    test_index = 0
+
+    # We'll store a list of test cases (description, kwargs, files, query, method)
+    test_cases = [
+        ("basic_hybrid_single_file", {"filter_structural": False, "merge_sources": False, "fill_gaps": False, "top_k": 5},
+         "book_of_enoch.pdf", "hybrid", "who are the watchers"),
+        ("structural_penalty_on", {"filter_structural": True, "merge_sources": False, "fill_gaps": False, "top_k": 5},
+         "NVIDIA-Nemotron-3-Super-Technical-Report.pdf", "hybrid", "introduction"),
+        ("gap_filling_and_merge", {"filter_structural": False, "merge_sources": True, "fill_gaps": True, "top_k": 5},
+         "book_of_enoch.pdf", "hybrid", "what is azazel"),
+        ("multi_file_merge", {"filter_structural": False, "merge_sources": True, "fill_gaps": True, "top_k": 6},
+         ["cursor_paper.pdf", "NVIDIA-Nemotron-3-Super-Technical-Report.pdf"], "hybrid", "artificial intelligence"),
+        ("keyword_retrieval", {"filter_structural": False, "merge_sources": False, "fill_gaps": False, "top_k": 5},
+         "book_of_enoch.pdf", "keyword", "watchers"),
+        ("semantic_retrieval", {"filter_structural": False, "merge_sources": False, "fill_gaps": False, "top_k": 5},
+         "book_of_enoch.pdf", "semantic", "giants"),
+        ("fallback_check", {"filter_structural": True, "merge_sources": False, "fill_gaps": False, "top_k": 5},
+         "book_of_enoch.pdf", "keyword", "the"),
+        ("truncation_check", {"filter_structural": False, "merge_sources": False, "fill_gaps": False, "top_k": 3, "max_chars": 1200},
+         "CSB_Pew_Bible_2nd_Printing.pdf", "hybrid", "history"),
+        ("multi_file_no_merge", {"filter_structural": False, "merge_sources": False, "fill_gaps": False, "top_k": 5},
+         ["sumsum.pdf", "cursor_paper.pdf"], "hybrid", "science"),
+        ("high_topk_body_only", {"filter_structural": True, "merge_sources": True, "fill_gaps": True, "top_k": 8},
+         "book_of_enoch.pdf", "hybrid", "angel"),
     ]
 
-    for query in queries:
-        print(f"\n{'=' * 60}")
-        print(f"  QUERY: '{query}'")
-        print(f"{'=' * 60}")
+    for desc, kwargs, files, method, query in test_cases:
+        test_index += 1
+        print(f"[{test_index}/{len(test_cases)}] Running: {desc}")
 
-        # ── DEEP RETRIEVAL ──────────────────────────────────────────
-        print(f"\n  📚 DEEP RETRIEVAL (RetrievalOrchestrator)")
-        print(f"  {'─' * 50}")
-
-        orch = RetrievalOrchestrator(store)
-        context = orch.retrieve_and_resolve(
+        ctx = orch.retrieve_and_resolve(
             query=query,
-            filename=FILENAME,
-            method="hybrid",
-            top_k=5,
-            merge_sources=True,
-            fill_gaps=True,
+            files=files,
+            method=method,
+            **kwargs
         )
 
-        print(f"    Raw results: {len(context.raw_results)}")
-        print(f"    Filtered structural: {context.penalized_count}")
-        print(f"    Final Sources: {len(context.passages)}")
+        # Build a rich dict representation
+        ctx_dict = context_to_dict(ctx)
 
-        for i, p in enumerate(context.passages):
-            original_count = len(p.original_results)
-            gap_filled = len(p.chunk_indices) - original_count
+        # Also store the LLM prompt for human inspection
+        prompt = orch.build_llm_prompt(ctx)
+        ctx_dict["llm_prompt"] = prompt
 
-            print(f"\n    [Source {i+1}] {p.chunk_indices}")
-            print(f"      Page {p.page_start}-{p.page_end} | "
-                  f"Original chunks: {original_count} | "
-                  f"Gap-filled: {gap_filled}")
-            print(f"      Text: {p.passage_text[:150]}...")
+        # Embed some metadata about the test run
+        entry = {
+            "test_id": test_index,
+            "description": desc,
+            "method": method,
+            "query": query,
+            "files": files if isinstance(files, list) else [files],
+            "parameters": kwargs,
+            "context": ctx_dict,
+        }
 
-        # ── SHALLOW WIKI ────────────────────────────────────────────
-        print(f"\n  📖 SHALLOW WIKI (WikiOrchestrator)")
-        print(f"  {'─' * 50}")
+        results_log[f"{test_index:02d}_{desc}"] = entry
 
-        wiki_orch = WikiOrchestrator(store)
-        wiki_result = wiki_orch.search(
-            query=query,
-            filename=FILENAME,
-            top_k=5,
-            merge_sources=True,
-            fill_gaps=True,
-        )
-        
-        # WikiOrchestrator likely returns a WikiContext object
-        print(f"Query: {wiki_result.query}")
-        print(f"Total concepts: {wiki_result.total_concepts}")
-        print(f"Penalized count: {wiki_result.penalized_count}")
-        print(f"Related topics: {wiki_result.related_topics}")
-        
-        for i, concept in enumerate(wiki_result.concepts):
-            print(f"\n    [Concept {i+1}] {concept.concept}")
-            print(f"      Raw concept: {concept.raw_concept}")
-            print(f"      Page {concept.page_start}-{concept.page_end} | "
-                  f"Chunks: {concept.chunk_indices} | "
-                  f"Merged from: {concept.source_count} concepts")
-            print(f"      Score: {concept.score}")
-            print(f"      Keywords: {', '.join(concept.keywords[:5])}")
-            print(f"      Related topics: {concept.related_topics}")
-            print(f"      Source file: {concept.source_file}")
-            print(f"      Audit: {concept.audit}")
+    # Save to JSON
+    output_path = Path("test_orchestrator_results.json")
+    with output_path.open("w", encoding="utf-8") as f:
+        json.dump(results_log, f, indent=2, ensure_ascii=False)
 
-    print("\n" + "✅" * 25)
-    print("  BOTH ORCHESTRATORS TEST COMPLETE")
-    print("  Deep + Wiki both merge adjacent and fill gaps")
-    print("✅" * 25 + "\n")
+    print(f"\n  All results saved to {output_path.resolve()}")
+    print("   Open the file to inspect every passage, score, penalty, and audit detail.")
 
 
 if __name__ == "__main__":

@@ -110,7 +110,7 @@ class ResultRecorder:
         ]
 
         for t in self.tests:
-            status = "✅ PASS" if t["success"] else "❌ FAIL"
+            status = "  PASS" if t["success"] else "❌ FAIL"
             lines.append(f"## {t['test']} — {status}")
             lines.append(f"**Query:** `{t['query']}`")
             if t["error"]:
@@ -199,7 +199,7 @@ def test_broad_query():
 
     print(f"  JSON length: {len(json_out)} chars")
     print(f"  Markdown length: {len(md_out)} chars")
-    print("  ✅ test_broad_query passed")
+    print("    test_broad_query passed")
     recorder.add("test_broad_query", plan, rq.original_query)
     return True
 
@@ -225,7 +225,7 @@ def test_dense_query():
 
     types = [b.block_type for b in plan.blocks]
     assert "hierarchy" not in types, f"Unexpected hierarchy in {types}"
-    print("  ✅ test_dense_query passed")
+    print("    test_dense_query passed")
     recorder.add("test_dense_query", plan, rq.original_query)
     return True
 
@@ -283,7 +283,7 @@ def test_comparison_query():
     assert comp_block.markdown_breakdown is not None, "Missing breakdown"
 
     print(f"  Comparison block fallback length: {len(comp_block.markdown_fallback or '')}")
-    print("  ✅ test_comparison_query passed")
+    print("    test_comparison_query passed")
     recorder.add("test_comparison_query", plan, queries[0].original_query)
     return True
 
@@ -312,7 +312,7 @@ def test_explicit_type_request():
     block = next(b for b in plan.blocks if b.block_type == "entity_map")
     assert block.markdown_fallback is not None
     print(f"  Fallback length: {len(block.markdown_fallback or '')}")
-    print("  ✅ test_explicit_type_request passed")
+    print("    test_explicit_type_request passed")
     recorder.add("test_explicit_type_request", plan, rq.original_query)
     return True
 
@@ -348,7 +348,7 @@ def test_json_markdown_duality():
 
             print(f"  '{q[:30]}...' → complex={plan.is_complex}, blocks={[b['type'] for b in json_data['blocks']]}")
 
-    print("  ✅ test_json_markdown_duality passed")
+    print("    test_json_markdown_duality passed")
     recorder.add("test_json_markdown_duality", None, "multiple")
     return True
 
@@ -382,7 +382,7 @@ def test_domain_agnostic():
 
     assert "hierarchy" not in types
     print(f"  Blocks: {types}")
-    print("  ✅ test_domain_agnostic passed")
+    print("    test_domain_agnostic passed")
     recorder.add("test_domain_agnostic", plan, rq.original_query)
     return True
 
@@ -421,7 +421,7 @@ def test_complex_multi_block():
     else:
         print("  [INFO] Routed as simple (insufficient data for complex mode)")
 
-    print("  ✅ test_complex_multi_block passed")
+    print("    test_complex_multi_block passed")
     recorder.add("test_complex_multi_block", plan, rq.original_query)
     return True
 

@@ -2,11 +2,6 @@ import platform
 from pathlib import Path
 import os
 
-def ensure_models_dir(path: Path) -> Path:
-    """Make sure the models directory exists, creating it if needed."""
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
 
 
 def get_darwin_dir() -> Path:
@@ -31,15 +26,25 @@ def default_models_dir() -> Path:
     return get_darwin_dir() / "models"
     
 
-def default_models_config_dir() -> Path:
-    """Platform-appropriate global models directory."""
-    return  default_models_dir() / "config"
+def default_plugins_dir() -> Path:
+    """Platform-appropriate global plugins directory."""
+    return get_darwin_dir() / "plugins"
+
+def default_plugins_config_dir() -> Path:
+    """Platform-appropriate global plugins directory."""
+    return  default_plugins_dir() / "config"
     
 
 
 def default_conversations_dir() -> Path:
     """Platform-appropriate global models directory."""
     return get_darwin_dir() / "conversations"
+    
+
+
+def default_models_config_dir() -> Path:
+    """Platform-appropriate global models directory."""
+    return  default_models_dir() / "config"
     
 
 def conversation_memory_path() -> Path:

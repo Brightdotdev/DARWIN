@@ -129,6 +129,11 @@ PROVIDER_REGISTRY = {
 }
 
 
+def is_key_set(provider: str) -> bool:
+    """Check if the API key for `provider` is set in environment."""
+    env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
+    return bool(env_var and os.getenv(env_var))
+
 # --------------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------------

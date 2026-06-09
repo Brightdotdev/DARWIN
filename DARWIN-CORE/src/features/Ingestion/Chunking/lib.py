@@ -77,7 +77,7 @@ class Chunk:
     page_end: int
     overlap_direction: OverlapDirection = OverlapDirection.NONE
     links: List[ChunkLink] = field(default_factory=list)
-    structural_type: Optional[str] = None  # toc | cover | caption | heading | footnote | body
+    structural_type: Optional[str] = "body"  # CHANGED: was None — now always present
     
     def __post_init__(self):
         """Ensure overlap_direction is always an Enum."""

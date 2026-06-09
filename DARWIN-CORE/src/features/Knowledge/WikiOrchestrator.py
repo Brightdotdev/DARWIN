@@ -1,437 +1,187 @@
-"""
-src/core/Knowledge/WikiOrchestrator.py
---------------------------------------
-Broad / conceptual search over document wiki.
-
-Returns concept pointers (where concepts live, what they're related to).
-NO passage text assembly — that's RetrievalOrchestrator's domain.
-"""
-
-from typing import List, Dict, Optional,Any
-from dataclasses import dataclass, field
-from collections import Counter
-import re
-
+from typing import List, Dict, Any, Optional
+from pathlib import Path
 from src.core.Storage.DarwinStore import DarwinStore
-from src.features.Indexing.Embedding.Embedder import embed_query
-from src.features.Knowledge.Wiki.WikiUtils import DocumentWiki, WikiPage, WikiSearchResult
-from src.features.Knowledge.Wiki.WikiSearch import WikiSearchEngine
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Query.StructuralClassifier import classify_structural_type, get_penalty_factor
-from src.features.Retrival.lib import SearchAudit
-
-
-# =============================================================================
-# Tunables
-# =============================================================================
-
-MERGE_SOURCES_DEFAULT = True
-FILTER_STRUCTURAL_DEFAULT = True
-FALLBACK_IF_ALL_FILTERED = True
-MAX_GAP_SIZE = 2
-MAX_PASSAGE_CHUNKS = 12  # chunk index budget, NOT text chars
-
-
-# =============================================================================
-# Result Types
-# =============================================================================
-
-@dataclass
-class WikiConcept:
-    """
-    A wiki concept with resolved pointers. NO passage text.
-    """
-    concept: str           # Display name (may include merged suffix)
-    raw_concept: str       # Primary concept name without suffix
-    keywords: List[str]
-    page_start: int
-    page_end: int
-    chunk_indices: List[int]
-    score: float
-    source_count: int
-    related_topics: List[str] = field(default_factory=list)
-    source_file: str = ""  # which file this concept came from
-    audit: Optional[SearchAudit] = None
-
-    def get_page_range(self) -> str:
-        if self.page_start == self.page_end:
-            return f"Page {self.page_start}"
-        return f"Pages {self.page_start}-{self.page_end}"
-
-
-@dataclass
-class WikiContext:
-    """Complete wiki search context."""
-    query: str
-    concepts: List[WikiConcept]
-    related_topics: List[str]
-    total_concepts: int
-    penalized_count: int
-
-
-# =============================================================================
-# Gap Filling (for chunk indices only)
-# =============================================================================
-
-def _fill_gaps(indices: List[int], max_gap: int = MAX_GAP_SIZE) -> List[int]:
-    if len(indices) < 2:
-        return indices
-    sorted_idx = sorted(indices)
-    filled = [sorted_idx[0]]
-    for i in range(1, len(sorted_idx)):
-        prev, curr = filled[-1], sorted_idx[i]
-        gap = curr - prev - 1
-        if 0 < gap <= max_gap:
-            for fill_idx in range(prev + 1, curr):
-                filled.append(fill_idx)
-        filled.append(curr)
-    return filled
-
-
-# =============================================================================
-# Merge Gating
-# =============================================================================
-
-def _should_merge_concepts(
-    c1_indices: List[int],
-    c2_indices: List[int],
-    chunk_map: Dict[int, Dict[str, Any]],
-) -> bool:
-    """Pure proximity check."""
-    for i1 in c1_indices:
-        for i2 in c2_indices:
-            if abs(i1 - i2) <= MAX_GAP_SIZE:
-                return True
-            chunk1 = chunk_map.get(i1)
-            chunk2 = chunk_map.get(i2)
-            if chunk1 and chunk2:
-                if chunk1.get("page") == chunk2.get("page") and chunk1.get("page") > 0:
-                    if abs(i1 - i2) <= 8:
-                        return True
-    return False
-
-
-def _has_semantic_overlap(r1: WikiSearchResult, r2: WikiSearchResult) -> bool:
-    """Require shared keywords OR shared substantive concept words."""
-    shared_keywords = set(r1.page.keywords) & set(r2.page.keywords)
-    if len(shared_keywords) >= 2:
-        return True
-
-    words1 = set(r1.page.concept.lower().split())
-    words2 = set(r2.page.concept.lower().split())
-    stops = {"the", "and", "of", "in", "to", "a", "is", "for", "on", "with", "as", "book", "ch"}
-    words1 -= stops
-    words2 -= stops
-    if len(words1 & words2) > 0:
-        return True
-
-    return False
-
-
-# =============================================================================
-# WikiOrchestrator
-# =============================================================================
+from src.features.Knowledge.WikiBuilder import WikiBuilder
+from src.features.Knowledge.WikiIndex import WikiIndex, NullWikiIndex
+from src.features.Knowledge.GraphBuilder import GraphBuilder
 
 class WikiOrchestrator:
-    """
-    Conceptual / broad search over document wiki.
-
-    Returns concept pointers (where concepts live, what they're related to).
-    Does NOT assemble passage text — that's RetrievalOrchestrator's domain.
-    """
+    """Central orchestrator for all wiki + graph operations."""
 
     def __init__(self, store: DarwinStore):
         self.store = store
-        self._engines: Dict[str, WikiSearchEngine] = {}
+        self.builder = WikiBuilder(store)
 
-    def _get_wiki_search(self, wiki: DocumentWiki, filename: str) -> WikiSearchEngine:
-        if filename not in self._engines:
-            self._engines[filename] = WikiSearchEngine(wiki)
-        return self._engines[filename]
+    # ── Core build / load ──────────────────────────────────────────────
 
-    def search(
-        self,
-        query: str,
-        filename: str,
-        query_embedding: Optional[List[float]] = None,
-        top_k: int = 5,
-        merge_sources: bool = MERGE_SOURCES_DEFAULT,
-        filter_structural: bool = FILTER_STRUCTURAL_DEFAULT,
-    ) -> WikiContext:
-        darwin.log(f"[WikiOrchestrator] Searching: '{query}' in {filename}", LogType.INFO)
+    def get_wiki(self, filename: str) -> WikiIndex:
+        return self.builder.get(filename)
 
-        if not query.strip():
-            return WikiContext(
-                query=query, concepts=[], related_topics=[],
-                total_concepts=0, penalized_count=0,
-            )
+    def build_wiki(self, filename: str, rerun: bool = False) -> WikiIndex:
+        return self.builder.build(filename, rerun=rerun)
+
+    # ── Entity analysis helpers ────────────────────────────────────────
+
+    def entity_card(self, entity_name: str, filenames: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        wiki = self._load_any_wiki(filenames)
+        if wiki is None:
+            return None
+        matches = wiki.detect_entities(entity_name)
+        if not matches:
+            return None
+        e = matches[0]
+        return {
+            "entity_id": e.entity_id,
+            "canonical_name": e.canonical_name,
+            "type": e.type,
+            "mentions": e.frequency,
+            "spread": e.spread,
+            "salience": e.salience,
+            "doc_ids": e.doc_ids,
+            "top_cooccurring": [],
+        }
+
+    def expand_query(self, query: str, filenames: Optional[List[str]] = None,
+                     top_n: int = 5) -> str:
+        wiki = self._load_any_wiki(filenames)
+        if wiki is None:
+            return query
+        entities = wiki.detect_entities(query)
+        if not entities:
+            return query
+        expansions = set()
+        for e in entities[:3]:
+            stats = wiki.get_entity_stats(filenames)
+            for top in stats.get("top_entities", []):
+                comp = wiki.compare_entities(e.entity_id, top["entity_id"])
+                if comp.get("cooccurrence_score", 0) > 0.2:
+                    expansions.add(top["canonical_name"])
+                    if len(expansions) >= top_n:
+                        break
+        if expansions:
+            return f"{query} {' '.join(expansions)}"
+        return query
+
+    def document_profile(self, filename: str) -> Dict[str, Any]:
+        wiki = self.get_wiki(filename)
+        if isinstance(wiki, NullWikiIndex):
+            return {}
+        return wiki.get_document_profile(filename)
+
+    # ── Graph generation & persistence ─────────────────────────────────
+
+    def build_and_save_graph(self, filename: str,
+                             max_entities: int = 100,
+                             min_cooccurrence: float = 0.1,
+                             max_edges_per_node: int = 8,
+                             force_rebuild: bool = False) -> bool:
+        """Build entity graph data + HTML and persist both to the store."""
+        if not force_rebuild and self.store.has_graph(filename):
+            darwin.log(f"Graph already complete for {filename}. Use force_rebuild=True.")
+            return True
+
+        wiki = self.get_wiki(filename)
+        if isinstance(wiki, NullWikiIndex):
+            darwin.log(f"No wiki data for {filename} — cannot build graph.", LogType.ERROR)
+            return False
+
+        gb = GraphBuilder(wiki)
+        graph_data = gb.build_graph_data(
+            filename,
+            max_entities=max_entities,
+            min_cooccurrence=min_cooccurrence,
+            max_edges_per_node=max_edges_per_node
+        )
+        html = gb.build_html(
+            filename,
+            max_entities=max_entities,
+            min_cooccurrence=min_cooccurrence,
+            max_edges_per_node=max_edges_per_node,
+            title=f"Entity Graph: {filename}"
+        )
+
+        try:
+            self.store.save_graph(filename, graph_data["nodes"], graph_data["edges"])
+            self.store.save_graph_html(filename, html)
+            darwin.log(f"Graph and HTML saved for {filename}", LogType.SUCCESS)
+            return True
+        except Exception as e:
+            darwin.log(f"Failed to save graph for {filename}: {e}", LogType.ERROR)
+            return False
         
-        pages_dicts = self.store.load_wiki(filename)
-        if not pages_dicts:          # pages_dicts may be None or empty list
-            darwin.log(f"No wiki found for {filename}", LogType.WARNING)
-            return WikiContext(
-                query=query, concepts=[], related_topics=[],
-                total_concepts=0, penalized_count=0,
-            )
+    def build_and_save_interactive_graph(self, filename: str,
+                                     max_entities: int = 100,
+                                     title: str = "Entity Graph") -> bool:
+        """Build the interactive HTML (with sliders) and persist it."""
+        wiki = self.get_wiki(filename)
+        if isinstance(wiki, NullWikiIndex):
+            darwin.log(f"No wiki data for {filename} — cannot build graph.", LogType.ERROR)
+            return False
 
-        # Ensure pages_dicts is a list
-        if pages_dicts is None:
-            pages_dicts = []
+        gb = GraphBuilder(wiki)
+        html = gb.build_interactive_html(filename, max_entities=max_entities, title=title)
 
-        wiki = DocumentWiki(
-            filename=filename,       # use the actual filename, not hardcoded "doc.pdf"
-            pages=[WikiPage.from_dict(p) for p in pages_dicts],
-        )
+        try:
+            # Save HTML to store (same as before)
+            self.store.save_graph_html(filename, html)
+            # Also generate basic graph data (nodes/edges) so the store is consistent
+            data = gb.build_graph_data(filename, max_entities=max_entities,
+                                    min_cooccurrence=0.0, max_edges_per_node=30)
+            self.store.save_graph(filename, data["nodes"], data["edges"])
 
-        if not wiki:
-            return WikiContext(
-                query=query, concepts=[], related_topics=[],
-                total_concepts=0, penalized_count=0,
-            )
+            # Optional: also write a local copy for instant viewing
+            with open("enoch_interactive.html", "w", encoding="utf-8") as f:
+                f.write(html)
+            return True
+        except Exception as e:
+            darwin.log(f"Failed to save interactive graph: {e}", LogType.ERROR)
+            return False
 
-        engine = self._get_wiki_search(wiki, filename)
-        if query_embedding is None:
-            query_embedding = embed_query(query)
 
-        raw_results: List[WikiSearchResult] = engine.search(
-            query=query, query_embedding=query_embedding, top_k=top_k * 2  # larger pool for penalties
-        )
+    def get_graph_html(self, filename: str) -> Optional[str]:
+        """Return the HTML string of the saved graph, if present."""
+        h = self.store._resolve_hash(filename)
+        if h is None:
+            return None
+        path = self.store.paths.graph_html_path(h)
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        return None
 
-        if not raw_results:
-            return WikiContext(
-                query=query, concepts=[], related_topics=[],
-                total_concepts=0, penalized_count=0,
-            )
+    def get_graph_data(self, filename: str) -> Optional[Dict[str, list]]:
+        """
+        Return nodes and edges as lists of dicts.
+        Converts from the store's Parquet columnar format.
+        """
+        try:
+            raw = self.store.load_graph(filename)
+        except Exception:
+            return None
+        if not raw or (not raw.get("nodes") and not raw.get("edges")):
+            return None
 
-        all_chunks = self.store.query_records(filename, columns=["index", "clean","text", "page", "page_end"])
+        nodes = self._columns_to_records(raw["nodes"]) if raw.get("nodes") else []
+        edges = self._columns_to_records(raw["edges"]) if raw.get("edges") else []
+        return {"nodes": nodes, "edges": edges}
 
-        chunk_map = {c.get("index", ""): c for c in all_chunks}
+    # ── Internal helpers ───────────────────────────────────────────────
 
-        # Precompute duplicate chunk hashes for structural detection
-        chunk_hashes = Counter()
-        for c in all_chunks:
-            chunk_hashes[hash(c.get("clean", "").lower()[:200])] += 1
+    def _load_any_wiki(self, filenames: Optional[List[str]] = None) -> Optional[WikiIndex]:
+        if filenames:
+            for f in filenames:
+                wiki = self.get_wiki(f)
+                if not isinstance(wiki, NullWikiIndex):
+                    return wiki
+        # If none given, try first file we can get a real wiki for
+        # (You may replace this with a method that lists all registered files)
+        return None
 
-        # Apply structural penalties instead of hard filtering
-        penalized_results: List[WikiSearchResult] = []
-        penalized_count = 0
-
-        for r in raw_results:
-            chunk_types = []
-            for idx in r.page.chunk_indices:
-                chunk = chunk_map.get(idx)
-                if chunk:
-                    stype = classify_structural_type(chunk, all_chunks, chunk_hashes=chunk_hashes, aggressive=True)
-                    if stype:
-                        chunk_types.append(stype)
-
-            if chunk_types and filter_structural:
-                factors = [get_penalty_factor(t) for t in chunk_types]
-                factor = min(factors)
-                stype = chunk_types[factors.index(factor)]
-
-                raw_score = r.score
-                r.score = raw_score * factor
-                penalized_count += 1
-
-                audit = SearchAudit(
-                    raw_score=raw_score,
-                    final_score=r.score,
-                    structural_type=stype,
-                    penalty_factor=factor,
-                    was_penalized=True,
-                    penalty_reason=f"concept has {len(chunk_types)} structural chunk(s): {set(chunk_types)}",
-                    concept_source=r.page.concept,
-                )
-                if hasattr(r, 'audit'):
-                    r.audit = audit
-                else:
-                    object.__setattr__(r, 'audit', audit)
-
-                darwin.log(
-                    f"[WikiPenalty] Concept '{r.page.concept}' {stype} factor={factor} "
-                    f"{raw_score:.3f}→{r.score:.3f}",
-                    LogType.INFO,
-                )
-
-            penalized_results.append(r)
-
-        # Re-sort after penalties
-        penalized_results.sort(key=lambda x: x.score, reverse=True)
-        penalized_results = penalized_results[:top_k]
-
-        # Note if all top concepts are heavily penalized
-        has_unpenalized = any(
-            getattr(r, 'audit', None) and r.audit.penalty_factor == 1.0
-            for r in penalized_results
-        )
-        if not has_unpenalized and penalized_results:
-            darwin.log(
-                "[WikiOrchestrator] All top concepts are structural; "
-                "returning penalized results.",
-                LogType.WARNING,
-            )
-
-        # Group concepts by proximity + semantic overlap
-        if merge_sources and len(penalized_results) > 1:
-            groups = self._group_concepts(penalized_results, chunk_map)
-        else:
-            groups = [[r] for r in penalized_results]
-
-        # Resolve each group into a WikiConcept (pointers only)
-        concepts = []
-        all_related = []
-
-        for group in groups:
-            all_indices = []
-            all_keywords = []
-            max_score = 0.0
-
-            for r in group:
-                all_indices.extend(r.page.chunk_indices)
-                all_keywords.extend(r.page.keywords)
-                max_score = max(max_score, r.score)
-                if r.page.related:
-                    all_related.extend(r.page.related)
-
-            # Deduplicate and budget chunk indices
-            all_indices = sorted(set(all_indices))
-            all_indices = _fill_gaps(all_indices)[:MAX_PASSAGE_CHUNKS]
-            all_keywords = list(dict.fromkeys(all_keywords))
-
-            # Compute page range from chunks
-            page_start, page_end = 0, 0
-            if all_indices:
-                contributors = [chunk_map[idx] for idx in all_indices if idx in chunk_map]
-                if contributors:
-                    all_pages = []
-                    for c in contributors:
-                        if c.get("page") is not None:
-                            all_pages.append(c.get("page"))
-                        if c.get("page_end") is not None:
-                            all_pages.append(c.get("page_end"))
-                    page_start = min(all_pages) if all_pages else contributors[0].get("page") or 0
-                    page_end = max(all_pages) if all_pages else contributors[-1].get("page_end") or 0
-
-            # Pick highest-scored concept as primary name
-            primary = max(group, key=lambda r: r.score)
-            concept_name = primary.page.concept
-            raw_name = primary.page.concept
-
-            if len(group) > 1:
-                other_names = [r.page.concept for r in group if r.page.concept != concept_name]
-                if other_names:
-                    display_names = other_names[:2]
-                    if len(other_names) > 2:
-                        display_names.append(f"+{len(other_names) - 2} more")
-                    concept_name += f" (with: {', '.join(display_names)})"
-
-            # FIX: Flatten related topics properly (r.page.related is a list)
-            _related_flat = []
-            for r in group:
-                if r.page.related:
-                    _related_flat.extend(r.page.related)
-            group_related = list(dict.fromkeys(_related_flat))[:5]
-
-            primary_audit = getattr(primary, 'audit', None)
-
-            concept = WikiConcept(
-                concept=concept_name,
-                raw_concept=raw_name,
-                keywords=all_keywords[:10],
-                page_start=page_start,
-                page_end=page_end,
-                chunk_indices=all_indices,
-                score=max_score,
-                source_count=len(group),
-                related_topics=group_related,
-                source_file=filename,
-                audit=primary_audit,
-            )
-            concepts.append(concept)
-
-        related_topics = list(dict.fromkeys(all_related))[:10]
-
-        return WikiContext(
-            query=query,
-            concepts=concepts,
-            related_topics=related_topics,
-            total_concepts=len(concepts),
-            penalized_count=penalized_count,
-        )
-
-    def _group_concepts(
-        self,
-        results: List[WikiSearchResult],
-        chunk_map: Dict[int, Dict[str, Any]],
-    ):
-        if not results:
+    @staticmethod
+    def _columns_to_records(columns: dict) -> list[dict]:
+        """Convert columnar dict (from PyArrow to_pydict) back to list of records."""
+        if not columns:
             return []
-        sorted_results = sorted(
-            results,
-            key=lambda r: min(r.page.chunk_indices) if r.page.chunk_indices else 0,
-        )
-        groups = []
-        current_group = [sorted_results[0]]
-
-        for r in sorted_results[1:]:
-            should_merge = False
-            for existing in current_group:
-                proximity = _should_merge_concepts(
-                    r.page.chunk_indices, existing.page.chunk_indices, chunk_map
-                )
-                semantic = _has_semantic_overlap(r, existing)
-                if proximity and semantic:
-                    should_merge = True
-                    break
-
-            if should_merge:
-                current_group.append(r)
-            else:
-                groups.append(current_group)
-                current_group = [r]
-
-        if current_group:
-            groups.append(current_group)
-
-        return groups
-
-    def get_concept_passage(
-        self,
-        concept: WikiConcept,
-        filename: str,
-        fill_gaps: bool = True,
-        max_chars: int = 4000,
-    ) -> str:
-        """
-        Lazy passage resolution — hydrate a WikiConcept with text on demand.
-        Use sparingly; prefer letting RetrievalOrchestrator handle evidence.
-        """
-        all_chunks = self.store.query_records(filename, columns=["index", "clean", "text", "page"])
-        chunk_map = {c.get("index", ""): c for c in all_chunks}
-
-        indices = concept.chunk_indices
-        if fill_gaps and len(indices) > 1:
-            indices = _fill_gaps(sorted(indices))
-
-        contributors = [chunk_map[idx] for idx in indices if idx in chunk_map]
-        if not contributors:
-            return ""
-
-        # Simple stitch (no sentence dedup for lazy load)
-        segments = []
-        for i, chunk in enumerate(contributors):
-            if i > 0 and chunk.get("page") != contributors[i - 1].get("page") and chunk.get("page") > 0:
-                segments.append(f"\n[Page {chunk.get('page')}]\n")
-            segments.append(chunk.get("text", chunk.get('clean', '')))
-
-        text = " ".join(segments)
-        if len(text) > max_chars:
-            text = text[:max_chars]
-            # Truncate at sentence boundary
-            for punct in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
-                idx = text.rfind(punct)
-                if idx != -1 and idx > len(text) * 0.5:
-                    text = text[:idx + 1]
-                    break
-        return text
+        keys = list(columns.keys())
+        length = len(columns[keys[0]])
+        return [{k: columns[k][i] for k in keys} for i in range(length)]

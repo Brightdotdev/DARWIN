@@ -60,11 +60,11 @@ def test_embedding():
 
     sim = float(embeddings[0] @ embeddings[1])
 
-    print(f"   ✅ Shape:        {embeddings.shape}")
-    print(f"   ✅ Dtype:        {embeddings.dtype}")
-    print(f"   ✅ L2 norm:      {norms[0]:.6f}")
-    print(f"   ✅ Cosine sim:   {sim:.4f}")
-    print("   ✅ PASS")
+    print(f"     Shape:        {embeddings.shape}")
+    print(f"     Dtype:        {embeddings.dtype}")
+    print(f"     L2 norm:      {norms[0]:.6f}")
+    print(f"     Cosine sim:   {sim:.4f}")
+    print("     PASS")
 
 
 def test_reranker():
@@ -91,13 +91,13 @@ def test_reranker():
 
     ranked = sorted(zip(docs, scores), key=lambda x: x[1], reverse=True)
 
-    print(f"   ✅ Scores:       {scores.tolist()}")
-    print(f"   ✅ Best match:   \"{ranked[0][0][:50]}...\" (score={ranked[0][1]:.4f})")
+    print(f"     Scores:       {scores.tolist()}")
+    print(f"     Best match:   \"{ranked[0][0][:50]}...\" (score={ranked[0][1]:.4f})")
 
     # ML-related docs should outrank Paris
     assert scores[0] > scores[1], "ML doc should score higher than Paris doc"
     assert scores[2] > scores[1], "Deep learning doc should score higher than Paris doc"
-    print("   ✅ PASS")
+    print("     PASS")
 
 
 def test_end_to_end():
@@ -147,7 +147,7 @@ def test_end_to_end():
     assert np.isfinite(rerank_scores).all(), "Reranker produced invalid scores"
     # Sanity: reranking should not crash and should return same count
     assert len(reranked) == len(candidates), "Reranker changed candidate count"
-    print("   ✅ PASS")
+    print("     PASS")
 
 
 # ═══════════════════════════════════════════════════════════════════════

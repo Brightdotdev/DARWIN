@@ -28,7 +28,7 @@ from src.lib.Utils import ensure_writable_directory
 # Handler
 # ─────────────────────────────────────────────────────────────────────────────
 
-def handle_embedding(args: EmbeddingArgs,store) -> None:
+def handle_embedding(args: EmbeddingArgs,store : DarwinStore) -> None:
     loader = ModelManager.get_loader()
 
     darwin.log("")

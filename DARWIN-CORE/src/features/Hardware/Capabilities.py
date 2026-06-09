@@ -7,10 +7,9 @@ import json
 import sys
 import subprocess
 from dataclasses import dataclass, asdict
-from pathlib import Path
 from typing import List
-from src.core.Logger.DarwinLogger import darwin, LogType
-
+from src.core.Logger.DarwinLogger import darwin
+from src.lib.AppPaths import default_plugins_dir, default_models_dir
 @dataclass
 class Capabilities:
     torch_available: bool
@@ -109,14 +108,14 @@ def _get_ram() -> int:
 
 
 def _list_plugins() -> List[str]:
-    plugin_dir = Path.home() / ".darwin" / "plugins"
+    plugin_dir = default_plugins_dir()
     if not plugin_dir.exists():
         return []
     return [d.name for d in plugin_dir.iterdir() if d.is_dir()]
 
 
 def _list_cached_models() -> List[str]:
-    models_dir = Path.home() / ".darwin" / "models"
+    models_dir = default_models_dir()
     if not models_dir.exists():
         return []
 

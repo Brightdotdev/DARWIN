@@ -1,16 +1,10 @@
-"""
-src/core/Search/Keyword/KeywordSearch.py
-----------------------------------
-Pure BM25 (sparse) retrieval over chunked document text.
-With automatic query expansion via term bank (falls back to raw query).
-"""
-
 from typing import List
 from src.features.Retrival.Keyword.KeywordUtilities import calculate_bm25
 from src.features.Retrival.lib import KeywordSearchResult
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Storage.DarwinStore import DarwinStore
 from src.features.Indexing.BM25.lib import BM25Data
+from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 
 def search_single_document_keyword(
     query: str,
@@ -32,16 +26,23 @@ def search_single_document_keyword(
     if not query.strip():
         return []
 
-    chunks = store.query_records(filename)
+    # Fetch ALL chunks for lookup by index
+    all_chunks = store.query_records(filename)
     data = store.load_bm25(filename)
-    if not chunks or not data:
+    if not all_chunks or not data:
         darwin.log(f"Skipping {filename} — no data for keyword search", LogType.INFO)
         darwin.log("Try running `darwin index` first", LogType.INFO)
         return []
 
+    # Build fast lookup by chunk index
+    chunk_by_index = {c.get("index"): c for c in all_chunks}
+
     from src.features.Indexing.BM25.BM25Utils import tokenize_text, STANDARD_STOPS
 
-    stopwords = set(data['domain_stopwords']).union(STANDARD_STOPS)
+    # ── FIX: Merge BM25 domain stopwords + persisted stopwords + standard stops ──
+    saved_stops = store.load_stopwords(filename)          # was missing entirely
+    domain_stops = set(data.domain_stopwords)             # from BM25 build-time
+    stopwords = domain_stops.union(saved_stops).union(STANDARD_STOPS)
 
     # ── Query expansion (with automatic fallback) ──────────────────────────
     search_query = query  # Default: use original query
@@ -52,7 +53,8 @@ def search_single_document_keyword(
             if expanded != query:
                 search_query = expanded
         except Exception:
-            pass
+            # FIX: Don't swallow failures silently
+            darwin.log("Query expansion failed, using raw query", LogType.ERROR)
 
     query_terms = tokenize_text(search_query, domain_stops=stopwords)
 
@@ -60,12 +62,23 @@ def search_single_document_keyword(
         darwin.log("Query produced no usable terms", LogType.WARNING)
         return []
 
+    # FIX: Use 'is not None' instead of truthiness to handle empty lists correctly
+    index_map = data.chunk_indices if data.chunk_indices is not None else list(range(len(data.tokens)))
+
     results = []
-    for chunk_idx in range(len(data["tokens"])):
-        score, matched = calculate_bm25(query_terms, chunk_idx, data, k1, b)
+    for bm25_pos in range(len(data.tokens)):
+        score, matched = calculate_bm25(query_terms, bm25_pos, data, k1, b)
         
         if score >= min_score:
-            chunk = chunks[chunk_idx]
+            chunk_idx = index_map[bm25_pos]
+            chunk = chunk_by_index.get(chunk_idx)
+            if not chunk:
+                continue
+            
+            # Hard gate — skip structural chunks
+            if is_structural_for_embedding(chunk.get("structural_type")):
+                continue
+            
             results.append(KeywordSearchResult(
                 text=chunk["text"],
                 clean=chunk["clean"],
@@ -74,7 +87,7 @@ def search_single_document_keyword(
                 page=chunk["page"],
                 page_end=chunk["page_end"],
                 heading=chunk["heading"],
-                chunk_index=chunk_idx,
+                chunk_index=chunk_idx,  # Use original chunk index, not BM25 position
                 matched_terms=matched,
                 links=chunk["links"] if chunk["links"] else [],
                 overlap_direction=chunk["overlap_direction"],
@@ -90,6 +103,7 @@ def search_across_documents_keyword(
     top_k: int = 10,
     k1: float = 1.5,
     b: float = 0.75,
+    min_score: float = 0.0,   # FIX: was missing entirely
     expand_query: bool = True,
 ) -> List[KeywordSearchResult]:
     """Search across multiple documents using BM25 with query expansion."""
@@ -110,6 +124,7 @@ def search_across_documents_keyword(
                 top_k=top_k,
                 k1=k1,
                 b=b,
+                min_score=min_score,   # FIX: now passed through
                 expand_query=expand_query,
             )
             all_results.extend(results)

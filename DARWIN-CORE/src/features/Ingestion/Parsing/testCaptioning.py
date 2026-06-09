@@ -192,7 +192,7 @@ def main() -> int:
         shutil.copy2(img, images_subdir / img.name)
 
     # ── Summary ────────────────────────────────────────────────────────────
-    print(f"\n✅ Results written to {args.output_dir}:")
+    print(f"\n  Results written to {args.output_dir}:")
     print(f"   • {display_path.name}   (display markdown)")
     print(f"   • {embed_path.name}     (embedding markdown)")
     print(f"   • {json_path.name}      (caption manifest)")
@@ -202,7 +202,7 @@ def main() -> int:
         print(f"\n📊 Caption summary:")
         for img in all_images:
             short = img.caption[:70] + "…" if len(img.caption) > 70 else img.caption
-            status = "✅" if img.caption else "❌ (empty / failed)"
+            status = " " if img.caption else "❌ (empty / failed)"
             print(f"   {status} {img.path.name:<30} → {short}")
 
     cache_file = args.output_dir / ".captions_cache.json"
