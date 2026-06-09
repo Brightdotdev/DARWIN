@@ -2,30 +2,57 @@
 
 import os
 from typing import Optional, Dict, Any
+from dataclasses import dataclass
 
-from src.core.Models.ModelStore import get_model_store, ModelStore
+from src.core.Models.ModelStore import get_model_store
 from src.core.Models.ModelLoader import ModelLoader
 from src.features.Hardware.SystemDetector import detect_system, recommend_defaults, SystemInfo
 from src.features.Hardware.DeviceManager import DeviceManager
-from src.core.Models.ModelRegistry import get_spec, REGISTRY, ModelCategory
+from src.core.Models.ModelRegistry import (
+    get_spec, REGISTRY, ModelCategory, REQUIRED_CATEGORIES, DEFAULT_PREFERRED
+)
 from src.core.Models.ModelConfig import set_active_model, load_active_models
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
 from src.features.Hardware.Capabilities import Capabilities
 from src.core.Plugins.TorchPlugin import TorchPlugin, PluginRequiredError
 
+
+# ── Phase 3: Result dataclasses for clean API/CLI separation ──────────────
+@dataclass
+class InstallResult:
+    key: str
+    success: bool
+    message: str
+    skipped: bool = False
+
+@dataclass
+class SwitchResult:
+    category: str
+    key: str
+    success: bool
+    message: str
+
+@dataclass
+class UninstallResult:
+    key: str
+    removed: bool
+    message: str
+
+
 _LOADER_INSTANCE = None
 _SYSTEM_CACHE = None
 
 
 class ModelManager:
-    def __init__(self, darwin_store=None):
+    def __init__(self, system: Optional[SystemInfo] = None):
         global _SYSTEM_CACHE
 
         # Load API keys from keychain (graceful if not set up)
         try:
             load_keys_from_keychain()
         except Exception as e:
+            
             darwin.log(f"Keychain not available: {e}", LogType.WARNING)
 
         # Ensure DeviceManager is initialised once
@@ -35,15 +62,13 @@ class ModelManager:
             try:
                 DeviceManager.init(_SYSTEM_CACHE)
             except RuntimeError:
-                # Already initialized — fine
                 pass
 
         self.model_store = get_model_store()
         if _SYSTEM_CACHE is None:
             _SYSTEM_CACHE = detect_system()
-        self.system = _SYSTEM_CACHE
-        self._darwin_store = darwin_store
-
+        self.system = system or _SYSTEM_CACHE
+        
         # Cache capabilities for repeated checks
         self.capabilities = Capabilities.detect()
 
@@ -54,12 +79,6 @@ class ModelManager:
     def get_capabilities() -> Capabilities:
         """Detect and return current system capabilities."""
         return Capabilities.detect()
-
-    @staticmethod
-    def emit_capabilities() -> None:
-        """Emit capabilities to stdout for Tauri handshake."""
-        caps = Capabilities.detect()
-        caps.emit()
 
     @staticmethod
     def get_loader() -> ModelLoader:
@@ -77,7 +96,7 @@ class ModelManager:
             _LOADER_INSTANCE = ModelLoader(
                 store,
                 prefs,
-                system_info=_SYSTEM_CACHE,  # pass system info for hardware validation
+                system_info=_SYSTEM_CACHE,
             )
         return _LOADER_INSTANCE
 
@@ -88,6 +107,7 @@ class ModelManager:
         try:
             load_keys_from_keychain()
         except Exception as e:
+            
             darwin.log(f"Keychain not available: {e}", LogType.WARNING)
 
         if _SYSTEM_CACHE is None:
@@ -97,11 +117,6 @@ class ModelManager:
                 DeviceManager.init(_SYSTEM_CACHE)
             except RuntimeError:
                 pass
-
-        try:
-            ModelManager.emit_capabilities()
-        except Exception as e:
-            darwin.log(f"Failed to emit capabilities: {e}", LogType.WARNING)
 
         if preferences is not None:
             for cat, model in preferences.items():
@@ -119,6 +134,7 @@ class ModelManager:
                 from src.core.Models.ModelStartup import download_required
                 download_required(get_model_store(), preferences, _SYSTEM_CACHE)
             except ImportError:
+                
                 darwin.log("ModelStartup not available, skipping auto-download", LogType.WARNING)
 
         if _LOADER_INSTANCE is None:
@@ -209,7 +225,7 @@ class ModelManager:
     ) -> Optional[str]:
         """
         Switch to a model, auto‑selecting ONNX or PyTorch variant.
-        Returns the actual registry key activated, or None if failed.
+        Returns the actual registry key activated, or raises on failure.
         """
         variants = {}
         for key, spec in REGISTRY.items():
@@ -222,8 +238,10 @@ class ModelManager:
                     variants["other"] = key
 
         if not variants:
-            darwin.log(f"No models found for {base_model} in category {category}", LogType.ERROR)
-            return None
+            msg = f"No models found for {base_model} in category {category}"
+            
+            darwin.log(msg, LogType.ERROR)
+            raise ValueError(msg)
 
         selected_format = prefer_format
         if selected_format is None:
@@ -240,37 +258,28 @@ class ModelManager:
         selected_key = variants.get(selected_format)
         if not selected_key:
             available = ", ".join(variants.keys())
-            darwin.log(f"Format '{selected_format}' not available. Available: {available}", LogType.ERROR)
-            return None
+            msg = f"Format '{selected_format}' not available. Available: {available}"
+            
+            darwin.log(msg, LogType.ERROR)
+            raise ValueError(msg)
 
-        try:
-            self.switch(category, selected_key, migrate=migrate)
-            return selected_key
-        except Exception:
-            return None
+        # ── FIX: No silent swallowing — propagate errors ─────────────
+        self.switch(category, selected_key, migrate=migrate)
+        return selected_key
 
     # ── Individual switch methods ────────────────────────────────────
-    def switch_embedding(self, new_key: str, migrate: bool = False, file: Optional[str] = None) -> None:
+    def switch_embedding(self, new_key: str) -> None:
         try:
             resolved_key = self.loader.resolve_key(new_key, "embedding")
             spec = get_spec(resolved_key)
-            is_ready =self._check_plugin_and_download(resolved_key, spec)
+            is_ready = self._check_plugin_and_download(resolved_key, spec)
             if not is_ready:
-                return          
+                return
             self.loader.set_preference("embedding", resolved_key)
-  
-  
-
         except PluginRequiredError as e:
+            
             darwin.log(str(e), LogType.ERROR)
             return
-
-        if migrate and self._darwin_store:
-            active = load_active_models().get("embedding")
-            health = self._darwin_store.get_embedding_health(active)
-            if health.get("needs_reembed", []):
-                darwin.log(f"{len(health['needs_reembed'])} file(s) need re-embedding. Migrating...", LogType.INFO)
-                self.migrate_embedding(file=file)
 
     def switch_reranker(self, new_key: str) -> None:
         self._switch_stateless("reranker", new_key)
@@ -289,184 +298,199 @@ class ModelManager:
             if not is_ready:
                 return
             self.loader.set_preference(category, resolved_key)
+            
             darwin.log(f"Switched {category} → {new_key}", LogType.SUCCESS)
         except PluginRequiredError as e:
+            
             darwin.log(str(e), LogType.ERROR)
 
     # ── Helper: plugin check + download with hardware validation ─────
     def _check_plugin_and_download(self, key: str, spec) -> bool:
-        """Raise PluginRequiredError if plugin missing,        hardware cannot run the model. Otherwise download if not cached."""
-        # Plugin check
+        """Raise PluginRequiredError if plugin missing or hardware cannot run the model.
+        Otherwise download if not cached."""
         if spec.requires_plugin:
             torch_plugin = TorchPlugin()
             if not torch_plugin.is_installed():
                 raise PluginRequiredError("torch", f"model {spec.model_id}")
 
-        # Hardware check before attempting download
         if spec.disk_mb > 0:
             if not self.system.can_run(spec):
-               darwin.log(
-                    f"{key} Needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)"
-            ,LogType.ERROR)
-               return False
-            if not self.system.has_disk_space(spec):
+                
                 darwin.log(
-                    f"{key} Needs {spec.disk_mb}MB disk (you have {self.system.disk_free_gb*1024:.0f}MB free)", LogType.ERROR
-            ,LogType.ERROR)
+                        f"{key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)",
+                        LogType.ERROR,
+                    )
                 return False
-     
+            if not self.system.has_disk_space(spec):
+                
+                darwin.log(
+                        f"{key} needs {spec.disk_mb}MB disk (you have {self.system.disk_free_gb*1024:.0f}MB free)",
+                        LogType.ERROR,
+                    )
+                return False
 
             if not self.model_store.is_downloaded(key):
+                
                 darwin.log(f"Downloading {key}...", LogType.INFO)
-                self.model_store.download(key)
+                try:
+                    self.model_store.download(key)
+                except Exception as e:
+                    
+                    darwin.log(f"Download failed for {key}: {e}", LogType.ERROR)
+                    return False
 
         return True
 
-    # ── Migration ────────────────────────────────────────────────────
-    def migrate_embedding(self, file: Optional[str] = None, force: bool = False) -> dict:
-        if not self._darwin_store:
-            darwin.log("No DarwinStore available for migration", LogType.ERROR)
-            return {"reembedded": 0, "failed": 1}
-        from src.features.Ingestion.main import handle_ingestion
-        from src.features.Ingestion.Parsing.lib import ParsingArgs
-        from src.features.Ingestion.Chunking.lib import ChunkingArgs
-        from src.features.Indexing.lib import IndexingArgs
-        from src.features.Indexing.main import handle_indexing
-        store = self._darwin_store
-        current_model = self.loader.get_model_key(ModelCategory.EMBEDDING)
-        stats = {"reembedded": 0, "skipped": 0, "term_banks_updated": 0, "failed": 0}
-        if file:
-            files_to_process = [file]
-        else:
-            health = store.get_embedding_health()
-            needs = health.get("needs_reembed", [])
-            up_to_date = health.get("up_to_date", []) if force else []
-            files_to_process = list(set(needs) | set(up_to_date))
-        if not files_to_process:
-            darwin.log("All files are up-to-date with current embedding model", LogType.SUCCESS)
-            return stats
-        darwin.log(f"Migrating {len(files_to_process)} file(s) to {current_model}", LogType.INFO)
-        try:
-            handle_ingestion(
-                ParsingArgs(target=".", files=list(files_to_process), save=True, skip_if_markdown=True),
-                ChunkingArgs(rerun=True, inspect=False),
-            )
-        except Exception as e:
-            darwin.log(f"Ingestion phase failed — {type(e).__name__}: {e}", LogType.ERROR)
-            stats["failed"] += len(files_to_process)
-            return stats
-        for fname in files_to_process:
-            try:
-                handle_indexing(IndexingArgs(path=".", file=[fname], rerun=True, inspect=False))
-                stats["reembedded"] += 1
-                darwin.log(f"{fname} — migrated", LogType.SUCCESS)
-            except Exception as e:
-                darwin.log(f"{fname} — {type(e).__name__}: {e}", LogType.ERROR)
-                stats["failed"] += 1
-        try:
-            self.loader.unload(ModelCategory.EMBEDDING)
-        except Exception:
-            pass
-        darwin.log(
-            f"Migration complete: {stats['reembedded']} migrated · {stats['term_banks_updated']} term banks updated · {stats['failed']} failed",
-            LogType.SUCCESS,
-        )
-        return stats
+
+    def unload_all_models(self) -> None:
+        self.loader.unload_all()
 
     # ── Install / uninstall commands ─────────────────────────────────
-    def install(self, key: str, force: bool = False) -> None:
+    def install(self, key: str, force: bool = False) -> InstallResult:
+        """
+        Install a model. Pure API — no input() prompts.
+        Returns InstallResult for CLI to format.
+        """
         if key not in REGISTRY:
-            darwin.log(f"Unknown model: {key}", LogType.ERROR)
-            return
+            msg = f"Unknown model: {key}"
+            
+            darwin.log(msg, LogType.ERROR)
+            return InstallResult(key=key, success=False, message=msg)
+
         spec = get_spec(key)
 
         # Plugin + hardware validation
         try:
             is_ready = self._check_plugin_and_download(key, spec)
             if not is_ready:
-                return
-      
-      
+                return InstallResult(
+                    key=key, success=False, message="Hardware or plugin check failed", skipped=True
+                )
         except PluginRequiredError as e:
-            darwin.log(str(e), LogType.ERROR)
-            return
+            msg = str(e)
+            
+            darwin.log(msg, LogType.ERROR)
+            return InstallResult(key=key, success=False, message=msg)
 
         if spec.disk_mb == 0:
             provider = key.split('/')[0]
             env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
             if env_var and not os.getenv(env_var):
-                darwin.log(f"{key} requires an API key for {provider}. Use 'darwin key set {provider} YOUR_KEY'", LogType.WARNING)
+                msg = f"{key} requires an API key for {provider}. Use 'darwin key set {provider} YOUR_KEY'"
+                
+                darwin.log(msg, LogType.WARNING)
+                return InstallResult(key=key, success=True, message=msg, skipped=False)
             else:
-                darwin.log(f"{key} is an API model – no local download needed.", LogType.INFO)
-            return
+                msg = f"{key} is an API model – no local download needed."
+                
+                darwin.log(msg, LogType.INFO)
+                return InstallResult(key=key, success=True, message=msg, skipped=False)
 
+        # Hardware warnings (no interactive prompts)
         if not self.system.can_run(spec):
-            darwin.log(f"Warning: {key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)", LogType.WARNING)
-            if input("   Continue anyway? [y/N]: ").strip().lower() != 'y':
-                return
+            msg = f"Warning: {key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)."
+            
+            darwin.log(msg, LogType.WARNING)
+            if not force:
+                return InstallResult(key=key, success=False, message=msg, skipped=True)
 
         if not self.system.has_disk_space(spec):
-            darwin.log("Warning: Not enough disk space.", LogType.WARNING)
-            if input("   Continue anyway? [y/N]: ").strip().lower() != 'y':
-                return
+            msg = "Warning: Not enough disk space."
+            
+            darwin.log(msg, LogType.WARNING)
+            if not force:
+                return InstallResult(key=key, success=False, message=msg, skipped=True)
 
+        
         darwin.log(f"Installing {key} ({spec.disk_mb}MB)...", LogType.INFO)
         self.model_store.download(key, force=force)
-        darwin.log(f"{key} installed. Run switch to activate it.", LogType.SUCCESS)
-
-    def uninstall(self, key: str, force: bool = False) -> bool:
-        """
-        Uninstall a model. Returns True if something was removed or deactivated.
+        msg = f"{key} installed. Run switch to activate it."
         
-        Args:
-            key: Registry key of the model to uninstall.
-            force: If True, bypass the required-model guard.
+        darwin.log(msg, LogType.SUCCESS)
+        return InstallResult(key=key, success=True, message=msg)
+
+    # ── FIX C5: Implement upgrade() ──────────────────────────────────
+    def upgrade(self, key: str) -> InstallResult:
+        """Upgrade a model: uninstall(force) then install(force)."""
+        if key not in REGISTRY:
+            msg = f"Unknown model: {key}"
+            
+            darwin.log(msg, LogType.ERROR)
+            return InstallResult(key=key, success=False, message=msg)
+
+        spec = get_spec(key)
+        if spec.disk_mb == 0:
+            msg = f"{key} is an API model — nothing to upgrade."
+            
+            darwin.log(msg, LogType.INFO)
+            return InstallResult(key=key, success=True, message=msg, skipped=True)
+
+        
+        darwin.log(f"Upgrading {key}...", LogType.INFO)
+
+        self.uninstall(key, force=True)
+        return self.install(key, force=True)
+
+    def uninstall(self, key: str, force: bool = False) -> UninstallResult:
+        """
+        Uninstall a model. Returns UninstallResult.
         """
         if key not in REGISTRY:
-            darwin.log(f"Unknown model: {key}", LogType.ERROR)
-            return False
+            msg = f"Unknown model: {key}"
+            
+            darwin.log(msg, LogType.ERROR)
+            return UninstallResult(key=key, removed=False, message=msg)
 
         spec = get_spec(key)
 
         # ── API models: no disk files, just deactivate ──────────────────────
         if spec.disk_mb == 0:
             active_key = self.loader.get_preference(spec.category)
-            if active_key == key:
+            # ── FIX C20: Normalize both keys before comparing ────────────
+            resolved_active = self.loader._resolve_key(active_key) if active_key else None
+            resolved_target = self.loader._resolve_key(key)
+            if resolved_active == resolved_target:
                 self.loader.set_preference(spec.category, None)
-                darwin.log(f"{key} deactivated (API model)..it is no longer your prefrence...but to delete your api key you should use the 'delete api key feature'", LogType.SUCCESS)
-                return True
-            darwin.log(f"{key} is an API model; not active, nothing to do.", LogType.INFO)
-            return False
+                msg = f"{key} deactivated (API model)."
+                
+                darwin.log(msg, LogType.SUCCESS)
+                return UninstallResult(key=key, removed=True, message=msg)
+            msg = f"{key} is an API model; not active, nothing to do."
+            
+            darwin.log(msg, LogType.INFO)
+            return UninstallResult(key=key, removed=False, message=msg)
 
         # ── Guard: required models ──────────────────────────────────────────
         if spec.required and not force:
-            darwin.log(
-                f"{key} is required. Uninstalling will break functionality. "
-                f"Use force=True to override.",
-                LogType.WARNING,
-            )
-            return False
+            msg = f"{key} is required. Uninstalling will break functionality. Use force=True to override."
+            
+            darwin.log(msg, LogType.WARNING)
+            return UninstallResult(key=key, removed=False, message=msg)
 
         # ── Guard: currently active ─────────────────────────────────────────
         active_key = self.loader.get_preference(spec.category)
-        if active_key == key:
-            darwin.log(
-                f"{key} is the currently active {spec.category} model. "
-                f"Switch to another model first.",
-                LogType.ERROR,
-            )
-            return False
+        resolved_active = self.loader._resolve_key(active_key) if active_key else None
+        resolved_target = self.loader._resolve_key(key)
+        if resolved_active == resolved_target:
+            msg = f"{key} is the currently active {spec.category} model. Switch to another model first."
+            
+            darwin.log(msg, LogType.ERROR)
+            return UninstallResult(key=key, removed=False, message=msg)
 
         # ── Guard: not installed ────────────────────────────────────────────
         if not self.model_store.is_downloaded(key):
-            darwin.log(f"{key} is not installed.", LogType.WARNING)
-            return False
+            msg = f"{key} is not installed."
+            
+            darwin.log(msg, LogType.WARNING)
+            return UninstallResult(key=key, removed=False, message=msg)
 
         # ── Execute deletion ────────────────────────────────────────────────
         target_format = self.model_store.get_format(key)
         self.model_store.delete(key, format=target_format)
-        darwin.log(f"{key} removed.", LogType.SUCCESS)
-        return True
+        msg = f"{key} removed."
+        
+        darwin.log(msg, LogType.SUCCESS)
+        return UninstallResult(key=key, removed=True, message=msg)
 
     # ── Batch operations ─────────────────────────────────────────────
     def install_category(self, category: str, tier: str = 'all') -> None:
@@ -478,9 +502,15 @@ class ModelManager:
                 self.install(key)
 
     def setup_required(self) -> None:
-        for key in [k for k, v in REGISTRY.items() if v.required]:
-            if not self.model_store.is_downloaded(key):
-                self.install(key)
+        """Install the preferred model for each required category."""
+        for category in REQUIRED_CATEGORIES:
+            preferred_key = DEFAULT_PREFERRED.get(category)
+            if not preferred_key:
+                continue
+            if not self.model_store.is_downloaded(preferred_key):
+                result = self.install(preferred_key)
+                if result.success:
+                    self.loader.set_preference(category, preferred_key)
 
     def setup_recommended(self) -> None:
         for cat, key in recommend_defaults(self.system).items():
@@ -489,6 +519,7 @@ class ModelManager:
 
     # ── Utility ──────────────────────────────────────────────────────
     def status(self) -> None:
+        
         darwin.log("\n Model Status\n")
         for key, spec in REGISTRY.items():
             installed = self.model_store.is_downloaded(key)
@@ -501,12 +532,14 @@ class ModelManager:
                 format_tag = "[PyTorch]"
             elif spec.loader.startswith("api_"):
                 format_tag = "[API]"
+            
             darwin.log(f"   {key:<30} {spec.model_id:<45} {format_tag:<10} {status} {size}")
 
     def list_models(self, category: Optional[str] = None) -> None:
         models = REGISTRY
         if category:
             models = {k: v for k, v in REGISTRY.items() if v.category == category}
+        
         darwin.log(f"\n Available Models ({category or 'all'}):\n")
         for key, spec in models.items():
             format_tag = ""
@@ -516,12 +549,13 @@ class ModelManager:
                 format_tag = "[PyTorch]"
             elif spec.loader.startswith("api_"):
                 format_tag = "[API]"
+            
             darwin.log(f"   {key:<30} {spec.model_id:<45} {format_tag:<10} {spec.tier:<10} {spec.disk_mb}MB")
-        darwin.log()
+        
 
     def switch(self, category: str, model: str, migrate: bool = False) -> None:
         if category == "embedding":
-            self.switch_embedding(model, migrate=migrate)
+            self.switch_embedding(model)
         elif category == "reranker":
             self.switch_reranker(model)
         elif category == "vision":
@@ -529,4 +563,5 @@ class ModelManager:
         elif category == "tokenizer":
             self.switch_tokenizer(model)
         else:
+            
             darwin.log(f"Unknown category: {category}", LogType.ERROR)

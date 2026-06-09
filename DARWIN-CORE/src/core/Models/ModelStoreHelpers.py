@@ -3,21 +3,19 @@ from typing import Optional
 from pathlib import Path
 from src.core.Models.lib import REQUIRED_FILES
 
+
 class ModelPathResolver:
     """Unified path resolution for all model categories and formats."""
 
     def __init__(self, root: Path):
         self.root = root
 
-   
     def model_path(self, spec, format: Optional[str] = None) -> Path:
         """Return the canonical nested path for a model."""
         if spec.loader.startswith("api_"):
             return Path("__api__")
 
-        # Strip format-related suffixes from model name for clean directory paths
         def strip_suffix(name: str) -> str:
-            
             for suffix in ["-onnx", "_onnx", "-quantized", "_quantized"]:
                 if name.lower().endswith(suffix):
                     return name[: -len(suffix)]
@@ -50,23 +48,20 @@ class ModelPathResolver:
 
     def legacy_model_path(self, spec) -> Path:
         """Old flat structure for backward compatibility."""
-        # Strip format-related suffixes for clean legacy paths
         model_id = spec.model_id
         org, name = model_id.split("/", 1) if "/" in model_id else ("", model_id)
-        
+
         base_name = name
         for suffix in ["-onnx", "_onnx", "-quantized", "_quantized"]:
             if base_name.lower().endswith(suffix):
                 base_name = base_name[: -len(suffix)]
                 break
-        
+
         if spec.loader == "spacy":
-            # Spacy models: category / org / base_name (or just base_name if no org)
             if org:
                 return self.root / spec.category / org / base_name
             return self.root / spec.category / base_name
-        
-        # Default legacy: category / base_name (flat, no org)
+
         return self.root / spec.category / base_name
 
     @staticmethod
@@ -77,8 +72,6 @@ class ModelPathResolver:
         if spec.loader == "spacy":
             return "spacy"
         return "pytorch"
-
-
 
 
 class ModelVerifier:
@@ -127,7 +120,9 @@ class ModelVerifier:
             if not has_weights:
                 return False
 
-        self._strip_bloat(path)
+        # ── FIX C8: Removed automatic _strip_bloat() ───────────────────
+        # Bloat removal is now an explicit optimize() call on ModelStore,
+        # not a side effect of verification.
         return True
 
     def _verify_spacy_model(self, path: Path) -> bool:
@@ -152,7 +147,9 @@ class ModelVerifier:
             return False
         return True
 
-    def _strip_bloat(self, path: Path) -> None:
+    # ── FIX C8: Explicit optimize method (opt-in) ────────────────────
+    def optimize(self, path: Path) -> None:
+        """Remove bloat directories from a verified model path. Call explicitly."""
         bloat_dirs = [
             "onnx", "coreml", "rust_model", "flax_model", "tf_model",
             "checkpoint-1", "eval", "runs",
@@ -161,4 +158,3 @@ class ModelVerifier:
             bloat_path = path / name
             if bloat_path.exists() and bloat_path.is_dir():
                 shutil.rmtree(bloat_path, ignore_errors=True)
-

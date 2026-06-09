@@ -2,7 +2,7 @@
 src/core/Models/ModelLoading/Wrappers.py
 ------------------------------------------
 API / PyTorch wrappers for embedding, reranking, and vision.
-Now integrated with Darwin event system for logging and warnings.
+Integrated with Darwin event system for logging and warnings.
 """
 
 import base64
@@ -10,7 +10,7 @@ import logging
 import warnings
 import os
 from pathlib import Path
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 import numpy as np
 
 # ── Nuke litellm logging BEFORE it ever imports ──────────────────────
@@ -51,7 +51,6 @@ except ImportError:
 # ------------------------------------------------------------------ #
 
 
-
 def _validate_non_empty_texts(texts: Union[str, List[str]]) -> List[str]:
     if isinstance(texts, str):
         texts = [texts]
@@ -68,6 +67,8 @@ def _safe_norm(tensor, dim: int, keepdim: bool = True):
 
 def _warn_short_input(texts: List[str], token_counts: List[int], min_length: int):
     """Emit Darwin warning for any input below min_length."""
+    if darwin is None:
+        return
     for idx, (text, count) in enumerate(zip(texts, token_counts)):
         if count < min_length:
             darwin.log(
@@ -95,7 +96,6 @@ class HFEmbeddingWrapper:
         max_length: int = None,
         min_length: int = 1,
         normalize: bool = True,
-        enable_logging: bool = True,
     ):
         if torch is None:
             raise ImportError("torch is required for HFEmbeddingWrapper. Install the torch plugin.")
@@ -103,7 +103,6 @@ class HFEmbeddingWrapper:
         self.tokenizer = tokenizer
         self.device = device
         self.normalize = normalize
-        self.enable_logging = enable_logging
 
         # Use provided max/min, else fall back to model config
         self.max_length = max_length or getattr(tokenizer, "model_max_length", None) or getattr(
@@ -111,11 +110,18 @@ class HFEmbeddingWrapper:
         )
         self.min_length = min_length
 
-        if self.enable_logging:
-            darwin.log(
+        
+        darwin.log(
                 f"HF embedding model loaded on {device}",
                 LogType.SUCCESS
             )
+
+    def warmup(self, texts: Optional[List[str]] = None) -> None:
+        """Run a dummy forward pass to warm GPU/CPU caches."""
+        try:
+            self.encode(texts or ["warmup"], batch_size=1)
+        except Exception:
+            pass
 
     def encode(
         self,
@@ -137,14 +143,18 @@ class HFEmbeddingWrapper:
                 return_tensors="pt",
             ).to(self.device)
 
-            # Token count for warning (approximate: attention_mask sum)
+            # ── FIX T10: Wire up short-input warning ─────────────────────
             token_counts = inputs["attention_mask"].sum(dim=1).tolist()
-            if self.enable_logging and self.min_length > 1:
-                _warn_short_input(batch, token_counts, self.min_length)
+            _warn_short_input(batch, token_counts, self.min_length)
 
             with torch.no_grad():
                 outputs = self.model(**inputs)
-                emb = outputs.last_hidden_state.mean(dim=1)
+                # ── FIX C2: Attention-masked mean pooling ────────────────
+                attention_mask = inputs["attention_mask"]
+                mask_expanded = attention_mask.unsqueeze(-1).expand(outputs.last_hidden_state.size()).float()
+                sum_embeddings = torch.sum(outputs.last_hidden_state * mask_expanded, dim=1)
+                sum_mask = torch.clamp(attention_mask.sum(dim=1, keepdim=True), min=1e-9)
+                emb = sum_embeddings / sum_mask
                 if self.normalize:
                     emb = _safe_norm(emb, dim=1)
 
@@ -170,7 +180,6 @@ class APIEmbeddingWrapper:
     """
     Matches SentenceTransformer.encode() interface.
     Works with OpenAI, Cohere, Voyage, and any litellm-supported provider.
-    Optionally warns on short inputs using Darwin.
     """
 
     def __init__(
@@ -178,9 +187,8 @@ class APIEmbeddingWrapper:
         model_id: str,
         timeout: int = 30,
         num_retries: int = 3,
-        max_length: int = None,        # not enforced; for logging only
+        max_length: int = None,
         min_length: int = 1,
-        enable_logging: bool = True,
     ):
         if litellm is None:
             raise ImportError("litellm is required for APIEmbeddingWrapper")
@@ -189,10 +197,9 @@ class APIEmbeddingWrapper:
         self.num_retries = num_retries
         self.max_length = max_length
         self.min_length = min_length
-        self.enable_logging = enable_logging
 
-        if self.enable_logging:
-            darwin.log(
+        
+        darwin.log(
                 f"API embedding wrapper ready: {model_id}",
                 LogType.SUCCESS
             )
@@ -206,22 +213,11 @@ class APIEmbeddingWrapper:
     ) -> np.ndarray:
         texts = _validate_non_empty_texts(texts)
 
-        if not convert_to_numpy:
-            warnings.warn(
+        if not convert_to_numpy and darwin is not None:
+            darwin.log(
                 "APIEmbeddingWrapper only supports numpy output; "
                 "convert_to_numpy=False is ignored.",
-                stacklevel=2,
-            )
-
-        # Rough length warning (character‑based heuristic)
-        if self.enable_logging and self.min_length > 1:
-            for idx, text in enumerate(texts):
-                if len(text.split()) < self.min_length:
-                    darwin.log(
-                        f"Input very short ({len(text.split())} words < min {self.min_length}) "
-                        f"for batch item {idx}: '{text[:80]}...'",
-                        LogType.WARNING,
-                    )
+                LogType.WARNING)
 
         all_embeddings = []
         for i in range(0, len(texts), batch_size):
@@ -263,7 +259,6 @@ class APIRerankerWrapper:
     """
     Matches CrossEncoder.predict() interface.
     Works with Cohere rerank and any litellm-supported reranker.
-    Now includes a per‑query document limit to avoid API rejection.
     """
 
     def __init__(
@@ -272,9 +267,8 @@ class APIRerankerWrapper:
         timeout: int = 30,
         num_retries: int = 3,
         max_docs_per_query: int = 1000,
-        max_length: int = None,       # informational
+        max_length: int = None,
         min_length: int = 1,
-        enable_logging: bool = True,
     ):
         if litellm is None:
             raise ImportError("litellm is required for APIRerankerWrapper")
@@ -284,17 +278,19 @@ class APIRerankerWrapper:
         self.max_docs_per_query = max_docs_per_query
         self.max_length = max_length
         self.min_length = min_length
-        self.enable_logging = enable_logging
 
-        if self.enable_logging:
-            darwin.log(
+        
+        darwin.log(
                 f"API reranker wrapper ready: {model_id}",
                 LogType.SUCCESS,
             )
 
     def predict(self, pairs: List[Tuple[str, str]], **kwargs) -> np.ndarray:
-        if not pairs or not isinstance(pairs, list):
-            raise ValueError("pairs must be a non-empty list of (query, document) tuples")
+        # ── FIX C15: Return empty array for empty input ────────────────
+        if not pairs:
+            return np.array([], dtype=np.float32)
+        if not isinstance(pairs, list):
+            raise ValueError("pairs must be a list of (query, document) tuples")
 
         # Group by query
         query_to_indices: dict[str, list[tuple[int, str]]] = {}
@@ -308,16 +304,6 @@ class APIRerankerWrapper:
             for chunk_start in range(0, len(indexed_docs), self.max_docs_per_query):
                 chunk = indexed_docs[chunk_start : chunk_start + self.max_docs_per_query]
                 indices, documents = zip(*chunk) if chunk else ([], [])
-
-                # Short document warning
-                if self.enable_logging and self.min_length > 1:
-                    for doc_idx, doc in enumerate(documents):
-                        if len(doc.split()) < self.min_length:
-                            darwin.log(
-                                f"Document short ({len(doc.split())} words < min {self.min_length}) "
-                                f"for query '{query[:40]}...' doc {doc_idx}",
-                                LogType.WARNING,
-                            )
 
                 try:
                     response = litellm.rerank(
@@ -355,7 +341,6 @@ class APIVisionWrapper:
     """
     Matches local vision captioning pipeline interface.
     Supports OpenAI, Gemini, OpenRouter vision models via litellm.
-    Unpackable as (processor, model, device) for pipeline compatibility.
     """
 
     def __init__(
@@ -363,20 +348,17 @@ class APIVisionWrapper:
         model_id: str,
         timeout: int = 60,
         num_retries: int = 3,
-        enable_logging: bool = True,
     ):
         if litellm is None:
             raise ImportError("litellm is required for APIVisionWrapper")
         self.model_id = model_id
         self.timeout = timeout
         self.num_retries = num_retries
-        self.enable_logging = enable_logging
 
-        if self.enable_logging:
-            darwin.log(
+        
+        darwin.log(
                 f"API vision wrapper ready: {model_id}",
                 LogType.SUCCESS,
-                
             )
 
     def caption(self, image_path: Union[str, Path], max_new_tokens: int = 100) -> str:
@@ -429,9 +411,9 @@ class APIVisionWrapper:
 
         return response.choices[0].message.content.strip()
 
-    def __iter__(self):
-        """Allow unpacking as (processor, model, device) for pipeline compatibility."""
-        return iter((self, self, "api"))
+    # ── FIX C18: Remove __iter__ hack ──────────────────────────────────
+    # Callers should use the wrapper directly, not unpack it as a tuple.
+    # If pipeline compatibility is needed, use an explicit adapter.
 
     def __repr__(self):
         return f"APIVisionWrapper(model={self.model_id})"

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Optional
 
 from src.core.Storage.StorePaths import StorePaths, ARTIFACT_MANIFEST
-from src.core.Storage.FileRegistry import FileRegistry
 from src.core.Models.ModelRegistry import REGISTRY
 from src.lib.AppPaths import default_models_dir
 
@@ -47,14 +46,14 @@ class DiskNode:
 
 # ── tree builder (always returns the full Darwin root) ───────────────────
 
-def build_tree(darwin_dir: Path, registry: FileRegistry, model_store) -> DiskNode:
+def build_tree(darwin_dir: Path, registry, model_store) -> DiskNode:
     paths = StorePaths(darwin_dir)
 
     # Helper: given a hash directory name, try to find the original filename
     def _label_from_hash(hash_name: str) -> str:
         for rec in registry.list_all():
-            if rec.file_hash == hash_name:
-                return f"{rec.original_name} ({hash_name[:8]}…)"
+            if rec.content_hash == hash_name:
+                return f"{rec.display_name} ({hash_name[:8]}…)"
         return ""
 
     # ── Models ────────────────────────────────────────────────────────
@@ -113,19 +112,11 @@ def build_tree(darwin_dir: Path, registry: FileRegistry, model_store) -> DiskNod
     if logs_dir.exists():
         logs_node.size = dir_size(logs_dir)
 
-    # ── Root config files ─────────────────────────────────────────────
-    root_files = []
-    for root_file in ["config.json", "file_registry.json"]:
-        fp = darwin_dir / root_file
-        if fp.exists():
-            root_files.append(DiskNode(root_file, fp, fp.stat().st_size))
-    configs_node = DiskNode("config", darwin_dir, size=sum(f.size for f in root_files),
-                            children=root_files)
 
     # ── Root node ─────────────────────────────────────────────────────
     root = DiskNode(darwin_dir.name, darwin_dir)
     root.children = [models_node, indexes_node, checkpoints_node,
-                     conv_node, logs_node, configs_node]
+                     conv_node, logs_node]
     root.size = sum(c.size for c in root.children)
     return root
 

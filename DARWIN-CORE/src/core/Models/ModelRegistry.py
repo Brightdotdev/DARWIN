@@ -1,7 +1,7 @@
 # src/core/Models/ModelRegistry.py
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional
+from typing import Literal, Optional, Set
 from enum import Enum
 
 
@@ -21,19 +21,31 @@ class ModelSpec:
     disk_mb: int
     loader: Literal[
         "sentence_transformers", "cross_encoder", "transformers", "spacy",
-        "embedding_hf", "embedding_st", "onnx_embedding",
+        "embedding_hf", "embedding_st", "onnx_embedding", "onnx_reranker",
         "api_embedding", "api_reranker", "api_vision"
     ]
-    required: bool = True
+    required: bool = False          # CHANGED: per-model required is now opt-in fallback only
     experimental: bool = False
     notes: str = ""
-    requires_plugin: Optional[str] = None  # NEW: e.g., "torch"
-    onnx_available: bool = False           # NEW: true if ONNX export exists
+    requires_plugin: Optional[str] = None
+    onnx_available: bool = False
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# REQUIRED CATEGORIES — the system must have *a* model for each of these
+# ═══════════════════════════════════════════════════════════════════════════
+REQUIRED_CATEGORIES: Set[str] = {"embedding", "reranker", "tokenizer"}
+
+# Default preferred model per category (used when no user preference exists)
+DEFAULT_PREFERRED: dict[str, str] = {
+    "embedding": "BAAI/bge-m3",
+    "reranker": "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    "tokenizer": "en_core_web_md",
+}
 
 REGISTRY: dict[str, ModelSpec] = {
     # ═══════════════════════════════════════════════════════════════════════
-    # Embedding (required) — ONNX versions added
+    # Embedding
     # ═══════════════════════════════════════════════════════════════════════
     "intfloat/e5-small-v2": ModelSpec(
         model_id="intfloat/e5-small-v2",
@@ -42,7 +54,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=8,
         disk_mb=130,
         loader="embedding_hf",
-        required=True,
         notes="384-dim, English-only. Fast, low memory.",
     ),
     "BAAI/bge-m3": ModelSpec(
@@ -52,7 +63,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=16,
         disk_mb=2200,
         loader="embedding_st",
-        required=True,
         notes="1024-dim, multilingual, understands markdown structure. 16GB RAM recommended.",
     ),
     "GritLM/GritLM-7B": ModelSpec(
@@ -62,13 +72,12 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=32,
         disk_mb=14000,
         loader="sentence_transformers",
-        required=False,
         experimental=True,
         requires_plugin="torch",
-        notes="7B LLM repurposed as embedder. 4096-dim. GPU strongly recommended; CPU inference will be prohibitively slow (hours per document)."
+        notes="7B LLM repurposed as embedder. 4096-dim. GPU strongly recommended.",
     ),
 
-    # ── ONNX Embedding Models (lean core, no torch) ──
+    # ── ONNX Embedding Models ──
     "BAAI/bge-m3-onnx": ModelSpec(
         model_id="BAAI/bge-m3-onnx",
         category="embedding",
@@ -76,7 +85,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=4,
         disk_mb=400,
         loader="onnx_embedding",
-        required=False,
         onnx_available=True,
         notes="BGE-M3 via ONNX Runtime. 1024-dim, multilingual. ~4x faster than PyTorch on CPU.",
     ),
@@ -87,13 +95,12 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=2,
         disk_mb=100,
         loader="onnx_embedding",
-        required=False,
         onnx_available=True,
         notes="E5-small via ONNX Runtime. 384-dim, English-only. Extremely fast.",
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Reranker (required)
+    # Reranker
     # ═══════════════════════════════════════════════════════════════════════
     "cross-encoder/ms-marco-MiniLM-L-12-v2": ModelSpec(
         model_id="cross-encoder/ms-marco-MiniLM-L-12-v2",
@@ -102,11 +109,8 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=2,
         disk_mb=33,
         loader="cross_encoder",
-        required=True,
         notes="33MB, ~50ms CPU. Perfect for everyone. Always installed.",
     ),
-
-    # ── ONNX Reranker ──
     "cross-encoder/ms-marco-MiniLM-L-6-v2-onnx": ModelSpec(
         model_id="cross-encoder/ms-marco-MiniLM-L-6-v2-onnx",
         category="reranker",
@@ -114,13 +118,12 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=1,
         disk_mb=25,
         loader="onnx_reranker",
-        required=False,
         onnx_available=True,
         notes="MiniLM cross-encoder via ONNX. Faster than PyTorch on CPU.",
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Vision (optional) — ALL require torch plugin
+    # Vision
     # ═══════════════════════════════════════════════════════════════════════
     "HuggingFaceTB/SmolVLM-256M-Instruct": ModelSpec(
         model_id="HuggingFaceTB/SmolVLM-256M-Instruct",
@@ -129,9 +132,8 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=4,
         disk_mb=500,
         loader="transformers",
-        required=False,
         requires_plugin="torch",
-        notes="256M params. Fast captions, low memory. Good enough for most docs. swiss army knife of vision models.",
+        notes="256M params. Fast captions, low memory.",
     ),
     "vikhyatk/moondream2": ModelSpec(
         model_id="vikhyatk/moondream2",
@@ -140,13 +142,12 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=16,
         disk_mb=1400,
         loader="transformers",
-        required=False,
         requires_plugin="torch",
         notes="1.8B params. Better caption quality, understands charts/diagrams.",
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Tokenizer / NLP (optional)
+    # Tokenizer / NLP
     # ═══════════════════════════════════════════════════════════════════════
     "en_core_web_md": ModelSpec(
         model_id="en_core_web_md",
@@ -155,8 +156,7 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=1,
         disk_mb=45,
         loader="spacy",
-        required=True,
-        notes="Medium English model. Optimized for concept extraction (NER, parsing, lemmatization). 45MB. Always installed.",
+        notes="Medium English model. Optimized for concept extraction. 45MB.",
     ),
     "en_core_web_lg": ModelSpec(
         model_id="en_core_web_lg",
@@ -165,12 +165,11 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=2,
         disk_mb=560,
         loader="spacy",
-        required=False,
         notes="Large English model. Better accuracy, word vectors. 560MB.",
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # API-based Embedding (zero local compute)
+    # API-based Embedding
     # ═══════════════════════════════════════════════════════════════════════
     "openai/text-embedding-3-small": ModelSpec(
         model_id="openai/text-embedding-3-small",
@@ -179,8 +178,7 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_embedding",
-        required=False,
-        notes="OpenAI embedding API. 1536-dim. $0.02/1M tokens. Requires OPENAI_API_KEY.",
+        notes="OpenAI embedding API. 1536-dim. Requires OPENAI_API_KEY.",
     ),
     "cohere/embed-english-v3.0": ModelSpec(
         model_id="cohere/embed-english-v3.0",
@@ -189,7 +187,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_embedding",
-        required=False,
         notes="Cohere embedding API. 1024-dim. Requires COHERE_API_KEY.",
     ),
     "voyage/voyage-3-lite": ModelSpec(
@@ -199,12 +196,11 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_embedding",
-        required=False,
-        notes="Voyage AI embeddings. 1024-dim. Requires VOYAGE_API_KEY.",
+        notes="Voyage AI embeddings. 512-dim. Requires VOYAGE_API_KEY.",
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # API-based Reranker (zero local compute)
+    # API-based Reranker
     # ═══════════════════════════════════════════════════════════════════════
     "cohere/rerank-english-v3.0": ModelSpec(
         model_id="cohere/rerank-english-v3.0",
@@ -213,12 +209,11 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_reranker",
-        required=False,
         notes="Cohere rerank API. Requires COHERE_API_KEY.",
     ),
 
     # ═══════════════════════════════════════════════════════════════════════
-    # API-based Vision (zero local compute)
+    # API-based Vision
     # ═══════════════════════════════════════════════════════════════════════
     "openai/gpt-4o": ModelSpec(
         model_id="openai/gpt-4o",
@@ -227,8 +222,7 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_vision",
-        required=False,
-        notes="OpenAI GPT-4o vision. Image captioning via API. Requires OPENAI_API_KEY.",
+        notes="OpenAI GPT-4o vision. Requires OPENAI_API_KEY.",
     ),
     "gemini/gemini-2.0-flash": ModelSpec(
         model_id="gemini/gemini-2.0-flash",
@@ -237,7 +231,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_vision",
-        required=False,
         notes="Google Gemini Flash vision. Requires GEMINI_API_KEY.",
     ),
     "openrouter/openai/gpt-4o": ModelSpec(
@@ -247,7 +240,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_vision",
-        required=False,
         notes="OpenRouter GPT-4o vision. Requires OPENROUTER_API_KEY.",
     ),
     "openrouter/meta-llama/llama-4-maverick": ModelSpec(
@@ -257,7 +249,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_vision",
-        required=False,
         notes="OpenRouter Llama 4 Maverick vision. Requires OPENROUTER_API_KEY.",
     ),
     "openrouter/google/gemini-2.0-flash-001": ModelSpec(
@@ -267,7 +258,6 @@ REGISTRY: dict[str, ModelSpec] = {
         ram_gb=0,
         disk_mb=0,
         loader="api_vision",
-        required=False,
         notes="OpenRouter Gemini Flash vision. Requires OPENROUTER_API_KEY.",
     ),
 }
@@ -288,6 +278,7 @@ def get_spec(key: str) -> ModelSpec:
 
 
 def required_models() -> dict[str, ModelSpec]:
+    """Return models that are individually marked required (legacy fallback)."""
     return {k: v for k, v in REGISTRY.items() if v.required}
 
 
@@ -300,9 +291,8 @@ def by_category(category: str) -> dict[str, ModelSpec]:
 
 
 _VALID_LOADERS = {
-    "sentence_transformers", "cross_encoder", "transformers",
-    "spacy","embedding_hf", "embedding_st",
-    "onnx_embedding",  "onnx_reranker", 
+    "sentence_transformers", "cross_encoder", "transformers", "spacy",
+    "embedding_hf", "embedding_st", "onnx_embedding", "onnx_reranker",
     "api_embedding", "api_reranker", "api_vision",
 }
 

@@ -1,12 +1,12 @@
-
 # src/core/Models/ModelSetup.py
 from dataclasses import dataclass
 from typing import Optional, List
-from src.core.Models.ModelRegistry import REGISTRY, get_spec
+from src.core.Models.ModelRegistry import REGISTRY, get_spec, REQUIRED_CATEGORIES, DEFAULT_PREFERRED
 from src.features.Hardware.SystemDetector import SystemInfo
 from src.core.Models.ModelStore import ModelStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.KeyManager import is_key_set
+
 
 @dataclass
 class ValidationResult:
@@ -15,6 +15,7 @@ class ValidationResult:
     ram_ok: bool
     disk_ok: bool
     warnings: List[str]
+
 
 def validate_model(key: str, system: SystemInfo, store: Optional[ModelStore] = None) -> ValidationResult:
     if key not in REGISTRY:
@@ -43,17 +44,19 @@ def validate_model(key: str, system: SystemInfo, store: Optional[ModelStore] = N
         warnings=warnings,
     )
 
+
 def validate_category(category: str, system: SystemInfo, store: Optional[ModelStore] = None) -> List[ValidationResult]:
     return [validate_model(key, system, store) for key, spec in REGISTRY.items() if spec.category == category]
+
 
 def select_best_for_category(category: str, system: SystemInfo) -> Optional[str]:
     candidates = [(key, spec) for key, spec in REGISTRY.items() if spec.category == category and system.can_run(spec)]
     if not candidates:
         return None
-    tier_order = {"overkill": 4, "large": 3, "medium": 2, "light": 1}
+    # ── FIX C9: Correct tier mapping to actual registry values ─────────
+    tier_order = {"minnow": 1, "dolphin": 2, "orca": 3, "whale": 4}
     candidates.sort(key=lambda x: (tier_order.get(x[1].tier, 0), -x[1].ram_gb), reverse=True)
     return candidates[0][0]
-
 
 
 def calculate_download_size(selected_models: dict[str, str], store: ModelStore) -> dict:
@@ -64,7 +67,7 @@ def calculate_download_size(selected_models: dict[str, str], store: ModelStore) 
     total_new = 0
     total_cached = 0
     per_model = {}
-    
+
     for category, key in selected_models.items():
         if not key or key == "none":
             continue
@@ -75,7 +78,7 @@ def calculate_download_size(selected_models: dict[str, str], store: ModelStore) 
         else:
             total_new += spec.disk_mb
             per_model[key] = {"size_mb": spec.disk_mb, "status": "new"}
-    
+
     return {
         "total_mb": total_new,
         "total_gb": total_new / 1024,
@@ -95,27 +98,24 @@ def validate_all_selections(selections: dict[str, str], system: SystemInfo, stor
         "download_info": None,
         "all_valid": True,
     }
-    
+
     for category, key in selections.items():
         if not key or key == "none":
             continue
-        
+
         result = validate_model(key, system, store)
         if result.can_run:
             report["valid"].append(result)
         else:
             report["rejected"].append(result)
             report["all_valid"] = False
-    
+
     if report["valid"]:
         # Only count models that passed validation for download
         valid_selections = {r.model_key: r.model_key for r in report["valid"]}
         report["download_info"] = calculate_download_size(valid_selections, store)
-    
+
     return report
-
-
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -126,24 +126,27 @@ def handle_download_error(error: Exception, key: str) -> None:
     """Handle download errors with actionable recovery suggestions."""
     from src.core.Models.ModelStore import DownloadError, IntegrityError
 
+    
     darwin.log(f"\n❌ Error downloading {key}: {error}", LogType.ERROR)
 
-    # model_path = manager.store.root / key
-
     if isinstance(error, IntegrityError):
+
+        
         darwin.log("\n🔧 Recovery steps:", LogType.INFO)
-        darwin.log(f"   1. Clear corrupted files: python -m src.Models.cli uninstall --model {key}", LogType.INFO)
+        darwin.log(f"   1. Clear corrupted files: python -m src.core.Models.cli uninstall --model {key}", LogType.INFO)
         darwin.log(f"   2. Free up disk space", LogType.INFO)
-        darwin.log(f"   3. Retry: python -m src.Models.cli install --model or use uv (recomended) uv run Main.py install --model {key}", LogType.INFO)
-        # darwin.log(f"\n   Model location: {model_path}", LogType.INFO)
+        darwin.log(f"   3. Retry: python -m src.core.Models.cli install --model {key}", LogType.INFO)
 
     elif isinstance(error, DownloadError):
         if error.recoverable:
+            
             darwin.log(f"\n💡 {error.hint}", LogType.INFO)
             darwin.log(f"   Partial download saved. Re-run to resume.", LogType.INFO)
         else:
+            
             darwin.log(f"\n💡 {error.hint}", LogType.INFO)
             darwin.log(f"   This is a required dependency. Please install it and try again.", LogType.INFO)
     else:
+        
         darwin.log(f"\n💡 Check your internet connection and disk space.", LogType.INFO)
         darwin.log(f"   Error details: {str(error)}", LogType.INFO)

@@ -10,13 +10,9 @@ from spacy.tokens import Doc
 class SpacyConceptExtractor:
     """
     spaCy wrapper optimized for knowledge extraction (graph + wiki).
-    
     Loaded once by Darwin's ModelLoader, cached for the session.
-    Provides entity extraction, sentence splitting, and keyword extraction
-    for downstream graph and wiki generation.
     """
 
-    # Entity types for knowledge graph nodes
     _SIGNIFICANT_ENTITIES = {
         "PERSON", "NORP", "FAC", "ORG", "GPE", "LOC", "PRODUCT",
         "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE",
@@ -29,29 +25,38 @@ class SpacyConceptExtractor:
         if not self.model_path.exists():
             raise FileNotFoundError(f"spaCy model not found: {model_path}")
 
-        # Safe load: disable heavy pipes we don't need for NER/parse
         disable = ["textcat", "textcat_multilabel", "entity_linker", "entity_ruler", "sentiment"]
-        
+
         try:
             self.nlp = spacy.load(str(self.model_path), disable=disable)
         except Exception:
-            # Fallback: load everything if disable list causes issues
             self.nlp = spacy.load(str(self.model_path))
-        
+
         self._enabled_pipes = set(self.nlp.pipe_names)
 
-        # Ensure sentence splitting works even without parser/senter
         if "parser" not in self._enabled_pipes and "senter" not in self._enabled_pipes:
             self.nlp.add_pipe("sentencizer")
             self._enabled_pipes.add("sentencizer")
 
+    # ── NEW: Plugin-compatible batch processing ───────────────────────────
+
+    def pipe(self, texts, batch_size=64):
+        """Delegate to spaCy Language.pipe for batch processing."""
+        return self.nlp.pipe(texts, batch_size=batch_size)
+
+    def split_sentences(self, text: str, max_length: int = 100000) -> List[str]:
+        """Return plain sentence strings (List[str]) for chunking."""
+        text = text.strip()
+        if not text:
+            return []
+        if len(text) > max_length:
+            text = text[:max_length]
+        doc = self.nlp(text)
+        return [sent.text.strip() for sent in doc.sents if sent.text.strip()]
+
     # ── Public API: Knowledge Plugin Entry Points ─────────────────────────
 
     def extract_entities(self, text: str, max_length: int = 5000) -> List[Dict]:
-        """
-        Extract named entities for knowledge graph nodes.
-        Returns deduplicated entities with positions and sentence IDs.
-        """
         text = self._prepare(text, max_length)
         if not text:
             return []
@@ -81,10 +86,7 @@ class SpacyConceptExtractor:
         return entities
 
     def extract_sentences(self, text: str, max_length: int = 100000) -> List[Dict]:
-        """
-        Split text into sentences with per-sentence entity lists.
-        Primary input for co-occurrence graph building.
-        """
+        """Split text into sentences with per-sentence entity lists."""
         text = text.strip()
         if not text:
             return []
@@ -127,9 +129,6 @@ class SpacyConceptExtractor:
         return sentences
 
     def extract_concepts(self, text: str, max_length: int = 5000) -> List[Dict]:
-        """
-        Extract named entities + noun phrases for wiki/concept views.
-        """
         text = self._prepare(text, max_length)
         if not text:
             return []
@@ -138,7 +137,6 @@ class SpacyConceptExtractor:
         concepts = []
         seen: Set[str] = set()
 
-        # Named entities first
         for ent in doc.ents:
             if ent.label_ not in self._SIGNIFICANT_ENTITIES:
                 continue
@@ -155,10 +153,8 @@ class SpacyConceptExtractor:
                 "source": "ner",
             })
 
-        # Noun chunks as fallback
         if "parser" in self._enabled_pipes:
             for chunk in doc.noun_chunks:
-                # Skip pure pronoun/determiner chunks
                 if all(t.pos_ in {"DET", "PRON"} for t in chunk):
                     continue
 
@@ -181,16 +177,6 @@ class SpacyConceptExtractor:
         texts: List[str],
         max_per_text: int = 20,
     ) -> Dict[str, List[int]]:
-        """
-        Extract keywords from multiple text strings for graph building.
-        
-        Args:
-            texts: List of text strings (e.g., [chunk.clean for chunk in chunks])
-            max_per_text: Max keywords per text
-            
-        Returns:
-            {keyword: [text_index, ...]}
-        """
         keywords: Dict[str, List[int]] = defaultdict(list)
 
         for idx, text in enumerate(texts):
@@ -210,14 +196,9 @@ class SpacyConceptExtractor:
         raw_keywords: Dict[str, List[int]],
         max_concepts: int = 100,
     ) -> Dict[str, List[int]]:
-        """
-        Normalize raw keywords into clean concepts.
-        Fast path: no per-keyword spaCy calls.
-        """
         if not raw_keywords:
             return {}
 
-        # Sort by frequency, take top candidates
         sorted_kw = sorted(raw_keywords.items(), key=lambda x: len(x[1]), reverse=True)
         top_kw = sorted_kw[:max_concepts * 2]
 
@@ -229,7 +210,6 @@ class SpacyConceptExtractor:
                 continue
             canonical_map[canonical].append((kw, indices))
 
-        # Merge indices
         elevated: Dict[str, List[int]] = {}
         for canonical, entries in canonical_map.items():
             merged = []
@@ -269,21 +249,16 @@ class SpacyConceptExtractor:
 
     @staticmethod
     def _canonicalize(text: str) -> str:
-        """
-        Full normalization for entity deduplication.
-        Lowercase, strip punctuation, normalize Unicode, collapse whitespace.
-        """
         text = text.strip().lower()
         text = unicodedata.normalize("NFKD", text)
-        text = text.strip(".,;:!?\"'()[]{}")
+        text = text.strip(".,;:!?" + chr(34) + chr(39) + "()[]{}")
         text = " ".join(text.split())
         return text
 
     @staticmethod
     def _quick_normalize(text: str) -> str:
-        """Fast normalization without Unicode heavy-lifting."""
         text = text.strip().lower()
-        text = text.strip(".,;:!?\"'()[]{}")
+        text = text.strip(".,;:!?" + chr(34) + chr(39) + "()[]{}")
         text = " ".join(text.split())
         return text
 
@@ -297,7 +272,6 @@ class SpacyConceptExtractor:
         chunks = []
         seen: Set[str] = set()
 
-        # NER first
         for ent in doc.ents:
             if ent.label_ in self._SIGNIFICANT_ENTITIES and ent.label_ != "GPE":
                 key = self._canonicalize(ent.text)
@@ -305,7 +279,6 @@ class SpacyConceptExtractor:
                     seen.add(key)
                     chunks.append(key)
 
-        # Noun chunks
         if "parser" not in self._enabled_pipes:
             return chunks[:max_per_doc]
 

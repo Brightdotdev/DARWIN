@@ -10,7 +10,7 @@ from typing import Union
 from src.core.Models.ModelDownloading.OnnxModelDownloader import OnnxModelDownloader
 from src.core.Models.EmbeddingConfig import get_preset
 from src.core.Logger.DarwinLogger import darwin, LogType
-from .ONNXWrapper import ONNXEmbeddingWrapper, ONNXRerankerWrapper
+from src.core.Models.ModelLoading.ONNXWrapper import ONNXEmbeddingWrapper, ONNXRerankerWrapper
 
 
 class ONNXLoader:
@@ -25,12 +25,13 @@ class ONNXLoader:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
-    def load(self, key: str,auto_download) -> Union[ONNXEmbeddingWrapper, ONNXRerankerWrapper]:
+    def load(self, key: str, auto_download: bool = True) -> Union[ONNXEmbeddingWrapper, ONNXRerankerWrapper]:
         """
         Ensure model is cached (download if needed), then load into a wrapper.
 
         Args:
             key: Registry key (e.g. 'BAAI/bge-m3-onnx').
+            auto_download: If True, download when not cached.
 
         Returns:
             Wrapper instance ready for inference.
@@ -40,32 +41,39 @@ class ONNXLoader:
 
         if self.downloader.is_cached(key, "onnx"):
             model_dir = self.downloader.get_model_path(key, "onnx")
-            print(model_dir)
+            
             darwin.log(f"ONNX model {key} found in cache ({model_dir})")
         elif auto_download:
+            
             darwin.log(f"ONNX model {key} not cached – downloading …")
-            model_dir = self.downloader.download_onnx(key)   # raises on failure
+            model_dir = self.downloader.download_onnx(key)
         else:
             model_dir = self.downloader.get_model_path(key, "onnx")
 
         if model_dir is None:
-            darwin.log(f"Model directory for {key} not found either enable auto download or retry")
+            raise FileNotFoundError(
+                f"Model directory for {key} not found. "
+                f"Enable auto_download or retry."
+            )
 
         # Extract params from spec with safe defaults
         max_length = spec.max_tokens
         min_length = spec.min_tokens
-        
         normalize = getattr(spec, "normalize", True)
+
+        # ── FIX C4: Derive model category from loader, not chunking category ─
+        model_category = "reranker" if "reranker" in spec.loader else "embedding"
 
         wrapper = self.load_from_path(
             model_dir,
-            category=spec.category,
+            category=model_category,
             max_length=max_length,
             min_length=min_length,
             normalize=normalize,
         )
 
-        darwin.log("ONNX model loaded successfully: {key}",LogType.SUCCESS,)
+        
+        darwin.log(f"ONNX model loaded successfully: {key}", LogType.SUCCESS)
         return wrapper
 
     def load_from_path(

@@ -22,8 +22,8 @@ from src.core.Models.ModelStoreHelpers import ModelPathResolver, ModelVerifier
 class ModelStore:
     """Orchestrates path resolution, verification, and downloads – no direct I/O."""
 
-    def __init__(self) -> None:
-        root = default_models_dir()
+    def __init__(self, root: Optional[Path] = None) -> None:
+        root = root or default_models_dir()
         self.resolver = ModelPathResolver(root)
         self.verifier = ModelVerifier(self.resolver)
         self.pytorch_downloader = PyTorchModelDownloader()
@@ -58,10 +58,10 @@ class ModelStore:
 
         # Prefer the new nested path, fallback to legacy
         new_path = self.resolver.model_path(spec, target_format)
-        if self.verifier._verify_at_path(new_path, spec):
+        if self.is_downloaded(key, target_format):
             return new_path
         legacy = self.resolver.legacy_model_path(spec)
-        if self.verifier._verify_at_path(legacy, spec):
+        if self.is_downloaded(key, target_format):
             return legacy
         raise IntegrityError(f"Model '{key}' verification failed after download.")
 
@@ -88,14 +88,14 @@ class ModelStore:
                 return self._download_onnx(key)
             elif target_format == "pytorch":
                 target = self.resolver.model_path(spec, "pytorch")
-                return self.pytorch_downloader.download(spec, target, minimal)
+                return self.pytorch_downloader.download(spec, target, minimal, force=force)
             elif spec.loader == "spacy":
                 target = self.resolver.model_path(spec, "spacy")
                 return self.spacy_downloader.download(spec.model_id, target)
             else:
                 # Unknown local loaders default to PyTorch layout
                 target = self.resolver.model_path(spec, "pytorch")
-                return self.pytorch_downloader.download(spec, target, minimal)
+                return self.pytorch_downloader.download(spec, target, minimal, force=force)
         finally:
             self._active_downloads.discard(key)
             # Clean up incomplete marker (onnx handled internally)
@@ -167,7 +167,7 @@ class ModelStore:
             spec = get_spec(key)
             fmt = self.resolver.infer_format(spec)
             for path in (self.resolver.model_path(spec, fmt), self.resolver.legacy_model_path(spec)):
-                if path.exists() and not self.verifier._verify_at_path(path, spec):
+                if path.exists() and not self.is_downloaded(key, fmt):
                     freed += sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
                     shutil.rmtree(path, ignore_errors=True)
         return freed
@@ -175,7 +175,7 @@ class ModelStore:
     # ── ONNX delegation (kept separate for clarity) ──────────────────
     def _download_onnx(self, key: str) -> Path:
         """Delegate ONNX download to the dedicated OnnxModelDownloader."""
-        downloader = OnnxModelDownloader(self.resolver.root)
+        downloader = OnnxModelDownloader(self.resolver.root, resolver=self.resolver)
         return downloader.download_onnx(key)
 
     def get_format(self, key: str) -> str:
@@ -186,6 +186,7 @@ class ModelStore:
 
 # ── Singleton ────────────────────────────────────────────────────────
 _STORE_INSTANCE: Optional[ModelStore] = None
+
 
 def get_model_store() -> ModelStore:
     """Return the global ModelStore singleton."""

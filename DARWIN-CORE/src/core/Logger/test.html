@@ -366,7 +366,7 @@
     function removeSpinner(id, success) {
         const div = spinners[id];
         if (div) {
-            div.innerHTML = success ? '✅ Done' : '❌ Failed';
+            div.innerHTML = success ? '  Done' : '❌ Failed';
             div.style.opacity = '0.6';
             delete spinners[id];
         }

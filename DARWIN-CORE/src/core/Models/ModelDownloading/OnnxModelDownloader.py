@@ -18,10 +18,7 @@ from huggingface_hub.utils import (
 
 from src.lib.AppPaths import default_models_dir
 from src.core.Models.ModelRegistry import get_spec
-from src.core.Logger.DarwinLogger import (
-    darwin,
-    LogType,
-)
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 class OnnxModelDownloadError(RuntimeError):
@@ -51,12 +48,14 @@ class OnnxModelDownloader:
         max_retries: int = 3,
         retry_delay: float = 2.0,
         enable_validation: bool = False,
+        resolver=None,  # ── FIX C13: accept ModelPathResolver ──
     ):
         self.cache_root = cache_root or default_models_dir()
         self.cache_root.mkdir(parents=True, exist_ok=True)
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.enable_validation = enable_validation
+        self.resolver = resolver  # Optional external resolver
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -64,7 +63,7 @@ class OnnxModelDownloader:
     def is_cached(self, key: str, format: str = "onnx") -> bool:
         """Check if model files exist in the nested cache directory."""
         spec = get_spec(key)
-        model_dir = self._model_dir(spec.model_id, spec.category, format)
+        model_dir = self._model_dir(spec, format)
         return model_dir.exists() and any(model_dir.iterdir())
 
     def download_onnx(
@@ -86,7 +85,7 @@ class OnnxModelDownloader:
             Path to the local cache directory containing the model.
         """
         spec = get_spec(key)
-        target = self._model_dir(spec.model_id, spec.category, "onnx")
+        target = self._model_dir(spec, "onnx")
         target.mkdir(parents=True, exist_ok=True)
 
         # Build list of repo candidates
@@ -98,34 +97,35 @@ class OnnxModelDownloader:
         # Download with retries
         # ------------------------------------------------------------------ #
         download_id = f"onnx_dl_{key.replace('/', '_')}"
+        
         darwin.spinner_start(download_id, f"Downloading {key} …")
 
         try:
             model_path = self._retry_download(
                 key, repo_candidates, target, download_id
             )
+            
             darwin.spinner_stop(download_id, success=True)
-            darwin.log(f"ONNX model cached at {model_path}", log_type=LogType.SUCCESS)
+            darwin.log(f"ONNX model cached at {model_path}", LogType.SUCCESS)
 
             # Optional validation
             if do_validate:
-                darwin.log( "Validating ONNX model …")
+                
+                darwin.log("Validating ONNX model …")
                 self._validate_onnx_model(model_path / "model.onnx", key)
 
             return model_path
 
         except Exception as exc:
+            
             darwin.spinner_stop(download_id, success=False)
-            darwin.log("Download failed: {exc}", log_type=LogType.ERROR)
+            darwin.log(f"Download failed: {exc}", log_type=LogType.ERROR)
             raise
-
-
-
 
     def delete_model(self, key: str, format: str = "onnx") -> bool:
         """Remove a cached model from disk."""
         spec = get_spec(key)
-        path = self._model_dir(spec.model_id, spec.category, format)
+        path = self._model_dir(spec, format)
         if path.exists():
             shutil.rmtree(path)
             return True
@@ -133,46 +133,47 @@ class OnnxModelDownloader:
 
     def get_model_path(self, key: str, format: str = "onnx") -> Path:
         spec = get_spec(key)
-        return self._model_dir(spec.model_id, spec.category, format)
+        return self._model_dir(spec, format)
 
     # ------------------------------------------------------------------ #
     # Internal helpers
     # ------------------------------------------------------------------ #
 
-    def _model_dir(self, model_id: str, category: str, format: str) -> Path:
+    def _model_dir(self, spec, format: str) -> Path:
+        """Use external resolver if available, otherwise build path locally."""
+        if self.resolver is not None:
+            return self.resolver.model_path(spec, format)
+
+        # Legacy local path building (kept as fallback)
+        model_id = spec.model_id
         org, name = model_id.split("/", 1)
-        
-        # Strip format-related suffixes from the model name for clean directory paths
         base_name = name
         for suffix in ["-onnx", "_onnx", "-quantized", "_quantized"]:
             if base_name.lower().endswith(suffix):
                 base_name = base_name[: -len(suffix)]
                 break
-        
-        return self.cache_root / category / org / base_name / format
+        return self.cache_root / spec.category / org / base_name / format
 
     def _repo_candidates(self, spec, custom_repo: Optional[str]) -> List[str]:
         """Prioritised list of Hugging Face repos to try."""
         candidates = []
         if custom_repo:
             candidates.append(custom_repo)
-        
-        # Derive base model name (strip -onnx suffix if present)
-        model_id = spec.model_id  # e.g. "intfloat/e5-small-v2-onnx"
+
+        model_id = spec.model_id
         org, name = model_id.split("/", 1)
-        
-        # Strip common ONNX suffixes to get base model name
+
         base_name = name
         for suffix in ["-onnx", "_onnx"]:
             if base_name.lower().endswith(suffix):
                 base_name = base_name[: -len(suffix)]
                 break
-        
+
         # Xenova exports: Xenova/{base_name}
         candidates.append(f"Xenova/{base_name}")
         # Original PyTorch repo (fallback)
         candidates.append(f"{org}/{base_name}")
-        
+
         return candidates
 
     def _retry_download(
@@ -188,8 +189,8 @@ class OnnxModelDownloader:
         for repo in repo_candidates:
             for attempt in range(1, self.max_retries + 1):
                 try:
+                    
                     darwin.log(f"Trying {repo} (attempt {attempt}/{self.max_retries})")
-                    # Update spinner message
                     darwin.spinner_start(spinner_id, f"Downloading from {repo} …")
 
                     # Fetch only ONNX files and essential JSON files
@@ -207,7 +208,7 @@ class OnnxModelDownloader:
                             "preprocessor_config.json",
                             "*.txt",
                         ],
-                        ignore_patterns=["*.safetensors", "*.bin", "*.pt"],  # safety
+                        ignore_patterns=["*.safetensors", "*.bin", "*.pt"],
                     )
 
                     # Ensure model.onnx exists (snapshot_download may have put it in a subfolder)
@@ -221,28 +222,32 @@ class OnnxModelDownloader:
                     onnx_file = onnx_files[0]
                     if onnx_file.parent != target:
                         shutil.move(str(onnx_file), target / "model.onnx")
-                        # Remove leftover empty dir
                         if onnx_file.parent != target:
                             shutil.rmtree(onnx_file.parent, ignore_errors=True)
 
                     return target
 
                 except (RepositoryNotFoundError, EntryNotFoundError) as e:
-                    darwin.log( f"Repo {repo} not found/missing: {e}",LogType.WARNING,
-                    )
+                    
+                    darwin.log(f"Repo {repo} not found/missing: {e}", LogType.WARNING)
                     errors.append(e)
-                    break  # no point retrying this repo
+                    break
 
                 except (HfHubHTTPError, ConnectionError, TimeoutError, OSError) as e:
-                    darwin.log(f"Transient error from {repo}: {e}. "
-                        f"Retrying in {self.retry_delay}s...",LogType.WARNING)
+                    
+                    darwin.log(
+                            f"Transient error from {repo}: {e}. "
+                            f"Retrying in {self.retry_delay}s...",
+                            LogType.WARNING,
+                        )
                     errors.append(e)
                     if attempt < self.max_retries:
                         time.sleep(self.retry_delay * (2 ** (attempt - 1)))
                     continue
 
                 except Exception as e:
-                    darwin.log( f"Unexpected error from {repo}: {e}",LogType.ERROR,)
+                    
+                    darwin.log(f"Unexpected error from {repo}: {e}", LogType.ERROR)
                     errors.append(e)
                     break
 
@@ -254,14 +259,18 @@ class OnnxModelDownloader:
         try:
             import onnxruntime as ort
         except ImportError:
-            darwin.log("onnxruntime not installed, skipping validation.",
-                log_type=LogType.WARNING,)
+            darwin.log("onnxruntime not installed, skipping validation.", log_type=LogType.WARNING)
             return
 
         try:
             session = ort.InferenceSession(str(onnx_path))
-            darwin.log(f"ONNX model loaded successfully. "
-                        f"Inputs: {[i.name for i in session.get_inputs()]}", log_type=LogType.SUCCESS)
+            
+            darwin.log(
+                    f"ONNX model loaded successfully. "
+                    f"Inputs: {[i.name for i in session.get_inputs()]}",
+                    log_type=LogType.SUCCESS,
+                )
         except Exception as e:
-            darwin.log(f"ONNX validation failed: {e}", log_type=LogType.ERROR,)
+            
+            darwin.log(f"ONNX validation failed: {e}", log_type=LogType.ERROR)
             raise RuntimeError(f"Downloaded ONNX model is invalid: {e}") from e

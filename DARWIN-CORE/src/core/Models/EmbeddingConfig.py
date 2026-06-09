@@ -3,6 +3,8 @@ src/core/Models/EmbeddingConfig.py
 -----------------------------------
 Model presets for chunking, prompting, and batch sizing.
 Covers embedding models, reranker models, and API-based variants.
+
+PURE DATA MODULE — no runtime object creation, no ModelManager imports.
 """
 
 from __future__ import annotations
@@ -24,16 +26,16 @@ class ModelPreset:
     dimensions: int
     overlap: int
     category: Literal["plain_text", "semantic_markdown", "reranker"]
-    
+
     # ── Prompting ──
     needs_prefix: bool = True
     passage_prefix: str = "passage: "
     query_prefix: str = "query: "
-    
+
     # ── Instruction-tuned models ──
     is_instruction_tuned: bool = False
     instruction_template: Optional[str] = None
-    
+
     # ── Metadata ──
     model_name: str = ""  # HF ID (e.g., 'intfloat/e5-small-v2')
 
@@ -90,7 +92,7 @@ PRESETS: dict[str, ModelPreset] = {
         needs_prefix=True,
         passage_prefix="passage: ",
         query_prefix="query: ",
-        model_name="intfloat/e5-small-v2",
+        model_name="intfloat/e5-small-v2-onnx",
     ),
     "BAAI/bge-m3-onnx": ModelPreset(
         max_tokens=8000,
@@ -99,7 +101,7 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=5,
         category="semantic_markdown",
         needs_prefix=False,
-        model_name="BAAI/bge-m3",
+        model_name="BAAI/bge-m3-onnx",
     ),
 
     # ──────────────────────────────────────────────────────────────────
@@ -165,7 +167,7 @@ PRESETS: dict[str, ModelPreset] = {
         overlap=0,
         category="reranker",
         needs_prefix=False,
-        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        model_name="cross-encoder/ms-marco-MiniLM-L-6-v2-onnx",
     ),
 
     # ──────────────────────────────────────────────────────────────────
@@ -195,32 +197,22 @@ DEFAULT_PRESET = ModelPreset(
 
 def get_preset(model_key: Optional[str] = None) -> ModelPreset:
     """
-    Returns the full ModelPreset for a given model_key, or the
-    CURRENTLY ACTIVE embedding model if none is provided.
-    
-    Handles ONNX variants by looking up the base model preset.
-    
+    Returns the full ModelPreset for a given model_key.
+
     Args:
-        model_key: Canonical model_id (e.g., 'BAAI/bge-m3') or None
-                   to auto-detect from the active loader.
-    
+        model_key: Canonical model_id (e.g., 'BAAI/bge-m3') or None.
+                   If None, returns DEFAULT_PRESET.
+
     Returns:
         ModelPreset matching the model, or DEFAULT_PRESET if unknown.
     """
-    if model_key is not None:
-        # Direct lookup
-        if model_key in PRESETS:
-            return PRESETS[model_key]
-    
+    if model_key is None:
         return DEFAULT_PRESET
-    
-    try:
-        from src.core.Models import ModelManager, ModelCategory
-        loader = ModelManager.get_loader()
-        model_key = loader.get_model_key(ModelCategory.EMBEDDING)
-        return get_preset(model_key)  # Recursive with the key
-    except (RuntimeError, ValueError, ImportError):
-        return DEFAULT_PRESET
+
+    if model_key in PRESETS:
+        return PRESETS[model_key]
+
+    return DEFAULT_PRESET
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -238,15 +230,12 @@ def get_optimal_batch_size(requested_size: int = 32) -> int:
     try:
         cfg = DeviceManager.get()
     except RuntimeError:
-        # DeviceManager not initialized — use safe defaults
         return min(requested_size, 16)
 
-    # GPU path
     if cfg.use_gpu:
         try:
             import torch
             vram_free = torch.cuda.mem_get_info()[0] / (1024 ** 3)
-
             if vram_free > 8:
                 return 128
             elif vram_free > 4:
@@ -256,39 +245,27 @@ def get_optimal_batch_size(requested_size: int = 32) -> int:
         except Exception:
             return 32
 
-    # CPU path
     mem = psutil.virtual_memory()
     available_gb = mem.available / (1024 ** 3)
     cpu_usage = psutil.cpu_percent(interval=0.1)
 
     if available_gb < 2.0 or cpu_usage > 80:
         return 16
-
     if available_gb > 4.0:
         return 64
-
     return requested_size
 
 
-def get_model_batch_size(preset: Optional[ModelPreset] = None, requested_size: int = 32) -> int:
+def get_model_batch_size(preset: Optional[ModelPreset] = None,model_key = "", requested_size: int = 32) -> int:
     """
     Batch size adjusted for the currently active model's memory footprint.
-    
-    Args:
-        preset: ModelPreset for the active model (auto-detected if None).
-        requested_size: Base batch size requested by the caller.
-    
-    Returns:
-        Safe batch size considering both hardware and model requirements.
     """
-    if preset is None:
-        preset = get_preset()
-    
-    base_size = get_optimal_batch_size(requested_size)
+    if preset is None and model_key is not None and model_key in PRESETS:
+        preset = get_preset(model_key)
 
-    # Adjust for specific model families based on model_id
+    base_size = get_optimal_batch_size(requested_size)
     model_name = preset.model_name.lower()
-    
+
     if "gritlm-7b" in model_name or "gritlm" in model_name:
         return max(8, base_size // 4)
     elif "bge-m3" in model_name or "bge" in model_name:
@@ -296,6 +273,6 @@ def get_model_batch_size(preset: Optional[ModelPreset] = None, requested_size: i
     elif "e5-small" in model_name or "e5" in model_name:
         return base_size * 2
     elif "minilm" in model_name:
-        return base_size * 4  # Tiny model — can handle large batches
+        return base_size * 4
 
     return base_size

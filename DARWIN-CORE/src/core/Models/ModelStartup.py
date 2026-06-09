@@ -15,24 +15,56 @@ from src.lib.KeyManager import (
     is_key_set,
 )
 
-def download_required(store, preferences, system):
-    """Download required local models (skip API models)."""
-    VALID_CATEGORIES = {"embedding", "reranker", "vision", "tokenizer"}
-    selected = {cat: val for cat, val in preferences.items()
-                if cat in VALID_CATEGORIES and val and val not in {"none", "not set"}}
 
-    to_download = []
+def download_required(store, preferences, system):
+    """
+    Download required **local** models (skip API models).
+
+    preferences : dict like {'embedding': 'BAAI/bge-m3-onnx', ...}
+    system      : SystemInfo instance
+    """
+    VALID_CATEGORIES = {"embedding", "reranker", "vision", "tokenizer"}
+
+    selected = {
+        cat: val
+        for cat, val in preferences.items()
+        if cat in VALID_CATEGORIES and val and val not in {"none", "not set"}
+    }
+
+    # Separate models into API-only vs local
+    api_models = []
+    local_models = []
+
     for cat, key in selected.items():
         if key not in REGISTRY:
+            darwin.log(f"Model '{key}' not found in registry – skipping.", LogType.WARNING)
             continue
         spec = REGISTRY[key]
-        if spec.disk_mb == 0:  # API model
+
+        if spec.disk_mb == 0:          # API model
             provider = key.split("/")[0]
             if not is_key_set(provider):
                 darwin.log(f"{key} requires API key for {provider}, which is not set.", LogType.WARNING)
             else:
                 darwin.log(f"{key} is API‑only, key present.", LogType.SUCCESS)
+            api_models.append(key)
+        else:                          # Local model
+            local_models.append(key)
+
+    # ── API models nothing to download ──
+    if not local_models:
+        darwin.log("All selected models are API‑based – no local downloads needed.", LogType.SUCCESS)
+        return
+
+    # ── Check which local models still need downloading ──
+    to_download = []
+    for key in local_models:
+        if store.is_downloaded(key):
+            spec = get_spec(key)
+            darwin.log(f"[{spec.category.capitalize()}]  {key} ({store.installed_size(key)})", LogType.SUCCESS)
             continue
+
+        # Only validate system requirements for models NOT yet downloaded
         validation = validate_model(key, system, store)
         if validation.can_run:
             to_download.append(key)
@@ -40,26 +72,29 @@ def download_required(store, preferences, system):
             darwin.log(f"Skipping {key}: {', '.join(validation.warnings)}", LogType.WARNING)
 
     if not to_download:
-        darwin.log("All compatible local models already cached or skipped.", LogType.SUCCESS)
+        darwin.log("All required local models are already cached.  ", LogType.SUCCESS)
         return
 
+    # ── Proceed with downloads ──
     download_info = calculate_download_size({k: k for k in to_download}, store)
-    darwin.log(f"Models directory: {store.resolver.root}", LogType.INFO)
+    darwin.log(f"[MODELS DIRECTORY]: {store.resolver.root}", LogType.INFO)
     darwin.log(f"System: {system.ram_gb}GB RAM, {system.disk_free_gb:.1f}GB free", LogType.INFO)
 
     if download_info["total_gb"] > system.disk_free_gb * 0.8:
-        darwin.log(f"Downloads need {download_info['total_gb']:.1f}GB but only {system.disk_free_gb:.1f}GB free", LogType.WARNING)
+        darwin.log(
+            f"Downloads need {download_info['total_gb']:.1f}GB but only {system.disk_free_gb:.1f}GB free",
+            LogType.WARNING,
+        )
 
-    new_downloads = [k for k in to_download if not store.is_downloaded(k)]
-    darwin.log(f"Downloading {len(new_downloads)} local model(s) — ~{download_info['total_gb']:.1f}GB", LogType.INFO)
+    darwin.log(
+        f"Downloading {len(to_download)} local model(s) — ~{download_info['total_gb']:.1f}GB",
+        LogType.INFO,
+    )
 
     for key in to_download:
         spec = get_spec(key)
-        if store.is_downloaded(key):
-            darwin.log(f"{key} — cached ({store.installed_size(key)})", LogType.SUCCESS)
-        else:
-            darwin.log(f"Downloading {key} ({spec.disk_mb}MB)...", LogType.INFO)
-            store.download(key)
+        darwin.log(f"[{spec.category.capitalize()}] Downloading {key} ({spec.disk_mb}MB)...", LogType.INFO)
+        store.download(key)
 
 
 async def run_onboarding_async() -> ModelLoader:
@@ -146,7 +181,7 @@ async def _onboard_category(category, title, recommended_key, system, store, req
         else:
             cached = " [cached]" if store.is_downloaded(key) else ""
             size_str = f"{spec.disk_mb}MB"
-        can = "✅" if validation.can_run else "⚠️"
+        can = " " if validation.can_run else "⚠️"
         options.append(f"[{i+1}] {key} ({spec.tier}, {size_str}, {spec.ram_gb}GB RAM) {can}{star}{cached}")
         darwin.log(f"  {options[-1]}", LogType.INFO)
 
@@ -202,7 +237,7 @@ async def _onboard_category(category, title, recommended_key, system, store, req
                 if api_key and api_key.strip():
                     try:
                         set_api_key(provider, api_key, validate=True)
-                        darwin.log(f"✅ API key for {provider} saved.", LogType.SUCCESS)
+                        darwin.log(f"  API key for {provider} saved.", LogType.SUCCESS)
                     except Exception as e:
                         darwin.log(f"❌ Failed: {e}. Key not saved.", LogType.ERROR)
                 else:

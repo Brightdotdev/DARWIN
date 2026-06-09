@@ -36,6 +36,7 @@ class TerminalUI(EventSubscriber):
 
     def show_banner(self) -> None:
         self.console.clear()
+        self.console.print()
         for line in ASCII_BANNER:
             self.console.print(f"[cyan]{line}[/cyan]")
         self.console.print()
