@@ -38,8 +38,8 @@ if __name__ == "__main__":
         show_banner=True,
     )
     store = DarwinStore("../../darwin_store_test")
-    # store.repair_registry()
-    # store.print_pipeline_report()
+    store.repair_registry()
+    store.print_pipeline_report()
 
     # print(f"\n{'#' * 60}")
     # print(f"#  DARWIN STORE V2 BATTLE TEST")

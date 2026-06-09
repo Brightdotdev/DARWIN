@@ -11,6 +11,9 @@ class ArtifactMarkdown:
     """Markdown artifact I/O and deletion."""
 
     def has_markdown(self, filename: str) -> bool:
+        if self._resolve_hash(filename) is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         return self._artifacts.has_artifact(self._resolve_hash(filename), "markdown")
 
     def save_markdown(self, filename: str, doc: Any) -> None:
@@ -28,6 +31,9 @@ class ArtifactMarkdown:
             return
 
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         self._artifacts.ensure_dir(h)
 
         md_path = self.paths.markdown_path(h)
@@ -52,6 +58,9 @@ class ArtifactMarkdown:
 
     def load_markdown(self, filename: str) -> str | None:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         path = self.paths.markdown_path(h)
         if not path.exists():
             return None
@@ -64,6 +73,9 @@ class ArtifactMarkdown:
     def delete_markdown(self, filename: str) -> bool:
         """Remove markdown artifacts and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         removed = False
         for p in (self.paths.markdown_path(h), self.paths.display_markdown_path(h)):
             if p.exists():

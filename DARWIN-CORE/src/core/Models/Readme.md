@@ -180,7 +180,8 @@ Wraps `ModelLoader` and `ModelStore`, adds setup wizards, migration, and model l
 | `manager.switch(category, model, migrate=False)` | Switch the active model in a category. |
 | `manager.switch_with_format(category, base_model, prefer_format=None, migrate=False)` | Switch and auto‑select ONNX or PyTorch variant. |
 | `manager.setup(preferences, skip_download=False)` | Complete first‑time setup (downloads). |
-| `manager.migrate_embedding(file=None, force=False)` | Re‑embed all files with the current embedding model. |
+
+
 | `manager.get_loader()` | Return the global `ModelLoader` singleton. |
 
 ### Usage

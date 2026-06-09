@@ -7,10 +7,10 @@ from src.core.Storage.ArtifactStore import ArtifactStore
 from src.core.Storage.CacheManager import CacheManager
 from src.core.Storage.HealthMonitor import HealthMonitor
 from src.core.Storage.MetaManager import MetaManager
-from src.core.Storage.DataModels import ContentStatus, Source
 from src.core.Storage.StoreRegistry import ContentIndex, Registry, SourceManager
 from src.core.Storage.StorePaths import StorePaths
 from src.lib.AppPaths import get_darwin_dir
+from src.core.Logger.DarwinLogger import darwin,LogType
 
 
 def get_current_embedding_model() -> str:
@@ -66,27 +66,19 @@ class StoreCore:
         ModelManager.setup()
         self.print_dashboard()
 
-    def _resolve_hash(self, filename: str) -> str:
+    def _resolve_hash(self, filename: str) -> str | None:
         source = self._sources.find_by_name(filename)
         if not source:
-            raise KeyError(f"File not registered: {filename}")
+            darwin.log(f"File not registered: {filename}", LogType.ERROR)
+            darwin.log(f"All operations will be aborted.", LogType.ERROR)
+            darwin.log(f"[TIP] Try parsing the file first.")
+            return None
         return source.content_hash
 
     def _hash_for(self, filename: str) -> str:
         return self._resolve_hash(filename)
 
-    def _source_for(self, filename: str) -> Source:
-        source = self._sources.find_by_name(filename)
-        if not source:
-            raise KeyError(f"File not registered: {filename}")
-        return source
 
-    def get_source_and_status(self, filename: str) -> tuple[Source, ContentStatus]:
-        source = self._sources.find_by_name(filename)
-        if not source:
-            raise KeyError(f"File not registered: {filename}")
-        status = self._contents.get_status(source.content_hash)
-        return source, status
 
     def invalidate(self, filename: str) -> None:
         prefix = f"*:{self._resolve_hash(filename)}"

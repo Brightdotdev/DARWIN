@@ -95,6 +95,10 @@ class StoreDashboard:
     ) -> dict:
         def _file_breakdown(filename: str) -> dict:
             h = self._resolve_hash(filename)
+
+            if h is None:
+                darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+                return {}
             breakdown: dict[str, Any] = {}
             total = 0
 

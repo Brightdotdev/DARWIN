@@ -16,13 +16,20 @@ class ArtifactAuxMixin:
     # ── Stopwords ───────────────────────────────────────────────────────
 
     def has_stopwords(self, filename: str) -> bool:
-        return self._artifacts.has_artifact(self._resolve_hash(filename), "stopwords")
+        h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
+        return self._artifacts.has_artifact(h, "stopwords")
 
     def save_stopwords(self, filename: str, stopwords: set[str]) -> None:
         if not stopwords:
             darwin.log(f"No stopwords to save for {filename}", LogType.ERROR)
             return
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return
         path = self.paths.stopwords_path(h)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_json(path, {"stopwords": sorted(stopwords)})
@@ -32,6 +39,9 @@ class ArtifactAuxMixin:
 
     def load_stopwords(self, filename: str) -> set[str]:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         path = self.paths.stopwords_path(h)
         if not path.exists():
             return set()
@@ -40,6 +50,9 @@ class ArtifactAuxMixin:
 
     def delete_stopwords(self, filename: str) -> bool:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         path = self.paths.stopwords_path(h)
         removed = False
         if path.exists():
@@ -53,6 +66,9 @@ class ArtifactAuxMixin:
 
     def has_graph(self, filename: str) -> bool:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         return self._artifacts.has_artifact(h, "graph") and self._artifacts.has_artifact(h, "graph_vis")
 
     def save_graph(self, filename: str, nodes: list[Any], edges: list[Any]) -> None:
@@ -61,6 +77,9 @@ class ArtifactAuxMixin:
             return
 
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return
         self._artifacts.ensure_dir(h)
 
         nodes_path = self.paths.graph_nodes_path(h)
@@ -93,6 +112,9 @@ class ArtifactAuxMixin:
             darwin.log(f"No graph HTML to save for {filename}", LogType.ERROR)
             return
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return
         path = self.paths.graph_html_path(h)
         path.parent.mkdir(parents=True, exist_ok=True)
         write_text_atomic(path, html)
@@ -102,6 +124,9 @@ class ArtifactAuxMixin:
 
     def load_graph(self, filename: str) -> dict:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return
         cache_key = f"graph:{h}"
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -122,6 +147,9 @@ class ArtifactAuxMixin:
     def delete_graph(self, filename: str) -> bool:
         """Remove graph nodes/edges and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         removed = False
         for p in (self.paths.graph_nodes_path(h), self.paths.graph_edges_path(h)):
             if p.exists():
@@ -134,6 +162,9 @@ class ArtifactAuxMixin:
     def delete_graph_html(self, filename: str) -> bool:
         """Remove graph HTML and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         path = self.paths.graph_html_path(h)
         removed = False
         if path.exists():
@@ -146,39 +177,48 @@ class ArtifactAuxMixin:
     # ── Wiki ────────────────────────────────────────────────────────────
 
     def has_wiki(self, filename: str) -> bool:
+        if self._resolve_hash(filename) is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         return self._artifacts.has_artifact(self._resolve_hash(filename), "wiki")
 
-    def save_wiki(self, filename: str, pages: list[Any]) -> None:
-        if not pages:
+    def save_wiki(self, filename: str, wiki: dict) -> None:
+        if not wiki:
             darwin.log(f"No wiki pages to save for {filename}", LogType.ERROR)
             return
 
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return
         self._artifacts.ensure_dir(h)
 
         wiki_path = self.paths.wiki_path(h)
         wiki_path.parent.mkdir(parents=True, exist_ok=True)
 
-        dicts = [normalize_record(p) for p in pages]
-        table = pa.Table.from_pylist(dicts)
-        pq.write_table(table, wiki_path, compression="zstd")
-
+        write_json(wiki_path, wiki)
         self._meta.update(h, "wiki")
         self._contents.set_stage(h, "wiki")
         self._cache.invalidate(f"wiki:{h}")
 
-        darwin.log(f"Wiki saved: {len(pages)} pages", LogType.SUCCESS)
+        darwin.log(f"Wiki saved for {filename}", LogType.SUCCESS)
 
-    def load_wiki(self, filename: str) -> list[dict] | None:
+    def load_wiki(self, filename: str) -> dict | None:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         path = self.paths.wiki_path(h)
         if not path.exists():
             return None
-        return pq.read_table(path).to_pydict()
+        return read_json(path)
 
     def delete_wiki(self, filename: str) -> bool:
         """Remove wiki parquet and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         path = self.paths.wiki_path(h)
         removed = False
         if path.exists():

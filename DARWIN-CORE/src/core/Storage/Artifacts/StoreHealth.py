@@ -1,11 +1,14 @@
 from __future__ import annotations
-
+from src.core.Logger.DarwinLogger import darwin, LogType
 class StoreHealth:
     """Registry integrity checks and embedding-model health."""
 
     def repair_registry(self, filename: str | None = None, dry_run: bool = False) -> dict:
         if filename:
             h = self._resolve_hash(filename)
+            if h is None:
+                darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+                return {}
             return self._health.repair(h, dry_run=dry_run)
         return self._health.repair(dry_run=dry_run)
 

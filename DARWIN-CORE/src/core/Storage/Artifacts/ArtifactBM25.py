@@ -15,6 +15,9 @@ class ArtifactBM25:
     """BM25 index I/O and deletion."""
 
     def has_bm25(self, filename: str) -> bool:
+        if self._resolve_hash(filename) is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         return self._artifacts.has_artifact(self._resolve_hash(filename), "bm25")
 
     def save_bm25(self, filename: str, data: Any) -> None:
@@ -43,9 +46,12 @@ class ArtifactBM25:
 
         if not tokens or not doc_lengths:
             darwin.log(f"No BM25 data to save for {filename}", LogType.ERROR)
-            return
+            return None
 
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         self._artifacts.ensure_dir(h)
 
         npz_path = self.paths.bm25_path(h)
@@ -81,6 +87,9 @@ class ArtifactBM25:
 
     def load_bm25(self, filename: str) -> dict | None:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         cache_key = f"bm25:{h}"
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -123,6 +132,9 @@ class ArtifactBM25:
     def delete_bm25(self, filename: str) -> bool:
         """Remove BM25 artifacts and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         removed = False
         for p in (self.paths.bm25_path(h), self.paths.bm25_meta_path(h), self.paths.bm25_tokens_path(h)):
             if p.exists():

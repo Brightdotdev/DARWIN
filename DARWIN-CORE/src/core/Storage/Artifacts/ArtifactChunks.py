@@ -15,6 +15,9 @@ class ArtifactChunks:
     """Parquet chunk records I/O, querying, and deletion."""
 
     def has_records(self, filename: str) -> bool:
+        if self._resolve_hash(filename) is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         return self._artifacts.has_artifact(self._resolve_hash(filename), "chunks")
 
     def save_records(self, filename: str, records: list[Any]) -> None:
@@ -23,6 +26,9 @@ class ArtifactChunks:
             return
 
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         self._artifacts.ensure_dir(h)
 
         dicts = [normalize_record(r) for r in records]
@@ -41,6 +47,9 @@ class ArtifactChunks:
 
     def load_records(self, filename: str, columns: list[str] | None = None) -> pa.Table:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return pa.table({})
         cache_key = f"records:{h}"
         cached = self._cache.get(cache_key)
         if cached is not None and columns is None:
@@ -57,6 +66,9 @@ class ArtifactChunks:
 
     def query_records(self, filename: str, columns: list[str] | None = None, **filters) -> list[dict[str, Any]]:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return []
         path = self.paths.chunks_path(h)
         if not path.exists():
             return []
@@ -76,6 +88,9 @@ class ArtifactChunks:
 
     def iter_records(self, filename: str, columns: list[str] | None = None, batch_size: int = 1000) -> Iterator[dict[str, Any]]:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return iter([])
         path = self.paths.chunks_path(h)
         if not path.exists():
             return iter([])
@@ -132,6 +147,9 @@ class ArtifactChunks:
     def delete_records(self, filename: str) -> bool:
         """Remove chunk parquet and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         path = self.paths.chunks_path(h)
         removed = False
         if path.exists():

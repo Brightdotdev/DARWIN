@@ -27,6 +27,6 @@ ARTIFACT_MANIFEST = {
     "stopwords": {"file": "stopwords.json"},
     "graph": {"nodes": "graph/nodes.parquet", "edges": "graph/edges.parquet"},
     "graph_vis": {"file": "graph/graph.html"},
-    "wiki": {"file": "wiki/wiki.parquet"},
+    "wiki": {"file": "wiki/wiki.json"},
     "meta": {"file": "meta.json"},
 }

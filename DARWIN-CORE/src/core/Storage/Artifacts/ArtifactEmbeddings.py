@@ -13,6 +13,9 @@ class ArtifactEmbeddings:
     """Numpy embeddings, USearch vector index, and deletion."""
 
     def has_embeddings(self, filename: str) -> bool:
+        if self._resolve_hash(filename) is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         return self._artifacts.has_artifact(self._resolve_hash(filename), "embeddings")
 
     def save_embeddings(self, filename: str, vectors: np.ndarray, indices: list[int] | None = None) -> None:
@@ -21,6 +24,9 @@ class ArtifactEmbeddings:
             return
 
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         self._artifacts.ensure_dir(h)
 
         vectors = np.ascontiguousarray(vectors.astype(np.float16))
@@ -51,6 +57,9 @@ class ArtifactEmbeddings:
 
     def load_embeddings(self, filename: str, mmap: bool = True) -> np.ndarray | None:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         cache_key = f"embeddings:{h}"
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -76,6 +85,9 @@ class ArtifactEmbeddings:
 
     def load_embedding_index_map(self, filename: str) -> list[int] | None:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         path = self.paths.embedding_index_map_path(h)
         if not path.exists():
             return None
@@ -84,10 +96,16 @@ class ArtifactEmbeddings:
     # ── Vector (USearch) ────────────────────────────────────────────────
 
     def has_vector(self, filename: str) -> bool:
+        if self._resolve_hash(filename) is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         return self._artifacts.has_artifact(self._resolve_hash(filename), "vector")
 
     def save_vector(self, filename: str, vectors: np.ndarray) -> None:
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         self._artifacts.ensure_dir(h)
 
         from usearch.index import Index
@@ -120,6 +138,10 @@ class ArtifactEmbeddings:
 
     def load_vector(self, filename: str):
         h = self._resolve_hash(filename)
+
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return None
         cache_key = f"vector:{h}"
         cached = self._cache.get(cache_key)
         if cached is not None:
@@ -182,6 +204,9 @@ class ArtifactEmbeddings:
     def delete_embeddings(self, filename: str) -> bool:
         """Remove .npy embeddings + index map and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         removed = False
         for p in (self.paths.embedding_path(h), self.paths.embedding_index_map_path(h)):
             if p.exists():
@@ -195,6 +220,9 @@ class ArtifactEmbeddings:
     def delete_vector(self, filename: str) -> bool:
         """Remove USearch index + meta and clear the registry flag."""
         h = self._resolve_hash(filename)
+        if h is None:
+            darwin.log("File not registered and operation aborted...try parsing the file first", LogType.ERROR)
+            return False
         removed = False
         for p in (self.paths.vector_index_path(h), self.paths.vector_json_path(h)):
             if p.exists():
