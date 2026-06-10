@@ -105,13 +105,8 @@ def _validate_url(url: str) -> Optional[str]:
 # ── HTTP fetch ────────────────────────────────────────────────────────────────
 
 _HEADERS = {
-    "User-Agent": "DarwinBot/1.0 (Document Parser)",
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml,"
-        "application/pdf,text/plain,text/markdown,*/*;q=0.9"
-    ),
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.0",
 }
-
 
 def fetch_url(
     url: str,

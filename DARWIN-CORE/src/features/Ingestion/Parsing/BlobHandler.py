@@ -8,15 +8,21 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
-from src.features.Ingestion.Parsing.Parser import parse_url, is_url
-from src.features.Ingestion.Parsing.lib import ParsedDocument, is_good_enough
+from src.features.Ingestion.Parsing.Parser import parse_url, is_url,is_good_enough
+from src.features.Ingestion.Parsing.lib import ParsedDocument, BlobInput
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ── Link extraction ─────────────────────────────────────────────────────────
 
+# Improved regex: captures parentheses in URLs (Wikipedia-style)
+# Allows balanced parens at end, stops at whitespace or unambiguous URL terminators
 _URL_PATTERN = re.compile(
-    r'https?://(?:[-\w.])+(?::\d+)?(?:/(?:[\w/_.])*(?:\?(?:[\w&=%.])*)?(?:#(?:[\w.])*)?)?',
+    r'https?://'
+    r'(?:[-\w.])+(?::\d+)?'  # host + optional port
+    r'(?:/[^\n\s<>"{}|\\^`\[\]]*'  # path
+    r'(?:\([^\n\s<>"{}|\\^`\[\]]*\))?'  # optional (parenthesized) suffix
+    r'(?:/[^\n\s<>"{}|\\^`\[\]]*)*)?',  # more path after parens
     re.IGNORECASE
 )
 
@@ -27,12 +33,20 @@ def extract_links(text: str) -> List[Dict]:
     seen = set()
     for match in _URL_PATTERN.finditer(text):
         url = match.group(0)
-        if url not in seen:
+        
+        # Smart trailing punctuation strip: don't strip ) if URL has (
+        while url and url[-1] in ".,;:!?":
+            url = url[:-1]
+        # Only strip ) if there's no ( in the URL
+        if url.endswith(")") and "(" not in url:
+            url = url[:-1]
+        
+        if url not in seen and len(url) > 10:
             seen.add(url)
             links.append({
                 "url": url,
                 "start": match.start(),
-                "end": match.end(),
+                "end": match.start() + len(url),  # adjust end to stripped length
                 "domain": urlparse(url).netloc or "unknown",
                 "status": "pending",
                 "content": None,
@@ -55,22 +69,57 @@ def replace_links_with_placeholders(text: str, links: List[Dict]) -> str:
 
 
 def resolve_placeholder(text: str, idx: int, link: Dict) -> str:
-    """Replace a pending placeholder with resolved content or failure reason."""
-    old = f'[link:{idx} | domain:{link["domain"]} | content:<pending> | url:{link["url"]}]'
+    """
+    Replace a pending placeholder with resolved content or failure reason.
+    Handles trailing markdown syntax (like (mythology)) after placeholder.
+    """
+    # Find the placeholder — it may have trailing text immediately after ]
+    old_pattern = f'[link:{idx} | domain:{link["domain"]} | content:<pending> | url:{link["url"]}]'
 
-    if link["status"] == "resolved" and link["content"]:
-        # Truncate content for inline display (keep it readable)
-        content = link["content"][:200].replace("]", "⟩").replace("[", "⟨")
-        if len(link["content"]) > 200:
-            content += "..."
-        new = f'[link:{idx} | domain:{link["domain"]} | content:{content} | url:{link["url"]}]'
-    elif link["status"] == "failed":
-        reason = link.get("error", "unknown error")[:100]
-        new = f'[link:{idx} | domain:{link["domain"]} | content:<failed: {reason}> | url:{link["url"]}]'
-    else:
-        new = old  # unchanged
+    # Try exact match first
+    if old_pattern in text:
+        if link["status"] == "resolved" and link.get("content"):
+            content = link["content"][:200].replace("]", "⟩").replace("[", "⟨")
+            if len(link["content"]) > 200:
+                content += "..."
+            new = f'[link:{idx} | domain:{link["domain"]} | content:{content} | url:{link["url"]}]'
+        elif link["status"] == "failed":
+            reason = link.get("error", "unknown error")[:100]
+            new = f'[link:{idx} | domain:{link["domain"]} | content:<failed: {reason}> | url:{link["url"]}]'
+        else:
+            new = old_pattern  # unchanged
 
-    return text.replace(old, new, 1)
+        return text.replace(old_pattern, new, 1)
+
+    # Fallback: search for pattern with possible trailing chars
+    # This handles cases where markdown syntax got appended
+    escaped_url = re.escape(link["url"])
+    pattern = re.compile(
+        rf'\[link:{re.escape(str(idx))} \| domain:{re.escape(link["domain"])} \| content:<pending> \| url:{escaped_url}\]'
+        r'([^\n\r]*)'  # capture trailing chars on same line
+    )
+
+    match = pattern.search(text)
+    if match:
+        full_match = match.group(0)
+        trailing = match.group(1)
+
+        if link["status"] == "resolved" and link.get("content"):
+            content = link["content"][:200].replace("]", "⟩").replace("[", "⟨")
+            if len(link["content"]) > 200:
+                content += "..."
+            new = f'[link:{idx} | domain:{link["domain"]} | content:{content} | url:{link["url"]}]{trailing}'
+        elif link["status"] == "failed":
+            reason = link.get("error", "unknown error")[:100]
+            new = f'[link:{idx} | domain:{link["domain"]} | content:<failed: {reason}> | url:{link["url"]}]{trailing}'
+        else:
+            return text  # unchanged
+
+        return text.replace(full_match, new, 1)
+
+    # Could not find placeholder — log and return unchanged
+    darwin.log(f"Could not find placeholder for link {idx} ({link['url']})", LogType.WARNING)
+    return text
 
 
 # ── Link fetching (immediate, synchronous) ──────────────────────────────────
@@ -81,40 +130,23 @@ def fetch_link_content(url: str, timeout: float = 15.0) -> Tuple[Optional[str], 
     Returns (content, error).
     """
     try:
+        darwin.log(f"    Fetching {url}...", LogType.INFO)
         doc = parse_url(url, precise=False, timeout=timeout)
-        if doc.error:
-            return None, doc.error
 
-        # Use display_text as the extracted content
+        if doc.error:
+            return None, f"fetch failed: {doc.error}"
+
         text = doc.display_text or doc.embedding_text
         if not text or len(text.strip()) < 50:
             return None, "extracted content is empty or too short"
 
-        # Truncate for inline embedding (full content available in metadata if needed)
         return text[:2000], None
 
+    except ImportError as e:
+        return None, f"missing dependency: {e}"
     except Exception as e:
         return None, f"{type(e).__name__}: {e}"
 
-
-# ── BlobHandler ─────────────────────────────────────────────────────────────
-
-@dataclass
-class BlobInput:
-    """Raw text content from clipboard, chat, or other non-file sources."""
-    content: str                        # The raw text/HTML/markdown
-    source: str                         # e.g. "clipboard", "chat", "web_clip"
-    title: str = ""                     # Optional title/context
-    mime_hint: str = "text/plain"       # text/plain, text/html, text/markdown
-    turn_id: Optional[str] = None       # Conversation turn for unique filenames
-    resolve_links: bool = True           # Immediately fetch linked URLs?
-    link_timeout: float = 15.0          # Per-link fetch timeout
-
-    @property
-    def filename(self) -> str:
-        """Generate unique filename from turn + source."""
-        prefix = f"{self.turn_id}_" if self.turn_id else ""
-        return f"{prefix}{self.source}"
 
 
 class BlobHandler:
@@ -128,11 +160,9 @@ class BlobHandler:
         """Auto-detect if raw text is HTML, Markdown, or plain text."""
         stripped = text.strip()
 
-        # HTML: starts with < or contains <!DOCTYPE or <html
         if stripped.startswith("<") or "<!DOCTYPE" in stripped[:100].upper() or "<html" in stripped[:100].lower():
             return "text/html"
 
-        # Markdown: has significant markdown syntax
         md_patterns = ["# ", "## ", "### ", "- ", "* ", "> ", "```", "[", "](", "| ---", "**", "__"]
         md_score = sum(1 for p in md_patterns if p in text[:500])
         if md_score >= 2:
@@ -156,11 +186,12 @@ class BlobHandler:
 
         # ── Step 1: Extract links ───────────────────────────────────────────
         links = extract_links(text)
+        darwin.log(f"  Extracted {len(links)} link(s) from {filename}", LogType.INFO)
 
         # ── Step 2: Replace with placeholders ──────────────────────────────
         if links:
             text = replace_links_with_placeholders(text, links)
-            darwin.log(f"Extracted {len(links)} links from {filename}", LogType.INFO)
+            darwin.log(f"  Replaced links with placeholders", LogType.INFO)
 
         # ── Step 3: HTML extraction (if HTML blob) ──────────────────────────
         if mime_hint in ("text/html", "application/xhtml+xml"):
@@ -168,7 +199,7 @@ class BlobHandler:
                 from trafilatura import extract
                 extracted = extract(
                     text,
-                    output_format="txt",  # Keep placeholders intact
+                    output_format="txt",
                     favor_recall=False,
                     include_comments=False,
                     include_tables=True,
@@ -177,25 +208,37 @@ class BlobHandler:
                 if extracted:
                     text = extracted
             except ImportError:
-                darwin.log("trafilatura not installed, parsing blob as raw text", LogType.WARNING)
+                darwin.log("  trafilatura not installed, parsing blob as raw text", LogType.WARNING)
 
-        # ── Step 4: Immediate link resolution (if enabled) ──────────────────
+        # ── Step 4: Immediate link resolution ───────────────────────────────
         if blob.resolve_links and links:
+            darwin.log(f"  Resolving {len(links)} link(s)...", LogType.INFO)
+
             for idx, link in enumerate(links):
-                darwin.log(f"Fetching link {idx + 1}/{len(links)}: {link['url']}", LogType.INFO)
+                darwin.log(f"    Link {idx + 1}/{len(links)}: {link['url']}", LogType.INFO)
                 content, error = fetch_link_content(link["url"], timeout=blob.link_timeout)
 
                 if content:
                     link["status"] = "resolved"
                     link["content"] = content
-                    darwin.log(f"  OK {link['domain']}: {len(content)} chars", LogType.SUCCESS)
+                    darwin.log(f"      OK: {len(content)} chars from {link['domain']}", LogType.SUCCESS)
                 else:
                     link["status"] = "failed"
-                    link["error"] = error or "unknown"
-                    darwin.log(f"  FAIL {link['domain']}: {error}", LogType.WARNING)
+                    link["error"] = error or "unknown error"
+                    darwin.log(f"      FAIL: {error}", LogType.WARNING)
 
                 # Replace placeholder immediately
+                text_before = text
                 text = resolve_placeholder(text, idx, link)
+                if text == text_before:
+                    darwin.log(f"      WARNING: placeholder not replaced", LogType.WARNING)
+        elif links and not blob.resolve_links:
+            darwin.log(f"  Link resolution disabled (resolve_links=False)", LogType.INFO)
+            for link in links:
+                link["status"] = "skipped"
+                link["error"] = "resolution disabled"
+        else:
+            darwin.log(f"  No links to resolve", LogType.INFO)
 
         # ── Step 5: Quality check ────────────────────────────────────────
         if not is_good_enough(text):
@@ -210,12 +253,12 @@ class BlobHandler:
             "source": blob.source,
             "title": blob.title,
             "mime_hint": mime_hint,
-            "links": links,  # Full link data for downstream use
+            "links": links,
         }
 
         page_count = max(1, len(text.split()) // 500)
 
-        darwin.log(f"Processed blob {filename}: {len(text)} chars, {len(links)} links", LogType.SUCCESS)
+        darwin.log(f"  Processed: {len(text)} chars, {len(links)} links", LogType.SUCCESS)
 
         return ParsedDocument(
             display_text=text,

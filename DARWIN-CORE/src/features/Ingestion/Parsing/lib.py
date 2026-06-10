@@ -96,6 +96,27 @@ class ExtractedImage:
     height:  int
 
 
+
+# ── BlobHandler ─────────────────────────────────────────────────────────────
+
+@dataclass
+class BlobInput:
+    """Raw text content from clipboard, chat, or other non-file sources."""
+    content: str                        # The raw text/HTML/markdown
+    source: str                         # e.g. "clipboard", "chat", "web_clip"
+    title: str = ""                     # Optional title/context
+    mime_hint: str = "text/plain"       # text/plain, text/html, text/markdown
+    turn_id: Optional[str] = None       # Conversation turn for unique filenames
+    resolve_links: bool = True           # Immediately fetch linked URLs?
+    link_timeout: float = 15.0          # Per-link fetch timeout
+
+    @property
+    def filename(self) -> str:
+        """Generate unique filename from turn + source."""
+        prefix = f"{self.turn_id}_" if self.turn_id else ""
+        return f"{prefix}{self.source}"
+
+
 @dataclass
 class ParsingArgs:
     target:            str
@@ -107,7 +128,11 @@ class ParsingArgs:
     precise:           bool = False
     save:              bool = True
     cleanup:           bool = True
-    skip_if_markdown:  bool = False  
+    skip_if_markdown:  bool = False
+    blobs: List[BlobInput] = field(default_factory=list)  # ←
+
+
+
 
 @dataclass
 class ParsedDocument:

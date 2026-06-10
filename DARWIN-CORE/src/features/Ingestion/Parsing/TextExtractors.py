@@ -22,7 +22,6 @@ def _words_to_pages(text: str, words_per_page: int = 275) -> int:
     word_count = len(text.split())
     return max(1, round(word_count / words_per_page))
 
-
 # ═══════════════════════════════════════════════════════════════════════════
 # HTML / XML
 # ═══════════════════════════════════════════════════════════════════════════
@@ -33,26 +32,31 @@ def parse_html(
     caption: bool = False,        # ignored – no image handling yet
     precise: bool = False,        # ignored
 ) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
-    """Extract readable text from an HTML file."""
+    """Extract readable text from an HTML file using Trafilatura."""
     try:
-        from bs4 import BeautifulSoup
+        from trafilatura import extract
     except ImportError:
-        raise ImportError("beautifulsoup4 is required for HTML parsing. Install with: pip install beautifulsoup4")
+        raise ImportError("trafilatura is required for HTML parsing. Install with: pip install trafilatura")
 
     html = path.read_text(encoding="utf-8", errors="replace")
-    soup = BeautifulSoup(html, "html.parser")
 
-    # Remove script, style, nav, footer elements
-    for tag in soup(["script", "style", "nav", "footer", "header"]):
-        tag.decompose()
+    # Trafilatura extracts main content automatically
+    # precise=True keeps more content (favor_recall), False drops more noise (favor_precision)
+    text = extract(
+        html,
+        output_format="txt",           # Plain text with paragraph breaks
+        favor_recall=precise,          # precise=True → keep more, precise=False → strict
+        include_comments=False,
+        include_tables=True,
+        deduplicate=True,
+    )
 
-    # Get text – preserve some structure via newlines
-    text = soup.get_text(separator="\n", strip=True)
-    # Collapse multiple blank lines
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if text is None:
+        text = ""
 
     page_count = _words_to_pages(text)
     return text, text, page_count, {}, []
+
 
 
 def parse_xml(

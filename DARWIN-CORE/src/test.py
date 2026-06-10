@@ -6,6 +6,9 @@ Milestone test — full Darwin pipeline:
 Uses WikiOrchestrator for entity extraction and interactive graph building.
 RetrievalOrchestrator for surgical retrieval (context display only, no generation).
 
+NEW: Link and blob support — ephemeral context, not persisted to Darwin store.
+     Parsed to markdown for real-time inspection only.
+
 Usage:
     uv run test_pipeline_with_knowledge.py
 """
@@ -14,7 +17,8 @@ from __future__ import annotations
 
 import sys
 import os
-from typing import List
+import tempfile
+from typing import List, Optional
 import warnings
 from pathlib import Path
 
@@ -51,6 +55,12 @@ from src.features.Retrival.RetrievalOrchestrator import RetrievalOrchestrator
 from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator
 from src.features.Knowledge.WikiBuilder import NullWikiIndex
 
+# ── NEW: Blob + Link handling ──────────────────────────────────────────────
+from src.features.Ingestion.Parsing.BlobHandler import BlobHandler, BlobInput
+from src.features.Ingestion.Parsing.Parser import parse_url, is_url
+from src.features.Ingestion.Parsing.lib import ParsedDocument
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIG
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -76,6 +86,135 @@ PARSED_FILES = get_parsed(directory)
 FILES = ["book_of_enoch.pdf"]
 QUERY = "who are the watchers"
 
+# ── Ephemeral context (links + blobs) ──────────────────────────────────────
+# These are NOT saved to Darwin store. Parsed to markdown for inspection only.
+
+EPHEMERAL_URLS: List[str] = [
+"https://en.wikipedia.org/wiki/Book_of_Enoch",
+"http://en.wikipedia.org/wiki/Amalthea_(mythology)",
+
+]
+
+EPHEMERAL_BLOBS: List[BlobInput] = [
+    
+    BlobInput(
+        content="Who do you think the watchers are to be http://en.wikipedia.org/wiki/Amalthea_(mythology)",
+        source="chat",
+        turn_id="turn_1",
+        resolve_links=True,
+    ),
+]
+
+# Where to write ephemeral markdown for inspection (relative to cwd)
+EPHEMERAL_OUTPUT_DIR = Path("./ephemeral_output")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EPHEMERAL HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def write_ephemeral_markdown(doc: ParsedDocument, output_dir: Path) -> Path:
+    """Write a ParsedDocument to a markdown file for inspection. Not saved to Darwin."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Sanitize filename
+    safe_name = doc.filename.replace("/", "_").replace("://", "_").replace("?", "_")
+    if not safe_name.endswith(".md"):
+        safe_name += ".md"
+
+    out_path = output_dir / safe_name
+
+    lines = [
+        f"# {doc.filename}",
+        "",
+        f"**Type:** {doc.file_type}  ",
+        f"**Pages:** {doc.page_count}  ",
+        f"**Source:** ephemeral (not in Darwin store)  ",
+        "",
+        "---",
+        "",
+        "## Display Text",
+        "",
+        doc.display_text,
+        "",
+        "---",
+        "",
+        "## Embedding Text",
+        "",
+        doc.embedding_text,
+        "",
+    ]
+
+    if doc.metadata:
+        lines.extend([
+            "---",
+            "",
+            "## Metadata",
+            "",
+            "```json",
+            str(doc.metadata),
+            "```",
+            "",
+        ])
+
+    if doc.error:
+        lines.extend([
+            "---",
+            "",
+            "## Error",
+            "",
+            f"> ⚠ {doc.error}",
+            "",
+        ])
+
+    out_path.write_text("\\n".join(lines), encoding="utf-8")
+    return out_path
+
+
+def process_ephemeral(
+    urls: List[str],
+    blobs: List[BlobInput],
+    output_dir: Path,
+) -> List[ParsedDocument]:
+    """
+    Process URLs and blobs as ephemeral context.
+    Not saved to Darwin store. Written to markdown for inspection.
+    """
+    docs: List[ParsedDocument] = []
+
+    # ── URLs ──────────────────────────────────────────────────────────────
+    for url in urls:
+        darwin.log(f"Processing ephemeral URL: {url}", LogType.INFO)
+        doc = parse_url(url, precise=False)
+        docs.append(doc)
+
+        if doc.error:
+            darwin.log(f"  Failed: {doc.error}", LogType.WARNING)
+        else:
+            out_path = write_ephemeral_markdown(doc, output_dir)
+            darwin.log(f"  Written to {out_path}", LogType.SUCCESS)
+
+    # ── Blobs ─────────────────────────────────────────────────────────────
+    for blob in blobs:
+        darwin.log(f"Processing ephemeral blob: {blob.filename}", LogType.INFO)
+        doc = BlobHandler.process(blob)
+        docs.append(doc)
+
+        if doc.error:
+            darwin.log(f"  Failed: {doc.error}", LogType.WARNING)
+        else:
+            out_path = write_ephemeral_markdown(doc, output_dir)
+            darwin.log(f"  Written to {out_path}", LogType.SUCCESS)
+
+            # Show link resolution status
+            if blob.resolve_links and doc.metadata.get("links"):
+                links = doc.metadata["links"]
+                resolved = sum(1 for l in links if l["status"] == "resolved")
+                failed = sum(1 for l in links if l["status"] == "failed")
+                darwin.log(f"  Links: {resolved} resolved, {failed} failed", LogType.INFO)
+
+    return docs
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -94,6 +233,24 @@ def main() -> int:
     store = DarwinStore(Path("./darwin_store_test"))
 
     with darwin.session("pipeline_wiki_graph_test"):
+        # ── 0. EPHEMERAL: Links + Blobs (no save) ──────────────────────────
+        if EPHEMERAL_URLS or EPHEMERAL_BLOBS:
+            darwin.log("═" * 60, LogType.INFO)
+            darwin.log("Stage 0: Ephemeral Context (links + blobs, no save)", LogType.INFO)
+            darwin.log("═" * 60, LogType.INFO)
+
+            ephemeral_docs = process_ephemeral(
+                urls=EPHEMERAL_URLS,
+                blobs=EPHEMERAL_BLOBS,
+                output_dir=EPHEMERAL_OUTPUT_DIR,
+            )
+
+            darwin.log(f"Ephemeral output written to: {EPHEMERAL_OUTPUT_DIR.resolve()}", LogType.INFO)
+            print(f"\\n  Inspect ephemeral markdown at: {EPHEMERAL_OUTPUT_DIR.resolve()}\\n")
+        else:
+            ephemeral_docs = []
+            darwin.log("No ephemeral URLs or blobs configured.", LogType.INFO)
+
         # ── 1. ingestion ─────────────────────────────────────────────────────
         darwin.log("═" * 60, LogType.INFO)
         darwin.log("Stage 1: Ingestion", LogType.INFO)
@@ -179,8 +336,12 @@ def main() -> int:
         # NOTE: LLM calls have been removed. To enable generation later,
         # uncomment the LLM block and ensure LLMManager is properly initialized.
 
-    darwin.log("\nPipeline complete (no LLM calls).", LogType.SUCCESS)
+    darwin.log("\\nPipeline complete (no LLM calls).", LogType.SUCCESS)
     darwin.log("Open enoch_interactive.html in your browser to explore the graph.", LogType.INFO)
+
+    if EPHEMERAL_URLS or EPHEMERAL_BLOBS:
+        darwin.log(f"Ephemeral markdown available at: {EPHEMERAL_OUTPUT_DIR.resolve()}", LogType.INFO)
+
     darwin.shutdown()
     return 0
 
