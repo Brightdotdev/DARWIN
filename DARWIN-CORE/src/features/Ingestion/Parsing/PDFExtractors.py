@@ -1,536 +1,347 @@
-# ============================================================================
-# src/core/Parsing/Extractors.py
-# ============================================================================
+"""
+ParserUtils.py — PDF extraction utilities with fast and precise modes.
+
+Data-flow contract
+──────────────────
+Extractor  →  [Image:N] slots + [Page N] headers in raw text
+ParserUtils →  NO captioning here; only extraction.
+Captioning is done later in the main process.
+"""
 
 import re
-from collections import Counter
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List, Tuple, Dict
+from typing import Optional, List, Tuple, Dict, Any
+
 from src.core.Logger.DarwinLogger import darwin, LogType
 
-
-MIN_IMAGE_SIZE_PX = 100
-MAX_IMAGES_PER_DOC = 50
-
-HEADING_SIZE_RATIO  = 1.20
-CAPTION_SIZE_RATIO  = 0.85
-LARGE_HEADING_RATIO = 1.50
-
-# ── Table detection thresholds ─────────────────────────────────────────────────
-TABLE_X_SPREAD      = 0.45
-TABLE_MIN_SPANS     = 6
-TABLE_MIN_COLS      = 3
-TABLE_MIN_ROWS      = 3
-TABLE_Y_GAP_RATIO   = 2.5
-COLUMN_BUCKETS      = 2
+from src.features.Ingestion.Parsing.lib import (
+    ExtractedImage,
+    MIN_TEXT_LENGTH,
+    ASCII_RATIO_THRESHOLD,
+    MAX_FILE_SIZE_MB,
+    NON_LATIN_ASCII_FLOOR,
+    IMAGE_SLOT_RE,
+    LARGE_PDF_CHUNK_PAGES,
+    LARGE_PDF_PAGE_THRESHOLD
+)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Text cleaning helpers
-# ─────────────────────────────────────────────────────────────────────────────
+from src.features.Ingestion.Parsing.Extractors.FitzExtractor import fitz_extract
+from src.features.Ingestion.Parsing.Extractors.PymuPdf4llmExtractor import pymupdf4llm_extract
 
-def _strip_pymupdf_markers(text: str, keep_images: bool = False) -> str:
-    """Clean up pymupdf4llm output."""
-    text = re.sub(r"\*\*==>.*?<==\*\*", "", text, flags=re.DOTALL)
-    if not keep_images:
-        text = re.sub(r"!\[\]\([^)]*\)\s*\n", "", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def is_good_enough(text: str) -> bool:
+    """Returns True if the extracted text looks usable."""
+    if not text or len(text.strip()) < MIN_TEXT_LENGTH:
+        return False
+
+    ascii_chars = sum(1 for c in text if ord(c) < 128)
+    ascii_ratio = ascii_chars / len(text)
+
+    if ascii_ratio < NON_LATIN_ASCII_FLOOR:
+        printable = sum(1 for c in text if c.isprintable() and not c.isspace())
+        ok = printable > MIN_TEXT_LENGTH
+        if not ok:
+            darwin.log(f"is_good_enough: non-latin doc rejected (printable={printable})")
+        return ok
+
+    ok = ascii_ratio > ASCII_RATIO_THRESHOLD
+    if not ok:
+        darwin.log(f"is_good_enough: rejected (ascii_ratio={ascii_ratio:.2f}, threshold={ASCII_RATIO_THRESHOLD})")
+    return ok
 
 
-def _make_image_slot(index: int) -> str:
-    """Unique placeholder that survives concatenation and post-processing."""
-    return f"[Image:{index}]"
+def normalize_image_path(img_path: Path, images_dir: Path = None) -> str:
+    """Return a relative path for display from the markdown file's perspective."""
+    if images_dir:
+        markdown_dir = images_dir.parent
+        try:
+            return img_path.relative_to(markdown_dir).as_posix()
+        except ValueError:
+            pass
+        return f"images/{img_path.name}"
+    return img_path.name
 
 
-def _make_page_header(page_label: str) -> str:
-    """Explicit page boundary marker written by the extractor."""
-    return f"[Page {page_label}]"
+def _sanitize_caption(caption: str) -> str:
+    """Collapse whitespace and strip characters that break markdown image syntax."""
+    if not caption:
+        return ""
+    caption = " ".join(caption.split())
+    caption = caption.replace("[", "").replace("]", "")
+    return caption.strip()
 
 
-def _convert_markdown_images_to_slots(
-    display_text: str,
+def check_file_size(path: Path) -> Optional[str]:
+    size_mb = path.stat().st_size / (1024 * 1024)
+    if size_mb > MAX_FILE_SIZE_MB:
+        return f"file too large: {size_mb:.0f}MB (max {MAX_FILE_SIZE_MB}MB)"
+    return None
+
+
+# ── Image slot replacement (used in main process after captioning) ─────────────
+
+def replace_image_slots(
+    display_text:   str,
     embedding_text: str,
-    extracted_imgs: List[Dict],
+    slot_map:       Dict[int, Dict],
 ) -> Tuple[str, str]:
-    """Replace ![](image.png) with [Image:N] slots for consistent captioning."""
-    filename_to_slot: Dict[str, int] = {}
-    for img in extracted_imgs:
-        img_path = Path(img["path"])
-        filename_to_slot[img_path.name] = img["slot"]
+    """Replace [Image:N] placeholders with final display/embedding tokens."""
+    def _display(m: re.Match) -> str:
+        idx  = int(m.group(1))
+        info = slot_map.get(idx)
+        if not info:
+            return "[Image]"
+        caption  = info.get("caption", "")
+        rel_path = info.get("rel_path", info.get("path", ""))
+        clean = _sanitize_caption(caption)
+        if clean:
+            return f"\n\n![{clean}]({rel_path})\n\n"
+        return f"\n\n![image]({rel_path})\n\n"
 
-    img_pattern = re.compile(r'!\[(.*?)\]\(([^)]+)\)')
+    
+    def _embed(m: re.Match) -> str:
+        idx  = int(m.group(1))
+        info = slot_map.get(idx)
+        if not info:
+            return "[Image]"
+        caption = info.get("caption", "")
+        clean = _sanitize_caption(caption)
+        if clean:
+            return f"\n\n[Image: {clean}]\n\n"   # ← marker added
+        return "\n\n[Image]\n\n"
 
-    def replace_with_slot(match: re.Match) -> str:
-        img_ref  = match.group(2)
-        filename = Path(img_ref).name
-        if filename in filename_to_slot:
-            return _make_image_slot(filename_to_slot[filename])
-        return match.group(0)
-
-    display_text   = img_pattern.sub(replace_with_slot, display_text)
-    embedding_text = img_pattern.sub(replace_with_slot, embedding_text)
+    display_text   = IMAGE_SLOT_RE.sub(_display,   display_text)
+    embedding_text = IMAGE_SLOT_RE.sub(_embed, embedding_text)
     return display_text, embedding_text
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Table detection helpers
-# ─────────────────────────────────────────────────────────────────────────────
+def _remap_image_slots(
+    display_text:   str,
+    embedding_text: str,
+    offset:         int,
+) -> Tuple[str, str]:
+    """Shift all [Image:N] slot indices in text by `offset`."""
+    if offset == 0:
+        return display_text, embedding_text
 
-def _cluster_rows(all_spans: List[dict], y_threshold: float = 3.0) -> List[List[dict]]:
-    spans = [s for s in all_spans if s.get("text", "").strip()]
-    if not spans:
-        return []
+    def _shift(m: re.Match) -> str:
+        return f"[Image:{int(m.group(1)) + offset}]"
 
-    spans.sort(key=lambda s: s.get("bbox", [0, 0, 0, 0])[1])
-
-    heights = [s.get("bbox", [0, 0, 0, 0])[3] - s.get("bbox", [0, 0, 0, 0])[1] for s in spans]
-    avg_height = sum(heights) / len(heights) if heights else 10.0
-    dynamic_threshold = max(y_threshold, avg_height * 0.4)
-
-    rows: List[List[dict]] = []
-    for span in spans:
-        y = span.get("bbox", [0, 0, 0, 0])[1]
-        placed = False
-        for row in rows:
-            row_y = sum(s.get("bbox", [0, 0, 0, 0])[1] for s in row) / len(row)
-            if abs(y - row_y) <= dynamic_threshold:
-                row.append(span)
-                placed = True
-                break
-        if not placed:
-            rows.append([span])
-
-    return rows
+    display_text   = IMAGE_SLOT_RE.sub(_shift, display_text)
+    embedding_text = IMAGE_SLOT_RE.sub(_shift, embedding_text)
+    return display_text, embedding_text
 
 
-def _is_table_block(all_spans: List[dict], page_w: float) -> bool:
-    """Heuristic table detector."""
-    if len(all_spans) < TABLE_MIN_SPANS:
-        return False
+# ── PDF chunk worker (no captioning) ──────────────────────────────────────────
 
-    spans = [s for s in all_spans if s.get("text", "").strip()]
-    if len(spans) < TABLE_MIN_SPANS:
-        return False
+def _parse_pdf_chunk(
+    pdf_path:    str,
+    images_dir:  Optional[str],
+    pages:       List[int],
+    do_images:   bool,
+    precise:     bool = False,
+) -> Dict[str, Any]:
+    """
+    Extract one contiguous page range from a PDF.
+    No captioning – only text and raw image extraction.
+    """
+    extractor = pymupdf4llm_extract if precise else fitz_extract
 
-    xs = [s.get("bbox", [0, 0, 0, 0])[0] for s in spans]
-    ys = [s.get("bbox", [0, 0, 0, 0])[1] for s in spans]
-
-    x_range = (max(xs) - min(xs)) / max(page_w, 1.0)
-    if x_range < TABLE_X_SPREAD:
-        return False
-
-    rows = _cluster_rows(spans)
-    row_count = len(rows)
-    if row_count < TABLE_MIN_ROWS:
-        return False
-
-    y_gaps = []
-    for i in range(1, len(rows)):
-        prev_max_y = max(s.get("bbox", [0, 0, 0, 0])[3] for s in rows[i - 1])
-        curr_min_y = min(s.get("bbox", [0, 0, 0, 0])[1] for s in rows[i])
-        gap = curr_min_y - prev_max_y
-        if gap > 0:
-            y_gaps.append(gap)
-
-    if y_gaps:
-        avg_gap = sum(y_gaps) / len(y_gaps)
-        max_gap = max(y_gaps)
-        if max_gap > avg_gap * TABLE_Y_GAP_RATIO:
-            return False
-
-    spans_per_row = [len(row) for row in rows]
-    avg_spans = sum(spans_per_row) / len(spans_per_row)
-    if avg_spans < 2:
-        return False
-    variance = sum((s - avg_spans) ** 2 for s in spans_per_row) / len(spans_per_row)
-    if variance > avg_spans * 2:
-        return False
-
-    BUCKET = 5.0
-    def bucket_x(x: float) -> int:
-        return int(x / BUCKET)
-
-    row_x_sets = [
-        tuple(sorted(bucket_x(s.get("bbox", [0, 0, 0, 0])[0]) for s in row))
-        for row in rows
-    ]
-    pattern_counts = Counter(row_x_sets)
-    most_common_count = pattern_counts.most_common(1)[0][1] if pattern_counts else 0
-    if most_common_count < row_count * 0.5:
-        return False
-
-    col_positions = set(bucket_x(x) for x in xs)
-    if len(col_positions) < TABLE_MIN_COLS:
-        return False
-
-    return True
-
-
-def _format_table(rows: List[List[dict]]) -> str:
-    formatted_rows = []
-    for row in rows:
-        row_sorted = sorted(row, key=lambda s: s.get("bbox", [0, 0, 0, 0])[0])
-        cells = [s.get("text", "").strip() for s in row_sorted if s.get("text", "").strip()]
-        if cells:
-            formatted_rows.append(" | ".join(cells))
-    return "\n".join(formatted_rows)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Core fitz extractor
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fitz_extract(
-    pdf_path: str,
-    pages: List[int],
-    images_dir: Optional[str] = None,
-) -> Tuple[str, str, List[Dict]]:
-    """Extract text and images from a PDF using PyMuPDF (fitz)."""
-    import fitz
-
-    doc     = fitz.open(pdf_path)
-    img_dir = Path(images_dir) if images_dir else None
-    img_index = 0
-
-    display_pages:   List[str] = []
-    embedding_pages: List[str] = []
-    extracted_imgs:  List[Dict] = []
-
-    label_map: Dict[int, str] = {}
     try:
-        page_labels = doc.get_page_labels() or []
-        for idx, entry in enumerate(page_labels):
-            start = entry["startpage"]
-            end   = page_labels[idx + 1]["startpage"] if idx + 1 < len(page_labels) else doc.page_count
-            for i in range(end - start):
-                label_map[start + i] = str(entry.get("prefix", "") or (start + i + 1))
-    except Exception:
-        label_map = {}
+        display_text, embedding_text, extracted_imgs = extractor(
+            pdf_path,
+            pages,
+            images_dir if do_images else None,
+        )
+    except Exception as e:
+        return {
+            "display_text":   "",
+            "embedding_text": "",
+            "images":         [],
+            "img_count":      0,
+            "error":          str(e),
+        }
 
-    def _page_label(idx: int) -> str:
-        if label_map and idx in label_map:
-            return label_map[idx]
-        return str(idx + 1)
-
-    seen_xrefs: set = set()
-
-    for page_num in pages:
-        
-        if page_num >= doc.page_count:
-            darwin.log(f"Page index {page_num} out of range (doc has {doc.page_count} pages), skipping.", LogType.WARNING)
-            continue
-
-        page = doc[page_num]
-        try:
-            page_dict = page.get_text(
-                "dict",
-                flags=fitz.TEXT_PRESERVE_LIGATURES | fitz.TEXT_DEHYPHENATE,
-            )
-        except Exception as e:
-            darwin.log(f"Failed to extract text from page {page_num}: {e}", LogType.ERROR)
-            continue  # Skip corrupted page, continue with remaining pages
-        
-        page_w = page.rect.width or 1.0
-        label  = _page_label(page_num)
-
-        blocks = page_dict.get("blocks", [])
-
-        # ── Modal (body) font size ───────────────────────────────────────────
-        size_votes: Counter = Counter()
-        for block in blocks:
-            if block.get("type") != 0:
-                continue
-            for line in block.get("lines", []):
-                for span in line.get("spans", []):
-                    sz  = round(span.get("size", 12), 1)
-                    cnt = len(span.get("text", "").strip())
-                    if cnt > 0:
-                        size_votes[sz] += cnt
-
-        modal_size: float = size_votes.most_common(1)[0][0] if size_votes else 12.0
-
-        text_blocks  = [b for b in blocks if b.get("type") == 0]
-        image_blocks = [b for b in blocks if b.get("type") == 1]
-
-        if COLUMN_BUCKETS > 1 and text_blocks:
-            bucket_w    = page_w / COLUMN_BUCKETS
-            text_blocks = sorted(
-                text_blocks,
-                key=lambda b: (
-                    min(int(b.get("bbox", [0])[0] / bucket_w), COLUMN_BUCKETS - 1),
-                    b.get("bbox", [0, 0])[1],
-                ),
-            )
-        else:
-            text_blocks = sorted(text_blocks, key=lambda b: b.get("bbox", [0, 0])[1])
-
-        image_blocks = sorted(image_blocks, key=lambda b: b.get("bbox", [0, 0])[1])
-
-        all_blocks: List[dict] = []
-        ti = ii = 0
-        while ti < len(text_blocks) and ii < len(image_blocks):
-            ty = text_blocks[ti].get("bbox",  [0, 0, 0, 0])[1]
-            iy = image_blocks[ii].get("bbox", [0, 0, 0, 0])[1]
-            if ty <= iy:
-                all_blocks.append(text_blocks[ti]); ti += 1
-            else:
-                all_blocks.append(image_blocks[ii]); ii += 1
-        all_blocks.extend(text_blocks[ti:])
-        all_blocks.extend(image_blocks[ii:])
-
-        # ── Image extraction with correct mapping ───────────────────────────
-        # Build a mapping from image xref -> slot index, using the *visual* order
-        # of image blocks.  This ensures that the slot assigned in the text
-        # matches the image file we saved.
-
-        # 1. Get all image blocks on this page with their xref
-        img_blocks_info = page.get_image_info()
-        # img_blocks_info is a list of dicts with keys: 'number', 'bbox', 'size', ...
-        # 'number' is the xref number.
-
-        # 2. Filter to only those images we will actually extract (size, max count, dedup)
-        valid_img_infos = []
-        for info in img_blocks_info:
-            xref = info["number"]
-            if xref in seen_xrefs:
-                continue
-            # Check size quickly if possible (we need pixmap for exact size, but get_image_info gives 'size' in bytes)
-            # We'll check dimensions later when we actually extract.
-            # For now we just include all not-yet-seen xrefs.
-            if img_index >= MAX_IMAGES_PER_DOC:
-                break
-            valid_img_infos.append(info)
-            seen_xrefs.add(xref)   # mark as seen now to avoid duplicate entries in the same loop
-
-        # 3. Sort the valid image blocks by visual position (y then x) to match interleaving order
-        valid_img_infos.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
-
-        # 4. Extract images in that order, assigning slots sequentially
-        page_img_slots: Dict[int, int] = {}  # xref -> slot index
-        page_img_start_index = img_index
-
-        for info in valid_img_infos:
-            xref = info["number"]
-            try:
-                pix = fitz.Pixmap(doc, xref)
-                if pix.n > 4:
-                    pix = fitz.Pixmap(fitz.csRGB, pix)
-                if pix.width < MIN_IMAGE_SIZE_PX or pix.height < MIN_IMAGE_SIZE_PX:
-                    pix = None
-                    continue
-                img_path = img_dir / f"page{page_num}_img{img_index}.png"
-                pix.save(str(img_path))
-                extracted_imgs.append({
-                    "path":    str(img_path),
-                    "page":    page_num,
-                    "label":   label,
-                    "index":   img_index,
-                    "caption": "",
-                    "width":   pix.width,
-                    "height":  pix.height,
-                    "xref":    xref,
-                    "slot":    img_index,
-                })
-                page_img_slots[xref] = img_index
-                pix = None
-                img_index += 1
-            except Exception as e:
-                darwin.log(f"Image extraction failed page {page_num} xref {xref}: {e}", LogType.WARNING)
-
-        # 5. When rendering blocks, use the mapping to get the correct slot
-        def _slot_for_xref(xref: int) -> Optional[int]:
-            return page_img_slots.get(xref)
-
-        # ── Render page content ──────────────────────────────────────────────
-        display_parts:   List[str] = []
-        embedding_parts: List[str] = []
-        prev_block_was_image = False
-
-        for block in all_blocks:
-            btype = block.get("type")
-
-            if btype == 1:
-                # Image block – find its xref from block info if possible
-                # In fitz, image blocks usually have 'number' attribute (the xref)
-                xref = block.get("number", None)
-                if xref is None:
-                    # Fallback: try to get xref from the block's first image info
-                    # Not always available, but we can skip
-                    continue
-                slot = _slot_for_xref(xref)
-                if slot is not None:
-                    slot_str = _make_image_slot(slot)
-                    display_parts.append(slot_str)
-                    embedding_parts.append(slot_str)
-                    prev_block_was_image = True
-                continue
-
-            if btype != 0:
-                continue
-
-            lines     = block.get("lines", [])
-            all_spans = [s for ln in lines for s in ln.get("spans", [])]
-
-            if (
-                len(all_spans) == 1
-                and all_spans[0].get("text", "").strip().isdigit()
-            ):
-                prev_block_was_image = False
-                continue
-
-            is_table = _is_table_block(all_spans, page_w)
-
-            if is_table:
-                rows       = _cluster_rows(all_spans)
-                table_text = _format_table(rows)
-                if table_text.strip():
-                    display_parts.append(f"[TABLE]\n{table_text}\n[/TABLE]")
-                    embedding_parts.append(f"[Table]\n{table_text}")
-                prev_block_was_image = False
-                continue
-
-            block_display:   List[str] = []
-            block_embedding: List[str] = []
-
-            for line in lines:
-                spans = line.get("spans", [])
-                if not spans:
-                    continue
-
-                line_size = max(
-                    (s.get("size", modal_size) for s in spans),
-                    default=modal_size,
-                )
-
-                line_d: List[str] = []
-                line_e: List[str] = []
-
-                for span in spans:
-                    text = span.get("text", "")
-                    if not text.strip():
-                        line_d.append(text)
-                        line_e.append(text)
-                        continue
-
-                    sz      = span.get("size", modal_size)
-                    flags   = span.get("flags", 0)
-                    is_bold = bool(flags & (1 << 4))
-
-                    if sz >= modal_size * HEADING_SIZE_RATIO:
-                        line_d.append(text); line_e.append(text)
-                    elif is_bold:
-                        line_d.append(f"**{text}**"); line_e.append(text)
-                    else:
-                        line_d.append(text); line_e.append(text)
-
-                line_display   = "".join(line_d).strip()
-                line_embedding = "".join(line_e).strip()
-                if not line_display:
-                    continue
-
-                if line_size >= modal_size * LARGE_HEADING_RATIO:
-                    line_display   = f"## {line_display}"
-                    line_embedding = f"## {line_embedding}"
-                elif line_size >= modal_size * HEADING_SIZE_RATIO:
-                    line_display   = f"### {line_display}"
-                    line_embedding = f"### {line_embedding}"
-                elif line_size <= modal_size * CAPTION_SIZE_RATIO and prev_block_was_image:
-                    line_display   = f"*{line_display}*"
-                    line_embedding = f"[Caption: {line_embedding}]"
-
-                block_display.append(line_display)
-                block_embedding.append(line_embedding)
-
-            if block_display:
-                display_parts.append("\n".join(block_display))
-                embedding_parts.append("\n".join(block_embedding))
-                prev_block_was_image = False
-
-        # Append any remaining images that were extracted but not linked to a block
-        # (should not happen with the new mapping, but keep as safety net)
-        for xref, slot in page_img_slots.items():
-            if not any(block.get("type") == 1 and block.get("number") == xref for block in all_blocks):
-                slot_str = _make_image_slot(slot)
-                display_parts.append(slot_str)
-                embedding_parts.append(slot_str)
-
-        page_header = _make_page_header(label)
-
-        def _join_parts(parts: List[str]) -> str:
-            cleaned = [p.strip() for p in parts if p.strip()]
-            return "\n\n".join(cleaned)
-
-        display_body   = _join_parts(display_parts)
-        embedding_body = _join_parts(embedding_parts)
-
-        display_pages.append(f"{page_header}\n\n{display_body}" if display_body else page_header)
-        embedding_pages.append(f"{page_header}\n\n{embedding_body}" if embedding_body else page_header)
-
-    doc.close()
-
-    sep            = "\n\n---\n\n"
-    display_text   = re.sub(r"\n{3,}", "\n\n", sep.join(display_pages)).strip()
-    embedding_text = re.sub(r"\n{3,}", "\n\n", sep.join(embedding_pages)).strip()
-
-    return display_text, embedding_text, extracted_imgs
+    return {
+        "display_text":   display_text,
+        "embedding_text": embedding_text,
+        "images":         extracted_imgs,
+        "img_count":      len(extracted_imgs),
+        "error":          None,
+    }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# pymupdf4llm extractor
-# ─────────────────────────────────────────────────────────────────────────────
+def _parse_pdf_single(
+    path:        Path,
+    images_dir:  Optional[Path],
+    caption:     bool,          # ignored – kept for compatibility
+    page_count:  int,
+    metadata:    Dict,
+    precise:     bool = False,
+) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+    """
+    Parse a small PDF (single process, no chunking).
+    Captioning is NOT performed here.
+    """
+    extractor = pymupdf4llm_extract if precise else fitz_extract
 
-def pymupdf4llm_extract(
-    pdf_path: str,
-    pages: List[int],
-    images_dir: Optional[str] = None,
-) -> Tuple[str, str, List[Dict]]:
-    import pymupdf4llm
-
-    img_dir   = Path(images_dir) if images_dir else None
-    do_images = bool(img_dir)
-
-    raw = pymupdf4llm.to_markdown(
-        pdf_path,
-        pages=pages,
-        write_images=do_images,
-        image_path=str(img_dir) if do_images else None,
-        image_format="png",
-        page_chunks=False,
-        show_progress=False,
+    display_text, embedding_text, extracted_imgs = extractor(
+        str(path),
+        list(range(page_count)),
+        str(images_dir) if images_dir else None,
     )
 
-    display_text   = _strip_pymupdf_markers(raw, keep_images=do_images)
-    embedding_text = _strip_pymupdf_markers(raw, keep_images=do_images)
+    mode = "pymupdf4llm" if precise else "fitz_extract"
+    darwin.log(f"Extraction mode: {mode}")
 
-    extracted_imgs: List[Dict] = []
-    if img_dir and img_dir.exists():
-        for idx, img_path in enumerate(sorted(img_dir.glob("*.png"))):
-            if idx >= MAX_IMAGES_PER_DOC:
-                break
-            try:
-                from PIL import Image as PILImage
-                with PILImage.open(img_path) as pil_img:
-                    width, height = pil_img.size
-            except Exception:
-                width, height = 0, 0
+    all_images: List[ExtractedImage] = []
+    if images_dir and extracted_imgs:
+        # Keep images for later, don't caption yet
+        for img_dict in extracted_imgs:
+            img_path = Path(img_dict["path"])
+            all_images.append(ExtractedImage(
+                path=img_path,
+                page=img_dict.get("page", 0),
+                index=img_dict.get("index", 0),
+                caption="",   # will be filled later
+                width=img_dict.get("width", 0),
+                height=img_dict.get("height", 0),
+            ))
 
-            extracted_imgs.append({
-                "path":    str(img_path),
-                "page":    pages[0] if pages else 0,
-                "index":   idx,
-                "slot":    idx,
-                "caption": "",
-                "width":   width,
-                "height":  height,
-            })
+    return display_text, embedding_text, page_count, metadata, all_images
 
-    if do_images and extracted_imgs:
-        display_text, embedding_text = _convert_markdown_images_to_slots(
-            display_text,
-            embedding_text,
-            extracted_imgs,
+
+def _parse_pdf_chunked(
+    path:        Path,
+    images_dir:  Optional[Path],
+    caption:     bool,          # ignored
+    page_count:  int,
+    metadata:    Dict,
+    precise:     bool = False,
+) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+    """
+    Extract a large PDF sequentially (no inner pool).
+    Captioning NOT performed.
+    """
+    all_pages   = list(range(page_count))
+    page_chunks = [
+        all_pages[i : i + LARGE_PDF_CHUNK_PAGES]
+        for i in range(0, page_count, LARGE_PDF_CHUNK_PAGES)
+    ]
+
+    n_chunks = len(page_chunks)
+    darwin.log(f"Processing {n_chunks} chunks sequentially...")
+
+    display_parts   = []
+    embedding_parts = []
+    all_raw_imgs    = []
+    slot_offset = 0
+
+    for chunk_idx, chunk_pages in enumerate(page_chunks):
+        result = _parse_pdf_chunk(
+            str(path),
+            str(images_dir) if images_dir else None,
+            chunk_pages,
+            bool(images_dir),
+            precise,
+        )
+        if result.get("error"):
+            darwin.log(f"Chunk {chunk_idx} error: {result['error']}", LogType.WARNING)
+            continue
+
+        d_text = result.get("display_text", "")
+        e_text = result.get("embedding_text", "")
+        imgs   = result.get("images", [])
+
+        # Remap slots to avoid index collisions across chunks
+        if slot_offset > 0 and imgs:
+            d_text, e_text = _remap_image_slots(d_text, e_text, slot_offset)
+
+        for img_dict in imgs:
+            adjusted = dict(img_dict)
+            if "slot" in adjusted:
+                adjusted["slot"]  = adjusted["slot"]  + slot_offset
+            if "index" in adjusted:
+                adjusted["index"] = adjusted["index"] + slot_offset
+            all_raw_imgs.append(adjusted)
+
+        slot_offset += result.get("img_count", 0)
+
+        display_parts.append(d_text)
+        embedding_parts.append(e_text)
+
+        darwin.log(f"Chunks complete: {chunk_idx+1}/{n_chunks}")
+
+    display_text   = re.sub(r"\n{3,}", "\n\n", "\n\n".join(display_parts)).strip()
+    embedding_text = re.sub(r"\n{3,}", "\n\n", "\n\n".join(embedding_parts)).strip()
+
+    # Build ExtractedImage list
+    all_images = []
+    if images_dir:
+        for img_dict in all_raw_imgs:
+            img_path = Path(img_dict["path"])
+            all_images.append(ExtractedImage(
+                path=img_path,
+                page=img_dict.get("page", 0),
+                index=img_dict.get("index", 0),
+                caption="",
+                width=img_dict.get("width", 0),
+                height=img_dict.get("height", 0),
+            ))
+
+    darwin.log(f"Merged {n_chunks} chunks — {page_count} pages, {len(all_images)} images")
+    return display_text, embedding_text, page_count, metadata, all_images
+
+
+# ── Main entry for PDF parsing ────────────────────────────────────────────────
+
+def parse_pdf(
+    path:        Path,
+    images_dir:  Optional[Path] = None,
+    caption:     bool = False,        # still accepted but ignored
+    precise:     bool = False,
+) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+    """
+    Parse a PDF and return (display_text, embedding_text, page_count, metadata, images).
+    Images are returned WITHOUT captions — captioning must be done later.
+    """
+    import fitz
+
+    doc        = fitz.open(str(path))
+    page_count = doc.page_count
+    metadata   = dict(doc.metadata or {})
+    doc.close()
+
+    mode_label = "precise" if precise else "fast"
+    darwin.log(f"Parsing {path.name} ({page_count} pages) [{mode_label} mode]...")
+
+    if page_count <= LARGE_PDF_PAGE_THRESHOLD:
+        return _parse_pdf_single(
+            path=path, images_dir=images_dir, caption=False,
+            page_count=page_count, metadata=metadata, precise=precise
+        )
+    else:
+        n_chunks = -(-page_count // LARGE_PDF_CHUNK_PAGES)
+        darwin.log(f"Large PDF — {n_chunks} chunks [{mode_label} mode]...")
+        return _parse_pdf_chunked(
+            path=path, images_dir=images_dir, caption=False,
+            page_count=page_count, metadata=metadata, precise=precise
         )
 
-    return display_text, embedding_text, extracted_imgs
+
+# ── Non-PDF parsing (unchanged) ───────────────────────────────────────────────
+
+def parse_markitdown(path: Path) -> Tuple[str, str, int, Dict, List]:
+    """Parse non-PDF documents via MarkItDown."""
+    from markitdown import MarkItDown
+
+    result = MarkItDown().convert(str(path))
+    text   = result.text_content or ""
+    text   = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    word_count = len(text.split())
+    page_count = max(1, round(word_count / 275))
+
+    return text, text, page_count, {}, []

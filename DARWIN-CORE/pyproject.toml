@@ -59,6 +59,8 @@ dependencies = [
     "pip>=26.1.1",
     "hf-xet>=1.5.0",
     "pyvis>=0.3.2",
+    "pymupdf4llm>=1.27.2.3",
+    "httpx>=0.28.1",
 ]
 
 [project.scripts]

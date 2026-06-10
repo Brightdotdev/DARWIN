@@ -33,7 +33,7 @@ if __name__ == "__main__":
 
 from PIL import Image as PILImage
 
-from src.features.Ingestion.Parsing.ParserUtils import _run_captioning
+from src.features.Ingestion.Parsing.PdfExtractors import _run_captioning
 from src.features.Ingestion.Parsing.lib import ExtractedImage
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 

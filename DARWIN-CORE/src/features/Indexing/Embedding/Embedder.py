@@ -14,6 +14,8 @@ from typing import List, Optional, Dict, Any
 
 import numpy as np
 
+
+from src.features.Indexing.Embedding.EmbeddingEngine import EmbeddingEngine
 from src.core.Models.EmbeddingConfig import (
     ModelPreset,
     get_preset,
@@ -130,14 +132,9 @@ def embed_chunks(
     )
 
     # Delegate stream encoding to loader — memory-aware, OOM recovery, progress tracking
-    vectors = loader.stream_encode(
-        model=embedder,
-        texts=texts,
-        base_batch_size=optimal_batch,
-        file_name=file_name,
-        normalize=True,
-        vector_dim=preset.dimensions,
-    )
+    engine = EmbeddingEngine()
+    vectors = engine.encode_stream(
+    embedder, texts, base_batch_size=32, file_name="foo.pdf")
 
     if vectors is None:
         darwin.log("Embedding returned None; possible OOM or encoding failure.", LogType.ERROR)
