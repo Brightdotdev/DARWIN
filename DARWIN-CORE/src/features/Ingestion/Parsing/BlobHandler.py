@@ -1,52 +1,53 @@
-# ============================================================================
-# src/core/Parsing/BlobHandler.py
-# ============================================================================
+"""
+BlobHandler.py — Process user-pasted blobs.
+
+Links are extracted, fetched, and their content summarised inline.
+HTML blobs are cleaned with Trafilatura via the shared HtmlProcessor.
+Images are stubbed out — plug your OCR/captioning here later.
+"""
 
 import re
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
-from src.features.Ingestion.Parsing.Parser import parse_url, is_url,is_good_enough
-from src.features.Ingestion.Parsing.lib import ParsedDocument, BlobInput
 from src.core.Logger.DarwinLogger import darwin, LogType
+from src.features.Ingestion.Parsing.UrlFetcher import fetch_url
+from src.features.Ingestion.Parsing.HtmlProcessor import extract_content
+from src.features.Ingestion.Parsing.lib import ParsedDocument, BlobInput, ExtractedImage
+from src.features.Ingestion.Parsing.lib import is_good_enough
 
+# ── URL detection ──────────────────────────────────────────────────────────
+_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 
-# ── Link extraction ─────────────────────────────────────────────────────────
+def _is_url(s: str) -> bool:
+    return bool(_URL_RE.match(s))
 
-# Improved regex: captures parentheses in URLs (Wikipedia-style)
-# Allows balanced parens at end, stops at whitespace or unambiguous URL terminators
+# ── Link extraction (unchanged) ────────────────────────────────────────────
 _URL_PATTERN = re.compile(
     r'https?://'
-    r'(?:[-\w.])+(?::\d+)?'  # host + optional port
-    r'(?:/[^\n\s<>"{}|\\^`\[\]]*'  # path
-    r'(?:\([^\n\s<>"{}|\\^`\[\]]*\))?'  # optional (parenthesized) suffix
-    r'(?:/[^\n\s<>"{}|\\^`\[\]]*)*)?',  # more path after parens
+    r'(?:[-\w.])+(?::\d+)?'
+    r'(?:/[^\n\s<>"{}|\\^`\[\]]*'
+    r'(?:\([^\n\s<>"{}|\\^`\[\]]*\))?'
+    r'(?:/[^\n\s<>"{}|\\^`\[\]]*)*)?',
     re.IGNORECASE
 )
 
-
 def extract_links(text: str) -> List[Dict]:
-    """Extract all HTTP(S) URLs from text with position info."""
     links = []
     seen = set()
     for match in _URL_PATTERN.finditer(text):
         url = match.group(0)
-        
-        # Smart trailing punctuation strip: don't strip ) if URL has (
         while url and url[-1] in ".,;:!?":
             url = url[:-1]
-        # Only strip ) if there's no ( in the URL
         if url.endswith(")") and "(" not in url:
             url = url[:-1]
-        
         if url not in seen and len(url) > 10:
             seen.add(url)
             links.append({
                 "url": url,
                 "start": match.start(),
-                "end": match.start() + len(url),  # adjust end to stripped length
+                "end": match.start() + len(url),
                 "domain": urlparse(url).netloc or "unknown",
                 "status": "pending",
                 "content": None,
@@ -54,211 +55,149 @@ def extract_links(text: str) -> List[Dict]:
             })
     return links
 
-
-# ── Inline link replacement ───────────────────────────────────────────────
+# ── Placeholder helpers (slightly simplified) ──────────────────────────────
+_PLACEHOLDER_TEMPLATE = '[Link:{idx} | domain:{domain} | status:{status} | content:{content} | url:{url}]'
 
 def replace_links_with_placeholders(text: str, links: List[Dict]) -> str:
-    """Replace URLs in text with numbered placeholders."""
-    # Sort by position descending to avoid offset shifts
-    sorted_links = sorted(enumerate(links), key=lambda x: x[1]["start"], reverse=True)
-    result = text
-    for idx, link in sorted_links:
-        placeholder = f'[link:{idx} | domain:{link["domain"]} | content:<pending> | url:{link["url"]}]'
-        result = result[:link["start"]] + placeholder + result[link["end"]:]
-    return result
-
-
-def resolve_placeholder(text: str, idx: int, link: Dict) -> str:
-    """
-    Replace a pending placeholder with resolved content or failure reason.
-    Handles trailing markdown syntax (like (mythology)) after placeholder.
-    """
-    # Find the placeholder — it may have trailing text immediately after ]
-    old_pattern = f'[link:{idx} | domain:{link["domain"]} | content:<pending> | url:{link["url"]}]'
-
-    # Try exact match first
-    if old_pattern in text:
-        if link["status"] == "resolved" and link.get("content"):
-            content = link["content"][:200].replace("]", "⟩").replace("[", "⟨")
-            if len(link["content"]) > 200:
-                content += "..."
-            new = f'[link:{idx} | domain:{link["domain"]} | content:{content} | url:{link["url"]}]'
-        elif link["status"] == "failed":
-            reason = link.get("error", "unknown error")[:100]
-            new = f'[link:{idx} | domain:{link["domain"]} | content:<failed: {reason}> | url:{link["url"]}]'
-        else:
-            new = old_pattern  # unchanged
-
-        return text.replace(old_pattern, new, 1)
-
-    # Fallback: search for pattern with possible trailing chars
-    # This handles cases where markdown syntax got appended
-    escaped_url = re.escape(link["url"])
-    pattern = re.compile(
-        rf'\[link:{re.escape(str(idx))} \| domain:{re.escape(link["domain"])} \| content:<pending> \| url:{escaped_url}\]'
-        r'([^\n\r]*)'  # capture trailing chars on same line
-    )
-
-    match = pattern.search(text)
-    if match:
-        full_match = match.group(0)
-        trailing = match.group(1)
-
-        if link["status"] == "resolved" and link.get("content"):
-            content = link["content"][:200].replace("]", "⟩").replace("[", "⟨")
-            if len(link["content"]) > 200:
-                content += "..."
-            new = f'[link:{idx} | domain:{link["domain"]} | content:{content} | url:{link["url"]}]{trailing}'
-        elif link["status"] == "failed":
-            reason = link.get("error", "unknown error")[:100]
-            new = f'[link:{idx} | domain:{link["domain"]} | content:<failed: {reason}> | url:{link["url"]}]{trailing}'
-        else:
-            return text  # unchanged
-
-        return text.replace(full_match, new, 1)
-
-    # Could not find placeholder — log and return unchanged
-    darwin.log(f"Could not find placeholder for link {idx} ({link['url']})", LogType.WARNING)
+    """Replace each URL with a placeholder that will be resolved later."""
+    # Sort descending by start to avoid offset issues
+    for idx, link in sorted(enumerate(links), key=lambda x: x[1]["start"], reverse=True):
+        placeholder = _PLACEHOLDER_TEMPLATE.format(
+            idx=idx, domain=link["domain"], status="pending", content="...", url=link["url"]
+        )
+        text = text[:link["start"]] + placeholder + text[link["end"]:]
     return text
 
+def resolve_placeholder(text: str, idx: int, link: Dict) -> str:
+    """Insert resolved content (or error) into the placeholder."""
+    status = "ok" if link["status"] == "resolved" else "failed"
+    content = ""
+    if link["status"] == "resolved" and link.get("content"):
+        content = link["content"][:200].replace("[", "⟨").replace("]", "⟩")
+        if len(link["content"]) > 200:
+            content += "..."
+    elif link["status"] == "failed":
+        content = f"<failed: {link.get('error', 'unknown')}>"
 
-# ── Link fetching (immediate, synchronous) ──────────────────────────────────
+    new = _PLACEHOLDER_TEMPLATE.format(
+        idx=idx, domain=link["domain"], status=status, content=content, url=link["url"]
+    )
 
-def fetch_link_content(url: str, timeout: float = 15.0) -> Tuple[Optional[str], Optional[str]]:
+    # Find the old placeholder pattern (status=pending) and replace
+    old = _PLACEHOLDER_TEMPLATE.format(
+        idx=idx, domain=link["domain"], status="pending", content="...", url=link["url"]
+    )
+    # Simple replacement – placeholder is unique enough
+    return text.replace(old, new, 1)
+
+# ── Link resolution (no longer uses parse_url) ─────────────────────────────
+def resolve_link_content(url: str, timeout: float = 15.0) -> Tuple[Optional[str], Optional[str]]:
     """
-    Immediately fetch and parse a link found in a blob.
-    Returns (content, error).
+    Fetch a URL and return a short text snippet (max 2000 chars).
+    Uses the same URL‑agnostic pipeline as the main parser.
     """
     try:
-        darwin.log(f"    Fetching {url}...", LogType.INFO)
-        doc = parse_url(url, precise=False, timeout=timeout)
+        data, content_type, err = fetch_url(url, timeout=timeout)
+        if err:
+            return None, err
 
-        if doc.error:
-            return None, f"fetch failed: {doc.error}"
+        # Extract content from the bytes (HTML, plain text, etc.)
+        text, meta = extract_content(url, html_bytes=data, precise=False)
+        if meta.get("error"):
+            return None, meta["error"]
 
-        text = doc.display_text or doc.embedding_text
         if not text or len(text.strip()) < 50:
-            return None, "extracted content is empty or too short"
+            return None, "insufficient content"
 
         return text[:2000], None
-
-    except ImportError as e:
-        return None, f"missing dependency: {e}"
     except Exception as e:
         return None, f"{type(e).__name__}: {e}"
 
-
-
+# ── BlobHandler ────────────────────────────────────────────────────────────
 class BlobHandler:
-    """
-    Handles user-pasted blobs: extracts links, fetches them immediately,
-    replaces inline with placeholders, returns unified ParsedDocument.
-    """
+    """Stateless handler for user‑pasted blobs."""
 
     @staticmethod
     def _detect_mime_hint(text: str) -> str:
-        """Auto-detect if raw text is HTML, Markdown, or plain text."""
         stripped = text.strip()
-
         if stripped.startswith("<") or "<!DOCTYPE" in stripped[:100].upper() or "<html" in stripped[:100].lower():
             return "text/html"
-
         md_patterns = ["# ", "## ", "### ", "- ", "* ", "> ", "```", "[", "](", "| ---", "**", "__"]
         md_score = sum(1 for p in md_patterns if p in text[:500])
         if md_score >= 2:
             return "text/markdown"
-
         return "text/plain"
 
     @classmethod
     def process(cls, blob: BlobInput) -> ParsedDocument:
-        """
-        Process a blob: extract links, fetch immediately, replace placeholders,
-        return ParsedDocument ready for chunk + embed.
-        """
         text = blob.content
         filename = blob.filename
+        image_dir = blob.image_dir   # may be None – fine for now
 
-        # Auto-detect mime hint if default
+        # Auto‑detect format
         mime_hint = blob.mime_hint
         if mime_hint == "text/plain":
             mime_hint = cls._detect_mime_hint(text)
 
-        # ── Step 1: Extract links ───────────────────────────────────────────
+        # ── Step 1: Extract links ──────────────────────────────────────
         links = extract_links(text)
-        darwin.log(f"  Extracted {len(links)} link(s) from {filename}", LogType.INFO)
+        darwin.log(f"  Found {len(links)} link(s) in blob", LogType.INFO)
 
-        # ── Step 2: Replace with placeholders ──────────────────────────────
+        # ── Step 2: Insert placeholders ─────────────────────────────────
         if links:
             text = replace_links_with_placeholders(text, links)
-            darwin.log(f"  Replaced links with placeholders", LogType.INFO)
 
-        # ── Step 3: HTML extraction (if HTML blob) ──────────────────────────
+        # ── Step 3: Clean the blob itself if it's HTML ─────────────────
         if mime_hint in ("text/html", "application/xhtml+xml"):
-            try:
-                from trafilatura import extract
-                extracted = extract(
-                    text,
-                    output_format="txt",
-                    favor_recall=False,
-                    include_comments=False,
-                    include_tables=True,
-                    deduplicate=True,
-                )
-                if extracted:
-                    text = extracted
-            except ImportError:
-                darwin.log("  trafilatura not installed, parsing blob as raw text", LogType.WARNING)
+            # Use the shared HtmlProcessor (Trafilatura → BeautifulSoup)
+            cleaned, _ = extract_content("blob://", html_bytes=text.encode("utf-8", errors="replace"))
+            if cleaned:
+                text = cleaned
+            else:
+                darwin.log("  Could not extract blob HTML content", LogType.WARNING)
 
-        # ── Step 4: Immediate link resolution ───────────────────────────────
+        # ── Step 4: Resolve links (optional) ────────────────────────────
         if blob.resolve_links and links:
             darwin.log(f"  Resolving {len(links)} link(s)...", LogType.INFO)
-
             for idx, link in enumerate(links):
-                darwin.log(f"    Link {idx + 1}/{len(links)}: {link['url']}", LogType.INFO)
-                content, error = fetch_link_content(link["url"], timeout=blob.link_timeout)
-
+                content, error = resolve_link_content(link["url"], timeout=blob.link_timeout)
                 if content:
                     link["status"] = "resolved"
                     link["content"] = content
-                    darwin.log(f"      OK: {len(content)} chars from {link['domain']}", LogType.SUCCESS)
+                    darwin.log(f"    [{idx+1}] {link['domain']}: {len(content)} chars", LogType.SUCCESS)
                 else:
                     link["status"] = "failed"
                     link["error"] = error or "unknown error"
-                    darwin.log(f"      FAIL: {error}", LogType.WARNING)
+                    darwin.log(f"    [{idx+1}] {link['domain']} FAILED: {error}", LogType.WARNING)
 
-                # Replace placeholder immediately
-                text_before = text
                 text = resolve_placeholder(text, idx, link)
-                if text == text_before:
-                    darwin.log(f"      WARNING: placeholder not replaced", LogType.WARNING)
         elif links and not blob.resolve_links:
-            darwin.log(f"  Link resolution disabled (resolve_links=False)", LogType.INFO)
-            for link in links:
-                link["status"] = "skipped"
-                link["error"] = "resolution disabled"
-        else:
-            darwin.log(f"  No links to resolve", LogType.INFO)
+            darwin.log("  Link resolution disabled", LogType.INFO)
 
-        # ── Step 5: Quality check ────────────────────────────────────────
-        if not is_good_enough(text):
+        # ── Step 5: Mock image extraction ──────────────────────────────
+        images: List[ExtractedImage] = []
+        if image_dir:
+            # TODO: Plug OCR / captioning here.
+            # For now, this is a stub that would find images in the blob,
+            # download them to image_dir, and create ExtractedImage entries.
+            darwin.log("  Image extraction is not yet implemented – skipping", LogType.INFO)
+
+        # ── Step 6: Quality check ──────────────────────────────────────
+        if not is_good_enough(text,darwin):
             return ParsedDocument(
                 display_text="", embedding_text="", filename=filename,
                 page_count=0, file_type="blob",
-                error="blob content is empty or garbled after processing",
+                error="blob content is empty or garbled",
             )
 
-        # ── Step 6: Build metadata ──────────────────────────────────────────
+        # ── Step 7: Assemble result ────────────────────────────────────
         metadata = {
             "source": blob.source,
             "title": blob.title,
             "mime_hint": mime_hint,
             "links": links,
         }
-
         page_count = max(1, len(text.split()) // 500)
-
-        darwin.log(f"  Processed: {len(text)} chars, {len(links)} links", LogType.SUCCESS)
 
         return ParsedDocument(
             display_text=text,
@@ -266,6 +205,7 @@ class BlobHandler:
             filename=filename,
             page_count=page_count,
             file_type="blob",
+            images=images,
             metadata=metadata,
             error=None,
         )

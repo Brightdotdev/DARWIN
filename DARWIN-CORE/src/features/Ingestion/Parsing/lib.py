@@ -5,6 +5,20 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Union, Dict
 
 
+
+URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+
+BLOCKED_HOSTS = frozenset({
+    "localhost", "127.0.0.1", "0.0.0.0", "::1",
+})
+
+PRIVATE_IP_PREFIXES = (
+    "10.", "192.168.", "172.16.", "172.17.", "172.18.",
+    "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+    "172.24.", "172.25.", "172.26.", "172.27.", "172.28.",
+    "172.29.", "172.30.", "172.31.",
+)
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 SUPPORTED_TYPES: Dict[str, str] = {
@@ -48,6 +62,26 @@ MIN_DIMENSION   = 100
 MAX_CAPTION_DIM = 512
 MAX_NEW_TOKENS  = 40
 
+
+def is_good_enough(text: str,darwin) -> bool:
+    """Returns True if the extracted text looks usable."""
+    if not text or len(text.strip()) < MIN_TEXT_LENGTH:
+        return False
+
+    ascii_chars = sum(1 for c in text if ord(c) < 128)
+    ascii_ratio = ascii_chars / len(text)
+
+    if ascii_ratio < NON_LATIN_ASCII_FLOOR:
+        printable = sum(1 for c in text if c.isprintable() and not c.isspace())
+        ok = printable > MIN_TEXT_LENGTH
+        if not ok:
+            darwin.log(f"is_good_enough: non-latin doc rejected (printable={printable})")
+        return ok
+
+    ok = ascii_ratio > ASCII_RATIO_THRESHOLD
+    if not ok:
+        darwin.log(f"is_good_enough: rejected (ascii_ratio={ascii_ratio:.2f}, threshold={ASCII_RATIO_THRESHOLD})")
+    return ok
 
 def should_caption_image(img_dict: dict) -> tuple[bool, str]:
     """Returns (should_caption, reason_if_skipped)."""
@@ -109,7 +143,7 @@ class BlobInput:
     turn_id: Optional[str] = None       # Conversation turn for unique filenames
     resolve_links: bool = True           # Immediately fetch linked URLs?
     link_timeout: float = 15.0          # Per-link fetch timeout
-
+    image_dir: Optional[Path] = None
     @property
     def filename(self) -> str:
         """Generate unique filename from turn + source."""

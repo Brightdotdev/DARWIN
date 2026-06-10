@@ -16,10 +16,7 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 
 from src.features.Ingestion.Parsing.lib import (
     ExtractedImage,
-    MIN_TEXT_LENGTH,
-    ASCII_RATIO_THRESHOLD,
     MAX_FILE_SIZE_MB,
-    NON_LATIN_ASCII_FLOOR,
     IMAGE_SLOT_RE,
     LARGE_PDF_CHUNK_PAGES,
     LARGE_PDF_PAGE_THRESHOLD
@@ -31,25 +28,6 @@ from src.features.Ingestion.Parsing.Extractors.PymuPdf4llmExtractor import pymup
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def is_good_enough(text: str) -> bool:
-    """Returns True if the extracted text looks usable."""
-    if not text or len(text.strip()) < MIN_TEXT_LENGTH:
-        return False
-
-    ascii_chars = sum(1 for c in text if ord(c) < 128)
-    ascii_ratio = ascii_chars / len(text)
-
-    if ascii_ratio < NON_LATIN_ASCII_FLOOR:
-        printable = sum(1 for c in text if c.isprintable() and not c.isspace())
-        ok = printable > MIN_TEXT_LENGTH
-        if not ok:
-            darwin.log(f"is_good_enough: non-latin doc rejected (printable={printable})")
-        return ok
-
-    ok = ascii_ratio > ASCII_RATIO_THRESHOLD
-    if not ok:
-        darwin.log(f"is_good_enough: rejected (ascii_ratio={ascii_ratio:.2f}, threshold={ASCII_RATIO_THRESHOLD})")
-    return ok
 
 
 def normalize_image_path(img_path: Path, images_dir: Path = None) -> str:
