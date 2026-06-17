@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from filelock import FileLock
-from src.lib.AppPaths import default_models_config_dir
+from src.lib.AppPaths import default_models_config_dir,default_models_dir
 
 
 CONFIG_FILENAME = "models.json"
@@ -35,7 +35,7 @@ def load_active_models() -> Dict[str, Optional[str]]:
         with lock:
             try:
                 data = json.loads(path.read_text())
-                from src.core.Models.ModelRegistry import ModelCategory
+                from src.core.Models.Lib.ModelSpec import ModelCategory
                 config = {}
                 for cat in ModelCategory:
                     config[cat.value] = data.get(cat.value, None)
@@ -66,6 +66,18 @@ def set_active_model(category: str, model_id: Optional[str]) -> None:
 def get_active_model(category: str) -> Optional[str]:
     """Return the currently active model_id for a category, or None."""
     return load_active_models().get(category)
+
+def get_model_path(model_id: str, base_dir: Optional[Path] = None, category: str = "models") -> Optional[Path]:
+    model_id = model_id.replace("/", "--").replace("\\", "--")
+    base_dir = base_dir or default_models_dir()
+    return base_dir / category.lower() / model_id
+
+def ensure_model_path(model_id: str, base_dir: Optional[Path] = None, category: str = "models") -> Path:
+    path = get_model_path(model_id, base_dir, category)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+    
 
 
 # if __name__ == "__main__":

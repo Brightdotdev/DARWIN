@@ -47,29 +47,7 @@ REQUIRED_FILES: dict[str, list[str]] = {
 # Download filters
 # ═══════════════════════════════════════════════════════════════════════════
 
-ALLOW_PATTERNS = [
-    "*.safetensors",
-    "pytorch_model*.bin",
-    "config.json",
-    "preprocessor_config.json",
-    "generation_config.json",
-    "sentence_bert_config.json",
-    "special_tokens_map.json",
-    "tokenizer_config.json",
-    "tokenizer.json",
-    "vocab.txt",
-    "vocab.json",
-    "merges.txt",
-    "tokenizer.model",
-    "spiece.model",
-    "added_tokens.json",
-    "image_processor.json",
-    "processor_config.json",
-    "modules.json",
-    "model.safetensors.index.json",
-    "pytorch_model.bin.index.json",
-    "chat_template.json",
-]
+
 
 IGNORE_PATTERNS = [
     "onnx/**", "onnx/*", "*.onnx", "*.h5", "*.keras",

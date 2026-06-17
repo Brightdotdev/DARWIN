@@ -1,567 +1,762 @@
 # src/core/Models/ModelManager.py
+"""
+Unified high-level API for all model operations.
+Single entry point: initialize → ensure → use → unload.
+"""
 
-import os
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from typing import Optional, Dict, List, Any, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 
-from src.core.Models.ModelStore import get_model_store
-from src.core.Models.ModelLoader import ModelLoader
-from src.features.Hardware.SystemDetector import detect_system, recommend_defaults, SystemInfo
-from src.features.Hardware.DeviceManager import DeviceManager
-from src.core.Models.ModelRegistry import (
-    get_spec, REGISTRY, ModelCategory, REQUIRED_CATEGORIES, DEFAULT_PREFERRED
-)
-from src.core.Models.ModelConfig import set_active_model, load_active_models
+from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec, get_specs_by_category
+from src.core.Models.ModelConfig import get_active_model, set_active_model
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.lib.KeyManager import load_keys_from_keychain, PROVIDER_REGISTRY
-from src.features.Hardware.Capabilities import Capabilities
-from src.core.Plugins.TorchPlugin import TorchPlugin, PluginRequiredError
+
+# Import all factories
+from src.core.Models.Infrence.EmbeddingInferenceFactory import (
+    get_embedding_inference,
+    set_embedding_preference,
+    discard_embedding_model,
+    get_embedding_model_path,
+    is_embedding_model_downloaded,
+)
+from src.core.Models.Infrence.NLPInferenceFactory import (
+    get_nlp_inference,
+    set_nlp_preference,
+    discard_nlp_model,
+    get_nlp_model_path,
+    is_nlp_model_downloaded,
+)
+from src.core.Models.Infrence.OCRInferenceFactory import (
+    get_ocr_inference,
+    set_ocr_preference,
+    discard_ocr_model,
+    get_ocr_model_path,
+    is_ocr_model_downloaded,
+)
+from src.core.Models.Infrence.RerankerInferenceFactory import (
+    get_reranker_inference,
+    set_reranker_preference,
+    discard_reranker_model,
+    get_reranker_model_path,
+    is_reranker_model_downloaded,
+)
 
 
-# ── Phase 3: Result dataclasses for clean API/CLI separation ──────────────
 @dataclass
-class InstallResult:
-    key: str
-    success: bool
-    message: str
-    skipped: bool = False
-
-@dataclass
-class SwitchResult:
+class CategoryStatus:
+    """Status for a single model category."""
     category: str
-    key: str
-    success: bool
-    message: str
+    active_model_id: Optional[str]
+    available: bool
+    available_models: List[str] = field(default_factory=list)
+    error: Optional[str] = None
+    is_required: bool = False
+
 
 @dataclass
-class UninstallResult:
-    key: str
-    removed: bool
-    message: str
+class SetupResult:
+    """Result of a single model setup operation."""
+    category: str
+    model_id: str
+    success: bool
+    downloaded: bool = False
+    loaded: bool = False
+    error: Optional[str] = None
+    model_info: Optional[dict] = None
+
+    def __bool__(self) -> bool:
+        return self.success
+
+    def __repr__(self) -> str:
+        status = "✓" if self.success else "✗"
+        return f"SetupResult({status} {self.category}/{self.model_id})"
 
 
-_LOADER_INSTANCE = None
-_SYSTEM_CACHE = None
+@dataclass
+class ManagerStatus:
+    """
+    Full metadata snapshot returned by initialize().
+    """
+    timestamp: str
+    categories: Dict[str, CategoryStatus]
+    missing_required: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
+
+    @property
+    def all_ready(self) -> bool:
+        """True if all required categories are available."""
+        return len(self.missing_required) == 0
+
+    @property
+    def summary(self) -> str:
+        """Human-readable summary."""
+        lines = ["Model Manager Status"]
+        lines.append(f"  Timestamp: {self.timestamp}")
+        for cat_name, status in self.categories.items():
+            icon = "✅" if status.available else "❌"
+            required = " (required)" if status.is_required else ""
+            active = f" → {status.active_model_id}" if status.active_model_id else ""
+            available = f" ({len(status.available_models)} ready)"
+            error = f"  Error: {status.error}" if status.error else ""
+            lines.append(f"  {icon} {cat_name.upper()}{required}{active}{available}")
+            if error:
+                lines.append(f"     {error}")
+        if self.missing_required:
+            lines.append(f"  ⚠️ Missing required: {', '.join(self.missing_required)}")
+        if self.warnings:
+            for w in self.warnings:
+                lines.append(f"  ⚠️ {w}")
+        return "\n".join(lines)
+
+
+class ModelManagerError(Exception):
+    """Raised when a required model operation fails."""
+    def __init__(self, message: str, category: Optional[str] = None):
+        self.category = category
+        prefix = f"[{category}] " if category else ""
+        super().__init__(f"{prefix}{message}")
 
 
 class ModelManager:
-    def __init__(self, system: Optional[SystemInfo] = None):
-        global _SYSTEM_CACHE
+    """
+    Unified entry point for all model operations.
+    """
 
-        # Load API keys from keychain (graceful if not set up)
-        try:
-            load_keys_from_keychain()
-        except Exception as e:
-            
-            darwin.log(f"Keychain not available: {e}", LogType.WARNING)
+    # Category → factory mappings
+    _FACTORIES = {
+        ModelCategory.EMBEDDING: {
+            "get": get_embedding_inference,
+            "set": set_embedding_preference,
+            "discard": discard_embedding_model,
+            "path": get_embedding_model_path,
+            "downloaded": is_embedding_model_downloaded,
+        },
+        ModelCategory.NLP: {
+            "get": get_nlp_inference,
+            "set": set_nlp_preference,
+            "discard": discard_nlp_model,
+            "path": get_nlp_model_path,
+            "downloaded": is_nlp_model_downloaded,
+        },
+        ModelCategory.OCR: {
+            "get": get_ocr_inference,
+            "set": set_ocr_preference,
+            "discard": discard_ocr_model,
+            "path": get_ocr_model_path,
+            "downloaded": is_ocr_model_downloaded,
+        },
+        ModelCategory.RERANKER: {
+            "get": get_reranker_inference,
+            "set": set_reranker_preference,
+            "discard": discard_reranker_model,
+            "path": get_reranker_model_path,
+            "downloaded": is_reranker_model_downloaded,
+        },
+    }
 
-        # Ensure DeviceManager is initialised once
-        if DeviceManager._config is None:
-            if _SYSTEM_CACHE is None:
-                _SYSTEM_CACHE = detect_system()
-            try:
-                DeviceManager.init(_SYSTEM_CACHE)
-            except RuntimeError:
-                pass
+    REQUIRED_CATEGORIES = {ModelCategory.EMBEDDING}
 
-        self.model_store = get_model_store()
-        if _SYSTEM_CACHE is None:
-            _SYSTEM_CACHE = detect_system()
-        self.system = system or _SYSTEM_CACHE
-        
-        # Cache capabilities for repeated checks
-        self.capabilities = Capabilities.detect()
+    def __init__(self):
+        self._loaded_models: Dict[str, Any] = {}  # cache_key → model instance
 
-        self._loader: Optional[ModelLoader] = None
+    # ────────────────────────────────────────────────────────────────
+    # INITIALIZE – full health check
+    # ────────────────────────────────────────────────────────────────
 
-    # ── Static helpers ───────────────────────────────────────────────
-    @staticmethod
-    def get_capabilities() -> Capabilities:
-        """Detect and return current system capabilities."""
-        return Capabilities.detect()
-
-    @staticmethod
-    def get_loader() -> ModelLoader:
-        global _LOADER_INSTANCE, _SYSTEM_CACHE
-        if _LOADER_INSTANCE is None:
-            store = get_model_store()
-            if _SYSTEM_CACHE is None:
-                _SYSTEM_CACHE = detect_system()
-            prefs = load_active_models()
-            if not prefs:
-                prefs = recommend_defaults(_SYSTEM_CACHE)
-                for cat, model in prefs.items():
-                    if model:
-                        set_active_model(cat, model)
-            _LOADER_INSTANCE = ModelLoader(
-                store,
-                prefs,
-                system_info=_SYSTEM_CACHE,
-            )
-        return _LOADER_INSTANCE
-
-    @staticmethod
-    def setup(preferences: dict = None, skip_download: bool = False) -> ModelLoader:
-        global _LOADER_INSTANCE, _SYSTEM_CACHE
-
-        try:
-            load_keys_from_keychain()
-        except Exception as e:
-            
-            darwin.log(f"Keychain not available: {e}", LogType.WARNING)
-
-        if _SYSTEM_CACHE is None:
-            _SYSTEM_CACHE = detect_system()
-        if DeviceManager._config is None:
-            try:
-                DeviceManager.init(_SYSTEM_CACHE)
-            except RuntimeError:
-                pass
-
-        if preferences is not None:
-            for cat, model in preferences.items():
-                set_active_model(cat, model)
-        else:
-            preferences = load_active_models()
-            if not preferences:
-                preferences = recommend_defaults(_SYSTEM_CACHE)
-                for cat, model in preferences.items():
-                    if model:
-                        set_active_model(cat, model)
-
-        if not skip_download:
-            try:
-                from src.core.Models.ModelStartup import download_required
-                download_required(get_model_store(), preferences, _SYSTEM_CACHE)
-            except ImportError:
-                
-                darwin.log("ModelStartup not available, skipping auto-download", LogType.WARNING)
-
-        if _LOADER_INSTANCE is None:
-            _LOADER_INSTANCE = ModelLoader(
-                get_model_store(),
-                preferences,
-                system_info=_SYSTEM_CACHE,
-            )
-        return _LOADER_INSTANCE
-
-    @property
-    def loader(self) -> ModelLoader:
-        if self._loader is None:
-            self._loader = ModelLoader(
-                self.model_store,
-                load_active_models(),
-                system_info=self.system,
-            )
-        return self._loader
-
-    # ── Model listing for UI ─────────────────────────────────────────
-    def list_available_models(self, category: Optional[str] = None) -> list[dict]:
-        """Return list of models with status, tags, and plugin requirements."""
-        caps = self.capabilities
-        torch_available = caps.torch_available
-
-        models = []
-        for key, spec in REGISTRY.items():
-            if category and spec.category != category:
-                continue
-
-            status = "unavailable"
-            tags = []
-
-            if spec.loader.startswith("api_"):
-                provider = key.split("/")[0]
-                env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
-                has_key = env_var and bool(os.getenv(env_var))
-                status = "available" if has_key else "needs_key"
-                tags.append("API" if has_key else "API — key required")
-
-            elif spec.loader in ("onnx_embedding", "onnx_reranker"):
-                is_cached = self.model_store.is_downloaded(key, "onnx")
-                status = "installed" if is_cached else "available"
-                tags.append("ONNX")
-
-            elif spec.requires_plugin == "torch":
-                if torch_available:
-                    is_cached = self.model_store.is_downloaded(key, "pytorch")
-                    status = "installed" if is_cached else "available"
-                    tags.append("PyTorch")
-                else:
-                    status = "needs_plugin"
-                    tags.append("PyTorch — torch plugin required")
-
-            elif spec.loader == "spacy":
-                is_cached = self.model_store.is_downloaded(key)
-                status = "installed" if is_cached else "available"
-                tags.append("Local")
-
-            else:
-                is_cached = self.model_store.is_downloaded(key)
-                status = "installed" if is_cached else "available"
-                tags.append("Local")
-
-            models.append({
-                "key": key,
-                "model_id": spec.model_id,
-                "category": spec.category,
-                "tier": spec.tier,
-                "status": status,
-                "tags": tags,
-                "disk_mb": spec.disk_mb,
-                "ram_gb": spec.ram_gb,
-                "requires_plugin": spec.requires_plugin,
-                "notes": spec.notes,
-            })
-
-        return models
-
-    # ── Switching with format auto-selection ─────────────────────────
-    def switch_with_format(
+    def initialize(
         self,
-        category: str,
-        base_model: str,
-        prefer_format: Optional[str] = None,
-        migrate: bool = False,
-    ) -> Optional[str]:
-        """
-        Switch to a model, auto‑selecting ONNX or PyTorch variant.
-        Returns the actual registry key activated, or raises on failure.
-        """
-        variants = {}
-        for key, spec in REGISTRY.items():
-            if spec.model_id == base_model and spec.category == category:
-                if spec.loader in ("onnx_embedding", "onnx_reranker"):
-                    variants["onnx"] = key
-                elif spec.requires_plugin == "torch":
-                    variants["pytorch"] = key
-                else:
-                    variants["other"] = key
+        *,
+        auto_setup: bool = False,
+        auto_download: bool = True,
+        force_download: bool = False,
+        preferences: Optional[Dict[ModelCategory, str]] = None,
+    ) -> ManagerStatus:
+        darwin.log("[ModelManager] Initializing...", LogType.INFO)
 
-        if not variants:
-            msg = f"No models found for {base_model} in category {category}"
+        timestamp = datetime.now().isoformat(timespec='seconds')
+        categories: Dict[str, CategoryStatus] = {}
+        warnings: List[str] = []
+        missing_required: List[str] = []
+
+        for cat in ModelCategory:
             
-            darwin.log(msg, LogType.ERROR)
-            raise ValueError(msg)
+            cat_name = cat.name.lower()
+            is_required = cat in self.REQUIRED_CATEGORIES
 
-        selected_format = prefer_format
-        if selected_format is None:
-            caps = self.capabilities
-            if "onnx" in variants:
-                selected_format = "onnx"
-            elif "pytorch" in variants and caps.torch_available:
-                selected_format = "pytorch"
-            elif "other" in variants:
-                selected_format = "other"
+            active_id = get_active_model(cat_name)
+            all_specs = get_specs_by_category(cat)
+
+            available_models = []
+            for spec in all_specs:
+                if self._is_model_available(cat, spec.model_id):
+                    available_models.append(spec.model_id)
+
+            active_available = active_id and (active_id in available_models)
+            any_available = bool(available_models)
+
+            # ── FIX: initialize error here ──
+            error = None
+            warnings = []  # already defined outside loop, but make sure it's accessible
+
+            if active_available:
+                available = True
+            elif active_id and not any_available:
+                available = False
+                error = f"Active model '{active_id}' not available and no other model ready"
+                warnings.append(f"[{cat_name}] Active model '{active_id}' is not available.")
+            elif not active_id and any_available:
+                available = True
+                warnings.append(f"[{cat_name}] No active model set, but {len(available_models)} model(s) are ready. Set a preference.")
             else:
-                selected_format = "pytorch" if "pytorch" in variants else list(variants.keys())[0]
+                available = False
+                error = "No model available"
 
-        selected_key = variants.get(selected_format)
-        if not selected_key:
-            available = ", ".join(variants.keys())
-            msg = f"Format '{selected_format}' not available. Available: {available}"
-            
-            darwin.log(msg, LogType.ERROR)
-            raise ValueError(msg)
+            if is_required and not available:
+                missing_required.append(cat_name)
 
-        # ── FIX: No silent swallowing — propagate errors ─────────────
-        self.switch(category, selected_key, migrate=migrate)
-        return selected_key
+            categories[cat_name] = CategoryStatus(
+                category=cat_name,
+                active_model_id=active_id,
+                available=available,
+                available_models=available_models,
+                error=error,
+                is_required=is_required,
+            )
 
-    # ── Individual switch methods ────────────────────────────────────
-    def switch_embedding(self, new_key: str) -> None:
+        # Auto-setup missing required
+        if auto_setup and missing_required:
+            darwin.log(f"Auto-setup triggered for: {', '.join(missing_required)}", LogType.INFO)
+            if preferences is None:
+                preferences = {}
+
+            for cat_name in missing_required:
+                cat = ModelCategory[cat_name.upper()]
+                if cat in preferences:
+                    model_id = preferences[cat]
+                else:
+                    model_id = self._pick_default(cat)
+                    if model_id:
+                        preferences[cat] = model_id
+                    else:
+                        warnings.append(f"Could not auto-select default for {cat_name}")
+                        continue
+
+                result = self.setup(
+                    cat,
+                    model_id=model_id,
+                    auto_download=auto_download,
+                    force_download=force_download,
+                    required=False,
+                )
+                if result.success:
+                    categories[cat_name].available = True
+                    categories[cat_name].active_model_id = model_id
+                    categories[cat_name].error = None
+                    if model_id not in categories[cat_name].available_models:
+                        categories[cat_name].available_models.append(model_id)
+                else:
+                    warnings.append(f"Auto-setup failed for {cat_name}: {result.error}")
+
+            missing_required = [
+                cn for cn, st in categories.items()
+                if st.is_required and not st.available
+            ]
+
+        status_obj = ManagerStatus(
+            timestamp=timestamp,
+            categories=categories,
+            missing_required=missing_required,
+            warnings=warnings,
+        )
+
+        darwin.log(status_obj.summary, LogType.INFO)
+        if status_obj.all_ready:
+            darwin.log("✅ All required models are available.", LogType.SUCCESS)
+        else:
+            darwin.log(
+                f"⚠️ Missing required: {', '.join(status_obj.missing_required)}. "
+                "Some features will be disabled.",
+                LogType.WARNING,
+            )
+        return status_obj
+
+    # ────────────────────────────────────────────────────────────────
+    # SETUP – full lifecycle
+    # ────────────────────────────────────────────────────────────────
+
+    def setup(
+        self,
+        category: ModelCategory,
+        model_id: Optional[str] = None,
+        *,
+        auto_download: bool = True,
+        force_download: bool = False,
+        required: bool = False,
+        **kwargs,
+    ) -> SetupResult:
+        cat_name = category.name.lower()
+        resolved_id = model_id or get_active_model(cat_name)
+
+        if not resolved_id:
+            resolved_id = self._pick_default(category)
+            if not resolved_id:
+                error = f"No default model for {cat_name}"
+                result = SetupResult(cat_name, "none", False, error=error)
+                if required:
+                    raise ModelManagerError(error, cat_name)
+                return result
+            darwin.log(f"Auto‑selected default for {cat_name}: {resolved_id}", LogType.INFO)
+
+        # Check cache
+        cache_key = f"{cat_name}:{resolved_id}"
+        if cache_key in self._loaded_models:
+            model = self._loaded_models[cache_key]
+            if hasattr(model, 'is_loaded') and model.is_loaded():
+                darwin.log(f"{cat_name} model already loaded: {resolved_id}", LogType.INFO)
+                return SetupResult(
+                    cat_name, resolved_id, True,
+                    loaded=True, model_info=self._get_model_info(model)
+                )
+
+        # Ensure availability
+        if not self._ensure_model_available(category, resolved_id, auto_download, force_download):
+            error = f"Model {resolved_id} not available"
+            result = SetupResult(cat_name, resolved_id, False, error=error)
+            if required:
+                raise ModelManagerError(error, cat_name)
+            return result
+
+        # Get factory and load
+        factory = self._get_factory(category, "get")
+        if factory is None:
+            error = f"No factory for {cat_name}"
+            result = SetupResult(cat_name, resolved_id, False, error=error)
+            if required:
+                raise ModelManagerError(error, cat_name)
+            return result
+
         try:
-            resolved_key = self.loader.resolve_key(new_key, "embedding")
-            spec = get_spec(resolved_key)
-            is_ready = self._check_plugin_and_download(resolved_key, spec)
-            if not is_ready:
-                return
-            self.loader.set_preference("embedding", resolved_key)
-        except PluginRequiredError as e:
-            
-            darwin.log(str(e), LogType.ERROR)
-            return
+            model = factory(model_id=resolved_id, **kwargs)
+            if model is None:
+                error = f"Factory returned None for {resolved_id}"
+                result = SetupResult(cat_name, resolved_id, False, error=error)
+                if required:
+                    raise ModelManagerError(error, cat_name)
+                return result
 
-    def switch_reranker(self, new_key: str) -> None:
-        self._switch_stateless("reranker", new_key)
+            # Load if needed
+            if hasattr(model, 'load'):
+                if hasattr(model, 'is_loaded') and not model.is_loaded():
+                    model.load()
+                elif not hasattr(model, 'is_loaded'):
+                    model.load()
 
-    def switch_vision(self, new_key: str) -> None:
-        self._switch_stateless("vision", new_key)
+            info = self._get_model_info(model)
+            if info:
+                darwin.log(f"{cat_name} model loaded:", LogType.SUCCESS)
+                for key, value in info.items():
+                    darwin.log(f"  {key}: {value}", LogType.INFO)
 
-    def switch_tokenizer(self, new_key: str) -> None:
-        self._switch_stateless("tokenizer", new_key)
+            self._loaded_models[cache_key] = model
+            set_active_model(cat_name,resolved_id,)
 
-    def _switch_stateless(self, category: str, new_key: str) -> None:
+            return SetupResult(
+                cat_name, resolved_id, True,
+                downloaded=False, loaded=True, model_info=info
+            )
+
+        except Exception as e:
+            error = f"Failed to load {resolved_id}: {e}"
+            darwin.log(error, LogType.ERROR)
+            result = SetupResult(cat_name, resolved_id, False, error=error)
+            if required:
+                raise ModelManagerError(error, cat_name) from e
+            return result
+
+    def setup_all(
+        self,
+        preferences: Optional[Dict[ModelCategory, str]] = None,
+        *,
+        auto_download: bool = True,
+        force_download: bool = False,
+        required_categories: Optional[List[ModelCategory]] = None,
+        **kwargs,
+    ) -> Dict[ModelCategory, SetupResult]:
+        if preferences is None:
+            preferences = {}
+        if not preferences:
+            for cat in ModelCategory:
+                active = get_active_model(cat.name.lower())
+                if active:
+                    preferences[cat] = active
+
+        required_set = set(required_categories or [])
+        results: Dict[ModelCategory, SetupResult] = {}
+
+        # Enforce embedding
+        if ModelCategory.EMBEDDING not in preferences:
+            darwin.log("Embedding model is required but not specified.", LogType.ERROR)
+            if ModelCategory.EMBEDDING in required_set or not required_set:
+                raise ModelManagerError("Embedding model is required but not specified", "embedding")
+
+        for cat, mid in preferences.items():
+            is_required = cat in required_set or cat == ModelCategory.EMBEDDING
+            try:
+                result = self.setup(
+                    cat, mid,
+                    auto_download=auto_download,
+                    force_download=force_download,
+                    required=is_required,
+                    **kwargs,
+                )
+            except ModelManagerError as e:
+                result = SetupResult(cat.name.lower(), mid or "unknown", False, error=str(e))
+            results[cat] = result
+            if result.success:
+                darwin.log(f"✅ {cat.name}: {mid} ready", LogType.SUCCESS)
+            else:
+                darwin.log(f"❌ {cat.name}: {result.error}", LogType.ERROR)
+        return results
+
+    # ────────────────────────────────────────────────────────────────
+    # CORE: get / ensure
+    # ────────────────────────────────────────────────────────────────
+
+    def ensure(
+        self,
+        category: ModelCategory,
+        model_id: Optional[str] = None,
+        auto_download: bool = True,
+        **kwargs,
+    ) -> Optional[Any]:
         try:
-            resolved_key = self.loader.resolve_key(new_key, category)
-            spec = get_spec(resolved_key)
-            is_ready = self._check_plugin_and_download(resolved_key, spec)
-            if not is_ready:
-                return
-            self.loader.set_preference(category, resolved_key)
-            
-            darwin.log(f"Switched {category} → {new_key}", LogType.SUCCESS)
-        except PluginRequiredError as e:
-            
-            darwin.log(str(e), LogType.ERROR)
+            return self.get(category, model_id, auto_download, **kwargs)
+        except Exception as e:
+            darwin.log(f"Failed to get {category.name} model: {e}", LogType.WARNING)
+            return None
 
-    # ── Helper: plugin check + download with hardware validation ─────
-    def _check_plugin_and_download(self, key: str, spec) -> bool:
-        """Raise PluginRequiredError if plugin missing or hardware cannot run the model.
-        Otherwise download if not cached."""
-        if spec.requires_plugin:
-            torch_plugin = TorchPlugin()
-            if not torch_plugin.is_installed():
-                raise PluginRequiredError("torch", f"model {spec.model_id}")
+    def get(
+        self,
+        category: ModelCategory,
+        model_id: Optional[str] = None,
+        auto_download: bool = True,
+        **kwargs,
+    ) -> Any:
+        cat_name = category.name.lower()
+        resolved_id = model_id or get_active_model(cat_name)
+        if not resolved_id:
+            raise ModelManagerError(f"No model specified for {cat_name} and no active model set", cat_name)
 
-        if spec.disk_mb > 0:
-            if not self.system.can_run(spec):
-                
-                darwin.log(
-                        f"{key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)",
-                        LogType.ERROR,
-                    )
-                return False
-            if not self.system.has_disk_space(spec):
-                
-                darwin.log(
-                        f"{key} needs {spec.disk_mb}MB disk (you have {self.system.disk_free_gb*1024:.0f}MB free)",
-                        LogType.ERROR,
-                    )
-                return False
+        cache_key = f"{cat_name}:{resolved_id}"
+        if cache_key in self._loaded_models:
+            model = self._loaded_models[cache_key]
+            if hasattr(model, 'is_loaded') and model.is_loaded():
+                return model
 
-            if not self.model_store.is_downloaded(key):
-                
-                darwin.log(f"Downloading {key}...", LogType.INFO)
-                try:
-                    self.model_store.download(key)
-                except Exception as e:
-                    
-                    darwin.log(f"Download failed for {key}: {e}", LogType.ERROR)
-                    return False
+        if not self._ensure_model_available(category, resolved_id, auto_download):
+            raise ModelManagerError(f"Model {resolved_id} not available", cat_name)
 
+        factory = self._get_factory(category, "get")
+        if factory is None:
+            raise ModelManagerError(f"No factory for {cat_name}", cat_name)
+
+        try:
+            model = factory(model_id=resolved_id, **kwargs)
+            if model is None:
+                raise ModelManagerError(f"Factory returned None", cat_name)
+
+            if hasattr(model, 'load'):
+                if hasattr(model, 'is_loaded') and not model.is_loaded():
+                    model.load()
+                elif not hasattr(model, 'is_loaded'):
+                    model.load()
+
+            self._loaded_models[cache_key] = model
+            return model
+        except Exception as e:
+            raise ModelManagerError(f"Failed to load {resolved_id}: {e}", cat_name) from e
+
+    # ────────────────────────────────────────────────────────────────
+    # CONTEXT MANAGER
+    # ────────────────────────────────────────────────────────────────
+
+    @contextmanager
+    def use(
+        self,
+        category: ModelCategory,
+        model_id: Optional[str] = None,
+        auto_download: bool = True,
+        unload_on_exit: bool = True,
+        **kwargs,
+    ) -> Iterator[Optional[Any]]:
+        model = None
+        try:
+            model = self.get(category, model_id, auto_download, **kwargs)
+            yield model
+        except Exception as e:
+            darwin.log(f"Error in context: {e}", LogType.ERROR)
+            yield None
+        finally:
+            if unload_on_exit and model is not None:
+                cat_name = category.name.lower()
+                resolved_id = model_id or get_active_model(cat_name)
+                if resolved_id:
+                    self.unload(category, resolved_id)
+
+    # ────────────────────────────────────────────────────────────────
+    # PREFERENCE MANAGEMENT
+    # ────────────────────────────────────────────────────────────────
+
+    def set_preference(
+        self,
+        category: ModelCategory,
+        model_id: str,
+        auto_download: bool = True,
+        force_download: bool = False,
+    ) -> bool:
+        factory = self._get_factory(category, "set")
+        if factory is None:
+            return False
+        try:
+            factory(model_id=model_id, auto_download=auto_download, force=force_download)
+            return True
+        except Exception as e:
+            darwin.log(f"Failed to set preference: {e}", LogType.ERROR)
+            return False
+
+    def clear_preference(self, category: ModelCategory) -> None:
+        set_active_model(category.name.lower(),None)
+
+    def get_active(self, category: ModelCategory) -> Optional[str]:
+        return get_active_model(category.name.lower())
+
+    # ────────────────────────────────────────────────────────────────
+    # RESOURCE MANAGEMENT
+    # ────────────────────────────────────────────────────────────────
+
+    def unload(self, category: ModelCategory, model_id: Optional[str] = None) -> bool:
+        cat_name = category.name.lower()
+        resolved_id = model_id or get_active_model(cat_name)
+        if not resolved_id:
+            return False
+
+        cache_key = f"{cat_name}:{resolved_id}"
+        if cache_key not in self._loaded_models:
+            return False
+
+        model = self._loaded_models.pop(cache_key)
+        if hasattr(model, 'unload'):
+            try:
+                model.unload()
+            except Exception as e:
+                darwin.log(f"Error unloading {resolved_id}: {e}", LogType.WARNING)
+        darwin.log(f"Unloaded {cat_name}/{resolved_id}", LogType.INFO)
         return True
 
-
-    def unload_all_models(self) -> None:
-        self.loader.unload_all()
-
-    # ── Install / uninstall commands ─────────────────────────────────
-    def install(self, key: str, force: bool = False) -> InstallResult:
+    def unload_all(self) -> int:
+        count = 0
+        for key in list(self._loaded_models.keys()):
+            try:
+                cat_name, model_id = key.split(":", 1)
+                # Find category enum
+                cat_enum = ModelCategory[cat_name.upper()]
+                if self.unload(cat_enum, model_id):
+                    count += 1
+            except (KeyError, ValueError):
+                # Fallback: just pop and unload
+                model = self._loaded_models.pop(key, None)
+                if model and hasattr(model, 'unload'):
+                    try:
+                        model.unload()
+                    except Exception:
+                        pass
+                count += 1
+        darwin.log(f"Unloaded {count} model(s)", LogType.INFO)
+        return count
+    
+    def is_available(self, category: ModelCategory, model_id: str) -> bool:
         """
-        Install a model. Pure API — no input() prompts.
-        Returns InstallResult for CLI to format.
+        Check if a specific model is available for use.
+        - For local models: returns True if files are downloaded.
+        - For API models: returns True if the API key is set.
         """
-        if key not in REGISTRY:
-            msg = f"Unknown model: {key}"
-            
-            darwin.log(msg, LogType.ERROR)
-            return InstallResult(key=key, success=False, message=msg)
+        return self._is_model_available(category, model_id)
 
-        spec = get_spec(key)
+    # ────────────────────────────────────────────────────────────────
+    # STATUS & DISCOVERY
+    # ────────────────────────────────────────────────────────────────
 
-        # Plugin + hardware validation
-        try:
-            is_ready = self._check_plugin_and_download(key, spec)
-            if not is_ready:
-                return InstallResult(
-                    key=key, success=False, message="Hardware or plugin check failed", skipped=True
-                )
-        except PluginRequiredError as e:
-            msg = str(e)
-            
-            darwin.log(msg, LogType.ERROR)
-            return InstallResult(key=key, success=False, message=msg)
+    def get_model_info(self, category: ModelCategory, model_id: Optional[str] = None) -> Optional[dict]:
+        cat_name = category.name.lower()
+        resolved_id = model_id or get_active_model(cat_name)
+        if not resolved_id:
+            return None
+        cache_key = f"{cat_name}:{resolved_id}"
+        if cache_key in self._loaded_models:
+            return self._get_model_info(self._loaded_models[cache_key])
+        return None
 
-        if spec.disk_mb == 0:
-            provider = key.split('/')[0]
-            env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
-            if env_var and not os.getenv(env_var):
-                msg = f"{key} requires an API key for {provider}. Use 'darwin key set {provider} YOUR_KEY'"
-                
-                darwin.log(msg, LogType.WARNING)
-                return InstallResult(key=key, success=True, message=msg, skipped=False)
-            else:
-                msg = f"{key} is an API model – no local download needed."
-                
-                darwin.log(msg, LogType.INFO)
-                return InstallResult(key=key, success=True, message=msg, skipped=False)
+    def is_loaded(self, category: ModelCategory, model_id: Optional[str] = None) -> bool:
+        cat_name = category.name.lower()
+        resolved_id = model_id or get_active_model(cat_name)
+        if not resolved_id:
+            return False
+        cache_key = f"{cat_name}:{resolved_id}"
+        if cache_key not in self._loaded_models:
+            return False
+        model = self._loaded_models[cache_key]
+        if hasattr(model, 'is_loaded'):
+            return model.is_loaded()
+        return True
 
-        # Hardware warnings (no interactive prompts)
-        if not self.system.can_run(spec):
-            msg = f"Warning: {key} needs {spec.ram_gb}GB RAM (you have {self.system.ram_gb}GB)."
-            
-            darwin.log(msg, LogType.WARNING)
-            if not force:
-                return InstallResult(key=key, success=False, message=msg, skipped=True)
+    def is_downloaded(self, category: ModelCategory, model_id: str) -> bool:
+        factory = self._get_factory(category, "downloaded")
+        if factory is None:
+            return False
+        return factory(model_id=model_id)
 
-        if not self.system.has_disk_space(spec):
-            msg = "Warning: Not enough disk space."
-            
-            darwin.log(msg, LogType.WARNING)
-            if not force:
-                return InstallResult(key=key, success=False, message=msg, skipped=True)
+    def get_model_path(self, category: ModelCategory, model_id: str) -> Optional[Path]:
+        factory = self._get_factory(category, "path")
+        if factory is None:
+            return None
+        return factory(model_id=model_id)
 
-        
-        darwin.log(f"Installing {key} ({spec.disk_mb}MB)...", LogType.INFO)
-        self.model_store.download(key, force=force)
-        msg = f"{key} installed. Run switch to activate it."
-        
-        darwin.log(msg, LogType.SUCCESS)
-        return InstallResult(key=key, success=True, message=msg)
-
-    # ── FIX C5: Implement upgrade() ──────────────────────────────────
-    def upgrade(self, key: str) -> InstallResult:
-        """Upgrade a model: uninstall(force) then install(force)."""
-        if key not in REGISTRY:
-            msg = f"Unknown model: {key}"
-            
-            darwin.log(msg, LogType.ERROR)
-            return InstallResult(key=key, success=False, message=msg)
-
-        spec = get_spec(key)
-        if spec.disk_mb == 0:
-            msg = f"{key} is an API model — nothing to upgrade."
-            
-            darwin.log(msg, LogType.INFO)
-            return InstallResult(key=key, success=True, message=msg, skipped=True)
-
-        
-        darwin.log(f"Upgrading {key}...", LogType.INFO)
-
-        self.uninstall(key, force=True)
-        return self.install(key, force=True)
-
-    def uninstall(self, key: str, force: bool = False) -> UninstallResult:
-        """
-        Uninstall a model. Returns UninstallResult.
-        """
-        if key not in REGISTRY:
-            msg = f"Unknown model: {key}"
-            
-            darwin.log(msg, LogType.ERROR)
-            return UninstallResult(key=key, removed=False, message=msg)
-
-        spec = get_spec(key)
-
-        # ── API models: no disk files, just deactivate ──────────────────────
-        if spec.disk_mb == 0:
-            active_key = self.loader.get_preference(spec.category)
-            # ── FIX C20: Normalize both keys before comparing ────────────
-            resolved_active = self.loader._resolve_key(active_key) if active_key else None
-            resolved_target = self.loader._resolve_key(key)
-            if resolved_active == resolved_target:
-                self.loader.set_preference(spec.category, None)
-                msg = f"{key} deactivated (API model)."
-                
-                darwin.log(msg, LogType.SUCCESS)
-                return UninstallResult(key=key, removed=True, message=msg)
-            msg = f"{key} is an API model; not active, nothing to do."
-            
-            darwin.log(msg, LogType.INFO)
-            return UninstallResult(key=key, removed=False, message=msg)
-
-        # ── Guard: required models ──────────────────────────────────────────
-        if spec.required and not force:
-            msg = f"{key} is required. Uninstalling will break functionality. Use force=True to override."
-            
-            darwin.log(msg, LogType.WARNING)
-            return UninstallResult(key=key, removed=False, message=msg)
-
-        # ── Guard: currently active ─────────────────────────────────────────
-        active_key = self.loader.get_preference(spec.category)
-        resolved_active = self.loader._resolve_key(active_key) if active_key else None
-        resolved_target = self.loader._resolve_key(key)
-        if resolved_active == resolved_target:
-            msg = f"{key} is the currently active {spec.category} model. Switch to another model first."
-            
-            darwin.log(msg, LogType.ERROR)
-            return UninstallResult(key=key, removed=False, message=msg)
-
-        # ── Guard: not installed ────────────────────────────────────────────
-        if not self.model_store.is_downloaded(key):
-            msg = f"{key} is not installed."
-            
-            darwin.log(msg, LogType.WARNING)
-            return UninstallResult(key=key, removed=False, message=msg)
-
-        # ── Execute deletion ────────────────────────────────────────────────
-        target_format = self.model_store.get_format(key)
-        self.model_store.delete(key, format=target_format)
-        msg = f"{key} removed."
-        
-        darwin.log(msg, LogType.SUCCESS)
-        return UninstallResult(key=key, removed=True, message=msg)
-
-    # ── Batch operations ─────────────────────────────────────────────
-    def install_category(self, category: str, tier: str = 'all') -> None:
-        models = {k: v for k, v in REGISTRY.items() if v.category == category}
-        if tier != 'all':
-            models = {k: v for k, v in models.items() if v.tier == tier}
-        for key in models:
-            if not self.model_store.is_downloaded(key):
-                self.install(key)
-
-    def setup_required(self) -> None:
-        """Install the preferred model for each required category."""
-        for category in REQUIRED_CATEGORIES:
-            preferred_key = DEFAULT_PREFERRED.get(category)
-            if not preferred_key:
+    def list_available(self, category: ModelCategory) -> List[str]:
+        from src.core.Models.Lib.ModelRegistry import get_registry
+        registry = get_registry()
+        result = []
+        for mid, spec in registry.items():
+            if spec.category != category:
                 continue
-            if not self.model_store.is_downloaded(preferred_key):
-                result = self.install(preferred_key)
-                if result.success:
-                    self.loader.set_preference(category, preferred_key)
+            if spec.requires_provider:
+                try:
+                    from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+                    load_keys_from_keychain(log=False)
+                    if is_key_set(spec.requires_provider):
+                        result.append(mid)
+                except Exception:
+                    pass
+            else:
+                if self.is_downloaded(category, mid):
+                    result.append(mid)
+        return result
 
-    def setup_recommended(self) -> None:
-        for cat, key in recommend_defaults(self.system).items():
-            if key and not self.model_store.is_downloaded(key):
-                self.install(key)
+    def health(self, category: ModelCategory) -> Dict[str, Any]:
+        model_id = get_active_model(category.name.lower())
+        return {
+            "category": category.name.lower(),
+            "model_id": model_id,
+            "has_preference": model_id is not None,
+            "is_loaded": self.is_loaded(category),
+            "is_downloaded": self.is_downloaded(category, model_id) if model_id else False,
+            "loaded_models": list(self._loaded_models.keys()),
+        }
 
-    # ── Utility ──────────────────────────────────────────────────────
-    def status(self) -> None:
-        
-        darwin.log("\n Model Status\n")
-        for key, spec in REGISTRY.items():
-            installed = self.model_store.is_downloaded(key)
-            size = self.model_store.installed_size(key) if installed else "N/A"
-            status = "++" if installed else "XX"
-            format_tag = ""
-            if spec.loader in ("onnx_embedding", "onnx_reranker"):
-                format_tag = "[ONNX]"
-            elif spec.requires_plugin == "torch":
-                format_tag = "[PyTorch]"
-            elif spec.loader.startswith("api_"):
-                format_tag = "[API]"
-            
-            darwin.log(f"   {key:<30} {spec.model_id:<45} {format_tag:<10} {status} {size}")
+    # ────────────────────────────────────────────────────────────────
+    # INTERNAL HELPERS
+    # ────────────────────────────────────────────────────────────────
 
-    def list_models(self, category: Optional[str] = None) -> None:
-        models = REGISTRY
-        if category:
-            models = {k: v for k, v in REGISTRY.items() if v.category == category}
-        
-        darwin.log(f"\n Available Models ({category or 'all'}):\n")
-        for key, spec in models.items():
-            format_tag = ""
-            if spec.loader in ("onnx_embedding", "onnx_reranker"):
-                format_tag = "[ONNX]"
-            elif spec.requires_plugin == "torch":
-                format_tag = "[PyTorch]"
-            elif spec.loader.startswith("api_"):
-                format_tag = "[API]"
-            
-            darwin.log(f"   {key:<30} {spec.model_id:<45} {format_tag:<10} {spec.tier:<10} {spec.disk_mb}MB")
-        
+    def _get_factory(self, category: ModelCategory, action: str):
+        cat_factories = self._FACTORIES.get(category)
+        if not cat_factories:
+            return None
+        return cat_factories.get(action)
 
-    def switch(self, category: str, model: str, migrate: bool = False) -> None:
-        if category == "embedding":
-            self.switch_embedding(model)
-        elif category == "reranker":
-            self.switch_reranker(model)
-        elif category == "vision":
-            self.switch_vision(model)
-        elif category == "tokenizer":
-            self.switch_tokenizer(model)
-        else:
-            
-            darwin.log(f"Unknown category: {category}", LogType.ERROR)
+    def _pick_default(self, category: ModelCategory) -> Optional[str]:
+        candidates = get_specs_by_category(category)
+        if not candidates:
+            return None
+
+        # Try downloaded first
+        for spec in candidates:
+            if not spec.requires_provider and self.is_downloaded(category, spec.model_id):
+                return spec.model_id
+
+        # Try API with key
+        for spec in candidates:
+            if spec.requires_provider:
+                try:
+                    from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+                    load_keys_from_keychain(log=False)
+                    if is_key_set(spec.requires_provider):
+                        return spec.model_id
+                except Exception:
+                    pass
+
+        # Local (will trigger download)
+        for spec in candidates:
+            if not spec.requires_provider:
+                return spec.model_id
+
+        # First API
+        return candidates[0].model_id if candidates else None
+
+    def _ensure_model_available(
+        self,
+        category: ModelCategory,
+        model_id: str,
+        auto_download: bool = True,
+        force_download: bool = False,
+    ) -> bool:
+        spec = find_spec(model_id)
+        if spec is None or spec.category != category:
+            return False
+
+        if spec.requires_provider:
+            try:
+                from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+                load_keys_from_keychain(log=False)
+                return is_key_set(spec.requires_provider)
+            except Exception:
+                return False
+
+        if self.is_downloaded(category, model_id):
+            return True
+
+        if not auto_download:
+            return False
+
+        set_factory = self._get_factory(category, "set")
+        if set_factory is None:
+            return False
+
+        try:
+            set_factory(model_id=model_id, auto_download=True, force=force_download)
+            return self.is_downloaded(category, model_id)
+        except Exception as e:
+            darwin.log(f"Download failed: {e}", LogType.ERROR)
+            return False
+
+    def _is_model_available(self, category: ModelCategory, model_id: str) -> bool:
+        spec = find_spec(model_id)
+        if spec is None or spec.category != category:
+            return False
+        if spec.requires_provider:
+            try:
+                from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+                load_keys_from_keychain(log=False)
+                return is_key_set(spec.requires_provider)
+            except Exception:
+                return False
+        return self.is_downloaded(category, model_id)
+
+    def _get_model_info(self, model) -> Optional[dict]:
+        if hasattr(model, 'get_model_info'):
+            try:
+                return model.get_model_info()
+            except Exception:
+                pass
+        return {
+            "type": type(model).__name__,
+            "loaded": hasattr(model, 'is_loaded') and model.is_loaded() if hasattr(model, 'is_loaded') else True,
+        }
+
+
+# ────────────────────────────────────────────────────────────────────
+# SINGLETON
+# ────────────────────────────────────────────────────────────────────
+
+modelManager = ModelManager()

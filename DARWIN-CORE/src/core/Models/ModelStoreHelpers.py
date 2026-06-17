@@ -1,3 +1,4 @@
+# src/core/Models/ModelStoreHelpers.py
 import shutil
 from typing import Optional
 from pathlib import Path
@@ -33,7 +34,6 @@ class ModelPathResolver:
                 base = self.root / spec.category / clean_name
             return base / format if format else base
 
-        # Standard nested: category / org / clean_name / format
         if "/" in model_id:
             org, name = model_id.split("/", 1)
             clean_name = strip_suffix(name)
@@ -67,7 +67,7 @@ class ModelPathResolver:
     @staticmethod
     def infer_format(spec) -> str:
         """Map spec loader to a storage format."""
-        if spec.loader in ("onnx_embedding", "onnx_reranker"):
+        if spec.loader in ("onnx_embedding", "onnx_reranker", "onnx_vision"):  # ← NEW
             return "onnx"
         if spec.loader == "spacy":
             return "spacy"
@@ -104,8 +104,9 @@ class ModelVerifier:
         if spec.loader == "spacy":
             return self._verify_spacy_model(path)
 
-        if spec.loader in ("onnx_embedding", "onnx_reranker"):
-            return any(path.glob("*.onnx"))
+        # ── FIX: rglob for all ONNX variants (multi-file vision models live in onnx/) ──
+        if spec.loader in ("onnx_embedding", "onnx_reranker", "onnx_vision"):  # ← NEW
+            return any(path.rglob("*.onnx"))  # ← was path.glob
 
         required = REQUIRED_FILES.get(spec.loader)
         if required is None:
@@ -115,14 +116,11 @@ class ModelVerifier:
             if not (path / req_file).exists():
                 return False
 
-        if spec.loader not in ["spacy", "none", "onnx_embedding", "onnx_reranker"]:
+        if spec.loader not in ["spacy", "none", "onnx_embedding", "onnx_reranker", "onnx_vision"]:
             has_weights = any(path.glob("*.safetensors")) or any(path.glob("pytorch_model*.bin"))
             if not has_weights:
                 return False
 
-        # ── FIX C8: Removed automatic _strip_bloat() ───────────────────
-        # Bloat removal is now an explicit optimize() call on ModelStore,
-        # not a side effect of verification.
         return True
 
     def _verify_spacy_model(self, path: Path) -> bool:
@@ -147,7 +145,6 @@ class ModelVerifier:
             return False
         return True
 
-    # ── FIX C8: Explicit optimize method (opt-in) ────────────────────
     def optimize(self, path: Path) -> None:
         """Remove bloat directories from a verified model path. Call explicitly."""
         bloat_dirs = [
