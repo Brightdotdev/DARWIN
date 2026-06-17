@@ -22,7 +22,10 @@ teststore/
 /darwinstoretest
 darwinstoretest/
 **/darwinstoretest/
-
+ephemeral_output/**
+/ephemeral_output/**
+**/ephemeral_output/**
+test_summarizer_results.txt
 .exe
 *.exe
 # ──────────────────────────────────────────
@@ -77,6 +80,7 @@ DARWIN.egg-info/
 *.png
 *.jpeg
 *.jpg
+*..webp
 # ──────────────────────────────────────────
 # Temporary & Junk
 # ──────────────────────────────────────────
