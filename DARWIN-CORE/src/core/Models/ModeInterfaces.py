@@ -161,7 +161,6 @@ class VisionInferenceInterface(ABC):
         """
         ...
 
-
     # ── Introspection ──────────────────────────────────────────────────────────
 
     @abstractmethod
@@ -207,3 +206,25 @@ class VisionInferenceInterface(ABC):
                 formatted += f"{role}: {content}\n"
         formatted += "Assistant:"
         return formatted
+    
+
+
+
+
+
+class OCRInferenceInterface(ABC):
+    """
+    OCR inference interface.
+    Implementations handle model lifecycle, preprocessing, and text extraction.
+    """
+
+    @abstractmethod
+    def load(self) -> None:
+        """Download models if missing and initialize the engine."""
+
+    @abstractmethod
+    async def extract_text(self, image: Union[str, Path, Image.Image]) -> str:
+        """
+        Extract text from an image.
+        Returns empty string if no text found or confidence is too low.
+        """

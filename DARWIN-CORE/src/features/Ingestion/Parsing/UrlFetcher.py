@@ -20,7 +20,7 @@ PRIVATE_IP_PREFIXES = (
 # ── Descriptive User-Agent (required by Wikipedia and other sites) ──────────
 # Replace with your project name and a valid contact email/URL.
 USER_AGENT = (
-    "DarwinParser/1.0 (https://github.com/Brightdotdev; mail.bright.dev@gmial.com) "
+    "DarwinParser/1.0 (https://github.com/Brightdotdev; mail.bright.dev@gmail.com) "
     "Python-httpx/0.27"
 )
 

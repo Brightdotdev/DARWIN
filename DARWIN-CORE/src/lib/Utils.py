@@ -35,7 +35,13 @@ def scan_folder():
             files.append(f)
     return files
 
-
+def format_size(size_bytes: int) -> str:
+    """Convert bytes to human-readable string (KB, MB, GB)."""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.2f} {unit}" if unit != 'B' else f"{int(size_bytes)} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.2f} PB"
 
 
 def ensure_writable_directory(path_str: str) -> bool:

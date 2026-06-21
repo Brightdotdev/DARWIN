@@ -64,6 +64,10 @@ class StorePaths:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def url_cache_dir(self) -> Path:
+        self.root.mkdir(parents=True, exist_ok=True)
+        return self.root / "url_cache"
+
     # --- Per-file artifact paths (pure, hash-based) ---
     def meta_path(self, file_hash: str) -> Path:
         return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["meta"]["file"]

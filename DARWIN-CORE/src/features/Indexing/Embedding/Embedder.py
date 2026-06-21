@@ -1,8 +1,11 @@
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# src/core/Embedding/Embedder.py
+# ═══════════════════════════════════════════════════════════════════════════════
 """
-src/core/Embedding/Embedder.py
-------------------------------
 Thin orchestrator. All heavy lifting (singleton cache, adaptive batching,
-stream encoding, OOM recovery) is delegated to ModelLoader.
+stream encoding, OOM recovery) is delegated to EmbeddingEngine.
 
 Preset handling is EXPLICIT — no ambiguous str|ModelPreset unions.
 Callers must resolve the active model key before calling embed functions.
@@ -14,59 +17,31 @@ from typing import List, Optional, Dict, Any
 
 import numpy as np
 
-
 from src.features.Indexing.Embedding.EmbeddingEngine import EmbeddingEngine
+from src.core.Models.ModelBatchSizing import get_model_batch_size
 from src.core.Models.EmbeddingConfig import (
     ModelPreset,
     get_preset,
-    get_model_batch_size,
 )
 from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
-from src.core.Models import ModelCategory, ModelManager
+from src.core.Models.ModelManager import modelManager
+from src.core.Models.Lib.ModelSpec import ModelCategory
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
 # Preset resolution — single source of truth
-# ═══════════════════════════════════════════════════════════════════════════
-
-def _resolve_preset(model_key: Optional[str] = None) -> ModelPreset:
-    """
-    Resolve a ModelPreset from an explicit model key.
-
-    Args:
-        model_key: Registry key (e.g., 'BAAI/bge-m3-onnx').
-                   If None, fetches the currently active embedding model.
-
-    Returns:
-        ModelPreset for the resolved model.
-
-    Raises:
-        RuntimeError: If no active model is configured and no key is provided.
-    """
-    if model_key is not None:
-        return get_preset(model_key)
-
-    # Fetch active model key from loader
-    loader = ModelManager.get_loader()
-    active_key = loader.get_model_key(ModelCategory.EMBEDDING)
-    if active_key == "not set" or not active_key:
-        raise RuntimeError(
-            "No embedding model configured. "
-            "Run: python -m src.core.Models.cli setup --profile required"
-        )
-    return get_preset(active_key)
+# ─────────────────────────────────────────────────────────────────────────────
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
 # Text preparation — always uses resolved preset
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
 
 def prepare_passage_text(text: str, preset: ModelPreset) -> str:
     """Add passage prefix / instruction template to a chunk of text."""
-    if preset.is_instruction_tuned and preset.instruction_template:
-        return preset.instruction_template.format(text=text)
-    elif preset.needs_prefix:
+ 
+    if preset.needs_prefix:
         return f"{preset.passage_prefix}{text}"
     else:
         return text
@@ -74,17 +49,16 @@ def prepare_passage_text(text: str, preset: ModelPreset) -> str:
 
 def prepare_query_text(query: str, preset: ModelPreset) -> str:
     """Add query prefix / instruction template to a search query."""
-    if preset.is_instruction_tuned:
-        return f"||<|<|user|>\nGiven a query, retrieve relevant passages: {query}\n<<||<|<|assistant|>\n"
-    elif preset.needs_prefix:
+    
+    if preset.needs_prefix:
         return f"{preset.query_prefix}{query}"
     else:
         return query
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Core embedding — delegates all heavy lifting to ModelLoader
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
+# Core embedding — delegates all heavy lifting to EmbeddingEngine
+# ─────────────────────────────────────────────────────────────────────────────
 
 def embed_chunks(
     chunks: List[Dict[str, Any]],
@@ -111,19 +85,19 @@ def embed_chunks(
         return np.array([], dtype=np.float32)
 
     # ── Resolve preset ONCE ──────────────────────────────────────────
-    preset = _resolve_preset(model_key)
-    loader = ModelManager.get_loader()
+    
 
-    embedder = loader.get(ModelCategory.EMBEDDING)
+    embedder = modelManager.get(ModelCategory.EMBEDDING)
+    preset = get_preset(model_key)
+
     if embedder is None:
         darwin.log("Failed to load embedding model", LogType.ERROR)
         darwin.log("[HELP] Run: python -m src.core.Models.cli setup --profile required")
         return None
 
-    # Use resolved key for batch size lookup (handles ONNX suffix correctly)
-    resolved_key = model_key or loader.get_model_key(ModelCategory.EMBEDDING)
+
     texts = [prepare_passage_text(c.get("clean", ""), preset) for c in chunks]
-    optimal_batch = batch_size or get_model_batch_size(preset, resolved_key)
+    optimal_batch = batch_size or get_model_batch_size(preset, model_key=model_key)
 
     darwin.log(
         f"Embedding with {preset.model_name} ({preset.category}, {preset.max_tokens} token limit) "
@@ -131,17 +105,18 @@ def embed_chunks(
         LogType.INFO,
     )
 
-    # Delegate stream encoding to loader — memory-aware, OOM recovery, progress tracking
+    # Delegate stream encoding to engine — memory-aware, OOM recovery, progress tracking
     engine = EmbeddingEngine()
     vectors = engine.encode_stream(
-    embedder, texts, base_batch_size=32, file_name="foo.pdf")
+        embedder,
+        texts,
+        base_batch_size=optimal_batch,
+        file_name=file_name,
+    )
 
-    if vectors is None:
-        darwin.log("Embedding returned None; possible OOM or encoding failure.", LogType.ERROR)
+    if vectors is None or len(vectors) == 0:
+        darwin.log("Embedding returned empty result; possible OOM or encoding failure.", LogType.ERROR)
         return None
-
-    if len(vectors) == 0:
-        return vectors
 
     model_short = preset.model_name.split("/")[-1]
     darwin.log(
@@ -149,6 +124,10 @@ def embed_chunks(
         f"(model: {model_short}, batch_size={optimal_batch})",
         LogType.SUCCESS,
     )
+
+    if unload_after:
+        modelManager.unload(ModelCategory.EMBEDDING)
+
     return vectors
 
 
@@ -166,9 +145,9 @@ def embed_query(
     Returns:
         np.ndarray of shape (1, D) or None on failure.
     """
-    preset = _resolve_preset(model_key)
-    loader = ModelManager.get_loader()
-    embedder = loader.get(ModelCategory.EMBEDDING)
+    preset = get_preset(model_key)
+    
+    embedder = modelManager.get(ModelCategory.EMBEDDING)
 
     if embedder is None:
         darwin.log("Failed to load embedding model", LogType.ERROR)
@@ -197,9 +176,9 @@ def embed_text(
     Returns:
         np.ndarray of shape (1, D) or None on failure.
     """
-    preset = _resolve_preset(model_key)
-    loader = ModelManager.get_loader()
-    embedder = loader.get(ModelCategory.EMBEDDING)
+    preset = get_preset(model_key)
+    
+    embedder = modelManager.get(ModelCategory.EMBEDDING)
 
     if embedder is None:
         darwin.log("Failed to load embedding model", LogType.ERROR)
@@ -214,9 +193,9 @@ def embed_text(
     ).astype(np.float32)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
 # Pipeline entry point — pre-filter structural chunks
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
 
 def run_embedding_pipeline(
     filename: str,
@@ -246,7 +225,9 @@ def run_embedding_pipeline(
         return None
 
     # Pre-filter: exclude structural chunks BEFORE any model work
-    content_chunks = [c for c in chunks if not is_structural_for_embedding(c.get("structural_type"))]
+    content_chunks = [
+        c for c in chunks if not is_structural_for_embedding(c.get("structural_type"))
+    ]
     n_structural = len(chunks) - len(content_chunks)
 
     if n_structural > 0:
@@ -259,7 +240,7 @@ def run_embedding_pipeline(
         darwin.log(f"No content chunks to embed for {filename}", LogType.WARNING)
         return None
 
-    preset = _resolve_preset(model_key)
+    preset = get_preset(model_key)
     model_name = preset.model_name
 
     darwin.log(
@@ -284,9 +265,9 @@ def run_embedding_pipeline(
     return vectors
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
 # Context manager for explicit lifecycle control
-# ═══════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────────────────────
 
 class EmbeddingSession:
     """
@@ -297,6 +278,7 @@ class EmbeddingSession:
             vec = session.embed_query("what is RAG?")
         # model guaranteed released (ref-counted) here
     """
+
     def __init__(self, model_key: Optional[str] = None):
         self.model_key = model_key
         self._preset: Optional[ModelPreset] = None
@@ -305,15 +287,15 @@ class EmbeddingSession:
         self._acquired = False
 
     def __enter__(self):
-        self._preset = _resolve_preset(self.model_key)
-        self._loader = ModelManager.get_loader()
+        self._preset = get_preset(self.model_key)
+        self._loader = modelManager
         self._embedder = self._loader.get(ModelCategory.EMBEDDING)
         self._acquired = self._embedder is not None
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._acquired:
-            self._loader.unload(ModelCategory.EMBEDDING, force=True)
+            self._loader.unload(ModelCategory.EMBEDDING)
         return False
 
     def embed_query(self, query: str) -> Optional[np.ndarray]:

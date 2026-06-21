@@ -104,24 +104,3 @@ def chunk_document(
 
     return final_chunks
 
-def chunk_for_model(
-    text:   str,
-    source: str = "unknown",
-) ->List[Chunk]:
-    """
-    Convert parser embedding_text into chunks using auto-detected parameters.
-
-    Args:
-        text:   embedding_text from ParsedDocument
-        source: filename for citations
-
-    Returns:
-        (chunks, chunk_metadata)
-    """
-    
-    chunks = chunk_document(
-        text   = text,
-        source = source,
-    )
-
-    return chunks

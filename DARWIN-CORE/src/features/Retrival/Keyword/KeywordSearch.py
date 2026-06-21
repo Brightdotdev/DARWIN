@@ -3,7 +3,6 @@ from src.features.Retrival.Keyword.KeywordUtilities import calculate_bm25
 from src.features.Retrival.lib import KeywordSearchResult
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Storage.DarwinStore import DarwinStore
-from src.features.Indexing.BM25.lib import BM25Data
 from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 
 def search_single_document_keyword(

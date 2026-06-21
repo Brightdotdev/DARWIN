@@ -159,6 +159,7 @@ async def main() -> int:
     parser.add_argument("--rerun", "-R", action="store_true", help="Reprocess cached files")
     parser.add_argument("--no-save", action="store_true", help="Don't save markdown files (preview only)")
     parser.add_argument("--skip-if-markdown", action="store_true", help="Skip files already parsed")
+    parser.add_argument("--ocr", action="store_true", help="Run OCR on extracted images (requires --images)")
 
     # chunking flags
     parser.add_argument("--inspect", "-i", action="store_true", help="Print sample chunks to terminal")
@@ -193,6 +194,7 @@ async def main() -> int:
                 caption=args.caption,
                 recursive=args.recursive,
                 rerun=args.rerun,
+                ocr=args.ocr,
                 precise=args.precise,
                 save=not args.no_save,
                 skip_if_markdown=args.skip_if_markdown,

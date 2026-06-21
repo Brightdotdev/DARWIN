@@ -26,6 +26,7 @@ def default_models_dir() -> Path:
     return get_darwin_dir() / "models"
     
 
+
 def default_plugins_dir() -> Path:
     """Platform-appropriate global plugins directory."""
     return get_darwin_dir() / "plugins"

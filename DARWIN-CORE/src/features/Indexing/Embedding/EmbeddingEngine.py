@@ -1,18 +1,39 @@
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# src/features/Indexing/Embedding/EmbeddingEngine.py
+# ═══════════════════════════════════════════════════════════════════════════════
+"""
+Pure embedding engine: stream encoding, tensor conversion, progress tracking,
+and OOM recovery.
+
+KNOWS NOTHING about:
+- model loading / key resolution
+- presets / prefixes
+- caching / storage
+- chunk filtering
+
+Receives a *loaded* model and a list of strings. Returns an ndarray.
+"""
+
+from __future__ import annotations
+
 import uuid
 from typing import Any, List, Optional
 
 import numpy as np
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Indexing.Embedding.MemoryMonitor import MemoryMonitor
-from src.features.Indexing.Embedding.BatchingStrategy import BatchingStrategy
+from .MemoryMonitor import MemoryMonitor
+from .BatchingStrategy import BatchingStrategy
 
 
 class EmbeddingEngine:
     """
-    Pure embedding orchestration: stream encoding, tensor conversion,
-    progress tracking, and OOM recovery.
-    Knows NOTHING about model loading, key resolution, or the cache.
+    Pure embedding orchestration.
+
+    Lifecycle:
+        engine = EmbeddingEngine()
+        vectors = engine.encode_stream(model, texts, base_batch_size=32)
     """
 
     def __init__(
@@ -64,6 +85,24 @@ class EmbeddingEngine:
 
         return np.array(vecs, dtype=np.float32)
 
+    @staticmethod
+    def _is_oom_error(exc: Exception) -> bool:
+        """Heuristic: is this exception a memory error?"""
+        msg = str(exc).lower()
+        if "out of memory" in msg or "oom" in msg:
+            return True
+        if isinstance(exc, MemoryError):
+            return True
+        try:
+            import torch
+            if hasattr(torch.cuda, "OutOfMemoryError") and isinstance(
+                exc, torch.cuda.OutOfMemoryError
+            ):
+                return True
+        except Exception:
+            pass
+        return False
+
     def encode_stream(
         self,
         model: Any,
@@ -71,25 +110,26 @@ class EmbeddingEngine:
         *,
         base_batch_size: int = 32,
         file_name: str = "",
-        normalize: bool = True,      # deprecated: kept for API compat
-        vector_dim: int = 384,         # deprecated: kept for API compat
         **encode_kwargs,
     ) -> np.ndarray:
         """
         Encode a list of texts in adaptive batches with OOM recovery.
 
-        Parameters ``normalize`` and ``vector_dim`` are accepted for backward
-        compatibility but are no longer used by the engine.
+        Args:
+            model: Loaded encoder model (must expose `.encode()`).
+            texts: List of strings to embed.
+            base_batch_size: Starting batch size.
+            file_name: Identifier for progress tracking.
+            **encode_kwargs: Passed through to model.encode().
 
         Returns:
-            np.ndarray of shape (N, D) dtype=float32
+            np.ndarray of shape (N, D) dtype=float32.
         """
         if not texts:
             return np.array([], dtype=np.float32)
 
         total = len(texts)
         progress_id = f"embed_{file_name}_{uuid.uuid4().hex[:8]}"
-
         darwin.progress_start(progress_id, total, f"Embedding {file_name}")
 
         device = self._detect_device(model)
@@ -134,7 +174,11 @@ class EmbeddingEngine:
                 current_size = self.strategy.recover(current_size, base_batch_size)
                 current_size = min(current_size, remaining)  # don't overshoot tail
 
-            except MemoryError:
+            except Exception as exc:
+                if not self._is_oom_error(exc):
+                    darwin.progress_end(progress_id)
+                    raise
+
                 darwin.log(
                     f"OOM at batch_size={batch_size}, reducing and retrying",
                     LogType.WARNING,
@@ -151,44 +195,6 @@ class EmbeddingEngine:
                     batch_size, model_key, device, remaining
                 )
                 # Safety: ensure we actually shrink
-                if current_size >= batch_size:
-                    current_size = max(1, batch_size // 2)
-                continue
-
-            except Exception as e:
-                # Only treat as OOM if it's a CUDA OOM or memory-related error
-                is_oom = False
-                msg = str(e).lower()
-                if "out of memory" in msg or "oom" in msg:
-                    is_oom = True
-                try:
-                    import torch
-                    if hasattr(torch.cuda, "OutOfMemoryError") and isinstance(
-                        e, torch.cuda.OutOfMemoryError
-                    ):
-                        is_oom = True
-                except Exception:
-                    pass
-
-                if not is_oom:
-                    darwin.progress_end(progress_id)
-                    raise
-
-                darwin.log(
-                    f"CUDA OOM at batch_size={batch_size}, reducing and retrying",
-                    LogType.WARNING,
-                )
-
-                if batch_size <= 1:
-                    darwin.log(
-                        "Cannot reduce batch below 1, skipping remaining chunks",
-                        LogType.ERROR,
-                    )
-                    break
-
-                current_size = self.strategy.on_failure(
-                    batch_size, model_key, device, remaining
-                )
                 if current_size >= batch_size:
                     current_size = max(1, batch_size // 2)
                 continue

@@ -1,9 +1,10 @@
-# src/core/Models/ModelLoading/API/OCRInferenceFactory.py
 """
-Factory for creating OCR inference instances (local ONNX only).
-Manages model path, downloads, and active preferences.
+OCR Inference Factory — mirrors VisionInferenceFactory exactly.
+
+Provides registry-aware routing for local OCR backends. Consumed by ModelManager.
 """
 
+import shutil
 from pathlib import Path
 from typing import Optional
 
@@ -14,164 +15,199 @@ from src.core.Models.ModelConfig import (
     get_model_path,
     ensure_model_path,
 )
-from src.core.Models.Infrence.Onnx.RapidOCRInference import RapidOCRInference
-from src.core.Models.ModelDownloading.OnnxOCRDownloader import OnnxOCRDownloader
 from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Models.ModeInterfaces import OCRInferenceInterface
+
+# IMPORT HERE - not inside functions
+from src.core.Models.Infrence.Onnx.RapidOCRInference import RapidOCRInference, MODELS
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-OCR_CATEGORY = ModelCategory.OCR.name.lower()  # "ocr"
+OCR_CATEGORY = ModelCategory.OCR.name.lower()
 
 
 # ---------------------------------------------------------------------------
-# Factory Functions
+# Factory
 # ---------------------------------------------------------------------------
 
 def get_ocr_inference(
-    model_id: Optional[str] = None,
-) -> Optional[RapidOCRInference]:
+    model_id: str = None,
+    **kwargs,
+) -> Optional[OCRInferenceInterface]:
     """
-    Return an OCR inference instance for the given model_id.
-    If model_id is None, uses the currently active OCR model.
+    Return the correct OCR inference backend for the given model_id.
+
+    Routing logic:
+      - rapidocr (default) -> RapidOCRInference (local ONNX)
 
     Args:
-        model_id: Model identifier from MODEL_REGISTRY, or None for active.
+        model_id: Key into MODEL_REGISTRY or raw identifier. Defaults to active model.
+        **kwargs: Passed to backend constructor:
+            - confidence_threshold (float, default 0.7)
+            - det_db_thresh (float, default 0.2)
+            - det_db_box_thresh (float, default 0.4)
 
     Returns:
-        RapidOCRInference instance ready to use, or None if model not found/loaded.
+        An OCRInferenceInterface implementation, ready after .load().
     """
+    # Use active model if none specified
     if not model_id:
         model_id = get_active_model(OCR_CATEGORY)
-        if model_id is None:
+        if not model_id:
             darwin.log("No OCR model specified and no active model set.", LogType.ERROR)
             return None
 
     spec = find_spec(model_id, category=ModelCategory.OCR)
+
     if spec is None:
         darwin.log(f"Unknown OCR model: {model_id}", LogType.ERROR)
         return None
 
+    # Resolve local path
     model_path = get_model_path(model_id, None, OCR_CATEGORY)
     if model_path is None:
-        darwin.log(f"Could not determine path for OCR model: {model_id}", LogType.ERROR)
+        model_path = ensure_model_path(model_id, OCR_CATEGORY)
+
+    # Route to local RapidOCR
+    ok, err = RapidOCRInference.verify_integrity(model_path)
+
+    if not ok:
+        darwin.log(f"OCR models missing or corrupt: {err}", LogType.WARNING)
         return None
 
-    # Ensure model files exist and are valid
-    if not _is_ocr_model_valid(model_path):
-        darwin.log(f"OCR model not found or invalid at: {model_path}", LogType.ERROR)
-        darwin.log(f"Please download it first using set_ocr_preference()", LogType.ERROR)
-        return None
-
-    try:
-        inference = RapidOCRInference(model_dir=model_path)
-        inference.load()
-        return inference
-    except Exception as e:
-        darwin.log(f"Failed to load OCR model {model_id}: {e}", LogType.ERROR)
-        return None
+    inference = RapidOCRInference(
+        model_dir=model_path,
+        confidence_threshold=kwargs.get("confidence_threshold", 0.7),
+        det_db_thresh=kwargs.get("det_db_thresh", 0.2),
+        det_db_box_thresh=kwargs.get("det_db_box_thresh", 0.4),
+    )
+    inference.load()
+    return inference
 
 
 def set_ocr_preference(
     model_id: str,
     auto_download: bool = True,
     force: bool = False,
+    **kwargs,
 ) -> None:
     """
-    Set the active OCR model preference, optionally downloading if missing.
+    Set the active OCR model preference.
+
+    Verifies model integrity before setting the preference. If models are missing
+    or corrupt and auto_download is True, attempts download first.
+
+    Args:
+        model_id: The model identifier to set as active.
+        auto_download: Whether to automatically download the model if missing locally.
+        force: Whether to force re-download even if model exists.
+        **kwargs: Additional config for the backend.
     """
-    spec = find_spec(model_id, category=ModelCategory.OCR)
-    if spec is None:
+    model_spec = find_spec(model_id, category=ModelCategory.OCR)
+
+    if model_spec is None and model_id.lower() not in ("rapidocr", "default"):
         raise ValueError(f"Unknown OCR model: {model_id}")
 
-    model_path = ensure_model_path(model_id, category=OCR_CATEGORY)
+    # Resolve path
+    model_path = get_model_path(model_id, None, OCR_CATEGORY)
     if model_path is None:
-        darwin.log(f"Failed to get path for OCR model: {model_id}", LogType.ERROR)
-        darwin.log("Model will not be set as active", LogType.ERROR)
-        return
+        model_path = ensure_model_path(model_id, OCR_CATEGORY)
 
-    downloader = OnnxOCRDownloader(target_dir=model_path, repo_id=spec.repo_id)
+    # Integrity check before setting preference
+    ok, err = RapidOCRInference.verify_integrity(model_path)
 
-    # Check if already downloaded and valid
-    if model_path.exists() and downloader.verify_integrity():
-        if not force:
-            darwin.log(f"OCR model already valid: {model_id}", LogType.INFO)
-            set_active_model(OCR_CATEGORY,spec.model_id)
-            darwin.log(f"OCR model set as active: {model_path}", LogType.SUCCESS)
+    if not ok:
+        darwin.log(f"OCR models missing or corrupt: {err}", LogType.WARNING)
+        if not auto_download:
+            darwin.log(f"Auto-download disabled. Cannot set preference for {model_id}.", LogType.ERROR)
             return
-        else:
-            darwin.log(f"Force re-download requested for {model_id}", LogType.INFO)
 
-    # If directory exists but files are invalid, we need to clean up
-    if model_path.exists() and not downloader.verify_integrity():
-        darwin.log(f"OCR model files corrupted or incomplete. Re-downloading...", LogType.WARNING)
+        # Download missing/corrupt models
+        darwin.log(f"Auto-downloading OCR models for {model_id}...", LogType.INFO)
+        try:
+            # Trigger a temporary load which handles download + re-verify
+            temp = RapidOCRInference(model_dir=model_path, **kwargs)
+            temp.load()
+            # Re-verify after download
+            ok, err = RapidOCRInference.verify_integrity(model_path)
+            if not ok:
+                darwin.log(f"OCR model verification failed after download: {err}", LogType.ERROR)
+                return
+        except Exception as e:
+            darwin.log(f"Auto-download failed for {model_id}: {e}", LogType.ERROR)
+            return
 
-    if not auto_download:
-        darwin.log(f"OCR model not available and auto_download=False", LogType.ERROR)
-        darwin.log("Model will not be set as active", LogType.ERROR)
-        return
+    elif force and auto_download:
+        # Force re-download: nuke existing files and re-download
+        darwin.log(f"Force re-download requested for {model_id}", LogType.INFO)
+        for key in ("det", "rec", "cls"):
+            f = model_path / MODELS[key]["file"]
+            if f.exists():
+                f.unlink()
+                darwin.log(f"Removed {f.name} for re-download", LogType.DEBUG)
 
-    darwin.log(f"Downloading OCR model {model_id}...", LogType.INFO)
-    success = downloader.ensure(force=force)
-    if not success:
-        darwin.log(f"Failed to download OCR model: {model_id}", LogType.ERROR)
-        darwin.log("Model will not be set as active", LogType.ERROR)
-        return
+        try:
+            temp = RapidOCRInference(model_dir=model_path, **kwargs)
+            temp.load()
+            ok, err = RapidOCRInference.verify_integrity(model_path)
+            if not ok:
+                darwin.log(f"OCR model verification failed after forced re-download: {err}", LogType.ERROR)
+                return
+        except Exception as e:
+            darwin.log(f"Forced re-download failed for {model_id}: {e}", LogType.ERROR)
+            return
 
-    # Verify after download
-    if not downloader.verify_integrity():
-        darwin.log(f"Integrity check failed after download for {model_id}", LogType.ERROR)
-        return
-
-    set_active_model(OCR_CATEGORY,spec.model_id)
-    darwin.log(f"OCR model set as active: {model_path}", LogType.SUCCESS)
+    # All clear — set preference
+    set_active_model(OCR_CATEGORY, model_id)
+    darwin.log(f"OCR model set as active: {model_id}", LogType.INFO)
 
 
-def discard_ocr_model(
-    model_id: str,
-    delete: bool = False,
-) -> None:
+def discard_ocr_model(model_id: str, delete: bool = False) -> None:
     """
-    Discard or delete a local OCR model from preferences and optionally disk.
-    """
-    import shutil
+    Discard or delete a local OCR model.
 
-    spec = find_spec(model_id, category=ModelCategory.OCR)
-    if spec is None:
+    Args:
+        model_id: The model identifier.
+        delete: If True, delete model files from disk.
+    """
+    model_spec = find_spec(model_id, category=ModelCategory.OCR)
+
+    if model_spec is None and model_id.lower() not in ("rapidocr", "default"):
         darwin.log(f"Unknown OCR model: {model_id}", LogType.ERROR)
         return
 
-    current = get_active_model(OCR_CATEGORY)
     model_path = get_model_path(model_id, None, OCR_CATEGORY)
+    if model_path is None:
+        darwin.log(f"Model path not found for: {model_id}", LogType.ERROR)
+        return
 
-    is_active = (current == model_id) or (model_path and str(model_path) == current)
-
-    if delete:
-        if model_path and model_path.exists():
-            try:
-                shutil.rmtree(model_path)
-                darwin.log(f"OCR model deleted from disk: {model_path}", LogType.INFO)
-            except Exception as e:
-                darwin.log(f"Failed to delete OCR model: {e}", LogType.ERROR)
-        else:
-            darwin.log(f"OCR model path not found: {model_path}", LogType.WARNING)
-    else:
-        darwin.log(f"OCR model removed from preferences only (files kept)", LogType.INFO)
-
-    if is_active:
-        set_active_model(OCR_CATEGORY,spec.model_id)
+    current_model = get_active_model(OCR_CATEGORY)
+    if current_model == model_id:
+        if delete:
+            darwin.log(f"Cannot delete currently active OCR model: {model_id}", LogType.ERROR)
+            darwin.log("Set a different OCR model as active first.", LogType.ERROR)
+            return
+        set_active_model(OCR_CATEGORY, None)
         darwin.log(f"Removed {model_id} from active OCR preferences", LogType.INFO)
 
+    if delete and model_path.exists():
+        try:
+            if model_path.is_dir():
+                shutil.rmtree(model_path)
+            else:
+                model_path.unlink()
+            darwin.log(f"Deleted OCR model files: {model_path}", LogType.INFO)
+        except Exception as e:
+            darwin.log(f"Failed to delete OCR model: {e}", LogType.ERROR)
 
-# ---------------------------------------------------------------------------
-# Helper Functions
-# ---------------------------------------------------------------------------
 
 def get_ocr_model_path(model_id: str) -> Optional[Path]:
+    """Get filesystem path for a local OCR model."""
     spec = find_spec(model_id, category=ModelCategory.OCR)
-    if spec is None:
+    if spec is None and model_id.lower() not in ("rapidocr", "default"):
         darwin.log(f"Unknown OCR model: {model_id}", LogType.ERROR)
         return None
     return get_model_path(model_id, None, OCR_CATEGORY)
@@ -179,21 +215,21 @@ def get_ocr_model_path(model_id: str) -> Optional[Path]:
 
 def is_ocr_model_downloaded(model_id: str) -> bool:
     """
-    Check whether the OCR model files exist locally and are valid.
+    Check if a local OCR model is downloaded, verified, and available.
+
+    Returns True only if all required ONNX files exist AND pass integrity checks.
     """
-    path = get_ocr_model_path(model_id)
-    if path is None:
+    spec = find_spec(model_id, category=ModelCategory.OCR)
+    if spec is None and model_id.lower() not in ("rapidocr", "default"):
         return False
-    return _is_ocr_model_valid(path)
 
+    model_path = get_model_path(model_id, None, OCR_CATEGORY)
+    if model_path is None:
+        return False
 
-def _is_ocr_model_valid(model_path: Path) -> bool:
-    """
-    Check that the required ONNX files exist and have reasonable size.
-    Uses the downloader's integrity check to avoid duplication.
-    """
     if not model_path.exists():
         return False
-    # Use downloader to validate files
-    downloader = OnnxOCRDownloader(target_dir=model_path)
-    return downloader.verify_integrity()
+
+    # Full integrity verification - no import needed, already imported
+    ok, _ = RapidOCRInference.verify_integrity(model_path)
+    return ok

@@ -1,3 +1,4 @@
+# src/core/Storage/DiskUsage.py
 """
 Disk usage tree (JSON exportable) for the Darwin data directory.
 Labels hashed directories with original filenames from the file registry.
@@ -6,10 +7,11 @@ Labels hashed directories with original filenames from the file registry.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Callable, Dict, Any
 
 from src.core.Storage.StorePaths import StorePaths, ARTIFACT_MANIFEST
-from src.core.Models.ModelRegistry import REGISTRY
+from src.core.Models.Lib.ModelRegistry import find_spec
+from src.core.Models.ModelStore import ModelStore
 from src.lib.AppPaths import default_models_dir
 
 # ── size helpers ─────────────────────────────────────────────────────────
@@ -44,16 +46,27 @@ class DiskNode:
         self.label = label        # extra info (e.g., original filename)
 
 
-# ── tree builder (always returns the full Darwin root) ───────────────────
+# ── tree builder ────────────────────────────────────────────────────────
 
-def build_tree(darwin_dir: Path, registry, model_store) -> DiskNode:
+def build_tree(
+    darwin_dir: Path,
+    registry,                    # your file registry (can be None if not needed)
+    model_store: Optional[ModelStore] = None,
+    hash_label_fn: Optional[Callable[[str], str]] = None,
+) -> DiskNode:
+    """
+    Build a DiskNode tree of the entire Darwin directory.
+    If model_store is None, it will be created with the default models dir.
+    """
+    if model_store is None:
+        model_store = ModelStore()
+
     paths = StorePaths(darwin_dir)
 
-    # Helper: given a hash directory name, try to find the original filename
+    # Helper: label for a hash directory (if registry provided)
     def _label_from_hash(hash_name: str) -> str:
-        for rec in registry.list_all():
-            if rec.content_hash == hash_name:
-                return f"{rec.display_name} ({hash_name[:8]}…)"
+        if registry and hash_label_fn:
+            return hash_label_fn(hash_name)
         return ""
 
     # ── Models ────────────────────────────────────────────────────────
@@ -61,9 +74,11 @@ def build_tree(darwin_dir: Path, registry, model_store) -> DiskNode:
     if default_models_dir().exists():
         for key in model_store.list_installed():
             model_path = model_store.model_path(key)
+            if model_path is None:
+                continue
             size = dir_size(model_path)
-            spec = REGISTRY[key]
-            label = f"{spec.model_id} ({spec.tier})"
+            spec = find_spec(key)
+            label = f"{spec.model_id} ({spec.tier})" if spec else key
             child = DiskNode(key, model_path, size, label=label)
             models_node.children.append(child)
         models_node.size = sum(c.size for c in models_node.children)
@@ -111,7 +126,6 @@ def build_tree(darwin_dir: Path, registry, model_store) -> DiskNode:
     logs_node = DiskNode("logs", logs_dir)
     if logs_dir.exists():
         logs_node.size = dir_size(logs_dir)
-
 
     # ── Root node ─────────────────────────────────────────────────────
     root = DiskNode(darwin_dir.name, darwin_dir)

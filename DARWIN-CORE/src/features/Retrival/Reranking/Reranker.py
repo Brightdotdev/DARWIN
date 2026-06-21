@@ -138,6 +138,7 @@ def _get_original_score(candidate: Any) -> float:
 # Core reranking
 # ============================================================================
 
+
 def rerank_results(
     query: str,
     candidates: List[Any],
@@ -158,38 +159,57 @@ def rerank_results(
         List of RerankedResult sorted by final_score
     """
     from src.core.Logger.DarwinLogger import darwin, LogType
-    from src.core.Models import ModelManager, ModelCategory
-    
+    from src.core.Models.ModelManager import modelManager
+    from src.core.Models.Lib.ModelRegistry import ModelCategory
+
     if not candidates:
         darwin.log("No candidates to rerank", LogType.WARNING)
         return []
 
     darwin.log(f"Reranking {len(candidates)} candidates...", LogType.INFO)
 
-    # Load cross-encoder model
-    loader = ModelManager.get_loader()
-    darwin.log(f"Loading Model")
-    model = loader.get(ModelCategory.RERANKER)
-    darwin.log(f"Loaded Successfully")
+    # Get the active reranker model using our unified loader
+    try:
+        model = modelManager.get(ModelCategory.RERANKER)
+        if model is None:
+            darwin.log("Reranking Model Not set or available...skipping rerankking", LogType.WARNING)
+            return candidates[:top_k]
 
-    # Prepare query-chunk pairs (truncate to ~512 tokens)
-    pairs = [[query, c.text[:1500]] for c in candidates]
-    
-    # Get raw logits from cross-encoder
-    logits = model.predict(pairs, show_progress_bar=False)
-    
-    # Normalize reranker scores to [0,1]
-    norm_rerank = np.array([_sigmoid(logit) for logit in logits])
+
+    except Exception as e:
+        darwin.log(f"Failed to load reranker model: {e}", LogType.ERROR)
+        # Fallback: return top_k original candidates (no reranking)
+        return candidates[:top_k]
+
+    # Prepare documents (truncate to ~1500 chars to save tokens)
+    documents = [c.text[:1500] for c in candidates]
+
+    # Get scores from model (returns list of floats, one per document)
+    try:
+        scores = model.predict(query, documents)
+    except Exception as e:
+        darwin.log(f"Reranking failed: {e}", LogType.ERROR)
+        model.unload()
+        return candidates[:top_k]
+
+    # Convert scores to numpy for easier manipulation
+    scores_np = np.array(scores)
+
+    # Normalize reranker scores to [0,1] using sigmoid if they look like logits
+    if scores_np.max() > 1.0 or scores_np.min() < 0.0:
+        norm_rerank = 1.0 / (1.0 + np.exp(-scores_np))
+    else:
+        norm_rerank = scores_np
 
     # Build reranked results
     reranked = []
-    for candidate, logit, nr in zip(candidates, logits, norm_rerank):
+    for candidate, raw_score, norm_score in zip(candidates, scores, norm_rerank):
         # Get normalized original score
         norm_orig = _get_original_score(candidate)
-        
+
         # Blend scores
-        final = (1.0 - original_score_weight) * nr + original_score_weight * norm_orig
-        
+        final = (1.0 - original_score_weight) * norm_score + original_score_weight * norm_orig
+
         # Extract original score for metadata
         original_score = None
         if hasattr(candidate, 'final_score'):
@@ -198,11 +218,11 @@ def rerank_results(
             original_score = candidate.score
         elif hasattr(candidate, 'rrf_score'):
             original_score = candidate.rrf_score
-        
+
         reranked.append(RerankedResult(
             text=candidate.text,
             clean=candidate.clean,
-            rerank_score=float(logit),
+            rerank_score=float(raw_score),
             original_score=original_score,
             final_score=final,
             source=candidate.source,
@@ -217,12 +237,11 @@ def rerank_results(
 
     # Sort by final score descending
     reranked.sort(key=lambda x: x.final_score, reverse=True)
-    
+
     result_count = min(top_k, len(reranked))
-    loader.unload(ModelCategory.RERANKER)
-    darwin.log(f"Freed Up Model Memory", LogType.SUCCESS)
-
     darwin.log(f"Reranked — returning top {result_count} results", LogType.SUCCESS)
+
+    # Unload model to free memory (important for local ONNX)
+    model.unload()
+
     return reranked[:top_k]
-
-

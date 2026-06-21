@@ -1,6 +1,4 @@
 import sys
-import os
-import warnings
 import argparse
 import time
 import asyncio
@@ -25,7 +23,6 @@ from src.features.Retrival.Keyword.KeywordUtilities import (
     format_keyword_results,
     
 )
-from src.lib.Utils import scan_folder
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 

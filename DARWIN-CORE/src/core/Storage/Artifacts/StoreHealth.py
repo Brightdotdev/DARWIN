@@ -15,11 +15,11 @@ class StoreHealth:
     def full_registry_health_check(self) -> dict:
         return self._health.full_audit()
 
+   
     def get_embedding_health(self, model_id: str) -> dict:
-        from src.core.Models.ModelRegistry import REGISTRY
-        from src.core.Models.ModelStore import get_model_store
+        from src.core.Models.ModelManager import modelManager
+        from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec
 
-        model_store = get_model_store()
         health = {
             "active_model": model_id,
             "up_to_date": [],
@@ -28,7 +28,12 @@ class StoreHealth:
             "never_embedded": [],
         }
 
-        id_to_key = {spec.model_id: key for key, spec in REGISTRY.items()}
+        # Quick check: does the active model exist in registry?
+        spec = find_spec(model_id)
+        if spec is None or spec.category != ModelCategory.EMBEDDING:
+            # The active model is not even registered – treat everything as "model_missing"
+            # but we can still iterate content to mark missing.
+            pass  # we'll still check per content
 
         for content in self._contents.list_all():
             h = content.hash
@@ -38,14 +43,16 @@ class StoreHealth:
             if not content.embedding_model:
                 health["never_embedded"].append(name)
                 continue
-            if content.embedding_model == model_id:
-                health["up_to_date"].append(name)
-                continue
 
-            old_key = id_to_key.get(content.embedding_model)
-            if old_key and model_store.is_downloaded(old_key):
-                health["needs_reembed"].append(name)
+            old_model = content.embedding_model
+
+            if old_model == model_id:
+                health["up_to_date"].append(name)
             else:
-                health["model_missing"].append(name)
+                # Check if the old model is still available
+                if modelManager.is_available(ModelCategory.EMBEDDING, old_model):
+                    health["needs_reembed"].append(name)
+                else:
+                    health["model_missing"].append(name)
 
         return health

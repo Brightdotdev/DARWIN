@@ -157,6 +157,7 @@ class ParsingArgs:
     files: list[str] = field(default_factory=list)
     images:            bool = False
     caption:           bool = False
+    ocr:           bool = False
     recursive:         bool = False
     rerun:             bool = False
     precise:           bool = False

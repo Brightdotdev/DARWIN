@@ -3,7 +3,6 @@
 # Hybrid retrieval combining semantic and keyword search via RRF.
 
 import sys
-import json
 from pathlib import Path
 from typing import List, Optional
 
@@ -26,7 +25,6 @@ from src.features.Retrival.Hybrid.HybridSearchUtils import (
     reciprocal_rank_fusion,
     merge_results,
     build_ranked_lists,
-    apply_hybrid_scoring,
     HybridSearchResult,
     DEFAULT_TOP_K,
     DEFAULT_RRF_K,
@@ -38,7 +36,6 @@ from src.features.Retrival.Hybrid.HybridSearchUtils import (
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.lib.Utils import scan_folder
 
 
 # ============================================================================

@@ -73,11 +73,18 @@ def _validate_groq(key: str) -> bool:
     return True
 
 
-def _validate_cohere(key: str) -> bool:
-    import cohere
-    cohere.Client(api_key=key).list_models()
-    return True
 
+def _validate_cohere(key: str) -> bool:
+    try:
+        litellm.completion(
+            model="cohere/command-r",
+            messages=[{"role": "user", "content": "hello"}],
+            api_key=key,
+            max_tokens=1,
+        )
+        return True
+    except Exception:
+        return False
 
 def _validate_together(key: str) -> bool:
     litellm.completion(

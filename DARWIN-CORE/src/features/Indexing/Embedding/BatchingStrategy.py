@@ -1,15 +1,31 @@
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# src/features/Indexing/Embedding/BatchingStrategy.py
+# ═══════════════════════════════════════════════════════════════════════════════
+"""
+Unified adaptive batch sizing with hardware-aware floors, OOM recovery,
+and per-model history.
+
+This is the ONLY place batch-size decisions are made.
+"""
+
+from __future__ import annotations
+
 from typing import Dict, Optional
+
 from .MemoryMonitor import MemoryMonitor
 
 
 class BatchingStrategy:
     """
     Decides optimal batch size for embedding streams.
-    - Starts at base_size (ignores warm history for initial; always trust caller)
+
+    Rules:
+    - Starts at base_size (trusts caller; ignores warm history for initial)
     - Only shrinks on *actual* OOM / MemoryError
     - Floor: CPU=16, GPU=8  (never preemptively shrink to 1)
     - Recovers by +25 % after each success so we trend back to base
-    - Remembers last successful size per model_key across calls (for observability)
+    - Remembers last successful size per model_key across calls
     """
 
     DEFAULT_MIN_CPU: int = 16
@@ -81,3 +97,4 @@ class BatchingStrategy:
 
     def get_history(self) -> Dict[str, int]:
         return dict(self._history)
+

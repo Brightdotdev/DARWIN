@@ -184,7 +184,3 @@ def inspect_bm25_index(data: BM25Data, show_samples: int = 3) -> None:
     darwin.log("")
 
 
-def create_bm25_scorer(data: BM25Data, k1: float = 1.5, b: float = 0.75):
-    """Build a BM25Okapi scorer from stored token data."""
-    from rank_bm25 import BM25Okapi
-    return BM25Okapi(corpus=data.tokens, k1=k1, b=b)

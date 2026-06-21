@@ -6,7 +6,7 @@ NLP is optional – deleting the active model is allowed.
 """
 
 from pathlib import Path
-from typing import Optional, Dict, List, Union, Iterator
+from typing import Optional, List
 
 from src.core.Models.Lib.ModelRegistry import find_spec, ModelCategory
 from src.core.Models.ModelConfig import (
@@ -16,7 +16,7 @@ from src.core.Models.ModelConfig import (
     ensure_model_path,
 )
 from src.core.Models.Infrence.Spacy.SpacyNLPInference import SpacyNLPInference
-from src.core.Models.ModelDownloading.SpacyNLPModelDownloader import SpacyNLPModelDownloader  # assume exists
+from src.core.Models.ModelDownloading.SpacyNLPModelDownloader import SpacyNLPModelDownloader 
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 

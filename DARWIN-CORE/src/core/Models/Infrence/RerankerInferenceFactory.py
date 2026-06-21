@@ -76,6 +76,11 @@ def get_reranker_inference(
         return None
 
     # Instantiate and load
+    model_integrity_downloader = OnnxRerankerDownloader(model_path)
+    if not model_integrity_downloader.ensure():
+        darwin.log(f"Reranker model not complete", LogType.ERROR)
+        return None
+
     try:
         inference = OnnxRerankerInference(
             model_dir=model_path,

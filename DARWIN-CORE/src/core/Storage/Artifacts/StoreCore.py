@@ -14,9 +14,9 @@ from src.core.Logger.DarwinLogger import darwin,LogType
 
 
 def get_current_embedding_model() -> str:
-    from src.core.Models import ModelManager, ModelCategory
-    loader = ModelManager.get_loader()
-    return loader.get_model_key(ModelCategory.EMBEDDING)
+    from src.core.Models.ModelConfig import get_active_model
+    from src.core.Models.Lib.ModelSpec import  ModelCategory
+    return get_active_model(ModelCategory.EMBEDDING.name.lower()) or ""
 
 
 def get_current_model_dimensions() -> int:
@@ -57,13 +57,8 @@ class StoreCore:
         self._init_setup()
 
     def _init_setup(self) -> None:
-        from src.core.Models import ModelManager
-        from src.features.Hardware.DeviceManager import DeviceManager
-        from src.features.Hardware.SystemDetector import detect_system
-
-        if DeviceManager._config is None:
-            DeviceManager.init(detect_system())
-        ModelManager.setup()
+        from src.core.Models.ModelManager import modelManager
+        modelManager.initialize()
         self.print_dashboard()
 
     def _resolve_hash(self, filename: str) -> str | None:

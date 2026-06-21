@@ -1,9 +1,44 @@
-import json
+"""
+Darwin Wiki / Graph Builder (v3.3)
+Entity co-occurrence graph generation using Pyvis.
+
+Pyvis handles all vis.js embedding, HTML generation, and interactivity.
+No manual HTML templates, no CDN dependencies, no inline JS.
+"""
+
 from typing import List, Dict, Any, Optional
+from pyvis.network import Network
 from src.features.Knowledge.WikiIndex import WikiIndex
 
+
+# ── Color palette by entity type ───────────────────────────────────────
+
+ENTITY_COLORS = {
+    "PERSON":      "#e67e22",
+    "ORG":         "#3498db",
+    "GPE":         "#2ecc71",
+    "LOC":         "#2ecc71",
+    "WORK_OF_ART": "#9b59b6",
+    "NORP":        "#f1c40f",
+    "FAC":         "#1abc9c",
+    "EVENT":       "#e74c3c",
+    "LAW":         "#95a5a6",
+    "LANGUAGE":    "#af7ac5",
+    "PRODUCT":     "#d35400",
+    "DATE":        "#34495e",
+    "TIME":        "#7f8c8d",
+    "MONEY":       "#27ae60",
+    "PERCENT":     "#16a085",
+    "QUANTITY":    "#8e44ad",
+}
+
+DEFAULT_COLOR = "#4a90d9"
+BG_COLOR = "#1e1e1e"
+FONT_COLOR = "#e0e0e0"
+
+
 class GraphBuilder:
-    """Build entity co‑occurrence graph data + HTML for a document."""
+    """Build entity co-occurrence graphs using Pyvis."""
 
     def __init__(self, wiki_index: WikiIndex):
         self.wiki = wiki_index
@@ -12,7 +47,7 @@ class GraphBuilder:
                          max_entities: int = 100,
                          min_cooccurrence: float = 0.1,
                          max_edges_per_node: int = 8) -> Dict[str, list]:
-        """Returns filtered nodes and edges (as before)."""
+        """Returns filtered nodes and edges as plain dicts."""
         entities = self.wiki.list_entities(
             filenames=[filename], sort_by="salience", limit=max_entities
         )
@@ -28,9 +63,10 @@ class GraphBuilder:
                                max_entities: int = 100,
                                title: str = "Entity Graph") -> str:
         """
-        Generate a full HTML page with interactive sliders.
-        All candidate edges (score >= 0) are embedded, and two sliders
-        let you filter them on the fly.
+        Generate an interactive HTML graph using Pyvis.
+
+        Pyvis handles all vis.js bundling, physics, and UI controls.
+        The output is a self-contained HTML file with no external dependencies.
         """
         entities = self.wiki.list_entities(
             filenames=[filename], sort_by="salience", limit=max_entities
@@ -38,144 +74,56 @@ class GraphBuilder:
         if not entities:
             return "<html><body>No entities found.</body></html>"
 
-        nodes = self._make_nodes(entities)
-        all_edges = self._all_edge_candidates(entities, filename)
+        # Build the Pyvis network
+        net = Network(
+            height="100vh",
+            width="100vw",
+            bgcolor=BG_COLOR,
+            font_color=FONT_COLOR,
+            heading=title,
+            directed=False,
+        )
 
-        nodes_json = json.dumps(nodes)
-        edges_json = json.dumps(all_edges)   # full set, scoring from 0–1
+        # Physics: repulsion solver for clean layout
+        net.repulsion(
+            node_distance=120,
+            central_gravity=0.2,
+            spring_length=150,
+            spring_strength=0.05,
+            damping=0.09,
+        )
 
-        html = f"""<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>{title}</title>
-  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
-  <style>
-    body {{
-      margin: 0; background: #1e1e1e; font-family: 'Segoe UI', sans-serif;
-    }}
-    #controls {{
-      position: absolute; top: 10px; left: 10px; z-index: 999;
-      background: rgba(30,30,30,0.9); padding: 15px; border-radius: 8px;
-      color: #e0e0e0; display: flex; flex-direction: column; gap: 8px;
-      min-width: 220px;
-    }}
-    #controls label {{ font-size: 14px; }}
-    #mynetwork {{
-      width: 100vw; height: 100vh;
-    }}
-  </style>
-</head>
-<body>
-<div id="controls">
-  <label>Min Co‑occurrence: <span id="coocVal">0.10</span></label>
-  <input type="range" id="coocSlider" min="0" max="1" step="0.01" value="0.10">
+        # Add nodes
+        for e in entities:
+            color = ENTITY_COLORS.get(e.type, DEFAULT_COLOR)
+            size = max(10, min(60, 10 + e.salience * 50))  # Scale 10-60 by salience
+            tooltip = f"<b>{e.canonical_name}</b><br>Type: {e.type}<br>Mentions: {e.frequency}<br>Spread: {e.spread}"
 
-  <label>Max Edges per Node: <span id="maxEdgeVal">8</span></label>
-  <input type="range" id="maxEdgeSlider" min="1" max="30" step="1" value="8">
+            net.add_node(
+                e.entity_id,
+                label=e.canonical_name,
+                color=color,
+                size=size,
+                title=tooltip,
+                group=e.type,
+            )
 
-  <div style="margin-top:6px;font-size:13px;color:#aaa">
-    Nodes: {len(nodes)} | Edges: <span id="edgeCount">{len(all_edges)}</span>
-  </div>
-</div>
-<div id="mynetwork"></div>
-<script type="text/javascript">
-  var allNodes = new vis.DataSet({nodes_json});
-  var allEdges = {edges_json};   // raw array of {{from, to, value, title}}
+        # Add all edge candidates (Pyvis lets users filter interactively)
+        edge_candidates = self._all_edge_candidates(entities, filename)
+        for edge in edge_candidates:
+            net.add_edge(
+                edge["from"],
+                edge["to"],
+                value=edge["value"],
+                title=edge["title"],
+            )
 
-  var container = document.getElementById('mynetwork');
-  var data = {{
-    nodes: allNodes,
-    edges: new vis.DataSet()
-  }};
-  var options = {{
-    nodes: {{
-      shape: 'dot',
-      scaling: {{
-        min: 10, max: 60,
-        label: {{ enabled: true, min: 14, max: 30 }}
-      }},
-      font: {{ color: '#e0e0e0', size: 14 }},
-      color: {{
-        background: '#4a90d9', border: '#2c5f8a',
-        highlight: {{ background: '#ffaa00', border: '#cc8800' }}
-      }}
-    }},
-    edges: {{
-      color: {{ color: '#5a5a5a', highlight: '#ffaa00', hover: '#aaaaaa' }},
-      width: 1, selectionWidth: 2,
-      smooth: {{ type: 'continuous' }}
-    }},
-    physics: {{
-      stabilization: {{ iterations: 200 }},
-      solver: 'repulsion',
-      repulsion: {{
-        centralGravity: 0.2, springLength: 150, springConstant: 0.05,
-        nodeDistance: 120, damping: 0.09
-      }}
-    }},
-    interaction: {{
-      hover: true, tooltipDelay: 200, navigationButtons: true, keyboard: true
-    }},
-    groups: {{
-      PERSON: {{ color: {{ background: '#e67e22', border: '#a85c1a' }} }},
-      ORG:    {{ color: {{ background: '#3498db', border: '#1f618d' }} }},
-      GPE:    {{ color: {{ background: '#2ecc71', border: '#1f8b4c' }} }},
-      LOC:    {{ color: {{ background: '#2ecc71', border: '#1f8b4c' }} }},
-      WORK_OF_ART: {{ color: {{ background: '#9b59b6', border: '#6c3483' }} }},
-      NORP:   {{ color: {{ background: '#f1c40f', border: '#b7950b' }} }},
-      FAC:    {{ color: {{ background: '#1abc9c', border: '#117864' }} }},
-      EVENT:  {{ color: {{ background: '#e74c3c', border: '#a93226' }} }},
-      LAW:    {{ color: {{ background: '#95a5a6', border: '#5d6d7e' }} }},
-      LANGUAGE: {{ color: {{ background: '#af7ac5', border: '#76448a' }} }}
-    }}
-  }};
-  var network = new vis.Network(container, data, options);
+        # Enable UI controls
+        net.show_buttons(filter_=["physics"])
+        net.toggle_physics(True)
 
-  function applyFilters() {{
-    var minCooc = parseFloat(document.getElementById('coocSlider').value);
-    var maxEdges = parseInt(document.getElementById('maxEdgeSlider').value);
-
-    document.getElementById('coocVal').textContent = minCooc.toFixed(2);
-    document.getElementById('maxEdgeVal').textContent = maxEdges;
-
-    // Step 1: filter by co‑occurrence
-    var filtered = allEdges.filter(e => e.value >= minCooc);
-
-    // Step 2: keep top N edges per node
-    var nodeEdgeCount = {{}};
-    filtered.forEach(e => {{
-      nodeEdgeCount[e.from] = nodeEdgeCount[e.from] || [];
-      nodeEdgeCount[e.from].push(e);
-      nodeEdgeCount[e.to] = nodeEdgeCount[e.to] || [];
-      nodeEdgeCount[e.to].push(e);
-    }});
-    var used = new Set();
-    var finalEdges = [];
-    Object.keys(nodeEdgeCount).forEach(node => {{
-      var sorted = nodeEdgeCount[node].sort((a,b) => b.value - a.value);
-      sorted.slice(0, maxEdges).forEach(e => {{
-        var key = [e.from, e.to].sort().join('---');
-        if (!used.has(key)) {{
-          used.add(key);
-          finalEdges.push(e);
-        }}
-      }});
-    }});
-
-    document.getElementById('edgeCount').textContent = finalEdges.length;
-    network.setData({{ nodes: allNodes, edges: new vis.DataSet(finalEdges) }});
-  }}
-
-  document.getElementById('coocSlider').addEventListener('input', applyFilters);
-  document.getElementById('maxEdgeSlider').addEventListener('input', applyFilters);
-
-  // Initial apply
-  applyFilters();
-</script>
-</body>
-</html>"""
-        return html
+        # Generate HTML string
+        return net.generate_html()
 
     # ── Private helpers ────────────────────────────────────────────────
 
@@ -189,12 +137,12 @@ class GraphBuilder:
                 "group": e.type,
                 "frequency": e.frequency,
                 "spread": e.spread,
-                "title": f"<b>{e.canonical_name}</b><br>Type: {e.type}<br>Mentions: {e.frequency}"
+                "title": f"Type: {e.type} | Mentions: {e.frequency}",
             })
         return nodes
 
     def _all_edge_candidates(self, entities: List, filename: str) -> List[Dict]:
-        """Compute all co‑occurrence scores, no filtering."""
+        """Compute all co-occurrence scores, no filtering."""
         edges = []
         for i in range(len(entities)):
             a = entities[i]
@@ -208,13 +156,13 @@ class GraphBuilder:
                     "from": a.entity_id,
                     "to": b.entity_id,
                     "value": score,
-                    "title": f"Co‑occurrence: {score:.3f}"
+                    "title": f"Co-occurrence: {score:.3f}",
                 })
         return edges
 
     def _filter_edges(self, candidates: List[Dict],
                       min_cooc: float, max_edges: int) -> List[Dict]:
-        """Server‑side filter (for non‑interactive method)."""
+        """Server-side filter (for non-interactive data export)."""
         filtered = [e for e in candidates if e["value"] >= min_cooc]
         node_edge_map: Dict[str, List[Dict]] = {}
         for e in filtered:

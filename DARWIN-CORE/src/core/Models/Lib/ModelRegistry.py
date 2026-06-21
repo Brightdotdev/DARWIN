@@ -14,6 +14,8 @@ from src.core.Models.Lib.ModelSpec import (
 )
 
 
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Master list of all model specs
 # ═══════════════════════════════════════════════════════════════════════════
@@ -81,16 +83,6 @@ MODEL_SPECS: List[ModelSpec] = [
 
 
 
-    # ── VISION — local ONNX ──
-    ModelSpec(
-        model_id="HuggingFaceTB/SmolVLM-256M-Instruct-onnx",
-        category=ModelCategory.VISION,
-        tier=ModelTier.DOLPHIN,
-        loader="onnx_vision",
-        ram_gb=4, disk_mb=550,
-        onnx_available=True,
-        notes="SmolVLM vision model (ONNX)",
-    ),
 
     # ── VISION — API: OpenAI ──
     ModelSpec(
@@ -180,17 +172,7 @@ MODEL_SPECS: List[ModelSpec] = [
         notes="Qwen2.5-VL 72B vision via OpenRouter",
     ),
 
-    # ── OCR — local (RapidOCR) ──
-    ModelSpec(
-        model_id="SWHL/RapidOCR",
-        category=ModelCategory.OCR,
-        tier=ModelTier.DOLPHIN,
-        loader="rapidocr",
-        ram_gb=1, disk_mb=20,
-        onnx_available=True,
-        repo_id="SWHL/RapidOCR",
-        notes="OCR for images (ONNX)",
-    ),
+
 
     # ── NLP — local (spaCy) ──
     ModelSpec(
@@ -211,6 +193,18 @@ MODEL_SPECS: List[ModelSpec] = [
         ram_gb=2,
         disk_mb=400,
     ),
+
+ ModelSpec(
+    model_id="rapidocr",
+    category=ModelCategory.OCR,
+    tier=ModelTier.DOLPHIN,
+    loader="rapidocr",
+    ram_gb=0,
+    disk_mb=16,
+    notes="Lightweight ONNX OCR. English recognition. Dual-pass with synthetic-image preprocessing.",
+    onnx_available=True,
+    repo_id=None,
+)
 ]
 
 

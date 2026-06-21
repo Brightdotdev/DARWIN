@@ -1,18 +1,17 @@
-# src/core/Models/ModelLoading/API/APIVisionInference.py
 """
 API-based vision inference using LiteLLM.
 Implements the unified VisionInferenceInterface.
+
+Refactored for UnifiedVisionInference compatibility.
 """
 
 import time
 from pathlib import Path
-from typing import  Optional, Union
+from typing import Optional, Union, List
 import numpy as np
 from PIL import Image
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Models.Infrence.Api.InfrenceApi import vision_sync
-
 from src.core.Models.ModeInterfaces import (
     VisionInferenceInterface,
     UnifiedVisionMetadata,
@@ -60,9 +59,16 @@ class APIVisionInference(VisionInferenceInterface):
         image: Union[str, Path, bytes, np.ndarray, Image.Image],
         prompt: str = "Describe this image.",
         max_new_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        stream_callback: Optional[callable] = None,
     ) -> UnifiedVisionResult:
         """
         Generate text from image + prompt via API.
+
+        Note: temperature, top_p, top_k, stream_callback are ignored for API.
+        The API provider handles its own sampling.
         """
         if not self.is_loaded():
             self.load()
@@ -70,6 +76,7 @@ class APIVisionInference(VisionInferenceInterface):
         start = time.perf_counter()
 
         try:
+            from src.core.Models.Infrence.Api.InfrenceApi import vision_sync
             text = vision_sync(
                 image=image,
                 prompt=prompt,
@@ -83,9 +90,8 @@ class APIVisionInference(VisionInferenceInterface):
 
         inference_time_ms = (time.perf_counter() - start) * 1000
 
-        # API doesn't give us token-level info, so we approximate
-        # You can swap this for actual token counting if your API provider supports it
-        tokens = []  # API doesn't expose tokens via LiteLLM by default
+        # API doesn't give token-level info by default
+        tokens: List[int] = []
 
         metadata = UnifiedVisionMetadata(
             model_id=self.model_id,
@@ -103,29 +109,19 @@ class APIVisionInference(VisionInferenceInterface):
             metadata=metadata,
         )
 
-
-    # ── Introspection ────────────────────────────────────────────────────────
-
-    def get_model_info(self) -> dict:
-        return {
-            "status": "ready" if self._ready else "unloaded",
-            "model_id": self.model_id,
-            "backend": "api",
-            "max_image_size": self.max_image_size,
-            "jpeg_quality": self.jpeg_quality,
-        }
-
-    # ── Async variant (API-specific convenience) ───────────────────────────
+    # ── Async variant ────────────────────────────────────────────────────────
 
     async def agenerate(
         self,
         image: Union[str, Path, bytes, np.ndarray, Image.Image],
         prompt: str = "Describe this image.",
         max_new_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        stream_callback: Optional[callable] = None,
     ) -> UnifiedVisionResult:
-        """
-        Async generate. Same contract, but non-blocking.
-        """
+        """Async generate. Same contract, but non-blocking."""
         if not self.is_loaded():
             self.load()
 
@@ -162,3 +158,23 @@ class APIVisionInference(VisionInferenceInterface):
             tokens=[],
             metadata=metadata,
         )
+
+    # ── Introspection ────────────────────────────────────────────────────────
+
+    def get_model_info(self) -> dict:
+        return {
+            "status": "ready" if self._ready else "unloaded",
+            "model_id": self.model_id,
+            "backend": "api",
+            "max_image_size": self.max_image_size,
+            "jpeg_quality": self.jpeg_quality,
+        }
+
+    # ── Context Manager ──────────────────────────────────────────────────────
+
+    def __enter__(self) -> "APIVisionInference":
+        self.load()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.unload()

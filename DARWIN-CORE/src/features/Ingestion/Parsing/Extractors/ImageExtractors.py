@@ -21,6 +21,8 @@ def _is_image_xref(doc: fitz.Document, xref: int) -> bool:
         return True
     except Exception:
         return False
+    
+    
 
 def extract_page_images(
     doc: fitz.Document,

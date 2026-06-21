@@ -164,7 +164,7 @@ def _discover_ollama_models() -> list[tuple[str, str, int]]:
         _OLLAMA_CACHE = []
         return _OLLAMA_CACHE
     except Exception as e:
-        darwin.log(f"Ollama JSON discovery failed, falling back to text parsing: {e}", LogType.DEBUG)
+        darwin.log(f"Ollama JSON discovery failed, falling back to text parsing: {e}" )
 
     # ------------------------------------------------------------------
     # Attempt 2: Fallback – text parsing of `ollama list`
@@ -246,7 +246,7 @@ def pick_model(provider: Optional[str] = None, grade: ModelGrade = "normal") -> 
 
     if provider in _PROVIDER_MAP:
         model = _PROVIDER_MAP[provider].get(grade, _PROVIDER_MAP[provider]["normal"])
-        darwin.log(f"Model picked: {provider}/{model} (grade={grade})", LogType.DEBUG)
+        darwin.log(f"Model picked: {provider}/{model} (grade={grade})" )
         return model
 
     darwin.log(f"Unknown provider '{provider}', using as-is", LogType.WARNING)

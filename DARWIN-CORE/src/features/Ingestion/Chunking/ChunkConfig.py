@@ -1,27 +1,7 @@
-"""
-src/core/Chunking/ChunkConfig.py
----------------------------------
-Single source of truth for embedding model configuration.
-
-Covers:
-  - Chunk sizing (max_tokens, min_tokens, overlap)
-  - Cleaning mode (plain_text vs semantic_markdown)
-  - Prefix/instruction templates per model
-  - Hardware-aware batch sizing
-  - Lazy model loading (delegates to ModelLoader)
-
-No hardcoded model names anywhere else in the pipeline.
-Everything auto-detects from the currently active model.
-"""
-
-
-
-
-
 def get_current_embedding_model() -> str:
-    from src.core.Models import ModelManager, ModelCategory
-    loader = ModelManager.get_loader()
-    return loader.get_model_key(ModelCategory.EMBEDDING)
+    from src.core.Models.ModelConfig import get_active_model
+    from src.core.Models.Lib.ModelRegistry import ModelCategory
+    return get_active_model(ModelCategory.EMBEDDING.name.lower()) or ""
 
 
 

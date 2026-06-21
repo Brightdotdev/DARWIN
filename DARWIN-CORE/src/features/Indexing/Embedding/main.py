@@ -1,35 +1,42 @@
 """
-src/core/Embedding/main.py - Clean embedding pipeline (refactored, no architecture changes)
+src/core/Embedding/main.py - Clean embedding pipeline (unified architecture)
+
+Refactored to use the new layered architecture:
+  MemoryMonitor → BatchingStrategy → EmbeddingEngine → Embedder
 """
 
 import sys
-import os
-import warnings
 import argparse
 import asyncio
 from pathlib import Path
+
 import numpy as np
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
+from src.features.Indexing.Embedding.MemoryMonitor import MemoryMonitor
+from src.features.Indexing.Embedding.BatchingStrategy import BatchingStrategy
 
 from src.features.Indexing.Embedding.Embedder import run_embedding_pipeline
 from src.features.Indexing.Embedding.lib import EmbeddingArgs
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Models import ModelManager, ModelCategory
+from src.core.Models.ModelManager import modelManager
+from src.core.Models.Lib.ModelRegistry import ModelCategory
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
 from src.lib.Utils import ensure_writable_directory
-
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Handler
 # ─────────────────────────────────────────────────────────────────────────────
 
-def handle_embedding(args: EmbeddingArgs,store : DarwinStore) -> None:
-    loader = ModelManager.get_loader()
+def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
+    
+    # ── Hardware summary (new) ──────────────────────────────────────
+    monitor = MemoryMonitor()
+    monitor.log_summary()
 
     darwin.log("")
     darwin.log("Embedding pipeline", LogType.INFO)
@@ -51,6 +58,7 @@ def handle_embedding(args: EmbeddingArgs,store : DarwinStore) -> None:
 
     darwin.log(f"Embedding {len(filenames)} file(s)", LogType.INFO)
 
+
     succeeded = skipped = failed = 0
     total = len(filenames)
 
@@ -62,7 +70,7 @@ def handle_embedding(args: EmbeddingArgs,store : DarwinStore) -> None:
             skipped += 1
             continue
 
-        chunks = store.query_records(filename=filename, columns=["clean","index"])
+        chunks = store.query_records(filename=filename, columns=["clean", "index"])
 
         if not chunks:
             darwin.log(f"{filename} — no chunks found", LogType.ERROR)
@@ -72,6 +80,7 @@ def handle_embedding(args: EmbeddingArgs,store : DarwinStore) -> None:
         is_last = (i == total - 1)
 
         try:
+            
             vectors = run_embedding_pipeline(
                 filename=filename,
                 chunks=chunks,
@@ -80,12 +89,13 @@ def handle_embedding(args: EmbeddingArgs,store : DarwinStore) -> None:
                 unload_after=is_last,
             )
 
-            if vectors is not None:
+            if vectors is not None and len(vectors) > 0:
                 succeeded += 1
-                
+
                 if args.inspect:
-                    darwin.log(f"{filename} — {vectors.shape}", LogType.INFO)
+                    darwin.log(f"{filename} — shape={vectors.shape}, dtype={vectors.dtype}", LogType.INFO)
             else:
+                
                 skipped += 1
 
         except Exception as e:
@@ -94,10 +104,16 @@ def handle_embedding(args: EmbeddingArgs,store : DarwinStore) -> None:
 
     # ── ensure model cleanup ──
     try:
-        loader.unload(ModelCategory.EMBEDDING)
+        modelManager.unload(ModelCategory.EMBEDDING)
         darwin.log("Embedding model unloaded", LogType.INFO)
     except Exception as e:
         darwin.log(f"Unload warning: {e}", LogType.WARNING)
+
+    # ── Batching history (new — for observability) ──────────────────
+    strategy = BatchingStrategy()
+    history = strategy.get_history()
+    if history:
+        darwin.log(f"Batching history: {history}", LogType.INFO)
 
     darwin.log("")
     darwin.log(
@@ -119,14 +135,32 @@ async def main() -> int:
     parser.add_argument("--inspect", "-i", action="store_true")
     parser.add_argument("--rerun", "-R", action="store_true")
 
+    # ── New: batching overrides (optional) ──────────────────────────
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Override batch size (default: hardware-aware auto)",
+    )
+    parser.add_argument(
+        "--min-batch-cpu",
+        type=int,
+        default=None,
+        help="Minimum batch size on CPU (default: 16)",
+    )
+    parser.add_argument(
+        "--min-batch-gpu",
+        type=int,
+        default=None,
+        help="Minimum batch size on GPU (default: 8)",
+    )
+
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
     parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
     parser.add_argument("--ws-port", type=int, default=8765)
     parser.add_argument("--no-ws", action="store_true")
 
     args = parser.parse_args()
-
-
 
     darwin.configure(
         enable_websocket=not args.no_ws,
@@ -135,13 +169,11 @@ async def main() -> int:
         verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
         show_banner=True,
     )
-    
+
     if args.store_dir and ensure_writable_directory(args.store_dir):
         store = DarwinStore(args.store_dir)
     else:
         store = DarwinStore()
-
-
 
     try:
         embedding_args = EmbeddingArgs(

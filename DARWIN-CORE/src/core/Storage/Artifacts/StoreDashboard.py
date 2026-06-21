@@ -48,9 +48,10 @@ class StoreDashboard:
     def _build_disk_tree(self):
         if not hasattr(self, "_cached_disk_tree"):
             from src.core.Storage.DiskUsage import build_tree
-            from src.core.Models.ModelStore import get_model_store
+            from src.core.Models.ModelStore import ModelStore
 
-            def hash_to_label(h: str) -> str:
+            model_store = ModelStore()
+            def hash_label_fn(h: str) -> str:
                 sources = self._sources.get_by_hash(h)
                 if sources:
                     names = ", ".join(s.display_name for s in sources)
@@ -60,8 +61,8 @@ class StoreDashboard:
             self._cached_disk_tree = build_tree(
                 self._darwin_dir,
                 self._sources,
-                get_model_store(),
-                hash_label_fn=hash_to_label,
+                model_store=model_store,
+                hash_label_fn=hash_label_fn,
             )
         return self._cached_disk_tree
 

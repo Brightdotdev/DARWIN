@@ -1,7 +1,6 @@
-# src/core/Models/ModelManager.py
 """
 Unified high-level API for all model operations.
-Single entry point: initialize → ensure → use → unload.
+Single entry point: initialize -> ensure -> use -> unload.
 """
 
 from typing import Optional, Dict, List, Any, Iterator
@@ -29,19 +28,26 @@ from src.core.Models.Infrence.NLPInferenceFactory import (
     get_nlp_model_path,
     is_nlp_model_downloaded,
 )
-from src.core.Models.Infrence.OCRInferenceFactory import (
-    get_ocr_inference,
-    set_ocr_preference,
-    discard_ocr_model,
-    get_ocr_model_path,
-    is_ocr_model_downloaded,
-)
 from src.core.Models.Infrence.RerankerInferenceFactory import (
     get_reranker_inference,
     set_reranker_preference,
     discard_reranker_model,
     get_reranker_model_path,
     is_reranker_model_downloaded,
+)
+from src.core.Models.Infrence.VisionInfrenceFactory import (
+    get_vision_inference,
+    set_vision_preference,
+    discard_vision_model,
+    get_vision_model_path,
+    is_vision_model_downloaded,
+)
+from src.core.Models.Infrence.OCRInferenceFactory import (
+    get_ocr_inference,
+    set_ocr_preference,
+    discard_ocr_model,
+    get_ocr_model_path,
+    is_ocr_model_downloaded,
 )
 
 
@@ -98,7 +104,7 @@ class ManagerStatus:
         for cat_name, status in self.categories.items():
             icon = "✅" if status.available else "❌"
             required = " (required)" if status.is_required else ""
-            active = f" → {status.active_model_id}" if status.active_model_id else ""
+            active = f" -> {status.active_model_id}" if status.active_model_id else ""
             available = f" ({len(status.available_models)} ready)"
             error = f"  Error: {status.error}" if status.error else ""
             lines.append(f"  {icon} {cat_name.upper()}{required}{active}{available}")
@@ -125,7 +131,7 @@ class ModelManager:
     Unified entry point for all model operations.
     """
 
-    # Category → factory mappings
+    # Category -> factory mappings
     _FACTORIES = {
         ModelCategory.EMBEDDING: {
             "get": get_embedding_inference,
@@ -141,13 +147,6 @@ class ModelManager:
             "path": get_nlp_model_path,
             "downloaded": is_nlp_model_downloaded,
         },
-        ModelCategory.OCR: {
-            "get": get_ocr_inference,
-            "set": set_ocr_preference,
-            "discard": discard_ocr_model,
-            "path": get_ocr_model_path,
-            "downloaded": is_ocr_model_downloaded,
-        },
         ModelCategory.RERANKER: {
             "get": get_reranker_inference,
             "set": set_reranker_preference,
@@ -155,12 +154,26 @@ class ModelManager:
             "path": get_reranker_model_path,
             "downloaded": is_reranker_model_downloaded,
         },
+        ModelCategory.VISION: {
+            "get": get_vision_inference,
+            "set": set_vision_preference,
+            "discard": discard_vision_model,
+            "path": get_vision_model_path,
+            "downloaded": is_vision_model_downloaded,
+        },
+        ModelCategory.OCR: {
+            "get": get_ocr_inference,
+            "set": set_ocr_preference,
+            "discard": discard_ocr_model,
+            "path": get_ocr_model_path,
+            "downloaded": is_ocr_model_downloaded,
+        },
     }
 
     REQUIRED_CATEGORIES = {ModelCategory.EMBEDDING}
 
     def __init__(self):
-        self._loaded_models: Dict[str, Any] = {}  # cache_key → model instance
+        self._loaded_models: Dict[str, Any] = {}  # cache_key -> model instance
 
     # ────────────────────────────────────────────────────────────────
     # INITIALIZE – full health check
@@ -182,7 +195,6 @@ class ModelManager:
         missing_required: List[str] = []
 
         for cat in ModelCategory:
-            
             cat_name = cat.name.lower()
             is_required = cat in self.REQUIRED_CATEGORIES
 
@@ -199,7 +211,6 @@ class ModelManager:
 
             # ── FIX: initialize error here ──
             error = None
-            warnings = []  # already defined outside loop, but make sure it's accessible
 
             if active_available:
                 available = True
@@ -361,7 +372,7 @@ class ModelManager:
                     darwin.log(f"  {key}: {value}", LogType.INFO)
 
             self._loaded_models[cache_key] = model
-            set_active_model(cat_name,resolved_id,)
+            set_active_model(cat_name, resolved_id)
 
             return SetupResult(
                 cat_name, resolved_id, True,
@@ -528,10 +539,96 @@ class ModelManager:
             return False
 
     def clear_preference(self, category: ModelCategory) -> None:
-        set_active_model(category.name.lower(),None)
+        set_active_model(category.name.lower(), None)
 
     def get_active(self, category: ModelCategory) -> Optional[str]:
         return get_active_model(category.name.lower())
+
+    # ────────────────────────────────────────────────────────────────
+    # DISCARD — convenience: unload + remove preference + optionally delete
+    # ────────────────────────────────────────────────────────────────
+
+    def discard(
+        self,
+        category: ModelCategory,
+        model_id: Optional[str] = None,
+        *,
+        delete: bool = False,
+        unload_first: bool = True,
+    ) -> bool:
+        """
+        Convenience method to fully discard a model.
+
+        Steps:
+          1. Unload from memory (if loaded).
+          2. Call the factory discard handler (removes preference, optionally deletes files).
+
+        Args:
+            category: The model category.
+            model_id: Specific model to discard. Uses active model if None.
+            delete: If True, delete model files from disk.
+            unload_first: If True, unload from cache before discarding.
+
+        Returns:
+            True if discard succeeded.
+        """
+        cat_name = category.name.lower()
+        resolved_id = model_id or get_active_model(cat_name)
+
+        if not resolved_id:
+            darwin.log(f"No model specified or active for {cat_name}; nothing to discard.", LogType.WARNING)
+            return False
+
+        # 1. Unload if requested
+        if unload_first:
+            self.unload(category, resolved_id)
+
+        # 2. Call factory discard
+        discard_factory = self._get_factory(category, "discard")
+        if discard_factory is None:
+            darwin.log(f"No discard factory for {cat_name}", LogType.ERROR)
+            return False
+
+        try:
+            discard_factory(model_id=resolved_id, delete=delete)
+            darwin.log(
+                f"Discarded {cat_name}/{resolved_id}"
+                + (" (files deleted)" if delete else ""),
+                LogType.INFO,
+            )
+            return True
+        except Exception as e:
+            darwin.log(f"Failed to discard {cat_name}/{resolved_id}: {e}", LogType.ERROR)
+            return False
+
+    def discard_all(
+        self,
+        categories: Optional[List[ModelCategory]] = None,
+        *,
+        delete: bool = False,
+    ) -> Dict[str, bool]:
+        """
+        Discard models across multiple (or all) categories.
+
+        Args:
+            categories: List of categories to discard from. Defaults to all.
+            delete: If True, delete files for all discarded models.
+
+        Returns:
+            Dict mapping "category/model_id" -> success bool.
+        """
+        targets = categories or list(ModelCategory)
+        results: Dict[str, bool] = {}
+
+        for cat in targets:
+            active = get_active_model(cat.name.lower())
+            if active:
+                success = self.discard(cat, active, delete=delete)
+                results[f"{cat.name.lower()}/{active}"] = success
+            else:
+                results[f"{cat.name.lower()}/none"] = True  # Nothing to discard
+
+        return results
 
     # ────────────────────────────────────────────────────────────────
     # RESOURCE MANAGEMENT
@@ -576,7 +673,7 @@ class ModelManager:
                 count += 1
         darwin.log(f"Unloaded {count} model(s)", LogType.INFO)
         return count
-    
+
     def is_available(self, category: ModelCategory, model_id: str) -> bool:
         """
         Check if a specific model is available for use.

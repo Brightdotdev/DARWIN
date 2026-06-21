@@ -1,79 +1,97 @@
+"""
+Darwin Wiki / Knowledge Module — Utilities (v3.0)
+Normalization, validation, and helper functions.
+"""
+
 import re
-from typing import Tuple
-from src.features.Knowledge.lib import ENTITY_STOPWORDS, REJECTED_ENTITY_TYPES
+from typing import Optional
 
-
-_NUMBER_WORDS = {
-    "zero", "one", "two", "three", "four", "five", "six", "seven",
-    "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen",
-    "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty",
-    "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
-    "hundred", "thousand", "million", "first", "second", "third",
-    "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth",
-}
-
-def _is_garbage_date_time(norm: str) -> bool:
-    """Return True if the normalised text is a meaningless DATE/TIME fragment."""
-    tokens = norm.split()
-    # Reject if every token is a stopword, number word, or digit
-    if all(t in ENTITY_STOPWORDS or t in _NUMBER_WORDS or t.isdigit() for t in tokens):
-        return True
-    # Also reject if the first token is a stopword and the rest are too (catches "the day")
-    return False  # the first condition already covers this
+try:
+    from .lib import VALID_ENTITY_TYPES, REJECTED_ENTITY_TYPES, ENTITY_STOPWORDS
+except ImportError:
+    from lib import VALID_ENTITY_TYPES, REJECTED_ENTITY_TYPES, ENTITY_STOPWORDS
 
 
 def normalize(text: str) -> str:
-    """Lower-case, strip punctuation, collapse whitespace."""
+    """
+    Normalize entity text for canonical identity.
+
+    Rules:
+    - Lowercase
+    - Collapse whitespace
+    - Strip leading/trailing punctuation
+    - Preserve internal punctuation (O'Connor, C.S. Lewis)
+    """
+    if not text:
+        return ""
     text = text.lower()
-    # Remove all non-word, non-space characters
-    text = re.sub(r"[^\w\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
+    # Strip leading/trailing non-alphanumeric, but preserve internal
+    text = re.sub(r"^[^\w]+", "", text)
+    text = re.sub(r"[^\w]+$", "", text)
     return text
-
-
-def make_entity_id(canonical_name: str, ent_type: str) -> str:
-    return f"{canonical_name}|{ent_type.lower()}"
-
-
-# Patterns for obvious noise (dates, verse references, pure numbers, etc.)
-_NOISE_PATTERNS = re.compile(
-    r"|".join([
-        r"^\d+$",                     # pure number
-        r"^\d+[:.\-]\d+([:.\-]\d+)*$", # verse / date ref like 12:9-10, 10.18
-        r"^\d+[A-Za-z]?\d*$",         # 12910, 110172
-        r"^[MDCLXVI]+$",              # roman numerals (optional)
-    ])
-)
 
 
 def is_valid_entity(text: str, label: str) -> bool:
     """
-    Decide whether a raw spaCy entity should be kept.
-    Returns True if the entity passes all quality checks.
+    Multi-layer entity validation.
+
+    Rejects:
+    1. Empty or whitespace-only text
+    2. Rejected entity types (CARDINAL, ORDINAL)
+    3. Stopword-only canonical names
+    4. Pure numbers / verse references (e.g., "3:16", "1 Corinthians")
+    5. Single-character entities
+    6. Entities that are mostly non-alphabetic
     """
-    # Reject whole categories
+    if not text or not text.strip():
+        return False
+
     if label in REJECTED_ENTITY_TYPES:
         return False
 
     norm = normalize(text)
-
-    # Minimum length
-    if len(norm) < 2:
+    if not norm or len(norm) < 2:
         return False
 
-    # Stopword
     if norm in ENTITY_STOPWORDS:
         return False
-    
-    tokens = norm.split()
-    if all(t in ENTITY_STOPWORDS or t.isdigit() for t in tokens):
-        return False
-    
-    if label in {"DATE", "TIME"} and _is_garbage_date_time(norm):
+
+    # Reject pure numbers, verse refs, chapter:verse patterns
+    if re.match(r"^\d+(:\d+)?$", norm):
         return False
 
-    # Noise patterns
-    if _NOISE_PATTERNS.search(norm):
+    # Reject if > 70% non-alphabetic (catches garbage like "!!!", "...")
+    alpha_count = sum(1 for c in norm if c.isalpha())
+    if alpha_count / len(norm) < 0.3:
+        return False
+
+    # Reject if it's just a year/date pattern
+    if re.match(r"^\d{1,4}(\s*(bc|ad|bce|ce))?$", norm):
         return False
 
     return True
+
+
+def is_garbage_entity(text: str) -> bool:
+    """
+    Extra aggressive filter for post-processing cleanup.
+    Called after initial extraction to catch edge cases.
+    """
+    norm = normalize(text)
+
+    # All-stopword check
+    words = norm.split()
+    if all(w in ENTITY_STOPWORDS for w in words):
+        return True
+
+    # Reject if looks like a URL or email fragment
+    if "@" in text or "http" in text.lower():
+        return True
+
+    # Reject if contains excessive punctuation
+    punct_count = sum(1 for c in text if c in ".,;:!?-_—")
+    if punct_count / max(len(text), 1) > 0.4:
+        return True
+
+    return False

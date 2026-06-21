@@ -1,3 +1,7 @@
+"""
+Darwin Wiki / Knowledge Module — Core Types & Constants (v3.0)
+"""
+
 from dataclasses import dataclass, field
 from typing import Dict, List, Any
 

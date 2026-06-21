@@ -1,644 +1,349 @@
-# src/core/Models/Infrence/Onnx/RapidOCRInference.py
 """
-RapidOCR ONNX Inference Engine — PP-OCRv4
-Runs detection → classification → recognition pipeline locally.
+Local OCR Inference — RapidOCR backend with synthetic-image preprocessing.
+Handles one-time model download (via HuggingFace), dual-pass extraction, and async threadpool wrapping.
+Includes integrity verification: file existence + size validation.
 """
 
-import gc
-import time
-from dataclasses import dataclass
+import asyncio
+import io
+import re
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import Union, Tuple
 
 import cv2
 import numpy as np
-
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Models.ModeInterfaces import OCRInferenceInterface
+
+# ---------------------------------------------------------------------------
+# Model manifest — SWHL/RapidOCR community mirror on HuggingFace
+#
+# NOTE: There is NO English-specific rec model in the SWHL/RapidOCR repo.
+# The "en" prefix only exists on the detection model (en_PP-OCRv3_det).
+# The recognition model is always Chinese (ch_PP-OCRv4_rec_server).
+# This is a known upstream limitation. See:
+#   https://github.com/RapidAI/RapidOCR/discussions/324
+#
+# Workarounds:
+#   1. Use the Chinese rec model with post-process whitespace recovery
+#   2. Convert a PaddleOCR English rec model yourself using
+#      PaddleOCRModelConverter + add rec_dict metadata
+#   3. Use rapidocr-onnxruntime (v1.x) which bundles its own models
+# ---------------------------------------------------------------------------
+
+MODELS = {
+    "det": {
+        "file": "en_PP-OCRv3_det_infer.onnx",
+        "hf_repo": "SWHL/RapidOCR",
+        "hf_path": "PP-OCRv4/en_PP-OCRv3_det_infer.onnx",
+    },
+    "rec": {
+        "file": "ch_PP-OCRv4_rec_server_infer.onnx",
+        "hf_repo": "SWHL/RapidOCR",
+        "hf_path": "PP-OCRv4/ch_PP-OCRv4_rec_server_infer.onnx",
+    },
+    "cls": {
+        "file": "ch_ppocr_mobile_v2.0_cls_train.onnx",
+        "hf_repo": "SWHL/RapidOCR",
+        "hf_path": "PP-OCRv3/ch_ppocr_mobile_v2.0_cls_train.onnx",
+    },
+}
+
+# Expected size ranges (bytes) — catches truncated or corrupted downloads
+VERIFY = {
+    "det": {"min_bytes": 1_500_000, "max_bytes": 5_000_000},      # Actual: ~2.3 MB
+    "rec": {"min_bytes": 80_000_000, "max_bytes": 100_000_000},   # Actual: ~86.3 MB
+    "cls": {"min_bytes": 500_000, "max_bytes": 1_000_000},         # Actual: ~0.6 MB
+}
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Data structures
-# ═══════════════════════════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------------
+# RapidOCR Inference
+# ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class OCRMetadata:
-    """Metadata about the OCR inference run."""
-    model_name: str
-    repo_id: str
-    device: str
-    onnx_runtime_version: str
-    inference_time_ms: float
-    num_text_regions: int
-    image_size: Tuple[int, int]
-    det_time_ms: float
-    cls_time_ms: float
-    rec_time_ms: float
-    det_model: str
-    cls_model: str
-    rec_model: str
-
-
-@dataclass
-class TextRegion:
-    """Single detected text region."""
-    text: str
-    score: float
-    box: np.ndarray  # (4, 2) float32 — corner points
-    cls_score: float
-    cls_label: int   # 0 = normal, 1 = rotated 180°
-
-
-@dataclass
-class OCRResult:
-    """Full OCR output."""
-    regions: List[TextRegion]
-    metadata: OCRMetadata
-    annotated_image: Optional[np.ndarray] = None  # debug viz
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Constants
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Detection
-DET_INPUT_SIZE = 960
-DET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32).reshape((1, 1, 3))
-DET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32).reshape((1, 1, 3))
-DET_THRESH = 0.3
-DET_BOX_THRESH = 0.5
-DET_MAX_CANDIDATES = 1000
-DET_UNCLIP_RATIO = 1.5
-DET_MIN_SIZE = 3
-
-# Classification
-CLS_INPUT_SHAPE = (192, 48)  # W, H
-CLS_MEAN = np.array([0.5, 0.5, 0.5], dtype=np.float32).reshape((1, 1, 3))
-CLS_STD = np.array([0.5, 0.5, 0.5], dtype=np.float32).reshape((1, 1, 3))
-CLS_THRESH = 0.9
-
-# Recognition
-REC_INPUT_SHAPE = (320, 48)  # W, H
-REC_MEAN = np.array([0.5, 0.5, 0.5], dtype=np.float32).reshape((1, 1, 3))
-REC_STD = np.array([0.5, 0.5, 0.5], dtype=np.float32).reshape((1, 1, 3))
-
-# CTC blank index
-CTC_BLANK_IDX = 0
-
-# PP-OCRv4 rec dictionary (simplified Latin + digits + symbols)
-REC_CHAR_DICT = (
-    "0123456789abcdefghijklmnopqrstuvwxyz"
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ "
-)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Inference Engine
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class RapidOCRInference:
+class RapidOCRInference(OCRInferenceInterface):
     """
-    RapidOCR PP-OCRv4 ONNX inference pipeline.
-    Loads det + cls + rec models and runs full OCR.
+    RapidOCR provider with automatic model download, integrity verification,
+    and synthetic-image recovery.
     """
 
     def __init__(
         self,
         model_dir: Path,
-        repo_id: str = "SWHL/RapidOCR",
-        char_dict: Optional[str] = None,
-        det_limit_side: int = DET_INPUT_SIZE,
-        rec_batch_size: int = 6,
+        confidence_threshold: float = 0.7,
+        det_db_thresh: float = 0.2,
+        det_db_box_thresh: float = 0.4,
+        max_workers: int = 1,
     ):
         self.model_dir = Path(model_dir)
-        self.repo_id = repo_id
-        self.char_dict = char_dict or REC_CHAR_DICT
-        self.det_limit_side = det_limit_side
-        self.rec_batch_size = rec_batch_size
+        self.model_dir.mkdir(parents=True, exist_ok=True)
 
-        self._det_session = None
-        self._cls_session = None
-        self._rec_session = None
-        self._device = "CPU"
-        self._onnx_runtime_version = "unknown"
+        self.confidence_threshold = confidence_threshold
+        self.det_db_thresh = det_db_thresh
+        self.det_db_box_thresh = det_db_box_thresh
 
-    # ── Darwin logging ───────────────────────────────────────────────────────
+        self._engine = None
+        self._thread_pool = ThreadPoolExecutor(max_workers=max_workers)
 
-    def _log(self, msg: str, level: LogType = LogType.INFO):
-        darwin.log(f"[RapidOCR] {msg}", level)
+    # -----------------------------------------------------------------------
+    # Integrity verification (static — can be used before instantiation)
+    # -----------------------------------------------------------------------
 
-    # ── Context Manager ──────────────────────────────────────────────────────
-
-    def __enter__(self) -> "RapidOCRInference":
-        self.load()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.unload()
-
-    # ── Lifecycle ────────────────────────────────────────────────────────────
-
-    def load(self) -> "RapidOCRInference":
-        """Load all three ONNX sessions. Chainable."""
-        if self.is_loaded():
-            self._log("Already loaded, skipping.")
-            return self
-
-        self._log(f"Loading RapidOCR from {self.model_dir}")
-        self._load_sessions()
-        self._log("RapidOCR loaded.", LogType.SUCCESS)
-        return self
-
-    def unload(self) -> None:
-        """Unload all sessions and free memory."""
-        if not self.is_loaded():
-            self._log("Not loaded, nothing to unload.")
-            return
-
-        self._log("Unloading RapidOCR...")
-        self._det_session = None
-        self._cls_session = None
-        self._rec_session = None
-        gc.collect()
-        self._log("Unloaded.", LogType.SUCCESS)
-
-    def is_loaded(self) -> bool:
-        # Only det and rec are mandatory; cls is optional
-        return self._det_session is not None and self._rec_session is not None
-
-    # ── Public inference API ─────────────────────────────────────────────────
-
-    def infer(
-        self,
-        image: Union[str, Path, bytes, np.ndarray, Image.Image],
-        return_annotated: bool = False,
-    ) -> OCRResult:
+    @staticmethod
+    def verify_integrity(model_dir: Path) -> Tuple[bool, str]:
         """
-        Run full OCR pipeline on an image.
-        Returns detected text regions with metadata.
+        Check that all required ONNX files exist and are within expected size ranges.
+        Returns (ok, error_message). Safe to call before load().
         """
-        if not self.is_loaded():
-            self._log("Model not loaded. Call .load() first.", LogType.ERROR)
-            raise RuntimeError("Model not loaded. Call .load() first.")
+        model_dir = Path(model_dir)
+        errors = []
 
-        # Load and preprocess image
-        img = self._load_image(image)
-        h, w = img.shape[:2]
-        self._log(f"Image: {w}×{h}")
-
-        spinner_id = f"ocr_{id(img)}"
-        darwin.spinner_start(spinner_id, "Running OCR pipeline")
-
-        t_start = time.perf_counter()
-
-        # ── Stage 1: Detection ──────────────────────────────────────────────
-        t0 = time.perf_counter()
-        dt_boxes = self._detect(img)
-        t_det = (time.perf_counter() - t0) * 1000
-        self._log(f"Detection: {len(dt_boxes)} regions in {t_det:.1f}ms")
-
-        if len(dt_boxes) == 0:
-            darwin.spinner_stop(spinner_id, success=True)
-            meta = self._build_metadata(
-                img, t_start, t_det, 0.0, 0.0, len(dt_boxes)
-            )
-            return OCRResult(regions=[], metadata=meta)
-
-        # ── Stage 2: Classification + Recognition ─────────────────────────────
-        t0_cls = time.perf_counter()
-        t0_rec = time.perf_counter()
-
-        regions: List[TextRegion] = []
-        rec_inputs = []
-        rec_boxes = []
-
-        # Batch recognition
-        for i, box in enumerate(dt_boxes):
-            # Crop and align each box
-            crop = self._crop_box(img, box)
-
-            # Classification (orientation)
-            cls_label, cls_score = self._classify(crop)
-            if cls_label == 1 and cls_score > CLS_THRESH:
-                crop = cv2.rotate(crop, cv2.ROTATE_180)
-
-            # Prepare for recognition batching
-            rec_input = self._preprocess_rec(crop)
-            rec_inputs.append(rec_input)
-            rec_boxes.append(box)
-
-            # Run recognition batch when full or last
-            if len(rec_inputs) >= self.rec_batch_size or i == len(dt_boxes) - 1:
-                texts, scores = self._recognize_batch(rec_inputs)
-                for text, score, b in zip(texts, scores, rec_boxes[-len(rec_inputs):]):
-                    regions.append(TextRegion(
-                        text=text,
-                        score=score,
-                        box=b,
-                        cls_score=cls_score,
-                        cls_label=cls_label,
-                    ))
-                rec_inputs = []
-                rec_boxes = []
-
-        t_cls = (time.perf_counter() - t0_cls) * 1000
-        t_rec = (time.perf_counter() - t0_rec) * 1000
-
-        # Sort top-to-bottom, left-to-right
-        regions.sort(key=lambda r: (r.box[:, 1].min(), r.box[:, 0].min()))
-
-        total_ms = (time.perf_counter() - t_start) * 1000
-        darwin.spinner_stop(spinner_id, success=True)
-
-        self._log(
-            f"OCR complete: {len(regions)} regions in {total_ms:.1f}ms "
-            f"(det={t_det:.1f} cls={t_cls:.1f} rec={t_rec:.1f})",
-            LogType.SUCCESS,
-        )
-
-        meta = self._build_metadata(img, t_start, t_det, t_cls, t_rec, len(regions))
-        result = OCRResult(regions=regions, metadata=meta)
-
-        if return_annotated:
-            result.annotated_image = self._draw_boxes(img, regions)
-
-        return result
-
-    # ── Internal: Session loading (FLEXIBLE PATH RESOLUTION) ───────────────
-
-    def _load_sessions(self) -> None:
-        try:
-            import onnxruntime as ort
-        except ImportError:
-            self._log("onnxruntime required. pip install onnxruntime", LogType.ERROR)
-            raise
-
-        self._onnx_runtime_version = ort.__version__
-
-        available = ort.get_available_providers()
-        preferred = ["CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
-        providers = [p for p in preferred if p in available] or ["CPUExecutionProvider"]
-        self._device = providers[0].replace("ExecutionProvider", "")
-
-        sess_opts = ort.SessionOptions()
-        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-
-        def resolve_path(name: str, patterns: List[str]) -> Path:
-            """
-            Try multiple patterns (with or without subfolder).
-            Patterns are tried in order; the first existing file is used.
-            """
-            for pattern in patterns:
-                p = self.model_dir / pattern
-                if p.exists():
-                    return p
-                # Also try without any subfolder (flat)
-                flat = Path(pattern).name
-                p_flat = self.model_dir / flat
-                if p_flat.exists():
-                    return p_flat
-            raise FileNotFoundError(f"Missing model {name}: tried {patterns}")
-
-        # Detection and recognition are required
-        det_path = resolve_path(
-            "detection",
-            ["PP-OCRv4/ch_PP-OCRv4_det_infer.onnx", "ch_PP-OCRv4_det_infer.onnx"]
-        )
-        rec_path = resolve_path(
-            "recognition",
-            ["PP-OCRv4/ch_PP-OCRv4_rec_infer.onnx", "ch_PP-OCRv4_rec_infer.onnx"]
-        )
-
-        self._log(f"Loading detection: {det_path}")
-        self._det_session = ort.InferenceSession(str(det_path), sess_options=sess_opts, providers=providers)
-
-        self._log(f"Loading recognition: {rec_path}")
-        self._rec_session = ort.InferenceSession(str(rec_path), sess_options=sess_opts, providers=providers)
-
-        # Classification is optional – try to load it, but if not found, warn and continue
-        try:
-            cls_path = resolve_path(
-                "classification",
-                ["PP-OCRv4/ch_PP-OCRv4_cls_infer.onnx", "ch_PP-OCRv4_cls_infer.onnx"]
-            )
-            self._log(f"Loading classification: {cls_path}")
-            self._cls_session = ort.InferenceSession(str(cls_path), sess_options=sess_opts, providers=providers)
-            self._log("Classification model loaded – orientation correction enabled.", LogType.SUCCESS)
-        except FileNotFoundError:
-            self._cls_session = None
-            self._log("Classification model not found – orientation correction disabled.", LogType.WARNING)
-
-        self._log(f"Providers: {providers}")
-
-    # ── Internal: Image loading ──────────────────────────────────────────────
-
-    @staticmethod
-    def _load_image(image: Union[str, Path, bytes, np.ndarray, Image.Image]) -> np.ndarray:
-        """Load image to BGR numpy array."""
-        if isinstance(image, (str, Path)):
-            img = cv2.imread(str(image), cv2.IMREAD_COLOR)
-            if img is None:
-                raise FileNotFoundError(f"Cannot read image: {image}")
-        elif isinstance(image, bytes):
-            arr = np.frombuffer(image, np.uint8)
-            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-        elif isinstance(image, Image.Image):
-            img = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-        elif isinstance(image, np.ndarray):
-            img = image.copy()
-            if img.ndim == 2:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-            elif img.shape[2] == 4:
-                img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
-            elif img.shape[2] == 3:
-                # Assume RGB, convert to BGR
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        else:
-            raise TypeError(f"Unsupported image type: {type(image)}")
-        return img
-
-    # ── Internal: Detection ──────────────────────────────────────────────────
-
-    def _detect(self, img: np.ndarray) -> List[np.ndarray]:
-        h, w = img.shape[:2]
-        ratio = self.det_limit_side / max(h, w)
-        if ratio < 1.0:
-            new_h, new_w = int(h * ratio), int(w * ratio)
-        else:
-            new_h, new_w = h, w
-
-        pad_h = (32 - new_h % 32) % 32
-        pad_w = (32 - new_w % 32) % 32
-        resize_h, resize_w = new_h + pad_h, new_w + pad_w
-
-        resized = cv2.resize(img, (resize_w, resize_h))
-        pad = np.zeros((resize_h, resize_w, 3), dtype=np.uint8)
-        pad[:new_h, :new_w] = resized[:new_h, :new_w]   # ← FIXED
-
-        # Normalize
-        norm = pad.astype(np.float32) / 255.0
-        norm = (norm - DET_MEAN) / DET_STD
-        tensor = np.transpose(norm, (2, 0, 1))[np.newaxis, ...].astype(np.float32)
-
-        # Inference
-        outputs = self._det_session.run(None, {"x": tensor})
-        pred = outputs[0][0, 0]  # (H, W)
-
-        # Postprocess: threshold + contours
-        binary = (pred > DET_THRESH).astype(np.uint8) * 255
-
-        # Scale back to original image
-        scale_h = resize_h / h
-        scale_w = resize_w / w
-
-        contours, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        boxes = []
-        for cnt in contours[:DET_MAX_CANDIDATES]:
-            if len(cnt) < 4:
+        for key, info in MODELS.items():
+            file_path = model_dir / info["file"]
+            if not file_path.exists():
+                errors.append(f"{key}: missing '{info['file']}'")
                 continue
-            # Min area rect
-            rect = cv2.minAreaRect(cnt)
-            box = cv2.boxPoints(rect)  # (4, 2)
-            # Scale back
-            box[:, 0] /= scale_w
-            box[:, 1] /= scale_h
-            # Unclip / expand
-            box = self._unclip(box, DET_UNCLIP_RATIO)
-            # Check size
-            if self._box_size(box) < DET_MIN_SIZE * DET_MIN_SIZE:
+
+            size = file_path.stat().st_size
+            bounds = VERIFY[key]
+            if size < bounds["min_bytes"]:
+                errors.append(
+                    f"{key}: '{info['file']}' too small ({size / 1_048_576:.1f} MB < "
+                    f"{bounds['min_bytes'] / 1_048_576:.1f} MB) — likely truncated"
+                )
+            elif size > bounds["max_bytes"]:
+                errors.append(
+                    f"{key}: '{info['file']}' unexpectedly large ({size / 1_048_576:.1f} MB > "
+                    f"{bounds['max_bytes'] / 1_048_576:.1f} MB)"
+                )
+
+        if errors:
+            return False, "; ".join(errors)
+        return True, ""
+
+    # -----------------------------------------------------------------------
+    # Model lifecycle
+    # -----------------------------------------------------------------------
+
+    def load(self) -> None:
+        """One-time setup: download ONNX files if missing, verify integrity, init engine."""
+        # 1. Verify current state
+        ok, err = self.verify_integrity(self.model_dir)
+        if not ok:
+            darwin.log(f"OCR models missing or corrupt: {err}", LogType.WARNING)
+            self._ensure_models()
+
+        # 2. Verify after download
+        ok, err = self.verify_integrity(self.model_dir)
+        if not ok:
+            darwin.log(f"OCR model verification failed after download: {err}", LogType.ERROR)
+            raise RuntimeError(f"OCR model integrity check failed: {err}")
+
+        # 3. Initialize engine
+        self._engine = self._init_engine()
+        darwin.log("RapidOCR engine loaded and verified.", LogType.INFO)
+
+    def _ensure_models(self) -> None:
+        """Download missing models from HuggingFace SWHL/RapidOCR mirror."""
+        from huggingface_hub import hf_hub_download
+        import shutil
+
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+
+        for key, info in MODELS.items():
+            file_path = self.model_dir / info["file"]
+            if file_path.exists():
                 continue
-            boxes.append(box.astype(np.float32))
 
-        # NMS-like deduplication (simplified: remove heavily overlapping)
-        boxes = self._filter_boxes(boxes)
-        # Sort top-to-bottom
-        boxes.sort(key=lambda b: (b[:, 1].min(), b[:, 0].min()))
-        return boxes
+            darwin.log(f"Downloading OCR {key} model → {file_path}", LogType.INFO)
+            try:
+                downloaded_path = hf_hub_download(
+                    repo_id=info["hf_repo"],
+                    filename=info["hf_path"],
+                    local_dir=str(self.model_dir),
+                )
 
-    @staticmethod
-    def _unclip(box: np.ndarray, ratio: float) -> np.ndarray:
-        """Expand box outward by ratio."""
-        poly = box.copy()
-        area = cv2.contourArea(poly)
-        if area < 1:
-            return poly
-        # Simple expansion: offset from center
-        center = poly.mean(axis=0)
-        poly = center + (poly - center) * ratio
-        return poly
+                darwin.log(f"Downloaded to: {downloaded_path}")
 
-    @staticmethod
-    def _box_size(box: np.ndarray) -> float:
-        """Approximate box area via shoelace."""
-        x, y = box[:, 0], box[:, 1]
-        return 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+                downloaded_path_obj = Path(downloaded_path)
+                if downloaded_path_obj.parent != self.model_dir:
+                    target_path = self.model_dir / info["file"]
+                    darwin.log(f"Moving {downloaded_path} to {target_path}")
+                    shutil.move(str(downloaded_path), str(target_path))
 
-    
-    
-    @staticmethod
-    def _filter_boxes(boxes: List[np.ndarray], threshold: float = 0.7) -> List[np.ndarray]:
-        """Simple overlap filter. Remove boxes that are mostly inside another."""
-        if len(boxes) < 2:
-            return boxes
-        keep = []
-        for i, b in enumerate(boxes):
-            area_b = RapidOCRInference._box_size(b)
-            if area_b < 1:
-                continue
-            suppressed = False
-            for j, other in enumerate(boxes):
-                if i == j:
-                    continue
-                if b.shape != (4, 2) or other.shape != (4, 2):
-                    continue
-                try:
-                    # intersectConvexConvex returns (area, polygon)
-                    _, inter = cv2.intersectConvexConvex(np.array(b), np.array(other))
-                except cv2.error:
-                    continue
-                # inter is the intersection polygon (or None if no intersection)
-                if inter is not None and inter.size >= 6:  # at least 3 points -> 6 coordinates
-                    inter_area = cv2.contourArea(inter)
-                    if inter_area / area_b > threshold:
-                        if area_b < RapidOCRInference._box_size(other):
-                            suppressed = True
-                            break
-            if not suppressed:
-                keep.append(b)
-        return keep
-    # ── Internal: Crop and align ─────────────────────────────────────────────
+                    try:
+                        downloaded_path_obj.parent.rmdir()
+                    except OSError:
+                        pass
 
-    @staticmethod
-    def _crop_box(img: np.ndarray, box: np.ndarray, height: int = 48) -> np.ndarray:
-        """Perspective crop of a rotated box to a straight rectangle."""
-        w = int(np.linalg.norm(box[0] - box[1]))
-        h = int(np.linalg.norm(box[1] - box[2]))
-        if h > w * 1.5:
-            # Vertical text: reorder so width is the long side
-            dst = np.array([[0, 0], [h, 0], [h, height], [0, height]], dtype=np.float32)
-        else:
-            dst = np.array([[0, 0], [w, 0], [w, height], [0, height]], dtype=np.float32)
+                    file_path = target_path
+                else:
+                    file_path = downloaded_path_obj
 
-        # Ensure box is ordered tl, tr, br, bl
-        box = RapidOCRInference._order_points(box)
-        M = cv2.getPerspectiveTransform(box.astype(np.float32), dst)
-        crop = cv2.warpPerspective(img, M, (int(dst[2][0]), int(dst[2][1])))
-        return crop
+                if not file_path.exists():
+                    raise RuntimeError(f"File not found after download: {file_path}")
 
-    @staticmethod
-    def _order_points(pts: np.ndarray) -> np.ndarray:
-        """Order rect points: top-left, top-right, bottom-right, bottom-left."""
-        rect = np.zeros((4, 2), dtype=np.float32)
-        s = pts.sum(axis=1)
-        diff = np.diff(pts, axis=1)
-        rect[0] = pts[np.argmin(s)]
-        rect[2] = pts[np.argmax(s)]
-        rect[1] = pts[np.argmin(diff)]
-        rect[3] = pts[np.argmax(diff)]
-        return rect
+                size_mb = file_path.stat().st_size / 1_048_576
+                darwin.log(f"Downloaded {key} model ({size_mb:.1f} MB)", LogType.INFO)
 
-    # ── Internal: Classification ─────────────────────────────────────────────
+            except Exception as e:
+                darwin.log(f"Failed to download {key} model: {e}", LogType.ERROR)
+                raise RuntimeError(f"OCR model download failed for {key}: {e}")
 
-    def _classify(self, crop: np.ndarray) -> Tuple[int, float]:
-        # If cls session is not available, assume normal orientation
-        if self._cls_session is None:
-            return 0, 1.0
+    def _init_engine(self):
+        """Initialize RapidOCR v3.x with dot-notation params dict."""
+        from rapidocr import RapidOCR
 
-        """Run orientation classifier. Returns (label, score)."""
-        # Resize to cls input
-        h, w = crop.shape[:2]
-        ratio = min(CLS_INPUT_SHAPE[0] / w, CLS_INPUT_SHAPE[1] / h)
-        new_w, new_h = int(w * ratio), int(h * ratio)
-        resized = cv2.resize(crop, (new_w, new_h))
-
-        pad = np.zeros((CLS_INPUT_SHAPE[1], CLS_INPUT_SHAPE[0], 3), dtype=np.uint8)
-        pad[:new_h, :new_w] = resized
-
-        norm = pad.astype(np.float32) / 255.0
-        norm = (norm - CLS_MEAN) / CLS_STD
-        tensor = np.transpose(norm, (2, 0, 1))[np.newaxis, ...].astype(np.float32)
-
-        outputs = self._cls_session.run(None, {"x": tensor})
-        probs = self._softmax(outputs[0][0])
-        label = int(np.argmax(probs))
-        score = float(probs[label])
-        return label, score
-
-    @staticmethod
-    def _softmax(x: np.ndarray) -> np.ndarray:
-        e = np.exp(x - np.max(x))
-        return e / e.sum()
-
-    # ── Internal: Recognition ──────────────────────────────────────────────
-
-    def _preprocess_rec(self, crop: np.ndarray) -> np.ndarray:
-        """Preprocess crop for recognition. Returns normalized tensor."""
-        h, w = crop.shape[:2]
-        ratio = min(REC_INPUT_SHAPE[0] / w, REC_INPUT_SHAPE[1] / h)
-        new_w, new_h = int(w * ratio), int(h * ratio)
-        resized = cv2.resize(crop, (new_w, new_h))
-
-        pad = np.zeros((REC_INPUT_SHAPE[1], REC_INPUT_SHAPE[0], 3), dtype=np.uint8)
-        pad[:new_h, :new_w] = resized
-
-        norm = pad.astype(np.float32) / 255.0
-        norm = (norm - REC_MEAN) / REC_STD
-        tensor = np.transpose(norm, (2, 0, 1)).astype(np.float32)
-        return tensor
-
-    def _recognize_batch(self, inputs: List[np.ndarray]) -> Tuple[List[str], List[float]]:
-        """Run recognition on a batch of preprocessed crops."""
-        if not inputs:
-            return [], []
-
-        # Stack batch
-        batch = np.stack(inputs, axis=0).astype(np.float32)  # (B, 3, H, W)
-        outputs = self._rec_session.run(None, {"x": batch})
-        preds = outputs[0]  # (B, T, C)
-
-        texts = []
-        scores = []
-        for pred in preds:
-            text, score = self._ctc_decode(pred)
-            texts.append(text)
-            scores.append(score)
-        return texts, scores
-
-    def _ctc_decode(self, pred: np.ndarray) -> Tuple[str, float]:
-        """CTC greedy decode."""
-        char_list = []
-        score_list = []
-        pred_indices = np.argmax(pred, axis=1)
-
-        for i, idx in enumerate(pred_indices):
-            if idx != CTC_BLANK_IDX and (i == 0 or idx != pred_indices[i - 1]):
-                if idx < len(self.char_dict):
-                    char_list.append(self.char_dict[idx])
-                score_list.append(float(pred[i, idx]))
-
-        text = "".join(char_list)
-        score = np.mean(score_list) if score_list else 0.0
-        return text, score
-
-    # ── Internal: Visualization ──────────────────────────────────────────────
-
-    @staticmethod
-    def _draw_boxes(img: np.ndarray, regions: List[TextRegion]) -> np.ndarray:
-        """Draw bounding boxes and text on image for debugging."""
-        vis = img.copy()
-        for i, r in enumerate(regions):
-            box = r.box.astype(np.int32)
-            cv2.polylines(vis, [box], True, (0, 255, 0), 2)
-            label = f"{i}: {r.text} ({r.score:.2f})"
-            cv2.putText(vis, label, tuple(box[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        return vis
-
-    # ── Internal: Metadata ───────────────────────────────────────────────────
-
-    def _build_metadata(
-        self,
-        img: np.ndarray,
-        t_start: float,
-        t_det: float,
-        t_cls: float,
-        t_rec: float,
-        num_regions: int,
-    ) -> OCRMetadata:
-        h, w = img.shape[:2]
-        total_ms = (time.perf_counter() - t_start) * 1000
-        return OCRMetadata(
-            model_name="RapidOCR PP-OCRv4",
-            repo_id=self.repo_id,
-            device=self._device,
-            onnx_runtime_version=self._onnx_runtime_version,
-            inference_time_ms=round(total_ms, 3),
-            num_text_regions=num_regions,
-            image_size=(w, h),
-            det_time_ms=round(t_det, 3),
-            cls_time_ms=round(t_cls, 3),
-            rec_time_ms=round(t_rec, 3),
-            det_model="ch_PP-OCRv4_det_infer.onnx",
-            cls_model="ch_PP-OCRv4_cls_infer.onnx",
-            rec_model="ch_PP-OCRv4_rec_infer.onnx",
-        )
-
-    # ── Info ─────────────────────────────────────────────────────────────────
-
-    def get_model_info(self) -> dict:
-        """Return static info about the loaded models."""
-        if not self.is_loaded():
-            return {"status": "not_loaded", "model_dir": str(self.model_dir)}
-
-        has_cls = self._cls_session is not None
-        return {
-            "status": "loaded",
-            "model_dir": str(self.model_dir),
-            "repo_id": self.repo_id,
-            "device": self._device,
-            "onnx_runtime_version": self._onnx_runtime_version,
-            "det_limit_side": self.det_limit_side,
-            "rec_batch_size": self.rec_batch_size,
-            "char_dict_size": len(self.char_dict),
-            "orientation_correction": has_cls,
+        params = {
+            "Global.text_score": self.confidence_threshold,
+            "Det.model_path": str(self.model_dir / MODELS["det"]["file"]),
+            "Det.thresh": self.det_db_thresh,
+            "Det.box_thresh": self.det_db_box_thresh,
+            "Det.unclip_ratio": 1.5,
+            "Cls.model_path": str(self.model_dir / MODELS["cls"]["file"]),
+            "Rec.model_path": str(self.model_dir / MODELS["rec"]["file"]),
         }
+        return RapidOCR(params=params)
+
+    # -----------------------------------------------------------------------
+    # Public API
+    # -----------------------------------------------------------------------
+
+    async def extract_text(
+        self,
+        image: Union[str, Path, Image.Image],
+        preserve_layout: bool = True,
+    ) -> str:
+        """
+        Dual-pass extraction with post-processing fixes for English text.
+
+        Args:
+            image: Input image (path, Path, or PIL Image)
+            preserve_layout: If True, keep newlines from multi-line detection.
+                             If False, collapse all whitespace to single spaces.
+                             Use False for simple English text extraction.
+
+        Returns:
+            Concatenated text or empty string.
+        """
+        pil_image = self._to_pil(image)
+
+        # Pass 1 — raw
+        text, confidence = await self._run_ocr(pil_image)
+        if confidence >= self.confidence_threshold and text:
+            return self._post_process(text, preserve_layout)
+
+        # Pass 2 — synthetic-image preprocessing
+        darwin.log(f"OCR pass 1 weak (conf={confidence:.2f}), attempting preprocessing...")
+        preprocessed = self._preprocess_for_synthetic(pil_image)
+        text, confidence = await self._run_ocr(preprocessed)
+
+        if confidence >= self.confidence_threshold and text:
+            return self._post_process(text, preserve_layout)
+
+        darwin.log(f"OCR failed both passes (best conf={confidence:.2f})", LogType.WARNING)
+        return ""
+
+    # -----------------------------------------------------------------------
+    # Post-processing
+    # -----------------------------------------------------------------------
+
+    def _post_process(self, text: str, preserve_layout: bool) -> str:
+        """
+        Clean up OCR output for English text.
+
+        The ch_PP-OCRv4_rec model (Chinese) does not preserve inter-word spaces
+        well. We apply heuristics to recover them.
+        """
+        if not text:
+            return ""
+
+        if preserve_layout:
+            # Keep newlines, but normalize line-internal whitespace
+            lines = text.split("\n")
+            cleaned_lines = [self._recover_spaces(line) for line in lines]
+            return "\n".join(cleaned_lines)
+        else:
+            # Collapse everything to single spaces
+            flat = text.replace("\n", " ")
+            flat = re.sub(r"\s+", " ", flat)
+            return self._recover_spaces(flat).strip()
+
+    def _recover_spaces(self, text: str) -> str:
+        """
+        Heuristic: insert spaces between camelCase/PascalCase transitions
+        and around punctuation to recover English word boundaries.
+
+        Examples:
+            "HelloWorld"   → "Hello World"
+            "DarkBackground" → "Dark Background"
+            "Text123!@#"   → "Text 123 ! @ #" (handled by caller)
+        """
+        # Insert space before uppercase letters that follow lowercase (camelCase boundary)
+        text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+        # Insert space after punctuation if followed by a letter/number
+        text = re.sub(r"([.,;:!?])([A-Za-z0-9])", r"\1 \2", text)
+        # Insert space before opening brackets/parens
+        text = re.sub(r"([A-Za-z0-9])([\[({])", r"\1 \2", text)
+        # Collapse multiple spaces
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    # -----------------------------------------------------------------------
+    # Internal helpers
+    # -----------------------------------------------------------------------
+
+    async def _run_ocr(self, image: Image.Image) -> Tuple[str, float]:
+        """Run RapidOCR in a thread and return (text, mean_confidence)."""
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(self._thread_pool, self._sync_ocr, image)
+
+        if not result or not result.txts:
+            return "", 0.0
+
+        texts = result.txts
+        scores = result.scores
+
+        full_text = "\n".join(texts)
+        mean_conf = float(sum(scores) / len(scores)) if scores else 0.0
+        return full_text, mean_conf
+
+    def _sync_ocr(self, image: Image.Image):
+        """Synchronous RapidOCR call — pass numpy array for v3.x compatibility."""
+        img_array = np.array(image.convert("RGB"))
+        return self._engine(img_array)
+
+    def _to_pil(self, image: Union[str, Path, Image.Image]) -> Image.Image:
+        """Normalize input to PIL RGB."""
+        if isinstance(image, (str, Path)):
+            return Image.open(image).convert("RGB")
+        if isinstance(image, Image.Image):
+            return image.convert("RGB")
+        raise TypeError(f"Unsupported image type: {type(image)}")
+
+    def _preprocess_for_synthetic(self, image: Image.Image) -> Image.Image:
+        """
+        Degrade a perfect synthetic image so the DB detector sees 'real' text.
+        Pipeline: slight blur → gaussian noise → adaptive threshold → back to RGB.
+        """
+        img = image.filter(ImageFilter.GaussianBlur(radius=0.5))
+
+        arr = np.array(img).astype(np.int16)
+        noise = np.random.normal(0, 4, arr.shape).astype(np.int16)
+        arr = np.clip(arr + noise, 0, 255).astype(np.uint8)
+
+        gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
+        binary = cv2.adaptiveThreshold(
+            gray, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY, 11, 2
+        )
+
+        rgb = cv2.cvtColor(binary, cv2.COLOR_GRAY2RGB)
+        return Image.fromarray(rgb)
+
+    def __del__(self):
+        self._thread_pool.shutdown(wait=False)

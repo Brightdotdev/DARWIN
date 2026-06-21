@@ -1,29 +1,25 @@
 """
 Parser.py — Document parsing dispatcher.
+Supports both local files and URLs. All URL fetching and content handling is encapsulated here.
 """
 
 import re
 import tempfile
 from pathlib import Path
 from urllib.parse import urlparse
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Ingestion.Parsing.UrlFetcher import fetch_url, validate_url, resolve_file_type
+from src.features.Ingestion.Parsing.UrlFetcher import fetch_url, validate_url
 from src.features.Ingestion.Parsing.HtmlProcessor import extract_content
-from src.features.Ingestion.Parsing.PdfExtractors import parse_pdf,parse_markitdown,check_file_size
+from src.features.Ingestion.Parsing.PdfExtractors import parse_pdf, parse_markitdown, check_file_size
 from src.features.Ingestion.Parsing.lib import (
     ParsedDocument,
     SUPPORTED_TYPES,
     detect_type,
     is_supported,
-    PRIVATE_IP_PREFIXES,
     URL_RE,
-    BLOCKED_HOSTS,
-)
-from src.features.Ingestion.Parsing.lib import (
     is_good_enough,
-    
 )
 from src.features.Ingestion.Parsing.TextExtractors import (
     parse_html,
@@ -33,7 +29,6 @@ from src.features.Ingestion.Parsing.TextExtractors import (
     parse_ebook,
     parse_email,
 )
-
 
 # ── Parser dispatch map ─────────────────────────────────────────────────────
 PARSER_MAP = {
@@ -52,21 +47,41 @@ def is_url(path_or_url: str | Path) -> bool:
     return isinstance(path_or_url, str) and URL_RE.match(path_or_url) is not None
 
 
-# ── Local file parsing ──────────────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────────────────
 def parse(
-    file_path: str | Path,
+    source: Union[str, Path],
     images_dir: Path | None = None,
     caption: bool = False,
     precise: bool = False,
+    display_name: Optional[str] = None,
 ) -> ParsedDocument:
-    """Parse a single file or URL into a ParsedDocument."""
-    if is_url(file_path):
-        return parse_url(file_path, images_dir=images_dir, caption=caption, precise=precise)
+    """
+    Parse a local file or URL.
 
-    path = Path(file_path).resolve()
+    Args:
+        source: Local file path (Path or str) or URL string.
+        images_dir: Directory to store extracted images (if any).
+        caption: Whether to generate captions during extraction (currently only for PDFs).
+        precise: Use precise extraction (layout‑aware for PDFs, markdown output for HTML).
+        display_name: Optional override for the returned document's filename.
+                      If not given, the basename of the file or the URL is used.
+
+    Returns:
+        ParsedDocument with extracted text, metadata, and images.
+    """
+    if is_url(source):
+        return parse_url(
+            str(source),
+            images_dir=images_dir,
+            caption=caption,
+            precise=precise,
+            display_name=display_name,
+        )
+
+    path = Path(source).resolve()
     if not path.exists():
         return ParsedDocument(
-            display_text="", embedding_text="", filename=path.name,
+            display_text="", embedding_text="", filename=display_name or path.name,
             page_count=0, file_type="unknown",
             error=f"file not found: {path}",
         )
@@ -75,7 +90,7 @@ def parse(
     if file_type is None:
         supported = ", ".join(SUPPORTED_TYPES.keys())
         return ParsedDocument(
-            display_text="", embedding_text="", filename=path.name,
+            display_text="", embedding_text="", filename=display_name or path.name,
             page_count=0, file_type="unsupported",
             error=f"unsupported file type '{path.suffix}' — supported: {supported}",
         )
@@ -83,12 +98,19 @@ def parse(
     size_error = check_file_size(path)
     if size_error:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=path.name,
-            page_count=0, file_type="unknown",
+            display_text="", embedding_text="", filename=display_name or path.name,
+            page_count=0, file_type=file_type,
             error=size_error,
         )
 
-    return _dispatch_parser(file_type, path, path.name, images_dir, caption, precise)
+    return _dispatch_parser(
+        file_type,
+        path,
+        display_name or path.name,
+        images_dir,
+        caption,
+        precise,
+    )
 
 
 # ── URL parsing ─────────────────────────────────────────────────────────────
@@ -98,6 +120,7 @@ def parse_url(
     caption: bool = False,
     precise: bool = False,
     timeout: float = 30.0,
+    display_name: Optional[str] = None,
 ) -> ParsedDocument:
     """
     Fetch a URL and parse its content.
@@ -107,7 +130,7 @@ def parse_url(
     err = validate_url(url)
     if err:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=url,
+            display_text="", embedding_text="", filename=display_name or url,
             page_count=0, file_type="unknown",
             error=err,
         )
@@ -115,7 +138,7 @@ def parse_url(
     data, content_type, fetch_err = fetch_url(url, timeout=timeout)
     if fetch_err:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=url,
+            display_text="", embedding_text="", filename=display_name or url,
             page_count=0, file_type="unknown",
             error=fetch_err,
         )
@@ -130,7 +153,14 @@ def parse_url(
             tmp.write(data)
             tmp_path = Path(tmp.name)
         try:
-            return _dispatch_parser("pdf", tmp_path, url, images_dir, caption, precise)
+            return _dispatch_parser(
+                "pdf",
+                tmp_path,
+                display_name or url,
+                images_dir,
+                caption,
+                precise,
+            )
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -144,11 +174,18 @@ def parse_url(
             file_type = detect_type(tmp_path)
             if file_type is None:
                 return ParsedDocument(
-                    display_text="", embedding_text="", filename=url,
+                    display_text="", embedding_text="", filename=display_name or url,
                     page_count=0, file_type="unsupported",
                     error=f"unsupported content from URL (type: {content_type})",
                 )
-            return _dispatch_parser(file_type, tmp_path, url, images_dir, caption, precise)
+            return _dispatch_parser(
+                file_type,
+                tmp_path,
+                display_name or url,
+                images_dir,
+                caption,
+                precise,
+            )
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -156,10 +193,10 @@ def parse_url(
     if content_type in ("text/html", "application/xhtml+xml", "text/plain", "text/markdown", ""):
         text, metadata = extract_content(url, html_bytes=data, precise=precise)
 
-        if not text or not is_good_enough(text,darwin):
+        if not text or not is_good_enough(text, darwin):
             error_msg = metadata.get("error") or "extracted text is empty or garbled"
             return ParsedDocument(
-                display_text="", embedding_text="", filename=url,
+                display_text="", embedding_text="", filename=display_name or url,
                 page_count=0, file_type="html",
                 error=error_msg,
             )
@@ -167,7 +204,7 @@ def parse_url(
         return ParsedDocument(
             display_text=text,
             embedding_text=text,
-            filename=url,
+            filename=display_name or url,
             page_count=_words_to_pages(text),
             file_type="html",
             metadata=metadata,
@@ -175,7 +212,7 @@ def parse_url(
         )
 
     return ParsedDocument(
-        display_text="", embedding_text="", filename=url,
+        display_text="", embedding_text="", filename=display_name or url,
         page_count=0, file_type="unsupported",
         error=f"unsupported content type '{content_type}'",
     )
@@ -209,7 +246,7 @@ def _dispatch_parser(
             error=f"{type(e).__name__}: {e}",
         )
 
-    if not is_good_enough(embedding_text,darwin):
+    if not is_good_enough(embedding_text, darwin):
         return ParsedDocument(
             display_text="", embedding_text="", filename=display_name,
             page_count=page_count, file_type=file_type, metadata=metadata,

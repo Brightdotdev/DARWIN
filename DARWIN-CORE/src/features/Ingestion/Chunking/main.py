@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
 
 from src.core.Storage.DarwinStore import DarwinStore
-from src.features.Ingestion.Chunking.Chunker import chunk_for_model
+from src.features.Ingestion.Chunking.Chunker import chunk_document
 from src.features.Ingestion.Chunking.lib import Chunk, ChunkingArgs
 from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
@@ -240,7 +240,7 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
         try:
             t0 = time.perf_counter()
 
-            chunks = chunk_for_model(
+            chunks = chunk_document(
                 text=chunk_text,
                 source=filename,
             )
@@ -264,9 +264,7 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
                 filename=filename,
                 records=chunks,
             )
-
-            # TODO: If your store supports a content-only index table, also save:
-            # store.save_content_records(filename, records=content_chunks)
+            
 
             avg_tokens = sum(c.token_count for c in chunks) // len(chunks)
             darwin.log(
