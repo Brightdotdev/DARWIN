@@ -10,6 +10,28 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 class StoreSearch:
     """Unified retrieval: vector, numpy fallback, and multi-file search."""
 
+    def _finalize_matches(
+        self,
+        filename: str,
+        matches: list[tuple[int, float]],
+        columns: list[str] | None,
+        cls: Any,
+    ) -> list[Any]:
+        """Shared tail: query records, attach scores, optional reconstruct."""
+        if not matches:
+            return []
+
+        indices, scores = zip(*matches)
+        rows = self.query_records(filename, columns=columns, index__in=list(indices))
+        score_map = {idx: sc for idx, sc in matches}
+        for row in rows:
+            row["_score"] = score_map.get(row.get("index", -1), 0.0)
+
+        if cls is not None:
+            from src.core.Storage.StoreUtils import reconstruct_records
+            return reconstruct_records(rows, cls=cls)
+        return rows
+
     def retrieve_by_vector(
         self,
         filename: str,
@@ -19,17 +41,7 @@ class StoreSearch:
         cls: Any = None,
     ) -> list[Any]:
         matches = self.search_vector(filename, query_vec, k=k)
-        if not matches:
-            return []
-        indices, _ = zip(*matches)
-        rows = self.query_records(filename, columns=columns, index__in=list(indices))
-        score_map = {idx: sc for idx, sc in matches}
-        for row in rows:
-            row["_score"] = score_map.get(row.get("index", -1), 0.0)
-        if cls is not None:
-            from src.core.Storage.StoreUtils import reconstruct_records
-            return reconstruct_records(rows, cls=cls)
-        return rows
+        return self._finalize_matches(filename, matches, columns, cls)
 
     def retrieve_by_numpy(
         self,
@@ -55,16 +67,9 @@ class StoreSearch:
 
         chunk_indices = [index_map[pos] if index_map else int(pos) for pos in top_positions.tolist()]
         scores = similarities[top_positions].tolist()
+        matches = list(zip(chunk_indices, scores))
 
-        rows = self.query_records(filename, columns=columns, index__in=chunk_indices)
-        score_map = {idx: sc for idx, sc in zip(chunk_indices, scores)}
-        for row in rows:
-            row["_score"] = score_map.get(row.get("index", -1), 0.0)
-
-        if cls is not None:
-            from src.core.Storage.StoreUtils import reconstruct_records
-            return reconstruct_records(rows, cls=cls)
-        return rows
+        return self._finalize_matches(filename, matches, columns, cls)
 
     def search_single(
         self,

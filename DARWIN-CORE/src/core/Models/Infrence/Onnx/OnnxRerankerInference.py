@@ -1,9 +1,3 @@
-# src/core/Models/ModelInference/OnnxRerankerInference.py
-"""
-ONNX Cross-Encoder Reranker Inference — MS MARCO MiniLM-L6-v2
-Loads ONNX model + tokenizer, runs pairwise query-document scoring.
-"""
-
 import gc
 import time
 from dataclasses import dataclass

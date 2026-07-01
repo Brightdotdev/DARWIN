@@ -50,10 +50,12 @@ dependencies = [
     "rapidocr-onnxruntime>=1.4.4",
     "tokenizers>=0.22.2",
     "pillow>=12.2.0",
-    "pynvml>=13.0.1",
     "sentencepiece>=0.2.1",
     "rapidocr>=3.8.4",
     "pyvis>=0.3.2",
+    "nvidia-ml-py>=13.610.43",
+    "aiohttp-sse>=2.2.0",
+    "fastmcp>=3.4.2",
 ]
 
 [project.scripts]

@@ -24,6 +24,17 @@ def get_darwin_dir() -> Path:
 def default_models_dir() -> Path:
     """Platform-appropriate global models directory."""
     return get_darwin_dir() / "models"
+
+
+def default_darwin_config_dir() -> Path:
+    """Platform-appropriate global models directory."""
+    return get_darwin_dir() / "config"
+
+
+
+def default_darwin_logs() -> Path:
+    """Platform-appropriate global models directory."""
+    return get_darwin_dir() / "logs"
     
 
 

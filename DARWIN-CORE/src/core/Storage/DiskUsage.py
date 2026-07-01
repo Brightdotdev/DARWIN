@@ -7,7 +7,7 @@ Labels hashed directories with original filenames from the file registry.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable
 
 from src.core.Storage.StorePaths import StorePaths, ARTIFACT_MANIFEST
 from src.core.Models.Lib.ModelRegistry import find_spec

@@ -20,7 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # ── Imports ──────────────────────────────────────────────────────────────
 
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, Verbosity
+from src.core.Logger.DarwinLogger import darwin
 
 
 
@@ -32,10 +32,7 @@ from src.core.Logger.DarwinLogger import darwin, Verbosity
 if __name__ == "__main__":
     # test_root = Path(__file__).parent / "teststore_v2"
     darwin.configure(
-        enable_websocket=False,
-        enable_history=True,
-        verbosity_default=Verbosity.NORMAL,
-        show_banner=True,
+     show_banner=True,
     )
     store = DarwinStore("../../darwin_store_test")
     store.repair_registry()

@@ -77,7 +77,7 @@ async def test_ocr():
                 "success": True
             })
         except Exception as e:
-            darwin.log(f"❌ Error on {filepath.name}: {e}", LogType.ERROR)
+            darwin.log(f"  Error on {filepath.name}: {e}", LogType.ERROR)
             results.append({
                 "file": filepath.name,
                 "extracted": f"ERROR: {e}",

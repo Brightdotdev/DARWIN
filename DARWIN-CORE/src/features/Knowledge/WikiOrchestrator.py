@@ -1,634 +1,777 @@
 """
-Darwin Wiki / Knowledge Orchestrator (v3.4)
-Central orchestrator for all wiki + graph operations.
-
-NEW: Batch operations, staged builds, multi-file entity overlap detection.
-
-REQUIRES: Full Darwin stack (src.core.Logger, src.core.Storage)
+Darwin WikiOrchestrator — Per-File Entity Wiki & Graph
+Pure math + NLP. No LLM. Logs everything via DarwinLogger.
 """
 
-from typing import List, Dict, Any, Optional, Set, Literal
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import gc
+import json
+import math
+import re
+import threading
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from datetime import datetime
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
+from src.core.Logger.DarwinLogger import darwin
+from src.core.Models.ModelManager import modelManager
+from src.core.Models.Lib.ModelRegistry import ModelCategory
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Knowledge.WikiBuilder import WikiBuilder
-from src.features.Knowledge.WikiIndex import WikiIndex, NullWikiIndex
-from src.features.Knowledge.GraphBuilder import GraphBuilder
-from src.features.Knowledge.lib import EntityRecord
 
 
-# ── Build stage enum ───────────────────────────────────────────────────
-
-BUILD_STAGE = Literal["wiki", "graph", "both"]
-
-
-# ── Batch result dataclass ─────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# Tunable Configuration
+# ═══════════════════════════════════════════════════════════════════════════════
 
 @dataclass
-class BatchBuildResult:
-    """Result of a single file in a batch build operation."""
-    filename: str
-    success: bool
-    wiki_built: bool = False
-    graph_built: bool = False
-    error: Optional[str] = None
-    entity_count: int = 0
-    duration_ms: float = 0.0
+class ExtractionConfig:
+    """All tweakable parameters. Sensible defaults work across any domain."""
+    similarity_threshold: float = 0.82
+    window_size: int = 5
+    min_mentions: int = 1
+    min_entropy: float = 0.3
+    max_entity_len: int = 60
+    pmi_threshold: Optional[float] = None
+    max_nodes_html: int = 150
+    html_title: str = "Knowledge Graph"
+    skip_labels: Set[str] = field(default_factory=lambda: {
+        "CARDINAL", "ORDINAL", "PERCENT", "MONEY", "QUANTITY", "DATE", "TIME"
+    })
 
 
-@dataclass  
-class MultiFileEntityResult:
-    """
-    Result of listing entities across multiple files.
+# ═══════════════════════════════════════════════════════════════════════════════
+# Internal Data Structures
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    Includes per-file views AND merged overlap detection.
-    """
-    # Per-file entity lists (filename -> list of EntityRecord)
-    per_file: Dict[str, List[EntityRecord]] = field(default_factory=dict)
+@dataclass
+class _ExtractedEntity:
+    text: str
+    label: str
+    start: int
+    end: int
+    source: str = "ner"
+    sentence: str = ""
 
-    # Merged view: entities that appear in ANY of the files
-    merged_entities: List[EntityRecord] = field(default_factory=list)
 
-    # Overlap analysis: entities that appear in MULTIPLE files
-    overlapping: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+@dataclass
+class _WikiEntry:
+    canonical_name: str
+    aliases: Set[str] = field(default_factory=set)
+    types: Set[str] = field(default_factory=set)
+    mention_count: int = 0
+    contexts: List[str] = field(default_factory=list)
+    first_seen: str = ""
 
-    # Entities unique to each file (appear in only one)
-    unique_per_file: Dict[str, List[EntityRecord]] = field(default_factory=dict)
 
-    # Cross-file statistics
-    total_entities_across_all: int = 0
-    total_unique_entities: int = 0
-    overlap_count: int = 0
+# ═══════════════════════════════════════════════════════════════════════════════
+# Canonicalizer  (pure math)
+# ═══════════════════════════════════════════════════════════════════════════════
 
+class _EntityCanonicalizer:
+    def __init__(self, threshold: float = 0.82):
+        self.threshold = threshold
+        self._entries: Dict[str, _WikiEntry] = {}
+        self._lock = threading.RLock()
+
+    def _normalize(self, text: str) -> str:
+        text = text.strip()
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'^(Mr\.?|Mrs\.?|Ms\.?|Dr\.?|Prof\.?)\s+', '', text, flags=re.I)
+        text = re.sub(r'^(\w)\.\s+', r'\1 ', text)
+        text = re.sub(r'^([\w\s]+),\s+(\w)\.?$', r'\2 \1', text)
+        return text.lower().strip()
+
+    def _similarity(self, a: str, b: str) -> float:
+        lev = SequenceMatcher(None, self._normalize(a), self._normalize(b)).ratio()
+
+        def tri(s):
+            s = s.lower()
+            return {s[i:i + 3] for i in range(len(s) - 2)}
+        ta, tb = tri(a), tri(b)
+        jac = len(ta & tb) / len(ta | tb) if ta and tb else 0.0
+        return max(lev, jac)
+
+    def resolve(self, mention: str, entity_type: str) -> str:
+        with self._lock:
+            norm = self._normalize(mention)
+
+            for canonical, entry in self._entries.items():
+                if self._normalize(canonical) == norm:
+                    entry.aliases.add(mention)
+                    entry.types.add(entity_type)
+                    return canonical
+                if norm in {self._normalize(a) for a in entry.aliases}:
+                    entry.aliases.add(mention)
+                    entry.types.add(entity_type)
+                    return canonical
+
+            best_match, best_score = None, 0.0
+            for canonical in self._entries:
+                score = self._similarity(mention, canonical)
+                if score > best_score:
+                    best_score = score
+                    best_match = canonical
+
+            if best_match and best_score >= self.threshold:
+                entry = self._entries[best_match]
+                entry.aliases.add(mention)
+                entry.types.add(entity_type)
+                return best_match
+
+            self._entries[mention] = _WikiEntry(
+                canonical_name=mention,
+                aliases={mention},
+                types={entity_type},
+                first_seen=datetime.utcnow().isoformat(),
+            )
+            return mention
+
+    def update(self, canonical: str, context: str):
+        with self._lock:
+            entry = self._entries[canonical]
+            entry.mention_count += 1
+            if len(entry.contexts) < 15:
+                entry.contexts.append(context[:300])
+
+    def to_dict(self) -> dict:
+        return {
+            name: {
+                "canonical_name": e.canonical_name,
+                "aliases": list(e.aliases),
+                "types": list(e.types),
+                "mention_count": e.mention_count,
+                "contexts": e.contexts,
+                "first_seen": e.first_seen,
+            }
+            for name, e in self._entries.items()
+        }
+
+    @property
+    def entries(self) -> Dict[str, _WikiEntry]:
+        return dict(self._entries)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Three-Tier Extractor
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class _EntityExtractor:
+    def __init__(self, config: ExtractionConfig):
+        self.cfg = config
+
+    def extract(self, doc) -> List[_ExtractedEntity]:
+        candidates = []
+
+        # Tier 1: NER
+        for ent in doc.ents:
+            if ent.label_ in self.cfg.skip_labels:
+                continue
+            if len(ent.text) > self.cfg.max_entity_len:
+                continue
+            sent = ent.sent.text[:400] if ent.sent else ""
+            candidates.append(_ExtractedEntity(
+                text=ent.text.strip(), label=ent.label_,
+                start=ent.start_char, end=ent.end_char,
+                source="ner", sentence=sent,
+            ))
+
+        # Tier 2: Noun chunks
+        if doc.has_annotation("DEP"):
+            for chunk in doc.noun_chunks:
+                overlap = any(
+                    ent.start <= chunk.start < ent.end or ent.start < chunk.end <= ent.end
+                    for ent in doc.ents
+                )
+                if overlap:
+                    continue
+
+                words = [t.text for t in chunk if t.pos_ not in ("DET", "PUNCT")]
+                if not words:
+                    continue
+                chunk_text = " ".join(words)
+                if len(chunk_text) > self.cfg.max_entity_len:
+                    continue
+
+                sent = chunk.sent.text[:400] if chunk.sent else ""
+                candidates.append(_ExtractedEntity(
+                    text=chunk_text, label="CONCEPT",
+                    start=chunk.start_char, end=chunk.end_char,
+                    source="noun_chunk", sentence=sent,
+                ))
+
+        return self._filter(candidates)
+
+    def _filter(self, candidates: List[_ExtractedEntity]) -> List[_ExtractedEntity]:
+        if not candidates:
+            return []
+
+        counts = Counter(c.text for c in candidates)
+
+        if len(counts) > 10:
+            sorted_counts = sorted(counts.values(), reverse=True)
+            idx = max(0, int(len(sorted_counts) * 0.3) - 1)
+            floor = sorted_counts[min(idx, len(sorted_counts) - 1)]
+        else:
+            floor = 1
+        floor = max(floor, self.cfg.min_mentions)
+
+        contexts = defaultdict(list)
+        for c in candidates:
+            contexts[c.text].append(c.sentence)
+
+        def entropy(texts: List[str]) -> float:
+            if not texts:
+                return 0.0
+            joined = " ".join(texts)
+            if len(joined) < 10:
+                return 1.0
+            freqs = Counter(joined)
+            total = len(joined)
+            probs = [f / total for f in freqs.values()]
+            return -sum(p * math.log2(p) for p in probs if p > 0)
+
+        filtered = []
+        for c in candidates:
+            if counts[c.text] < floor:
+                continue
+            if self.cfg.min_entropy > 0 and entropy(contexts[c.text]) < self.cfg.min_entropy:
+                continue
+            filtered.append(c)
+
+        return filtered
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Graph Builder  (PMI + Dependency)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class _GraphBuilder:
+    def __init__(self, config: ExtractionConfig):
+        self.cfg = config
+        self._cooccur: Dict[Tuple[str, str], int] = defaultdict(int)
+        self._dep_edges: List[dict] = []
+
+    def process(self, doc, canonical_map: Dict[str, str]):
+        sentences = list(doc.sents)
+
+        # Co-occurrence
+        for i in range(len(sentences)):
+            window = sentences[i:i + self.cfg.window_size]
+            window_text = " ".join(s.text for s in window)
+
+            found = set()
+            for raw, canonical in canonical_map.items():
+                if raw in window_text:
+                    found.add(canonical)
+
+            for a in found:
+                for b in found:
+                    if a >= b:
+                        continue
+                    key = tuple(sorted((a, b)))
+                    self._cooccur[key] += 1
+
+        # Dependency paths
+        if doc.has_annotation("DEP"):
+            for token in doc:
+                if token.dep_ in ("nsubj", "nsubjpass") and token.head.pos_ == "VERB":
+                    subj_can = None
+                    for raw, canonical in canonical_map.items():
+                        if raw in token.text or token.text in raw:
+                            subj_can = canonical
+                            break
+
+                    for child in token.head.children:
+                        if child.dep_ in ("dobj", "pobj", "attr"):
+                            obj_can = None
+                            for raw, canonical in canonical_map.items():
+                                if raw in child.text or child.text in raw:
+                                    obj_can = canonical
+                                    break
+
+                            if subj_can and obj_can and subj_can != obj_can:
+                                self._dep_edges.append({
+                                    "source": subj_can, "target": obj_can,
+                                    "label": token.head.lemma_,
+                                    "type": "dependency", "weight": 1.0,
+                                })
+
+    def build(self, canonicalizer: _EntityCanonicalizer) -> Tuple[List[dict], List[dict]]:
+        entries = canonicalizer.entries
+        if not entries:
+            return [], []
+
+        nodes = []
+        for name, entry in entries.items():
+            nodes.append({
+                "id": name, "label": name,
+                "type": list(entry.types)[0] if entry.types else "UNKNOWN",
+                "mentions": entry.mention_count,
+                "aliases": list(entry.aliases),
+            })
+
+        total_cooccur = sum(self._cooccur.values()) or 1
+        entity_counts = {name: e.mention_count for name, e in entries.items()}
+        total_mentions = sum(entity_counts.values()) or 1
+
+        edges = []
+        for (a, b), count in self._cooccur.items():
+            if a not in entity_counts or b not in entity_counts:
+                continue
+            p_a = entity_counts[a] / total_mentions
+            p_b = entity_counts[b] / total_mentions
+            p_ab = count / total_cooccur
+
+            if p_ab > 0 and p_a > 0 and p_b > 0:
+                pmi = math.log2(p_ab / (p_a * p_b))
+            else:
+                pmi = 0.0
+
+            edges.append({
+                "source": a, "target": b,
+                "weight": round(pmi, 4), "count": count,
+                "type": "cooccurrence", "label": "",
+            })
+
+        if edges:
+            if self.cfg.pmi_threshold is None:
+                pmi_vals = [e["weight"] for e in edges]
+                mean_pmi = sum(pmi_vals) / len(pmi_vals)
+                std_pmi = math.sqrt(sum((x - mean_pmi) ** 2 for x in pmi_vals) / len(pmi_vals))
+                threshold = mean_pmi + 0.5 * std_pmi
+            else:
+                threshold = self.cfg.pmi_threshold
+            edges = [e for e in edges if e["weight"] >= threshold]
+
+        edges.extend(self._dep_edges)
+
+        seen = set()
+        deduped = []
+        for e in edges:
+            key = tuple(sorted((e["source"], e["target"])))
+            if key in seen and e["type"] == "cooccurrence":
+                continue
+            if e["type"] == "dependency":
+                seen.add(key)
+            deduped.append(e)
+
+        return nodes, deduped
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HTML Visualizer
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class _GraphVisualizer:
+    TYPE_COLORS = {
+        "PERSON": "#e74c3c", "ORG": "#3498db", "GPE": "#2ecc71",
+        "LOC": "#f39c12", "CONCEPT": "#9b59b6", "PRODUCT": "#1abc9c",
+        "EVENT": "#e67e22", "WORK_OF_ART": "#34495e", "LAW": "#16a085",
+        "LANGUAGE": "#d35400", "UNKNOWN": "#95a5a6",
+    }
+
+    @classmethod
+    def generate(cls, nodes: List[dict], edges: List[dict], title: str = "Knowledge Graph", max_nodes: int = 150) -> str:
+        if len(nodes) > max_nodes:
+            degree = Counter()
+            for e in edges:
+                degree[e["source"]] += 1
+                degree[e["target"]] += 1
+            top = sorted(degree, key=degree.get, reverse=True)[:max_nodes]
+            top_set = set(top)
+            nodes = [n for n in nodes if n["id"] in top_set]
+            edges = [e for e in edges if e["source"] in top_set and e["target"] in top_set]
+
+        max_mentions = max((n.get("mentions", 1) for n in nodes), default=1)
+
+        cy_nodes = []
+        for n in nodes:
+            t = n.get("type", "UNKNOWN")
+            color = cls.TYPE_COLORS.get(t, "#95a5a6")
+            size = 20 + 40 * math.log2(n.get("mentions", 1) + 1) / math.log2(max_mentions + 1)
+            cy_nodes.append({
+                "data": {
+                    "id": n["id"], "label": n["label"], "type": t,
+                    "mentions": n.get("mentions", 1), "aliases": n.get("aliases", []),
+                },
+                "style": {"background-color": color, "width": size, "height": size}
+            })
+
+        cy_edges = []
+        for e in edges:
+            cy_edges.append({
+                "data": {
+                    "source": e["source"], "target": e["target"],
+                    "weight": e.get("weight", 1), "label": e.get("label", ""),
+                    "type": e.get("type", "cooccurrence"),
+                }
+            })
+
+        legend_html = "".join(
+            f'<div class="legend-item"><span class="type" style="background:{c}"></span>{t}</div>'
+            for t, c in cls.TYPE_COLORS.items()
+        )
+
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<script src="https://unpkg.com/cytoscape@3.26.0/dist/cytoscape.min.js"></script>
+<style>
+body{{margin:0;font-family:system-ui,sans-serif;background:#1a1a2e;color:#eee}}
+#cy{{width:100vw;height:100vh}}
+#panel{{position:absolute;top:10px;right:10px;width:280px;background:rgba(0,0,0,0.8);
+padding:15px;border-radius:8px;font-size:13px;max-height:80vh;overflow-y:auto}}
+#panel h3{{margin:0 0 10px;color:#fff}}
+#panel .stat{{margin:5px 0;color:#aaa}}
+#panel .type{{display:inline-block;width:12px;height:12px;border-radius:50%;margin-right:6px}}
+.legend{{margin-top:10px}}
+.legend-item{{display:flex;align-items:center;margin:3px 0}}
+</style>
+</head>
+<body>
+<div id="cy"></div>
+<div id="panel">
+<h3>{title}</h3>
+<div class="stat">Nodes: {len(nodes)}</div>
+<div class="stat">Edges: {len(edges)}</div>
+<div class="legend">{legend_html}</div>
+<div id="info" style="margin-top:15px;"></div>
+</div>
+<script>
+var cy=cytoscape({{
+  container:document.getElementById('cy'),
+  elements:{json.dumps(cy_nodes + cy_edges)},
+  style:[
+    {{selector:'node',style:{{'label':'data(label)','color':'#fff','font-size':'10px',
+      'text-valign':'center','text-halign':'center','border-width':2,'border-color':'#fff'}}}},
+    {{selector:'edge',style:{{'width':2,'line-color':'#888','target-arrow-color':'#888',
+      'target-arrow-shape':'triangle','curve-style':'bezier','label':'data(label)',
+      'color':'#ccc','font-size':'9px'}}}},
+    {{selector:'edge[type="cooccurrence"]',style:{{'line-style':'dotted','target-arrow-shape':'none'}}}}
+  ],
+  layout:{{name:'cose',padding:10,nodeRepulsion:400000,idealEdgeLength:100,animate:true}}
+}});
+cy.on('tap','node',function(evt){{
+  var n=evt.target;
+  var info='<strong>'+n.data('label')+'</strong><br>Type: '+n.data('type')+
+           '<br>Mentions: '+n.data('mentions')+
+           '<br>Aliases: '+(n.data('aliases')||[]).join(', ');
+  document.getElementById('info').innerHTML=info;
+}});
+</script>
+</body>
+</html>"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Main Orchestrator
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class WikiOrchestrator:
-    """Central orchestrator for all wiki + graph operations."""
+    VALID_STAGES = {"wiki", "graph", "html"}
 
-    def __init__(self, store: DarwinStore, max_workers: int = 4):
+    def __init__(self, store: DarwinStore, model_manager=None):
         self.store = store
-        self.builder = WikiBuilder(store)
-        self.max_workers = max_workers
+        self.model_manager = model_manager or modelManager
+        self._nlp_engine = None
+        self._nlp_available: Optional[bool] = None
+        self._lock = threading.RLock()
 
-    # ═══════════════════════════════════════════════════════════════════
-    # SINGLE-FILE OPERATIONS (existing, preserved)
-    # ═══════════════════════════════════════════════════════════════════
+    # ── NLP Lifecycle ─────────────────────────────────────────────────────────
 
-    def get_wiki(self, filename: str) -> WikiIndex:
-        return self.builder.get(filename)
+    def _ensure_nlp(self) -> bool:
+        if self._nlp_available is not None:
+            return self._nlp_available
 
-    def build_wiki(self, filename: str, rerun: bool = False) -> WikiIndex:
-        return self.builder.build(filename, rerun=rerun)
+        with self._lock:
+            if self._nlp_available is not None:
+                return self._nlp_available
 
-    def entity_card(self, entity_name: str, filenames: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
-        wiki = self._load_any_wiki(filenames)
-        if wiki is None:
-            return None
-        matches = wiki.detect_entities(entity_name)
-        if not matches:
-            return None
-        e = matches[0]
-        return {
-            "entity_id": e.entity_id,
-            "canonical_name": e.canonical_name,
-            "type": e.type,
-            "mentions": e.frequency,
-            "spread": e.spread,
-            "salience": e.salience,
-            "doc_ids": e.doc_ids,
-            "top_cooccurring": [],
-        }
-
-    def expand_query(self, query: str, filenames: Optional[List[str]] = None,
-                     top_n: int = 5) -> str:
-        wiki = self._load_any_wiki(filenames)
-        if wiki is None:
-            return query
-        entities = wiki.detect_entities(query)
-        if not entities:
-            return query
-
-        stats = wiki.get_entity_stats(filenames)
-        top_entities = stats.get("top_entities", [])
-
-        expansions = set()
-        for e in entities[:3]:
-            for top in top_entities:
-                comp = wiki.compare_entities(e.entity_id, top["entity_id"])
-                if comp.get("cooccurrence_score", 0) > 0.2:
-                    expansions.add(top["canonical_name"])
-                    if len(expansions) >= top_n:
-                        break
-            if len(expansions) >= top_n:
-                break
-
-        if expansions:
-            return f"{query} {' '.join(expansions)}"
-        return query
-
-    def document_profile(self, filename: str) -> Dict[str, Any]:
-        wiki = self.get_wiki(filename)
-        if isinstance(wiki, NullWikiIndex):
-            return {}
-        return wiki.get_document_profile(filename)
-
-    # ═══════════════════════════════════════════════════════════════════
-    # BATCH WIKI BUILD
-    # ═══════════════════════════════════════════════════════════════════
-
-    def build_wiki_batch(
-        self,
-        filenames: List[str],
-        rerun: bool = False,
-        min_frequency: int = 2,
-        use_multiprocess: bool = True,
-        max_workers: Optional[int] = None,
-        on_progress: Optional[Any] = None,  # Callable[[str, bool], None]
-    ) -> Dict[str, BatchBuildResult]:
-        """
-        Build wikis for multiple files in parallel.
-
-        Parameters:
-            filenames:      List of files to index
-            rerun:          Force rebuild even if cached
-            min_frequency:  Minimum mentions to keep an entity
-            use_multiprocess: Use ProcessPoolExecutor for spaCy extraction
-            max_workers:    Thread pool size (default: self.max_workers)
-            on_progress:    Callback(filename, success) for progress tracking
-
-        Returns:
-            Dict mapping filename -> BatchBuildResult
-        """
-        workers = max_workers or self.max_workers
-        results: Dict[str, BatchBuildResult] = {}
-
-        import time
-
-        def _build_one(fname: str) -> BatchBuildResult:
-            start = time.time()
             try:
-                wiki = self.builder.build(
-                    fname,
-                    rerun=rerun,
-                    min_frequency=min_frequency,
-                    use_multiprocess=use_multiprocess,
-                )
-                success = not isinstance(wiki, NullWikiIndex)
-                entity_count = len(wiki._entities) if success else 0
-                dur = (time.time() - start) * 1000
+                engine = self.model_manager.get(ModelCategory.NLP)
+                if engine is None:
+                    engine = self.model_manager.ensure(ModelCategory.NLP, auto_download=False)
+                if engine is None:
+                    darwin.warning("No NLP model registered in ModelManager. Knowledge extraction disabled.")
+                    self._nlp_available = False
+                    return False
 
-                if on_progress:
-                    on_progress(fname, success)
+                self._nlp_engine = engine
+                self._nlp_available = True
+                model_name = getattr(engine, "model_name", "unknown")
+                darwin.success(f"NLP model ready: {model_name}")
+                return True
 
-                return BatchBuildResult(
-                    filename=fname,
-                    success=success,
-                    wiki_built=success,
-                    entity_count=entity_count,
-                    duration_ms=dur,
-                )
             except Exception as e:
-                dur = (time.time() - start) * 1000
-                if on_progress:
-                    on_progress(fname, False)
-                return BatchBuildResult(
-                    filename=fname,
-                    success=False,
-                    error=str(e),
-                    duration_ms=dur,
-                )
+                darwin.error(f"NLP initialization failed: {e}")
+                self._nlp_available = False
+                return False
 
-        # Use ThreadPoolExecutor for I/O-bound store operations
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(_build_one, f): f for f in filenames}
-            for future in as_completed(futures):
-                result = future.result()
-                results[result.filename] = result
+    def _get_doc(self, text: str):
+        if self._nlp_engine is None:
+            raise RuntimeError("NLP not loaded")
+        return next(self._nlp_engine.pipe([text], batch_size=1))
 
-        # Log summary
-        successes = sum(1 for r in results.values() if r.success)
-        darwin.log(
-            f"Wiki batch: {successes}/{len(filenames)} succeeded",
-            LogType.SUCCESS if successes == len(filenames) else LogType.WARNING
-        )
+    # ── Per-File Processing ───────────────────────────────────────────────────
 
-        return results
+    def _process_single(self, filename: str, text: str, stages: Set[str], config: ExtractionConfig):
+        """Internal workhorse. Logs everything. Returns nothing."""
+        try:
+            doc = self._get_doc(text)
+        except Exception as e:
+            darwin.error(f"[{filename}] NLP parsing failed: {e}")
+            return
 
-    # ═══════════════════════════════════════════════════════════════════
-    # STAGED KNOWLEDGE BUILD (wiki / graph / both)
-    # ═══════════════════════════════════════════════════════════════════
+        canonicalizer = _EntityCanonicalizer(threshold=config.similarity_threshold)
+        raw_to_canonical: Dict[str, str] = {}
 
-    def build_knowledge(
+        # ── Stage: Wiki ─────────────────────────────────────────────────────
+        if "wiki" in stages:
+            try:
+                extractor = _EntityExtractor(config)
+                candidates = extractor.extract(doc)
+
+                for c in candidates:
+                    canonical = canonicalizer.resolve(c.text, c.label)
+                    raw_to_canonical[c.text] = canonical
+                    canonicalizer.update(canonical, c.sentence)
+
+                wiki_data = {
+                    "filename": filename,
+                    "generated_at": datetime.utcnow().isoformat(),
+                    "entities": canonicalizer.to_dict(),
+                    "stats": {
+                        "total_mentions": sum(e.mention_count for e in canonicalizer.entries.values()),
+                        "unique_entities": len(canonicalizer.entries),
+                    },
+                }
+
+                self.store.save_wiki(filename, wiki_data)
+                darwin.info(f"[{filename}] Wiki saved: {len(canonicalizer.entries)} entities, {wiki_data['stats']['total_mentions']} total mentions")
+
+            except Exception as e:
+                darwin.error(f"[{filename}] Wiki build failed: {e}")
+                return
+
+        # ── Stage: Graph ────────────────────────────────────────────────────
+        if "graph" in stages:
+            try:
+                if "wiki" not in stages:
+                    extractor = _EntityExtractor(config)
+                    candidates = extractor.extract(doc)
+                    for c in candidates:
+                        canonical = canonicalizer.resolve(c.text, c.label)
+                        raw_to_canonical[c.text] = canonical
+                        canonicalizer.update(canonical, c.sentence)
+
+                builder = _GraphBuilder(config)
+                builder.process(doc, raw_to_canonical)
+                nodes, edges = builder.build(canonicalizer)
+
+                self.store.save_graph(filename, nodes, edges)
+                dep_count = sum(1 for e in edges if e.get("type") == "dependency")
+                cooc_count = sum(1 for e in edges if e.get("type") == "cooccurrence")
+                darwin.info(f"[{filename}] Graph saved: {len(nodes)} nodes, {len(edges)} edges ({dep_count} dependency, {cooc_count} co-occurrence)")
+
+            except Exception as e:
+                darwin.error(f"[{filename}] Graph build failed: {e}")
+                return
+
+        # ── Stage: HTML ─────────────────────────────────────────────────────
+        if "html" in stages and "graph" in stages:
+            try:
+                graph_data = self.store.load_graph(filename)
+                nodes = graph_data.get("nodes", [])
+                edges = graph_data.get("edges", [])
+                if nodes:
+                    html = _GraphVisualizer.generate(
+                        nodes, edges,
+                        title=f"KG: {filename}",
+                        max_nodes=config.max_nodes_html,
+                    )
+                    self.store.save_graph_html(filename, html)
+                    darwin.info(f"[{filename}] HTML visualization saved")
+                else:
+                    darwin.warning(f"[{filename}] No graph nodes — skipping HTML")
+            except Exception as e:
+                darwin.warning(f"[{filename}] HTML generation failed: {e}")
+
+    # ── Public API ──────────────────────────────────────────────────────────────
+
+    def handle_knowledge(
         self,
         filename: str,
-        stage: BUILD_STAGE = "both",
+        *,
         rerun: bool = False,
-        min_frequency: int = 2,
-        use_multiprocess: bool = True,
-        graph_max_entities: int = 100,
-        graph_min_cooccurrence: float = 0.1,
-        graph_max_edges_per_node: int = 8,
-        graph_title: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        stages: Optional[List[str]] = None,
+        similarity_threshold: float = 0.82,
+        window_size: int = 5,
+        min_mentions: int = 1,
+        min_entropy: float = 0.3,
+        max_entity_len: int = 60,
+        pmi_threshold: Optional[float] = None,
+        max_nodes_html: int = 150,
+        html_title: str = "Knowledge Graph",
+        skip_labels: Optional[Set[str]] = None,
+    ) -> None:
         """
-        Build knowledge artifacts for a single file with stage control.
-
-        Parameters:
-            filename:                Target file
-            stage:                   "wiki" | "graph" | "both"
-            rerun:                   Force rebuild even if cached
-            min_frequency:           Minimum mentions for entity retention
-            use_multiprocess:        Use multiprocessing for spaCy extraction
-            graph_max_entities:      Max entities to include in graph
-            graph_min_cooccurrence:  Min co-occurrence score for edges
-            graph_max_edges_per_node: Max edges per node (degree cap)
-            graph_title:             Custom graph title (default: filename)
-
-        Returns:
-            Dict with keys: wiki_index, graph_html, graph_data, stats
+        Extract wiki and/or graph for a single file. Returns nothing.
+        All status is reported via DarwinLogger.
         """
-        result: Dict[str, Any] = {
-            "filename": filename,
-            "stage": stage,
-            "wiki_index": None,
-            "graph_html": None,
-            "graph_data": None,
-            "stats": {},
-            "errors": [],
-        }
+        if stages is None:
+            stages = {"wiki", "graph", "html"}
+        stages = {s.lower() for s in stages} & self.VALID_STAGES
 
-        # ── Stage 1: Build Wiki ─────────────────────────────────────
-        if stage in ("wiki", "both"):
-            wiki = self.builder.build(
-                filename,
-                rerun=rerun,
-                min_frequency=min_frequency,
-                use_multiprocess=use_multiprocess,
-            )
-            if isinstance(wiki, NullWikiIndex):
-                result["errors"].append("Wiki build failed")
-                darwin.log(f"Knowledge build: wiki failed for {filename}", LogType.ERROR)
-                return result
+        if not stages:
+            darwin.warning(f"[{filename}] No valid stages requested")
+            return
 
-            result["wiki_index"] = wiki
-            result["stats"]["wiki"] = {
-                "entity_count": len(wiki._entities),
-                "doc_chunks": len(wiki._doc_chunks.get(filename, set())),
-            }
-            darwin.log(f"Wiki built for {filename}: {len(wiki._entities)} entities", LogType.SUCCESS)
+        if not self._ensure_nlp():
+            darwin.error(f"[{filename}] Cannot process — NLP engine unavailable")
+            return
+
+        text = self.store.load_markdown(filename)
+        if text is None:
+            darwin.error(f"[{filename}] Not registered in DarwinStore — cannot load markdown")
+            return
+
+        if not text.strip() or len(text.strip()) < 20:
+            darwin.warning(f"[{filename}] Text too short ({len(text.strip())} chars) — skipping")
+            return
+
+        # Rerun guard
+        if not rerun:
+            missing = []
+            if "wiki" in stages and not self.store.has_wiki(filename):
+                missing.append("wiki")
+            if "graph" in stages and not self.store.has_graph(filename):
+                missing.append("graph")
+            if "html" in stages and not self.store.has_graph(filename):
+                missing.append("graph (for html)")
+
+            if not missing:
+                darwin.info(f"[{filename}] Skipped — artifacts already exist (rerun=False)")
+                return
+
+        config = ExtractionConfig(
+            similarity_threshold=similarity_threshold,
+            window_size=window_size,
+            min_mentions=min_mentions,
+            min_entropy=min_entropy,
+            max_entity_len=max_entity_len,
+            pmi_threshold=pmi_threshold,
+            max_nodes_html=max_nodes_html,
+            html_title=html_title,
+            skip_labels=skip_labels or ExtractionConfig().skip_labels,
+        )
+
+        darwin.info(f"[{filename}] Starting knowledge extraction — stages: {sorted(stages)}")
+        self._process_single(filename, text, stages, config)
+        darwin.success(f"[{filename}] Knowledge extraction complete")
+
+    def handle_knowledge_batch(
+        self,
+        filenames: List[str],
+        *,
+        rerun: bool = False,
+        stages: Optional[List[str]] = None,
+        **kwargs,
+    ) -> None:
+        """
+        Process multiple files with the NLP model kept hot in memory.
+        Logs per-file progress. Returns nothing.
+        """
+        if not filenames:
+            darwin.warning("Batch knowledge called with empty file list")
+            return
+
+        if stages is None:
+            stages = {"wiki", "graph", "html"}
+        stages = {s.lower() for s in stages} & self.VALID_STAGES
+
+        if not self._ensure_nlp():
+            darwin.error("Batch aborted — NLP engine unavailable")
+            return
+
+        darwin.info(f"Batch knowledge starting: {len(filenames)} file(s) — stages: {sorted(stages)}")
+
+        config = ExtractionConfig(
+            similarity_threshold=kwargs.get("similarity_threshold", 0.82),
+            window_size=kwargs.get("window_size", 5),
+            min_mentions=kwargs.get("min_mentions", 1),
+            min_entropy=kwargs.get("min_entropy", 0.3),
+            max_entity_len=kwargs.get("max_entity_len", 60),
+            pmi_threshold=kwargs.get("pmi_threshold", None),
+            max_nodes_html=kwargs.get("max_nodes_html", 150),
+            html_title=kwargs.get("html_title", "Knowledge Graph"),
+            skip_labels=kwargs.get("skip_labels") or ExtractionConfig().skip_labels,
+        )
+
+        processed = 0
+        skipped = 0
+        failed = 0
+
+        for filename in filenames:
+            text = self.store.load_markdown(filename)
+            if text is None:
+                darwin.error(f"[{filename}] Not registered — skipped")
+                failed += 1
+                continue
+
+            if not text.strip() or len(text.strip()) < 20:
+                darwin.warning(f"[{filename}] Text too short — skipped")
+                failed += 1
+                continue
+
+            # Rerun guard
+            if not rerun:
+                missing = []
+                if "wiki" in stages and not self.store.has_wiki(filename):
+                    missing.append("wiki")
+                if "graph" in stages and not self.store.has_graph(filename):
+                    missing.append("graph")
+                if "html" in stages and not self.store.has_graph(filename):
+                    missing.append("graph")
+
+                if not missing:
+                    darwin.info(f"[{filename}] Skipped — artifacts exist")
+                    skipped += 1
+                    continue
+
+            self._process_single(filename, text, stages, config)
+            processed += 1
+
+        darwin.success(
+            f"Batch complete: {processed} processed, {skipped} skipped, {failed} failed"
+        )
+
+    # ── Utilities ─────────────────────────────────────────────────────────────
+
+    def delete_knowledge(self, filename: str) -> None:
+        """Remove all knowledge artifacts for a file."""
+        ok_wiki = self.store.delete_wiki(filename)
+        ok_graph = self.store.delete_graph(filename)
+        ok_html = self.store.delete_graph_html(filename)
+
+        if ok_wiki or ok_graph or ok_html:
+            darwin.info(f"[{filename}] Knowledge artifacts deleted")
         else:
-            # Graph-only mode: load existing wiki
-            wiki = self.get_wiki(filename)
-            if isinstance(wiki, NullWikiIndex):
-                result["errors"].append("No existing wiki for graph-only build")
-                return result
-            result["wiki_index"] = wiki
+            darwin.warning(f"[{filename}] No knowledge artifacts found to delete")
 
-        # ── Stage 2: Build Graph ────────────────────────────────────
-        if stage in ("graph", "both"):
-            wiki = result["wiki_index"]
-            if wiki is None or isinstance(wiki, NullWikiIndex):
-                result["errors"].append("Cannot build graph: no wiki data")
-                return result
+    def get_wiki(self, filename: str) -> dict | None:
+        return self.store.load_wiki(filename)
 
-            gb = GraphBuilder(wiki)
+    def get_graph(self, filename: str) -> dict:
+        return self.store.load_graph(filename)
 
-            # Build graph data
-            graph_data = gb.build_graph_data(
-                filename,
-                max_entities=graph_max_entities,
-                min_cooccurrence=graph_min_cooccurrence,
-                max_edges_per_node=graph_max_edges_per_node,
-            )
-            result["graph_data"] = graph_data
 
-            # Build interactive HTML
-            title = graph_title or f"Entity Graph: {filename}"
-            html = gb.build_interactive_html(
-                filename,
-                max_entities=graph_max_entities,
-                title=title,
-            )
-            result["graph_html"] = html
+# ═══════════════════════════════════════════════════════════════════════════════
+# Factory
+# ═══════════════════════════════════════════════════════════════════════════════
 
-            # Persist
-            try:
-                self.store.save_graph(filename, graph_data["nodes"], graph_data["edges"])
-                self.store.save_graph_html(filename, html)
-                darwin.log(f"Graph saved for {filename}", LogType.SUCCESS)
-            except Exception as e:
-                result["errors"].append(f"Graph persistence failed: {e}")
-                darwin.log(f"Graph save failed for {filename}: {e}", LogType.ERROR)
-
-            result["stats"]["graph"] = {
-                "node_count": len(graph_data.get("nodes", [])),
-                "edge_count": len(graph_data.get("edges", [])),
-            }
-
-        return result
-
-    # ═══════════════════════════════════════════════════════════════════
-    # BATCH STAGED KNOWLEDGE BUILD
-    # ═══════════════════════════════════════════════════════════════════
-
-    def build_knowledge_batch(
-        self,
-        filenames: List[str],
-        stage: BUILD_STAGE = "both",
-        rerun: bool = False,
-        min_frequency: int = 2,
-        use_multiprocess: bool = True,
-        graph_max_entities: int = 100,
-        graph_min_cooccurrence: float = 0.1,
-        graph_max_edges_per_node: int = 8,
-        max_workers: Optional[int] = None,
-        on_progress: Optional[Any] = None,
-    ) -> Dict[str, Dict[str, Any]]:
-        """
-        Build knowledge (wiki + graph) for multiple files in parallel.
-
-        Parameters: (same as build_knowledge + batch params)
-            filenames:      List of files to process
-            stage:          "wiki" | "graph" | "both"
-            rerun:          Force rebuild even if cached
-            min_frequency:  Minimum mentions for entity retention
-            use_multiprocess: Use multiprocessing for spaCy extraction
-            graph_max_entities:      Max entities in graph
-            graph_min_cooccurrence:  Min co-occurrence for edges
-            graph_max_edges_per_node: Max edges per node
-            max_workers:    Thread pool size
-            on_progress:    Callback(filename, result_dict)
-
-        Returns:
-            Dict mapping filename -> build_knowledge result
-        """
-        workers = max_workers or self.max_workers
-        results: Dict[str, Dict[str, Any]] = {}
-
-        def _build_one(fname: str) -> Dict[str, Any]:
-            result = self.build_knowledge(
-                filename=fname,
-                stage=stage,
-                rerun=rerun,
-                min_frequency=min_frequency,
-                use_multiprocess=use_multiprocess,
-                graph_max_entities=graph_max_entities,
-                graph_min_cooccurrence=graph_min_cooccurrence,
-                graph_max_edges_per_node=graph_max_edges_per_node,
-            )
-            if on_progress:
-                on_progress(fname, result)
-            return result
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(_build_one, f): f for f in filenames}
-            for future in as_completed(futures):
-                result = future.result()
-                fname = result["filename"]
-                results[fname] = result
-
-        # Summary logging
-        total = len(filenames)
-        wiki_ok = sum(1 for r in results.values() if r.get("wiki_index") and not isinstance(r.get("wiki_index"), NullWikiIndex))
-        graph_ok = sum(1 for r in results.values() if r.get("graph_html"))
-        errors = sum(1 for r in results.values() if r.get("errors"))
-
-        darwin.log(
-            f"Knowledge batch: {wiki_ok}/{total} wiki, {graph_ok}/{total} graph, {errors} errors",
-            LogType.SUCCESS if errors == 0 else LogType.WARNING
-        )
-
-        return results
-
-    # ═══════════════════════════════════════════════════════════════════
-    # MULTI-FILE ENTITY LISTING WITH OVERLAP DETECTION
-    # ═══════════════════════════════════════════════════════════════════
-
-    def list_entities_for_files(
-        self,
-        filenames: List[str],
-        entity_type: Optional[str] = None,
-        sort_by: Literal["frequency", "spread", "salience", "name", "file_count"] = "salience",
-        limit: int = 50,
-        min_frequency: int = 1,
-        min_files_present: int = 1,
-        include_overlap_analysis: bool = True,
-    ) -> MultiFileEntityResult:
-        """
-        List entities across multiple files with rich overlap detection.
-
-        Parameters:
-            filenames:              List of files to query
-            entity_type:            Filter by entity type (e.g., "PERSON")
-            sort_by:                "frequency" | "spread" | "salience" | "name" | "file_count"
-            limit:                  Max entities to return in merged view
-            min_frequency:          Minimum total mentions across all files
-            min_files_present:      Minimum number of files an entity must appear in
-            include_overlap_analysis: Compute overlapping/unique entity sets
-
-        Returns:
-            MultiFileEntityResult with per-file, merged, overlap, and unique views
-        """
-        result = MultiFileEntityResult()
-
-        # Load all files into a merged WikiIndex
-        wiki = WikiIndex(self.store)
-        for fname in filenames:
-            wiki._load_file(fname)
-
-        # ── Per-file entity lists ─────────────────────────────────────
-        for fname in filenames:
-            file_entities = wiki.list_entities(
-                filenames=[fname],
-                entity_type=entity_type,
-                sort_by=sort_by if sort_by != "file_count" else "salience",
-                limit=999999,  # Get all for analysis
-                min_frequency=min_frequency,
-            )
-            result.per_file[fname] = file_entities
-
-        # ── Merged view: all entities across all files ──────────────
-        merged = wiki.list_entities(
-            filenames=filenames,
-            entity_type=entity_type,
-            sort_by=sort_by if sort_by != "file_count" else "salience",
-            limit=999999,
-            min_frequency=min_frequency,
-        )
-
-        # Filter by min_files_present
-        if min_files_present > 1:
-            merged = [e for e in merged if len(e.doc_ids) >= min_files_present]
-
-        # Apply limit to merged view
-        result.merged_entities = merged[:limit]
-        result.total_entities_across_all = len(merged)
-        result.total_unique_entities = len({e.entity_id for e in merged})
-
-        # ── Overlap analysis ────────────────────────────────────────
-        if include_overlap_analysis:
-            # Group entities by ID to find which files they appear in
-            entity_sources: Dict[str, Set[str]] = {}
-            for fname, entities in result.per_file.items():
-                for e in entities:
-                    if e.entity_id not in entity_sources:
-                        entity_sources[e.entity_id] = set()
-                    entity_sources[e.entity_id].add(fname)
-
-            # Build overlap map: entities appearing in 2+ files
-            for eid, sources in entity_sources.items():
-                if len(sources) >= 2:
-                    # Find the canonical record from merged view
-                    rec = next((e for e in merged if e.entity_id == eid), None)
-                    if rec:
-                        result.overlapping[eid] = {
-                            "canonical_name": rec.canonical_name,
-                            "type": rec.type,
-                            "sources": sorted(sources),
-                            "source_count": len(sources),
-                            "total_mentions": rec.frequency,
-                            "salience": rec.salience,
-                        }
-
-            result.overlap_count = len(result.overlapping)
-
-            # ── Unique per file ─────────────────────────────────────
-            for fname in filenames:
-                unique = []
-                for e in result.per_file[fname]:
-                    sources = entity_sources.get(e.entity_id, set())
-                    if len(sources) == 1 and fname in sources:
-                        unique.append(e)
-                result.unique_per_file[fname] = unique
-
-        # Re-sort merged if sort_by is file_count
-        if sort_by == "file_count":
-            result.merged_entities.sort(key=lambda e: (-len(e.doc_ids), -e.frequency))
-
-        return result
-
-    # ═══════════════════════════════════════════════════════════════════
-    # EXISTING GRAPH METHODS (preserved)
-    # ═══════════════════════════════════════════════════════════════════
-
-    def build_and_save_graph(self, filename: str,
-                             max_entities: int = 100,
-                             min_cooccurrence: float = 0.1,
-                             max_edges_per_node: int = 8,
-                             force_rebuild: bool = False) -> bool:
-        """Build entity graph data + HTML and persist both to the store."""
-        if not force_rebuild and self.store.has_graph(filename):
-            darwin.log(f"Graph already complete for {filename}. Use force_rebuild=True.")
-            return True
-
-        wiki = self.get_wiki(filename)
-        if isinstance(wiki, NullWikiIndex):
-            darwin.log(f"No wiki data for {filename} — cannot build graph.", LogType.ERROR)
-            return False
-
-        gb = GraphBuilder(wiki)
-        graph_data = gb.build_graph_data(
-            filename,
-            max_entities=max_entities,
-            min_cooccurrence=min_cooccurrence,
-            max_edges_per_node=max_edges_per_node
-        )
-        html = gb.build_interactive_html(
-            filename,
-            max_entities=max_entities,
-            title=f"Entity Graph: {filename}"
-        )
-
-        try:
-            self.store.save_graph(filename, graph_data["nodes"], graph_data["edges"])
-            self.store.save_graph_html(filename, html)
-            darwin.log(f"Graph and HTML saved for {filename}", LogType.SUCCESS)
-            return True
-        except Exception as e:
-            darwin.log(f"Failed to save graph for {filename}: {e}", LogType.ERROR)
-            return False
-
-    def build_and_save_interactive_graph(self, filename: str,
-                                     max_entities: int = 100,
-                                     title: str = "Entity Graph") -> bool:
-        """Build the interactive HTML (with sliders) and persist it."""
-        wiki = self.get_wiki(filename)
-        if isinstance(wiki, NullWikiIndex):
-            darwin.log(f"No wiki data for {filename} — cannot build graph.", LogType.ERROR)
-            return False
-
-        gb = GraphBuilder(wiki)
-        html = gb.build_interactive_html(filename, max_entities=max_entities, title=title)
-
-        try:
-            self.store.save_graph_html(filename, html)
-            data = gb.build_graph_data(filename, max_entities=max_entities,
-                                    min_cooccurrence=0.0, max_edges_per_node=30)
-            self.store.save_graph(filename, data["nodes"], data["edges"])
-
-            with open("enoch_interactive.html", "w", encoding="utf-8") as f:
-                f.write(html)
-            return True
-        except Exception as e:
-            darwin.log(f"Failed to save interactive graph: {e}", LogType.ERROR)
-            return False
-
-    def get_graph_html(self, filename: str) -> Optional[str]:
-        """Return the HTML string of the saved graph, if present."""
-        h = self.store._resolve_hash(filename)
-        if h is None:
-            return None
-        path = self.store.paths.graph_html_path(h)
-        if path.exists():
-            return path.read_text(encoding="utf-8")
-        return None
-
-    def get_graph_data(self, filename: str) -> Optional[Dict[str, list]]:
-        """
-        Return nodes and edges as lists of dicts.
-        Converts from the store's Parquet columnar format.
-        """
-        try:
-            raw = self.store.load_graph(filename)
-        except Exception:
-            return None
-        if not raw or (not raw.get("nodes") and not raw.get("edges")):
-            return None
-
-        nodes = self._columns_to_records(raw["nodes"]) if raw.get("nodes") else []
-        edges = self._columns_to_records(raw["edges"]) if raw.get("edges") else []
-        return {"nodes": nodes, "edges": edges}
-
-    # ── Internal helpers ───────────────────────────────────────────────
-
-    def _load_any_wiki(self, filenames: Optional[List[str]] = None) -> Optional[WikiIndex]:
-        """
-        Load a real wiki from the provided filenames, or fall back to
-        the first available indexed file in the store.
-        """
-        if filenames:
-            for f in filenames:
-                wiki = self.get_wiki(f)
-                if not isinstance(wiki, NullWikiIndex):
-                    return wiki
-
-        try:
-            all_files = self.store.list_indexed_files()
-            for f in all_files:
-                wiki = self.get_wiki(f)
-                if not isinstance(wiki, NullWikiIndex):
-                    return wiki
-        except Exception:
-            pass
-
-        return None
-
-    @staticmethod
-    def _columns_to_records(columns: dict) -> list[dict]:
-        """Convert columnar dict (from PyArrow to_pydict) back to list of records."""
-        if not columns:
-            return []
-        keys = list(columns.keys())
-        length = len(columns[keys[0]])
-        return [{k: columns[k][i] for k in keys} for i in range(length)]
+def create_wiki_orchestrator(store: DarwinStore) -> WikiOrchestrator:
+    return WikiOrchestrator(store)

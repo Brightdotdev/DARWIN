@@ -135,11 +135,11 @@ class StepLogger:
         if self.verbose:
             prefix = f"[{step}]"
             if level == "ERROR":
-                print(f"  ❌ {prefix} {message}")
+                print(f"    {prefix} {message}")
             elif level == "WARNING":
-                print(f"  ⚠️  {prefix} {message}")
+                print(f"    {prefix} {message}")
             elif level == "SUCCESS":
-                print(f"  ✅ {prefix} {message}")
+                print(f"   {prefix} {message}")
             else:
                 print(f"  ℹ️  {prefix} {message}")
 

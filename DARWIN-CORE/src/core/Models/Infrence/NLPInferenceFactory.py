@@ -1,10 +1,3 @@
-# src/core/Models/ModelLoading/API/NLPInferenceFactory.py
-"""
-Factory for creating spaCy NLP inference instances (local only).
-Manages model path, downloads, and active preferences.
-NLP is optional – deleting the active model is allowed.
-"""
-
 from pathlib import Path
 from typing import Optional, List
 

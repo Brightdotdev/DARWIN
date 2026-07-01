@@ -1,9 +1,3 @@
-# src/core/Models/Infrence/Onnx/OnnxEmbeddingInference.py
-"""
-ONNX embedding inference using lightweight tokenizers (no transformers).
-Supports E5, BGE, and other BERT‑based ONNX models.
-"""
-
 import gc
 import time
 from pathlib import Path
@@ -182,13 +176,13 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
         return UnifiedEmbeddingResult(embeddings=embeddings, metadata=metadata)
 
     def _encode_batch(self, batch: List[str]) -> np.ndarray:
-        """Tokenize and run ONNX inference on a batch. Returns embeddings as np.ndarray."""
+        """Tokenize and run ONNX inference. Auto-detects pooled vs raw output."""
         encodings = self._tokenizer.encode_batch(batch, add_special_tokens=True)
 
         max_len = max(len(e.ids) for e in encodings)
         max_len = min(max_len, self.max_length)
 
-        pad_token_id = self._tokenizer.token_to_id("[PAD]") or 0
+        pad_token_id = self._tokenizer.token_to_id("") or 0
 
         input_ids = np.array([
             e.ids[:max_len] + [pad_token_id] * (max_len - len(e.ids[:max_len]))
@@ -211,7 +205,30 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
             "token_type_ids": token_type_ids,
         })
 
-        return outputs[0]  # shape (batch, vector_size)
+        embeddings = outputs[0]
+
+        # AUTO-DETECT: pooled (2D) vs raw hidden states (3D)
+        if embeddings.ndim == 3:
+            # Raw hidden states: (batch, seq_len, hidden_dim)
+            # Mean pool using attention mask
+            mask_expanded = np.expand_dims(attention_mask, axis=-1).astype(np.float32)
+            sum_embeddings = np.sum(embeddings * mask_expanded, axis=1)
+            sum_mask = np.clip(np.sum(mask_expanded, axis=1), a_min=1e-9, a_max=None)
+            embeddings = sum_embeddings / sum_mask
+            
+            self._log(f"Applied mean pooling: {embeddings.shape}")
+
+        elif embeddings.ndim == 2:
+            # Already pooled: (batch, hidden_dim) — use as-is
+            pass
+
+        else:
+            raise ValueError(
+                f"Unexpected embedding dimensions: {embeddings.ndim}D shape {embeddings.shape}. "
+                f"Expected 2D (pooled) or 3D (raw hidden states)."
+            )
+
+        return embeddings
 
     # ── Introspection ──────────────────────────────────────────────────────
 

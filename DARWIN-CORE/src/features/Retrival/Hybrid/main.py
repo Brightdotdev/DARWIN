@@ -33,7 +33,7 @@ from src.features.Retrival.Hybrid.HybridSearchUtils import (
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.lib.Utils import scan_folder
-from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ============================================================================
@@ -69,7 +69,7 @@ def _print_inspection(results: List[HybridSearchResult], query: str) -> None:
         if r.links:
             darwin.log(f"    Links: {len(r.links)} found", LogType.INFO)
         if r.overlap_direction != OverlapDirection.NONE:
-            darwin.log(f"    Overlap: ⚠️ This chunk has {r.overlap_direction.value} overlap", LogType.WARNING)
+            darwin.log(f"    Overlap:  This chunk has {r.overlap_direction.value} overlap", LogType.WARNING)
         
         preview = r.text[:500].replace("\n", " ").strip()
         if len(r.text) > 500:
@@ -92,26 +92,30 @@ def _is_hybrid_searchable(filename: str | None, status: dict) -> bool:
     return file_data.get("is_hybrid_searchable", False)
 
 
+
+
 def _validate_files(
     files: List[str], 
-    store: DarwinStore
+    store: DarwinStore,
+    mode: str = "hybrid"
 ) -> List[str]:
-    """Validate files exist and are searchable, returning valid filenames."""
-    status = store.status()
-    valid_files = []
-    invalid_files = []
+    """
+    Validate files exist in the registry and are searchable in the given mode.
+    Handles both full file paths and bare filenames.
+    Returns list of valid filenames (base names only).
+    """
+    valid = []
     
-    for filename in files:
-        if _is_hybrid_searchable(filename, status):
-            valid_files.append(filename)
+    for file_path in files:
+        filename = Path(file_path).name
+        
+        # Check registry and search readiness in one call
+        if store.is_search_ready(filename, mode=mode):
+            valid.append(filename)
         else:
-            invalid_files.append(filename)
+            darwin.log(f"{file_path} is not searchable in {mode} mode", LogType.WARNING)
     
-    if invalid_files:
-        for f in invalid_files:
-            darwin.log(f"{f} is not searchable", LogType.WARNING)
-    return valid_files
-
+    return valid
 
 # ============================================================================
 # Core handler
@@ -121,6 +125,9 @@ def handle_hybrid_search(args: HybridSearchArgs, store: DarwinStore) -> List[Hyb
     """Main handler for hybrid search CLI."""
     from src.core.Models.ModelConfig import get_active_model
     model_name = get_active_model("embedding")
+    if model_name is None:
+        darwin.log("No active embedding model found or set as prefrence Run model setup first.", LogType.ERROR)
+        return
     status = store.status()
 
     tobe_searched = []
@@ -269,10 +276,10 @@ def create_hybrid_search_parser():
     parser.add_argument("--pool-size", type=int, default=DEFAULT_POOL_SIZE, help="Candidates per retriever")
     parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
     parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
-    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
+    
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
-    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port (default: 8765)")
+    
 
     return parser
 
@@ -289,7 +296,7 @@ async def main() -> int:
     # Resolve query
     query = args.query or args.query_flag
     if not query:
-        parser.error("❌ Query required (either as positional argument or --query flag)")
+        parser.error("  Query required (either as positional argument or --query flag)")
 
     if args.query and args.query_flag:
         darwin.log(f"Both positional and --query provided. Using positional: '{args.query}'", LogType.WARNING)
@@ -298,10 +305,10 @@ async def main() -> int:
 
     # Setup WebSocket
     darwin.configure(
-        enable_websocket=not args.no_ws,
-        ws_port=args.ws_port,
-        enable_history=True,
-        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        
+        sse_port=args.sse_port,
+        
+        
         show_banner=True,
     )
 

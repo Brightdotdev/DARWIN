@@ -37,45 +37,42 @@ def calculate_bm25(
     k1:          float,
     b:           float,
 ) -> tuple[float, List[str]]:
-    """
-    Compute BM25 score for one chunk against a list of query terms.
-
-    Returns (score, matched_terms).
-
-    Formula per term:
-        tf_norm = (tf × (k1 + 1)) / (tf + k1 × (1 − b + b × dl/avgdl))
-        score  += IDF × tf_norm
-    """
-    if data.get("avgdl") == 0:
+    """Compute BM25 score with safe defaults."""
+    avgdl = data.get("avgdl", 0.0)
+    if avgdl == 0:
         return 0.0, []
 
-    dl           = data["doc_lengths"][chunk_idx]
-    length_norm  = 1 - b + b * (dl / data["avgdl"])
-    chunk_tokens = data["tokens"][chunk_idx]
+    doc_lengths = data.get("doc_lengths", [])
+    if chunk_idx >= len(doc_lengths):
+        return 0.0, []
 
-    # Build a term→frequency map for this chunk (once per score call)
-    tf_map: dict[str, int] = {}
+    dl = doc_lengths[chunk_idx]
+    length_norm = 1 - b + b * (dl / avgdl)
+    chunk_tokens = data.get("tokens", [])[chunk_idx] if chunk_idx < len(data.get("tokens", [])) else []
+
+    tf_map = {}
     for token in chunk_tokens:
         tf_map[token] = tf_map.get(token, 0) + 1
 
-    score         = 0.0
+    score = 0.0
     matched_terms = []
-
     idfs = data.get("precomputed_idfs") or {}
+    doc_freqs = data.get("doc_freqs", {})
+    chunk_count = data.get("chunk_count", 0)
+    idf_smoothing = data.get("idf_smoothing", 0.0)
 
-    for term in set(query_terms):          # deduplicate query terms
+    for term in set(query_terms):
         tf = tf_map.get(term, 0)
         if tf == 0:
             continue
 
-        idf      = idfs.get(term)
+        idf = idfs.get(term)
         if idf is None:
-            # term not in index vocab — compute on the fly (OOV at index time)
-            df  = data.get("doc_freqs", {}).get(term, 0)
-            idf = compute_idf(df, data.get("chunk_count"), data.get("idf_smoothing"))
+            df = doc_freqs.get(term, 0)
+            idf = compute_idf(df, chunk_count, idf_smoothing)
 
-        tf_norm  = (tf * (k1 + 1)) / (tf + k1 * length_norm)
-        score   += idf * tf_norm
+        tf_norm = (tf * (k1 + 1)) / (tf + k1 * length_norm)
+        score += idf * tf_norm
         matched_terms.append(term)
 
     return score, matched_terms

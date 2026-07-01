@@ -1,16 +1,6 @@
 # src/core/Models/lib.py
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Required files per loader type (minimum for inference)
-# ═══════════════════════════════════════════════════════════════════════════
 
-# FIX: Added "embedding_hf" and "embedding_st" entries that were previously
-# missing, causing is_downloaded() to fall through to a loose config.json
-# check that could pass prematurely.
-#
-# FIX: Removed "spacy" entry — it was dead code. ModelStore.is_downloaded()
-# delegates spaCy verification to _verify_spacy_model(), never reaching
-# REQUIRED_FILES for that loader. Having it here was misleading.
 
 REQUIRED_FILES: dict[str, list[str]] = {
     "sentence_transformers": [
@@ -40,7 +30,7 @@ REQUIRED_FILES: dict[str, list[str]] = {
         "tokenizer_config.json",
         "generation_config.json",
     ],
-    # "spacy" intentionally omitted — verified by ModelStore._verify_spacy_model()
+    
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -49,19 +39,6 @@ REQUIRED_FILES: dict[str, list[str]] = {
 
 
 
-IGNORE_PATTERNS = [
-    "onnx/**", "onnx/*", "*.onnx", "*.h5", "*.keras",
-    "tf_model.h5", "tf_model/**", "*.msgpack",
-    "flax_model.msgpack", "flax_model/**",
-    "*.ot", "rust_model.ot", "rust_model/**",
-    "*.gguf", "ggml-model-*",
-    "coreml/**", "coreml/*", "*.mlmodel", "*.mlpackage",
-    "README.md", "*.md", ".gitattributes", ".gitignore", ".git/**",
-    "checkpoint-*/**", "*.ckpt",
-    "optimizer.pt", "scheduler.pt",
-    "eval/**", "test/**", "tests/**", "*.ipynb", "runs/**",
-    "*.tar.gz", "*.tgz", "*.zip",
-]
 
 
 SPACY_URLS = {

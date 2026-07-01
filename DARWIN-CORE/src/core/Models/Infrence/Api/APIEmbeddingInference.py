@@ -1,9 +1,3 @@
-# src/core/Models/ModelLoading/API/APIEmbeddingInference.py
-"""
-API-based embedding inference using LiteLLM (sync wrapper).
-Implements the unified EmbeddingInferenceInterface.
-"""
-
 import time
 from typing import List, Optional, Union
 

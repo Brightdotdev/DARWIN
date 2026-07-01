@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import re
 import time
@@ -59,77 +58,35 @@ def write_json(path: Path, data: Any, compact: bool = False, max_retries: int = 
             time.sleep(0.1 * (attempt + 1))
 
 
-def normalize_record(obj: Any) -> dict[str, Any]:
-    if isinstance(obj, dict):
-        return dict(obj)
+def to_dict(obj: Any) -> dict:
+    """Convert supported objects (dataclass, dict) to a dict."""
     if hasattr(obj, "to_dict") and callable(obj.to_dict):
         return obj.to_dict()
-    if hasattr(obj, "model_dump") and callable(obj.model_dump):
-        return obj.model_dump()
-    if hasattr(obj, "dict") and callable(obj.dict):
-        return obj.dict()
-    dc_fields = getattr(obj, "__dataclass_fields__", None)
-    if dc_fields is not None:
-        return {k: getattr(obj, k) for k in dc_fields if not k.startswith("_")}
-    attrs_attrs = getattr(obj, "__attrs_attrs__", None)
-    if attrs_attrs is not None:
-        return {a.name: getattr(obj, a.name) for a in attrs_attrs}
-    if hasattr(obj, "__slots__"):
-        slots = obj.__slots__
-        if isinstance(slots, str):
-            slots = [slots]
-        result = {}
-        for slot in slots:
-            if not slot.startswith("_"):
-                try:
-                    result[slot] = getattr(obj, slot)
-                except AttributeError:
-                    pass
-        if result:
-            return result
-    if hasattr(obj, "__dict__"):
-        return vars(obj)
-    raise TypeError(f"Cannot normalize {type(obj).__name__}")
-
-
-def _deep_serialize(obj: Any) -> Any:
-    if obj is None or isinstance(obj, (str, int, float, bool)):
-        return obj
-    if isinstance(obj, (list, tuple, set)):
-        return [_deep_serialize(v) for v in obj]
+    if hasattr(obj, "__dataclass_fields__"):
+        return {k: getattr(obj, k) for k in obj.__dataclass_fields__}
     if isinstance(obj, dict):
-        return {k: _deep_serialize(v) for k, v in obj.items()}
-    try:
-        return _deep_serialize(normalize_record(obj))
-    except TypeError:
-        return str(obj)
+        return obj
+    raise TypeError(f"Cannot convert {type(obj).__name__} to dict")
 
 
-def reconstruct_records(rows: list[dict[str, Any]], cls: Any = None) -> list[Any]:
-    if cls is None or not rows:
-        return rows
-    if hasattr(cls, "model_validate") and callable(cls.model_validate):
-        return [cls.model_validate(row) for row in rows]
-    if hasattr(cls, "parse_obj") and callable(cls.parse_obj):
-        return [cls.parse_obj(row) for row in rows]
-    dc_fields = getattr(cls, "__dataclass_fields__", None)
-    if dc_fields is not None:
-        valid = set(dc_fields)
-        return [cls(**{k: v for k, v in row.items() if k in valid}) for row in rows]
-    attrs_attrs = getattr(cls, "__attrs_attrs__", None)
-    if attrs_attrs is not None:
-        valid = {a.name for a in attrs_attrs}
-        return [cls(**{k: v for k, v in row.items() if k in valid}) for row in rows]
+def get_current_embedding_model() -> str:
+    from src.core.Models.ModelConfig import get_active_model
+    from src.core.Models.Lib.ModelSpec import ModelCategory
+    return get_active_model(ModelCategory.EMBEDDING.name.lower()) or ""
+
+
+def get_current_model_dimensions() -> int:
     try:
-        sig = inspect.signature(cls.__init__)
-        valid = {
-            p.name for p in sig.parameters.values()
-            if p.name != "self" and p.kind in (
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                inspect.Parameter.KEYWORD_ONLY,
-            )
+        from src.core.Models.EmbeddingConfig import get_preset
+        key = get_current_embedding_model()
+        presets = get_preset(key)
+        if presets:
+            return presets.dimensions
+        _DIMENSIONS = {
+            "intfloat/e5-small-v2": 384,
+            "BAAI/bge-m3": 1024,
+            "GritLM/GritLM-7B": 4096,
         }
-        return [cls(**{k: v for k, v in row.items() if k in valid}) for row in rows]
-    except (ValueError, TypeError):
-        pass
-    return [cls(**row) for row in rows]
+        return _DIMENSIONS.get(key, 0)
+    except Exception:
+        return 0

@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
 from src.features.LLM.LLMManager import LLMManager
 from src.features.LLM.LLMTypes import LLMResponse
-from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
+from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.KeyManager import (
     set_api_key,
     load_keys_from_keychain,
@@ -298,29 +298,23 @@ async def main() -> int:
     parser.add_argument("--test", action="store_true", help="Run a quick test call to all configured providers")
     parser.add_argument("--test-json", action="store_true", help="Run a test with a simple JSON schema")
     parser.add_argument("--remove-provider", type=str, metavar="PROVIDER", help="Remove a provider by name")
-    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
-    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
+    
     parser.add_argument("--no-keychain", action="store_true", help="Do not load keys from OS keychain")
     parser.add_argument("--profile", type=str, default=None, help="Load a specific provider profile at startup")
-    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal",
-                        help="Log verbosity (default: normal)")
+ 
+ 
 
     args = parser.parse_args()
 
     if not args.no_keychain:
         load_keys_from_keychain()
-
-    verbosity_map = {
-        "quiet": Verbosity.QUIET,
-        "normal": Verbosity.NORMAL,
-    }
-    terminal_verbosity = verbosity_map[args.verbosity]
+        
 
     darwin.configure(
-        enable_websocket=not args.no_ws,
-        ws_port=args.ws_port,
-        enable_history=True,
-        verbosity_default=terminal_verbosity,
+        
+        sse_port=args.sse_port,
+        
         show_banner=True,
     )
 

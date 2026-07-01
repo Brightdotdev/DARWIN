@@ -19,7 +19,7 @@ def test_manager():
         load_keys_from_keychain(log=True)
         initialized = LLMManager.initialize()
         if not initialized:
-            print("\n⚠️  No LLM configuration found.")
+            print("\n  No LLM configuration found.")
             print("   Run: uv run main.py --wizard\n")
             sys.exit(1)
 
@@ -67,7 +67,7 @@ def test_manager():
         sys.exit(130)
     except Exception as e:
         # Friendly user-facing message
-        print(f"\n❌ Something went wrong: {e}")
+        print(f"\n  Something went wrong: {e}")
         if args.debug:
             print("\n--- Debug traceback ---")
             traceback.print_exc()

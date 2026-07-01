@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec, get_specs_by_category
+from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec, get_specs_by_category,MODEL_SPECS
 from src.core.Models.ModelConfig import get_active_model, set_active_model
 from src.core.Logger.DarwinLogger import darwin, LogType
 
@@ -49,6 +49,7 @@ from src.core.Models.Infrence.OCRInferenceFactory import (
     get_ocr_model_path,
     is_ocr_model_downloaded,
 )
+from src.lib.KeyManager import is_key_set, load_keys_from_keychain
 
 
 @dataclass
@@ -102,7 +103,7 @@ class ManagerStatus:
         lines = ["Model Manager Status"]
         lines.append(f"  Timestamp: {self.timestamp}")
         for cat_name, status in self.categories.items():
-            icon = "✅" if status.available else "❌"
+            icon = "" if status.available else " "
             required = " (required)" if status.is_required else ""
             active = f" -> {status.active_model_id}" if status.active_model_id else ""
             available = f" ({len(status.available_models)} ready)"
@@ -111,10 +112,10 @@ class ManagerStatus:
             if error:
                 lines.append(f"     {error}")
         if self.missing_required:
-            lines.append(f"  ⚠️ Missing required: {', '.join(self.missing_required)}")
+            lines.append(f"   Missing required: {', '.join(self.missing_required)}")
         if self.warnings:
             for w in self.warnings:
-                lines.append(f"  ⚠️ {w}")
+                lines.append(f"   {w}")
         return "\n".join(lines)
 
 
@@ -285,10 +286,10 @@ class ModelManager:
 
         darwin.log(status_obj.summary, LogType.INFO)
         if status_obj.all_ready:
-            darwin.log("✅ All required models are available.", LogType.SUCCESS)
+            darwin.log(" All required models are available.", LogType.SUCCESS)
         else:
             darwin.log(
-                f"⚠️ Missing required: {', '.join(status_obj.missing_required)}. "
+                f" Missing required: {', '.join(status_obj.missing_required)}. "
                 "Some features will be disabled.",
                 LogType.WARNING,
             )
@@ -317,7 +318,8 @@ class ModelManager:
                 error = f"No default model for {cat_name}"
                 result = SetupResult(cat_name, "none", False, error=error)
                 if required:
-                    raise ModelManagerError(error, cat_name)
+                    darwin.log(error, LogType.ERROR)
+                    return result
                 return result
             darwin.log(f"Auto‑selected default for {cat_name}: {resolved_id}", LogType.INFO)
 
@@ -337,7 +339,8 @@ class ModelManager:
             error = f"Model {resolved_id} not available"
             result = SetupResult(cat_name, resolved_id, False, error=error)
             if required:
-                raise ModelManagerError(error, cat_name)
+                darwin.log(error, LogType.ERROR)
+                return result
             return result
 
         # Get factory and load
@@ -346,7 +349,8 @@ class ModelManager:
             error = f"No factory for {cat_name}"
             result = SetupResult(cat_name, resolved_id, False, error=error)
             if required:
-                raise ModelManagerError(error, cat_name)
+                darwin.log(error, LogType.ERROR)
+                return result
             return result
 
         try:
@@ -355,7 +359,8 @@ class ModelManager:
                 error = f"Factory returned None for {resolved_id}"
                 result = SetupResult(cat_name, resolved_id, False, error=error)
                 if required:
-                    raise ModelManagerError(error, cat_name)
+                    darwin.log(error, LogType.ERROR)
+                    return result
                 return result
 
             # Load if needed
@@ -384,7 +389,8 @@ class ModelManager:
             darwin.log(error, LogType.ERROR)
             result = SetupResult(cat_name, resolved_id, False, error=error)
             if required:
-                raise ModelManagerError(error, cat_name) from e
+                darwin.log(error, LogType.ERROR)
+                return result 
             return result
 
     def setup_all(
@@ -427,9 +433,9 @@ class ModelManager:
                 result = SetupResult(cat.name.lower(), mid or "unknown", False, error=str(e))
             results[cat] = result
             if result.success:
-                darwin.log(f"✅ {cat.name}: {mid} ready", LogType.SUCCESS)
+                darwin.log(f" {cat.name}: {mid} ready", LogType.SUCCESS)
             else:
-                darwin.log(f"❌ {cat.name}: {result.error}", LogType.ERROR)
+                darwin.log(f"  {cat.name}: {result.error}", LogType.ERROR)
         return results
 
     # ────────────────────────────────────────────────────────────────
@@ -722,23 +728,20 @@ class ModelManager:
         return factory(model_id=model_id)
 
     def list_available(self, category: ModelCategory) -> List[str]:
-        from src.core.Models.Lib.ModelRegistry import get_registry
-        registry = get_registry()
         result = []
-        for mid, spec in registry.items():
+        for spec in MODEL_SPECS:
             if spec.category != category:
                 continue
             if spec.requires_provider:
                 try:
-                    from src.lib.KeyManager import is_key_set, load_keys_from_keychain
                     load_keys_from_keychain(log=False)
                     if is_key_set(spec.requires_provider):
-                        result.append(mid)
+                        result.append(spec.model_id)
                 except Exception:
                     pass
             else:
-                if self.is_downloaded(category, mid):
-                    result.append(mid)
+                if self.is_downloaded(category, spec.model_id):
+                    result.append(spec.model_id)
         return result
 
     def health(self, category: ModelCategory) -> Dict[str, Any]:
@@ -776,7 +779,6 @@ class ModelManager:
         for spec in candidates:
             if spec.requires_provider:
                 try:
-                    from src.lib.KeyManager import is_key_set, load_keys_from_keychain
                     load_keys_from_keychain(log=False)
                     if is_key_set(spec.requires_provider):
                         return spec.model_id
@@ -804,7 +806,6 @@ class ModelManager:
 
         if spec.requires_provider:
             try:
-                from src.lib.KeyManager import is_key_set, load_keys_from_keychain
                 load_keys_from_keychain(log=False)
                 return is_key_set(spec.requires_provider)
             except Exception:
@@ -833,7 +834,6 @@ class ModelManager:
             return False
         if spec.requires_provider:
             try:
-                from src.lib.KeyManager import is_key_set, load_keys_from_keychain
                 load_keys_from_keychain(log=False)
                 return is_key_set(spec.requires_provider)
             except Exception:

@@ -4,7 +4,8 @@ import hashlib
 from functools import cached_property
 from pathlib import Path
 
-from src.core.Storage.Constants import ARTIFACT_MANIFEST
+from src.core.Storage.Constants import ARTIFACT_MANIFEST, OPTIONAL_ARTIFACT_KEYS
+from src.core.Storage.Transanctions import delete_tree
 
 
 def hash_file(file_path: str | Path) -> str:
@@ -60,7 +61,7 @@ class StorePaths:
         return path
 
     def ensure_image_dir(self, file_hash: str) -> Path:
-        path = self.ensure_dir_for_hash(file_hash) / ARTIFACT_MANIFEST["images"]["dir"]
+        path = self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["images"]["dir"]
         path.mkdir(parents=True, exist_ok=True)
         return path
 
@@ -68,51 +69,49 @@ class StorePaths:
         self.root.mkdir(parents=True, exist_ok=True)
         return self.root / "url_cache"
 
-    # --- Per-file artifact paths (pure, hash-based) ---
-    def meta_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["meta"]["file"]
+    # --- Unified artifact path resolution ---
+    def artifact_path(self, content_hash: str, stage: str, key: str) -> Path:
+        """Return the absolute path for a specific artifact key under a stage."""
+        rel = ARTIFACT_MANIFEST[stage][key]
+        return self.dir_for_hash(content_hash) / rel
 
-    def markdown_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["markdown"]["source"]
+    # Convenience alias for meta.json
+    def meta_path(self, content_hash: str) -> Path:
+        return self.artifact_path(content_hash, "meta", "file")
 
-    def display_markdown_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["markdown"]["display"]
+    # --- ArtifactStore merged methods ---
+    def _artifact_entries(self, content_hash: str, stage: str) -> list[tuple[str, Path]]:
+        spec = ARTIFACT_MANIFEST.get(stage)
+        if not spec:
+            return []
+        dir_path = self.dir_for_hash(content_hash)
+        return [(key, dir_path / rel_path) for key, rel_path in spec.items()]
 
-    def chunks_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["chunks"]["file"]
+    def has_artifact(self, content_hash: str, stage: str) -> bool:
+        entries = self._artifact_entries(content_hash, stage)
+        if not entries:
+            return False
+        optional = OPTIONAL_ARTIFACT_KEYS.get(stage, set())
+        for key, p in entries:
+            if key in optional:
+                continue
+            if key == "dir":
+                if not p.exists() or not p.is_dir():
+                    return False
+            else:
+                if not p.exists():
+                    return False
+        return True
 
-    def embedding_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["embeddings"]["file"]
+    def ensure_dir(self, content_hash: str) -> Path:
+        return self.ensure_dir_for_hash(content_hash)
 
-    def embedding_index_map_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["embeddings"]["index_map"]
+    def delete_hash_dir(self, content_hash: str) -> None:
+        dir_path = self.dir_for_hash(content_hash)
+        if dir_path.exists():
+            delete_tree(dir_path)
 
-    def vector_index_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["vector"]["index"]
-
-    def vector_json_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["vector"]["meta"]
-
-    def bm25_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["bm25"]["index"]
-
-    def bm25_meta_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["bm25"]["meta"]
-
-    def bm25_tokens_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["bm25"]["tokens"]
-
-    def stopwords_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["stopwords"]["file"]
-
-    def graph_nodes_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["graph"]["nodes"]
-
-    def graph_edges_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["graph"]["edges"]
-
-    def graph_html_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["graph_vis"]["file"]
-
-    def wiki_path(self, file_hash: str) -> Path:
-        return self.dir_for_hash(file_hash) / ARTIFACT_MANIFEST["wiki"]["file"]
+    def list_hashes_on_disk(self) -> list[str]:
+        if not self.indexes_dir.exists():
+            return []
+        return [d.name for d in self.indexes_dir.iterdir() if d.is_dir()]

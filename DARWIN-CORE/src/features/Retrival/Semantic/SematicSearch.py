@@ -11,10 +11,10 @@ import numpy as np
 from typing import List, Optional
 
 from src.core.Storage.DarwinStore import DarwinStore
-from src.features.Indexing.Embedding.Embedder import embed_query
+from src.pipleline.Indexing.Embedding.Embedder import EmbeddingSession
 from src.features.Retrival.Semantic.SematicSearchUtils import SemanticSearchResult
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
+from src.pipleline.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 
 # Columns needed to populate a SemanticSearchResult.
 # These must match the field names produced by normalize_record(Chunk).
@@ -37,8 +37,8 @@ def _embed_query_safe(query: str, model_name: str) -> Optional[np.ndarray]:
     if not model_name:
         darwin.log("No embedding model configured", LogType.ERROR)
         return None
-
-    query_vec = embed_query(query, model_name)
+    with EmbeddingSession(model_key=model_name) as session:
+        query_vec = session.embed_query(query)
 
     if query_vec is None or len(query_vec) == 0:
         darwin.log("Failed to embed query — check model availability", LogType.ERROR)

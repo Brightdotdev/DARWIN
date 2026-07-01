@@ -1,9 +1,3 @@
-"""
-Local OCR Inference — RapidOCR backend with synthetic-image preprocessing.
-Handles one-time model download (via HuggingFace), dual-pass extraction, and async threadpool wrapping.
-Includes integrity verification: file existence + size validation.
-"""
-
 import asyncio
 import io
 import re
@@ -18,21 +12,7 @@ from PIL import Image, ImageFilter
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Models.ModeInterfaces import OCRInferenceInterface
 
-# ---------------------------------------------------------------------------
-# Model manifest — SWHL/RapidOCR community mirror on HuggingFace
-#
-# NOTE: There is NO English-specific rec model in the SWHL/RapidOCR repo.
-# The "en" prefix only exists on the detection model (en_PP-OCRv3_det).
-# The recognition model is always Chinese (ch_PP-OCRv4_rec_server).
-# This is a known upstream limitation. See:
-#   https://github.com/RapidAI/RapidOCR/discussions/324
-#
-# Workarounds:
-#   1. Use the Chinese rec model with post-process whitespace recovery
-#   2. Convert a PaddleOCR English rec model yourself using
-#      PaddleOCRModelConverter + add rec_dict metadata
-#   3. Use rapidocr-onnxruntime (v1.x) which bundles its own models
-# ---------------------------------------------------------------------------
+
 
 MODELS = {
     "det": {

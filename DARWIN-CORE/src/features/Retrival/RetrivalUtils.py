@@ -66,5 +66,5 @@ class RetrievalArgs:
     rerank_top_k: int = DEFAULT_RERANK_TOP_K
     
     # WebSocket
-    ws_port: int = 8765
+    sse_port: int = 8765
     no_ws: bool = False

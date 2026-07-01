@@ -1,10 +1,3 @@
-"""
-API-based vision inference using LiteLLM.
-Implements the unified VisionInferenceInterface.
-
-Refactored for UnifiedVisionInference compatibility.
-"""
-
 import time
 from pathlib import Path
 from typing import Optional, Union, List

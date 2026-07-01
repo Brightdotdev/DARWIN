@@ -60,7 +60,7 @@ from src.features.Retrival.RetrievalResult import (
     from_keyword,
 )
 
-from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 from src.features.Retrival.Hybrid.main import handle_hybrid_search
 from src.features.Retrival.Semantic.main import handle_semantic_search
@@ -377,9 +377,8 @@ Examples:
     rerank.add_argument("--rerank-weight",      type=float, default=DEFAULT_RERANK_WEIGHT)
     rerank.add_argument("--rerank-top-k",       type=int,   default=DEFAULT_RERANK_TOP_K)
 
-    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
-    parser.add_argument("--ws-port", type=int, default=8765)
-    parser.add_argument("--no-ws",   action="store_true")
+    
+    parser.add_argument("--sse-port", type=int, default=8765)
 
     return parser
 
@@ -396,10 +395,10 @@ async def main() -> int:
         parser.error("Query required")
 
     darwin.configure(
-        enable_websocket=not cli.no_ws,
-        ws_port=cli.ws_port,
-        enable_history=True,
-        verbosity_default=Verbosity.QUIET if cli.verbosity == "quiet" else Verbosity.NORMAL,
+        
+        sse_port=cli.sse_port,
+        
+    
         show_banner=True,
     )
 
@@ -423,7 +422,7 @@ async def main() -> int:
             rerank          = cli.rerank,
             rerank_weight   = cli.rerank_weight,
             rerank_top_k    = cli.rerank_top_k,
-            ws_port         = cli.ws_port,
+            sse_port         = cli.sse_port,
             no_ws           = cli.no_ws,
         )
 

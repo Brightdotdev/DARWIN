@@ -25,7 +25,7 @@ except ImportError:
 console = Console() if RICH_AVAILABLE else None
 
 from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec, MODEL_SPECS, TIER_LABELS
-from src.core.Models.ModelManager import manager, ModelManagerError
+from src.core.Models.ModelManager import modelManager, ModelManagerError
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.KeyManager import load_keys_from_keychain, set_api_key, is_key_set
 
@@ -227,7 +227,7 @@ async def run_onboarding_async(args: argparse.Namespace) -> None:
     _log_verbose(f"Best tier for your hardware: {TIER_LABELS.get(system.tier, 'unknown')}", LogType.INFO)
 
     _log_verbose("Scanning existing models...", LogType.INFO)
-    status = manager.initialize(auto_setup=False)
+    status = modelManager.initialize(auto_setup=False)
     _log_verbose(status.summary, LogType.INFO)
 
     choices: Dict[str, Optional[str]] = {}
@@ -283,10 +283,10 @@ async def run_onboarding_async(args: argparse.Namespace) -> None:
                 if spec.requires_provider:
                     provider = spec.requires_provider
                     has_key = is_key_set(provider)
-                    status_str = "🔑 key ready" if has_key else "❌ missing key"
+                    status_str = "key ready" if has_key else "  missing key"
                 else:
-                    downloaded = manager.is_downloaded(ModelCategory[cat.upper()], key)
-                    status_str = "✅ downloaded" if downloaded else "⏳ to download"
+                    downloaded = modelManager.is_downloaded(ModelCategory[cat.upper()], key)
+                    status_str = " downloaded" if downloaded else "⏳ to download"
                 _log_verbose(f"  {cat}: {key} ({spec.tier}) – {status_str}", LogType.INFO)
         else:
             _log_verbose(f"  {cat}: (none selected)", LogType.INFO)
@@ -299,20 +299,20 @@ async def run_onboarding_async(args: argparse.Namespace) -> None:
 
     if preferences:
         _log_verbose("Preparing to download and activate selected models...", LogType.INFO)
-        results = manager.setup_all(
+        results = modelManager.setup_all(
             preferences=preferences,
             auto_download=args.auto_download,
             required_categories=[ModelCategory.EMBEDDING] if 'embedding' in choices and choices['embedding'] else [],
         )
         for cat, result in results.items():
             if result.success:
-                _log_verbose(f"✅ {cat.name}: {result.model_id} ready", LogType.SUCCESS)
+                _log_verbose(f" {cat.name}: {result.model_id} ready", LogType.SUCCESS)
             else:
-                _log_verbose(f"❌ {cat.name}: {result.error}", LogType.ERROR)
+                _log_verbose(f"  {cat.name}: {result.error}", LogType.ERROR)
     else:
         _log_verbose("No models selected – nothing to do.", LogType.WARNING)
 
-    _log_verbose("✅ Onboarding complete!", LogType.SUCCESS)
+    _log_verbose(" Onboarding complete!", LogType.SUCCESS)
 
 
 async def _onboard_category_interactive(
@@ -334,14 +334,14 @@ async def _onboard_category_interactive(
         if spec.requires_provider:
             provider = spec.requires_provider
             has_key = is_key_set(provider)
-            status_str = "🔑 key " + ("✅" if has_key else "❌")
+            status_str = "key " + ("" if has_key else " ")
         else:
-            downloaded = manager.is_downloaded(category, spec.model_id)
-            status_str = "💾 " + ("✅ cached" if downloaded else "⬇️ to download")
+            downloaded = modelManager.is_downloaded(category, spec.model_id)
+            status_str = "💾 " + (" cached" if downloaded else "⬇️ to download")
 
         can_run = system.ram_gb >= spec.ram_gb if spec.ram_gb > 0 else True
         if not can_run:
-            status_str += " ⚠️ may not fit"
+            status_str += "  may not fit"
 
         options.append((spec.model_id, spec, status_str))
 
@@ -381,9 +381,9 @@ async def _onboard_category_interactive(
                 if key and key.strip():
                     try:
                         set_api_key(provider, key, validate=True)
-                        _log_verbose(f"✅ API key for {provider} saved.", LogType.SUCCESS)
+                        _log_verbose(f" API key for {provider} saved.", LogType.SUCCESS)
                     except Exception as e:
-                        _log_verbose(f"❌ Failed to save key: {e}", LogType.ERROR)
+                        _log_verbose(f"  Failed to save key: {e}", LogType.ERROR)
                 else:
                     _log_verbose("No key entered – model will not work.", LogType.WARNING)
 

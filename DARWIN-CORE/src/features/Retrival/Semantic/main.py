@@ -27,7 +27,7 @@ from src.features.Retrival.Semantic.SematicSearchUtils import (
 
 from src.features.Retrival.lib import SemanticSearchResult
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType, Verbosity
+from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 # ============================================================================
@@ -83,27 +83,30 @@ def _is_embedding_searchable(filename: str | None, status: dict) -> bool:
     return file_data.get("is_embedding_searchable", False)
 
 
+
+
 def _validate_files(
     files: List[str], 
-    store: DarwinStore
+    store: DarwinStore,
+    mode: str = "semantic"
 ) -> List[str]:
-    """Validate files exist and are searchable, returning valid filenames."""
-    status = store.status()
-    valid_files = []
-    invalid_files = []
+    """
+    Validate files exist in the registry and are searchable in the given mode.
+    Handles both full file paths and bare filenames.
+    Returns list of valid filenames (base names only).
+    """
+    valid = []
     
-    for filename in files:
-        if _is_embedding_searchable(filename, status):
-            valid_files.append(filename)
+    for file_path in files:
+        filename = Path(file_path).name
+        
+        # Check registry and search readiness in one call
+        if store.is_search_ready(filename, mode=mode):
+            valid.append(filename)
         else:
-            invalid_files.append(filename)
+            darwin.log(f"{file_path} is not searchable in {mode} mode", LogType.WARNING)
     
-    if invalid_files:
-        for f in invalid_files:
-            darwin.log(f"{f} is not searchable", LogType.WARNING)
-
-
-    return valid_files
+    return valid
 
 
 # ============================================================================
@@ -113,6 +116,10 @@ def _validate_files(
 def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List[SemanticSearchResult] | None:
     from src.core.Models.ModelConfig import get_active_model
     model_name = get_active_model("embedding")
+    
+    if model_name is None:
+        darwin.log("No active embedding model found or set as prefrence Run model setup first.", LogType.ERROR)
+        return
 
     
     darwin.log("")
@@ -225,10 +232,10 @@ async def main() -> int:
     parser.add_argument("--min-score", "-s", type=float, default=DEFAULT_MIN_SCORE, help="Minimum score threshold (0-1)")
     parser.add_argument("--inspect", "-i", action="store_true", help="Show detailed results")
     parser.add_argument("--json", "-j", action="store_true", help="Output as JSON")
-    parser.add_argument("--verbosity", choices=["normal", "quiet"], default="normal", help="Log verbosity")
+    
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket server port")
-    parser.add_argument("--no-ws", action="store_true", help="Disable WebSocket server")
+    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
+    
     
     args = parser.parse_args()
 
@@ -240,10 +247,10 @@ async def main() -> int:
     
     
     darwin.configure(
-        enable_websocket=not args.no_ws,
-        ws_port=args.ws_port,
-        enable_history=True,
-        verbosity_default=Verbosity.QUIET if args.verbosity == "quiet" else Verbosity.NORMAL,
+        
+        sse_port=args.sse_port,
+        
+        
         show_banner=True,
     )
 

@@ -1,36 +1,34 @@
+"""
+Darwin Logger — Session-aware, queryable structured logging.
+
+Restored features:
+  • Progress + Spinner events (terminal + frontend)
+  • logjson/loglist with format discrimination
+  • __darwin_type__ markers for structured data
+  • Default history persistence (~/.darwin/logs)
+  • Full event protocol (not just logs)
+  • Configurable log filtering (ALL, QUIET, SILENT)
+  • Output modes: TERMINAL, SSE, BOTH, NONE
+"""
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import dataclasses
 import json
 import os
-import sys
 import threading
 import time
-import contextvars
-import logging
-import multiprocessing
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from collections import deque
 from datetime import datetime
-
-# Internal error logger for subscriber exceptions
-_log = logging.getLogger("darwin.logger")
-
-
-class OutputMode(Enum):
-    TERMINAL = "terminal"
-    WEBSOCKET = "websocket"
-    NONE = "none"
-    AUTO = "auto"
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple, Callable
 
 
-class Verbosity(Enum):
-    NORMAL = "normal"
-    QUIET = "quiet"
-
-
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
 class LogType(Enum):
     INFO = "info"
     WARNING = "warning"
@@ -38,315 +36,454 @@ class LogType(Enum):
     SUCCESS = "success"
 
 
-@dataclass(frozen=True)
+class OutputMode(Enum):
+    TERMINAL = "terminal"
+    SSE = "sse"
+    BOTH = "both"          # ← NEW: simultaneous terminal + SSE
+    NONE = "none"
+
+
+class LogFilter(Enum):
+    """Filter presets for LogEvents."""
+    ALL = "all"            # everything (default)
+    QUIET = "quiet"        # errors + warnings + success only (no info)
+    SILENT = "silent"      # errors only
+
+
+# ---------------------------------------------------------------------------
+# Events (lightweight frozen dataclasses)
+# ---------------------------------------------------------------------------
+@dataclasses.dataclass(frozen=True, slots=True)
 class LogEvent:
-    type: str = "log"
-    message: str = ""
-    log_type: LogType = LogType.INFO
-    style: str = ""
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
-    # --- New optional fields for structured logging ---
-    payload: Optional[Any] = None   # Serialised structured data (JSON‑safe)
-    format: str = ""                # "json", "list", etc.
-    schemas: Optional[Dict[str, Any]] = None   # schema definitions
+    message: str
+    log_type: LogType
+    session: str
+    timestamp: float
+    payload: Optional[Any] = None
+    format: str = ""           # "json", "list", "" for plain
+
+    def to_dict(self) -> dict:
+        d = {
+            "message": self.message,
+            "log_type": self.log_type.value,
+            "session": self.session,
+            "timestamp": self.timestamp,
+            "datetime": datetime.fromtimestamp(self.timestamp).isoformat(),
+        }
+        if self.payload is not None:
+            d["payload"] = self.payload
+            d["format"] = self.format
+        return d
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ProgressStartEvent:
-    type: str = "progress_start"
-    id: str = ""
-    total: int = 0
-    label: str = ""
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
+    id: str
+    total: int
+    label: str
+    session: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ProgressUpdateEvent:
-    type: str = "progress_update"
-    id: str = ""
-    current: int = 0
-    status: str = ""
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
+    id: str
+    current: int
+    status: str
+    session: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ProgressEndEvent:
-    type: str = "progress_end"
-    id: str = ""
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
+    id: str
+    session: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SpinnerStartEvent:
-    type: str = "spinner_start"
-    id: str = ""
-    message: str = ""
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
+    id: str
+    message: str
+    session: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SpinnerUpdateEvent:
-    type: str = "spinner_update"
-    id: str = ""
-    message: str = ""
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
+    id: str
+    message: str
+    session: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SpinnerEndEvent:
-    type: str = "spinner_end"
-    id: str = ""
-    success: bool = True
-    session: str = ""
-    timestamp: float = field(default_factory=time.time)
+    id: str
+    success: bool
+    session: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SessionStartEvent:
-    type: str = "session_start"
-    name: str = ""
-    timestamp: float = field(default_factory=time.time)
+    name: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class SessionEndEvent:
-    type: str = "session_end"
-    name: str = ""
-    timestamp: float = field(default_factory=time.time)
+    name: str
+    timestamp: float = dataclasses.field(default_factory=time.time)
 
 
-class EventSubscriber(ABC):
-    @abstractmethod
-    def on_log(self, event: LogEvent) -> None: ...
-    @abstractmethod
-    def on_progress_start(self, event: ProgressStartEvent) -> None: ...
-    @abstractmethod
-    def on_progress_update(self, event: ProgressUpdateEvent) -> None: ...
-    @abstractmethod
-    def on_progress_end(self, event: ProgressEndEvent) -> None: ...
-    @abstractmethod
-    def on_spinner_start(self, event: SpinnerStartEvent) -> None: ...
-    @abstractmethod
-    def on_spinner_update(self, event: SpinnerUpdateEvent) -> None: ...
-    @abstractmethod
-    def on_spinner_end(self, event: SpinnerEndEvent) -> None: ...
-    @abstractmethod
-    def on_session_start(self, event: SessionStartEvent) -> None: ...
-    @abstractmethod
-    def on_session_end(self, event: SessionEndEvent) -> None: ...
+# Union type for all events
+DarwinEvent = LogEvent | ProgressStartEvent | ProgressUpdateEvent | ProgressEndEvent | SpinnerStartEvent | SpinnerUpdateEvent | SpinnerEndEvent | SessionStartEvent | SessionEndEvent
 
 
-class DarwinLogger:
-    _instance: Optional[DarwinLogger] = None
-    _lock = threading.Lock()
+# ---------------------------------------------------------------------------
+# History store — stores ALL events (not just logs)
+# ---------------------------------------------------------------------------
+class HistoryStore:
+    """
+    In-memory ring buffer with optional disk persistence.
+    Stores ALL event types (logs, progress, spinner, session).
+    """
 
-    def __new__(cls) -> DarwinLogger:
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
+    def __init__(self, max_memory: int = 10_000,
+                 persist_dir: Optional[Path] = None,
+                 persist_every: float = 1.0) -> None:
+        self._events: deque[DarwinEvent] = deque(maxlen=max_memory)
+        self._lock = threading.RLock()
+        self._persist_dir = persist_dir
+        self._persist_every = persist_every
+        self._last_flush = 0.0
+        self._pending: List[DarwinEvent] = []
 
-    def __init__(self) -> None:
-        if self._initialized:
+        if persist_dir:
+            persist_dir.mkdir(parents=True, exist_ok=True)
+            self._log_file = persist_dir / f"darwin_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        else:
+            self._log_file = None
+
+    def append(self, event: DarwinEvent) -> None:
+        with self._lock:
+            self._events.append(event)
+            if self._log_file:
+                self._pending.append(event)
+                now = time.time()
+                if now - self._last_flush >= self._persist_every:
+                    self._flush_unlocked()
+
+    def _flush_unlocked(self) -> None:
+        if not self._pending or not self._log_file:
             return
-        self._initialized = True
+        try:
+            with open(self._log_file, "a", encoding="utf-8") as f:
+                for e in self._pending:
+                    d = {k: v for k, v in e.__dict__.items() if not k.startswith("_")}
+                    if hasattr(d.get("log_type"), "value"):
+                        d["log_type"] = d["log_type"].value
+                    f.write(json.dumps(d, default=str) + "\n")
+            self._pending.clear()
+            self._last_flush = time.time()
+        except Exception:
+            pass
 
+    def flush(self) -> None:
+        with self._lock:
+            self._flush_unlocked()
+
+    def get_logs(self,
+                 session: Optional[str] = None,
+                 levels: Optional[Set[LogType]] = None,
+                 after: Optional[float] = None,
+                 before: Optional[float] = None,
+                 limit: int = 1000) -> List[LogEvent]:
+        """Query LogEvents only."""
+        with self._lock:
+            entries = list(self._events)
+        result = []
+        for e in reversed(entries):  # newest first
+            if not isinstance(e, LogEvent):
+                continue
+            if levels and e.log_type not in levels:
+                continue
+            if session is not None and e.session != session:
+                continue
+            if after is not None and e.timestamp < after:
+                continue
+            if before is not None and e.timestamp > before:
+                continue
+            result.append(e)
+            if len(result) >= limit:
+                break
+        return result
+
+    def get_events(self, session: Optional[str] = None, limit: int = 500) -> List[DarwinEvent]:
+        """Query ALL event types."""
+        with self._lock:
+            entries = list(self._events)
+        result = []
+        for e in reversed(entries):
+            if session is not None and getattr(e, "session", "") != session:
+                continue
+            result.append(e)
+            if len(result) >= limit:
+                break
+        return result
+
+    def sessions(self) -> List[str]:
+        with self._lock:
+            return list(dict.fromkeys(
+                getattr(e, "session", "") for e in self._events
+                if getattr(e, "session", "")
+            ))
+
+    def stats(self) -> Dict[str, Any]:
+        with self._lock:
+            log_count = sum(1 for e in self._events if isinstance(e, LogEvent))
+            by_level = {}
+            for e in self._events:
+                if isinstance(e, LogEvent):
+                    by_level[e.log_type.value] = by_level.get(e.log_type.value, 0) + 1
+            return {
+                "total_events": len(self._events),
+                "log_events": log_count,
+                "by_level": by_level,
+                "sessions": self.sessions(),
+                "persist_file": str(self._log_file) if self._log_file else None,
+            }
+
+
+# ---------------------------------------------------------------------------
+# Subscriber protocol — all event types, but with default no-ops
+# ---------------------------------------------------------------------------
+class EventSubscriber:
+    """Base subscriber. Override only what you care about."""
+
+    def on_log(self, event: LogEvent) -> None: pass
+    def on_progress_start(self, event: ProgressStartEvent) -> None: pass
+    def on_progress_update(self, event: ProgressUpdateEvent) -> None: pass
+    def on_progress_end(self, event: ProgressEndEvent) -> None: pass
+    def on_spinner_start(self, event: SpinnerStartEvent) -> None: pass
+    def on_spinner_update(self, event: SpinnerUpdateEvent) -> None: pass
+    def on_spinner_end(self, event: SpinnerEndEvent) -> None: pass
+    def on_session_start(self, event: SessionStartEvent) -> None: pass
+    def on_session_end(self, event: SessionEndEvent) -> None: pass
+
+
+# ---------------------------------------------------------------------------
+# Structured serializer — with __darwin_type__ markers
+# ---------------------------------------------------------------------------
+_seen_sentinel = object()
+
+
+def serialize_structured(obj: Any, _seen: Optional[Set[int]] = None) -> Any:
+    """
+    Convert to JSON-safe with __darwin_type__ markers.
+    Preserves type info so receivers know what they're rendering.
+    """
+    if _seen is None:
+        _seen = set()
+
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return {"__darwin_type__": "cycle", "ref": str(obj_id)}
+    _seen.add(obj_id)
+
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        cls = obj.__class__
+        result: Dict[str, Any] = {"__darwin_type__": cls.__name__}
+        for f in dataclasses.fields(obj):
+            value = getattr(obj, f.name)
+            if f.metadata.get("sensitive"):
+                value = "[REDACTED]"
+            else:
+                value = serialize_structured(value, _seen)
+            result[f.name] = value
+        return result
+
+    if isinstance(obj, list):
+        return {
+            "__darwin_type__": "list",
+            "items": [serialize_structured(item, _seen) for item in obj],
+        }
+
+    if isinstance(obj, dict):
+        return {k: serialize_structured(v, _seen) for k, v in obj.items()}
+
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+
+    return str(obj)
+
+
+# ---------------------------------------------------------------------------
+# Session handle — queryable
+# ---------------------------------------------------------------------------
+class SessionHandle:
+    def __init__(self, name: str, store: HistoryStore,
+                 start_time: float, logger: DarwinLogger) -> None:
+        self.name = name
+        self._store = store
+        self._start_time = start_time
+        self._end_time: Optional[float] = None
+        self._logger = logger
+        self._token: Optional[contextvars.Token] = None
+
+    def logs(self,
+             levels: Optional[Set[LogType]] = None,
+             limit: int = 1000) -> List[LogEvent]:
+        return self._store.get_logs(session=self.name, levels=levels, limit=limit)
+
+    def errors(self, limit: int = 1000) -> List[LogEvent]:
+        return self.logs(levels={LogType.ERROR}, limit=limit)
+
+    def warnings(self, limit: int = 1000) -> List[LogEvent]:
+        return self.logs(levels={LogType.WARNING}, limit=limit)
+
+    def success_logs(self, limit: int = 1000) -> List[LogEvent]:
+        return self.logs(levels={LogType.SUCCESS}, limit=limit)
+
+    def all(self, limit: int = 1000) -> List[LogEvent]:
+        return self.logs(limit=limit)
+
+    def duration(self) -> Optional[float]:
+        if self._end_time is None:
+            return None
+        return self._end_time - self._start_time
+
+    def __enter__(self) -> SessionHandle:
+        self._token = self._logger._session_var.set(self.name)
+        self._logger._emit(SessionStartEvent(name=self.name))
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self._end_time = time.time()
+        self._logger._emit(SessionEndEvent(name=self.name))
+        if self._token is not None:
+            self._logger._session_var.reset(self._token)
+
+
+# ---------------------------------------------------------------------------
+# Main logger
+# ---------------------------------------------------------------------------
+class DarwinLogger:
+    def __init__(self) -> None:
         self._subscribers: List[EventSubscriber] = []
-        self._subscriber_verbosity: Dict[EventSubscriber, Verbosity] = {}
-        self._actions: Dict[str, Callable[..., Any]] = {}
-        self._lock = threading.Lock()
-
-        self._mode: OutputMode = OutputMode.NONE
-        self._configured: bool = False
-        self._tui: Any = None
-        self._ws_server: Any = None
-        self._history_recorder: Any = None
-        self._default_verbosity: Verbosity = Verbosity.NORMAL
-
-        # Session context variable
+        self._history = HistoryStore()
         self._session_var: contextvars.ContextVar[str] = contextvars.ContextVar("darwin_session", default="")
-
-        # multiprocessing support
-        self._mp_queue: Optional[multiprocessing.Queue] = None
-        self._mp_listener: Optional[threading.Thread] = None
-        self._mp_shutdown: threading.Event = threading.Event()
+        self._configured = False
+        self._mode = OutputMode.NONE
+        self._lock = threading.Lock()
+        self._log_filter: Callable[[LogEvent], bool] = lambda e: True  # default: all pass
+        self._sse_server = None
 
     # ------------------------------------------------------------------
-    # Configuration (centralised)
+    # Configuration
     # ------------------------------------------------------------------
-    def configure(
-        self,
-        mode: Optional[OutputMode] = None,
-        enable_websocket: bool = False,
-        ws_host: str = "localhost",
-        ws_port: int = 8765,
-        enable_history: bool = False,
-        history_max_age: int = 10800,  # 3 hours
-        verbosity_default: Verbosity = Verbosity.NORMAL,
-        show_banner: bool = True,
-    ) -> None:
+    def configure(self,
+                  mode: OutputMode = OutputMode.TERMINAL,
+                  persist: bool = False,
+                  persist_dir: Optional[Path] = None,
+                  max_memory: int = 10_000,
+                  sse_port: int = 8765,
+                  sse_host: str = "127.0.0.1",
+                  show_banner: bool = True,
+                  log_filter: LogFilter = LogFilter.ALL) -> None:   # ← NEW
+        from src.lib.AppPaths import default_darwin_logs
         if self._configured:
             return
         self._configured = True
-        self._default_verbosity = verbosity_default
-
-        # Determine mode if not given
-        if mode is None:
-            if os.environ.get("DARWIN_HEADLESS") == "1":
-                mode = OutputMode.WEBSOCKET
-            elif sys.stdout.isatty():
-                mode = OutputMode.TERMINAL
-            else:
-                mode = OutputMode.WEBSOCKET
         self._mode = mode
 
-        # Attach terminal UI if in terminal mode
-        if self._mode == OutputMode.TERMINAL:
+        # Set filter
+        if log_filter == LogFilter.QUIET:
+            self._log_filter = lambda e: e.log_type in (LogType.ERROR, LogType.WARNING, LogType.SUCCESS)
+        elif log_filter == LogFilter.SILENT:
+            self._log_filter = lambda e: e.log_type == LogType.ERROR
+        else:
+            self._log_filter = lambda e: True
+
+        # Default persist dir
+        if persist and persist_dir is None:
+            persist_dir = default_darwin_logs()
+        elif not persist:
+            persist_dir = None
+
+        self._history = HistoryStore(max_memory=max_memory, persist_dir=persist_dir)
+
+        # BOTH terminal + SSE if requested
+        if mode in (OutputMode.TERMINAL, OutputMode.BOTH):
             self._attach_terminal(show_banner)
-
-        # Start WebSocket server if enabled
-        if enable_websocket:
-            self._start_websocket_server(ws_host, ws_port)
-
-        # Start history recorder if enabled
-        if enable_history:
-            self._start_history_recorder(history_max_age)
+        if mode in (OutputMode.SSE, OutputMode.BOTH):
+            self._start_sse(sse_host, sse_port, show_banner)
 
     def _attach_terminal(self, show_banner: bool) -> None:
         try:
             from src.core.Logger.TerminalUi import TerminalUI
-            self._tui = TerminalUI(logger=self)
+            tui = TerminalUI()
             if show_banner:
-                self._tui.show_banner()
-            self._tui.attach()
+                tui.show_banner()
+            self.subscribe(tui)
         except ImportError:
             pass
 
-    def _start_websocket_server(self, host: str, port: int) -> None:
+    def _start_sse(self, host: str, port: int, show_banner: bool) -> None:
         try:
-            from src.core.Logger.WebsocketHelpers import WebSocketServer
-            self._ws_server = WebSocketServer(host=host, port=port)
-            self._ws_server.start()
+            from src.core.Logger.SSEServer import SSEServer
+            from src.core.Logger.lib import ASCII_BANNER  
+            server = SSEServer(host=host, port=port, logger=self)
+            server.start()
+            self._sse_server = server
+            
+            # Emit banner as structured log for SSE clients
+            if show_banner:
+                self.logjson(                               
+                    {"banner": ASCII_BANNER},
+                    LogType.INFO
+                )
+
         except Exception as e:
-            self.log(f"Failed to start WebSocket server: {e}", LogType.ERROR)
-
-    def _start_history_recorder(self, max_age: int) -> None:
-        try:
-            from src.core.Logger.History import HistoryRecorder
-            self._history_recorder = HistoryRecorder(max_age_seconds=max_age)
-            self.subscribe(self._history_recorder)
-        except Exception as e:
-            self.log(f"Failed to start history recorder: {e}", LogType.ERROR)
+            self._emit(LogEvent(
+                message=f"SSE server failed to start: {e}",
+                log_type=LogType.ERROR,
+                session="",
+                timestamp=time.time(),
+            ))
 
     # ------------------------------------------------------------------
-    # Multiprocessing support
+    # Subscription
     # ------------------------------------------------------------------
-    def _is_worker_process(self) -> bool:
-        return multiprocessing.current_process().name != "MainProcess"
-
-    def _ensure_mp_queue(self) -> multiprocessing.Queue:
-        if self._mp_queue is None:
-            self._mp_queue = multiprocessing.Queue()
-        return self._mp_queue
-
-    def start_mp_listener(self) -> None:
-        if self._mp_listener is not None:
-            return
-        queue = self._ensure_mp_queue()
-        self._mp_shutdown.clear()
-        def _drain():
-            while not self._mp_shutdown.is_set():
-                try:
-                    msg = queue.get(timeout=0.1)
-                    if msg is None:
-                        break
-                    level_name, message = msg
-                    log_type = LogType(level_name) if level_name in {lt.value for lt in LogType} else LogType.INFO
-                    self.log(message, log_type)
-                except Exception:
-                    pass
-        self._mp_listener = threading.Thread(target=_drain, daemon=True)
-        self._mp_listener.start()
-
-    def stop_mp_listener(self) -> None:
-        self._mp_shutdown.set()
-        if self._mp_queue is not None:
-            try:
-                self._mp_queue.put(None, timeout=1.0)
-            except Exception:
-                pass
-        if self._mp_listener is not None:
-            self._mp_listener.join(timeout=2.0)
-            self._mp_listener = None
-    def set_mp_queue(self, queue: multiprocessing.Queue) -> None:
-        """
-        Set the shared multiprocessing queue to be used by this process.
-        Must be called in worker processes before any logging.
-        """
-        self._mp_queue = queue
-
-    def get_mp_queue(self) -> Optional[multiprocessing.Queue]:
-        """
-        Return the current multiprocessing queue.
-        Used in the main process to obtain the queue for passing to workers.
-        """
-        return self._mp_queue
-
-    # ------------------------------------------------------------------
-    # Subscriber management with verbosity
-    # ------------------------------------------------------------------
-    def subscribe(self, subscriber: EventSubscriber, verbosity: Optional[Verbosity] = None) -> None:
-        if subscriber not in self._subscribers:
-            self._subscribers.append(subscriber)
-            self._subscriber_verbosity[subscriber] = verbosity if verbosity is not None else self._default_verbosity
+    def subscribe(self, subscriber: EventSubscriber) -> None:
+        with self._lock:
+            if subscriber not in self._subscribers:
+                self._subscribers.append(subscriber)
 
     def unsubscribe(self, subscriber: EventSubscriber) -> None:
-        if subscriber in self._subscribers:
-            self._subscribers.remove(subscriber)
-            self._subscriber_verbosity.pop(subscriber, None)
+        with self._lock:
+            if subscriber in self._subscribers:
+                self._subscribers.remove(subscriber)
 
     # ------------------------------------------------------------------
-    # Action registration
+    # Core emit
     # ------------------------------------------------------------------
-    def register_action(self, name: str, func: Callable[..., Any]) -> None:
-        self._actions[name] = func
+    def _emit(self, event: DarwinEvent) -> None:
+        # Apply filter ONLY to LogEvents before storing/forwarding
+        if isinstance(event, LogEvent) and not self._log_filter(event):
+            return  # silently drop filtered logs
 
-    # ------------------------------------------------------------------
-    # Emit helpers
-    # ------------------------------------------------------------------
-    def _emit(self, event) -> None:
-        if self._is_worker_process():
-            if isinstance(event, LogEvent):
-                queue = self._ensure_mp_queue()
-                try:
-                    queue.put((event.log_type.value, event.message), timeout=0.5)
-                except Exception:
-                    pass
-            return
-
-        session = self._session_var.get()
-        if session and hasattr(event, "session"):
-            event = event.__class__(**{**event.__dict__, "session": session})
-
-        for sub in self._subscribers[:]:
-            verbosity = self._subscriber_verbosity.get(sub, Verbosity.NORMAL)
-            if isinstance(event, LogEvent):
-                if verbosity == Verbosity.QUIET and event.log_type not in (LogType.ERROR, LogType.WARNING, LogType.SUCCESS):
-                    continue
+        self._history.append(event)
+        with self._lock:
+            subs = self._subscribers[:]
+        for sub in subs:
             try:
                 self._dispatch(sub, event)
             except Exception:
-                _log.exception("Subscriber failed to handle event %s", event.type)
+                pass
 
-    def _dispatch(self, sub: EventSubscriber, event) -> None:
+    def _dispatch(self, sub: EventSubscriber, event: DarwinEvent) -> None:
         if isinstance(event, LogEvent):
             sub.on_log(event)
         elif isinstance(event, ProgressStartEvent):
@@ -367,218 +504,170 @@ class DarwinLogger:
             sub.on_session_end(event)
 
     # ------------------------------------------------------------------
-    # Public API – logging, progress, spinner, sessions
+    # Logging
     # ------------------------------------------------------------------
-    def log(self, message: str, log_type: LogType = LogType.INFO, style: str = "") -> None:
-        self._emit(LogEvent(message=message, log_type=log_type, style=style))
-
-    def logjson(self, payload: Any, log_type: LogType = LogType.INFO, style: str = "") -> None:
-        from src.core.Logger.StructuredSerializer import serialize
-        from src.core.Logger.SchemaExtractor import extract_schemas
-        structured = serialize(payload)
-        schemas = extract_schemas(payload)
-        message = json.dumps(structured, indent=2, ensure_ascii=False)
+    def log(self, message: str, log_type: LogType = LogType.INFO) -> None:
         self._emit(LogEvent(
             message=message,
             log_type=log_type,
-            style=style,
+            session=self._session_var.get(),
+            timestamp=time.time(),
+        ))
+
+    def info(self, message: str) -> None:
+        self.log(message, LogType.INFO)
+
+    def warning(self, message: str) -> None:
+        self.log(message, LogType.WARNING)
+
+    def error(self, message: str) -> None:
+        self.log(message, LogType.ERROR)
+
+    def success(self, message: str) -> None:
+        self.log(message, LogType.SUCCESS)
+
+    def logjson(self, payload: Any, log_type: LogType = LogType.INFO) -> None:
+        """Log structured data (dict, dataclass, etc). Preserves type info."""
+        structured = serialize_structured(payload)
+        self._emit(LogEvent(
+            message=json.dumps(structured, indent=2, ensure_ascii=False),
+            log_type=log_type,
+            session=self._session_var.get(),
+            timestamp=time.time(),
             payload=structured,
             format="json",
-            schemas=schemas,
         ))
 
-    def loglist(self, payload: Any, log_type: LogType = LogType.INFO, style: str = "") -> None:
+    def loglist(self, payload: Any, log_type: LogType = LogType.INFO) -> None:
+        """Log a list with type preservation."""
         if not isinstance(payload, list):
-            # were supposed to throw an error here but we'll just log it as a warning for now cause it dosnt make sense to crash the whole logger for this
-            self.log(f"loglist payload should be a list, got {type(payload).__name__}", LogType.WARNING)
-        from src.core.Logger.StructuredSerializer import serialize
-        from src.core.Logger.SchemaExtractor import extract_schemas
-        structured = serialize(payload)
-        schemas = extract_schemas(payload)
-        message = json.dumps(structured, indent=2, ensure_ascii=False)
+            self.warning(f"loglist expected list, got {type(payload).__name__}")
+            payload = [payload]
+        structured = serialize_structured(payload)
         self._emit(LogEvent(
-            message=message,
+            message=json.dumps(structured, indent=2, ensure_ascii=False),
             log_type=log_type,
-            style=style,
+            session=self._session_var.get(),
+            timestamp=time.time(),
             payload=structured,
             format="list",
-            schemas=schemas,
         ))
 
+    # ------------------------------------------------------------------
+    # Progress
+    # ------------------------------------------------------------------
     def progress_start(self, id: str, total: int, label: str) -> None:
-        self._emit(ProgressStartEvent(id=id, total=total, label=label))
+        self._emit(ProgressStartEvent(
+            id=id, total=total, label=label,
+            session=self._session_var.get(),
+        ))
 
     def progress_update(self, id: str, current: int, status: str = "") -> None:
-        self._emit(ProgressUpdateEvent(id=id, current=current, status=status))
+        self._emit(ProgressUpdateEvent(
+            id=id, current=current, status=status,
+            session=self._session_var.get(),
+        ))
 
     def progress_end(self, id: str) -> None:
-        self._emit(ProgressEndEvent(id=id))
+        self._emit(ProgressEndEvent(
+            id=id, session=self._session_var.get(),
+        ))
 
+    def progress(self, id: str, total: int, label: str = ""):
+        """Context manager for progress."""
+        return _ProgressContext(self, id, total, label)
+
+    # ------------------------------------------------------------------
+    # Spinner
+    # ------------------------------------------------------------------
     def spinner_start(self, id: str, message: str = "") -> None:
-        self._emit(SpinnerStartEvent(id=id, message=message))
+        self._emit(SpinnerStartEvent(
+            id=id, message=message,
+            session=self._session_var.get(),
+        ))
 
     def spinner_update(self, id: str, message: str = "") -> None:
-        self._emit(SpinnerUpdateEvent(id=id, message=message))
+        self._emit(SpinnerUpdateEvent(
+            id=id, message=message,
+            session=self._session_var.get(),
+        ))
 
     def spinner_stop(self, id: str, success: bool = True) -> None:
-        self._emit(SpinnerEndEvent(id=id, success=success))
-
-    def session(self, name: str):
-        return _Session(self, name)
-
-    # ------------------------------------------------------------------
-    # Transcripts (formatted logs with filtering)
-    # ------------------------------------------------------------------
-    def get_transcripts(
-        self,
-        session: Optional[str] = None,
-        log_types: Optional[Set[LogType]] = None,
-        start_time: Optional[float] = None,
-        end_time: Optional[float] = None,
-        limit: int = 1000,
-        format: str = "human",
-    ) -> List[str]:
-        if self._history_recorder is None:
-            return []
-
-        def to_timestamp(t):
-            if t is None:
-                return None
-            if isinstance(t, (int, float)):
-                return float(t)
-            if isinstance(t, str):
-                return datetime.fromisoformat(t.replace('Z', '+00:00')).timestamp()
-            # were supposed to throw an error here but we'll just log it as a warning for now cause it dosnt make sense to crash the whole logger for this
-            self.log("start_time/end_time must be float, int, or ISO string", LogType.WARNING)
-
-        start_ts = to_timestamp(start_time)
-        end_ts = to_timestamp(end_time)
-
-        events = self._history_recorder.get_events(session=session, limit=limit * 2)
-
-        filtered = []
-        for ev in events:
-            if not isinstance(ev, LogEvent):
-                continue
-            if log_types is not None and ev.log_type not in log_types:
-                continue
-            if start_ts is not None and ev.timestamp < start_ts:
-                continue
-            if end_ts is not None and ev.timestamp > end_ts:
-                continue
-            filtered.append(ev)
-
-        if limit and len(filtered) > limit:
-            filtered = filtered[-limit:]
-
-        result = []
-        for ev in filtered:
-            dt = datetime.fromtimestamp(ev.timestamp).strftime("%Y-%m-%d %H:%M:%S")
-            level = ev.log_type.value.upper()
-            if format == "human":
-                if ev.payload is not None:
-                    result.append(f"[{dt}] {level} (structured/{ev.format}):\n{ev.message}")
-                else:
-                    result.append(f"[{dt}] {level}: {ev.message}")
-            elif format == "json":
-                result.append(json.dumps({
-                    "timestamp": ev.timestamp,
-                    "datetime": dt,
-                    "level": level,
-                    "message": ev.message,
-                    "session": ev.session,
-                    "payload": ev.payload,
-                    "format": ev.format,
-                    "schemas": ev.schemas,
-                }))
-            else:
-                # were supposed to throw an error here but we'll just log it as a warning for now cause it dosnt make sense to crash the whole logger for this
-                self.log("format must be 'human' or 'json'", LogType.WARNING)
-        return result
+        self._emit(SpinnerEndEvent(
+            id=id, success=success,
+            session=self._session_var.get(),
+        ))
 
     # ------------------------------------------------------------------
-    # Bridge factory (used by WebSocket server)
+    # Sessions
     # ------------------------------------------------------------------
-    def _get_bridge(self, ws=None, loop=None):
-        try:
-            from src.core.Logger.FrontendUi import FrontendBridge
-            return FrontendBridge(websocket=ws, fallback_stdout=False, logger=self, loop=loop)
-        except ImportError:
-            return _FallbackBridge(ws, logger=self)
+    def session(self, name: str) -> SessionHandle:
+        return SessionHandle(name, self._history, time.time(), self)
+
+    # ------------------------------------------------------------------
+    # History queries
+    # ------------------------------------------------------------------
+    def get_logs(self,
+                 session: Optional[str] = None,
+                 levels: Optional[Set[LogType]] = None,
+                 after: Optional[float] = None,
+                 before: Optional[float] = None,
+                 limit: int = 1000) -> List[LogEvent]:
+        return self._history.get_logs(
+            session=session, levels=levels, after=after, before=before, limit=limit
+        )
+
+    def get_events(self, session: Optional[str] = None, limit: int = 500) -> List[DarwinEvent]:
+        return self._history.get_events(session=session, limit=limit)
+
+    def get_sessions(self) -> List[str]:
+        return self._history.sessions()
+
+    def history_stats(self) -> Dict[str, Any]:
+        return self._history.stats()
 
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
     def shutdown(self) -> None:
-        self.stop_mp_listener()
-        if self._ws_server:
-            self._ws_server.shutdown()
-        self._subscribers.clear()
-        self._subscriber_verbosity.clear()
-
-    # ------------------------------------------------------------------
-    # Progress context manager
-    # ------------------------------------------------------------------
-    class Progress:
-        def __init__(self, logger: DarwinLogger, id: str, total: int, label: str):
-            self.logger = logger
-            self.id = id
-            self.total = total
-            self.current = 0
-            self.label = label
-
-        def __enter__(self):
-            self.logger.progress_start(self.id, self.total, self.label)
-            return self
-
-        def update(self, current: int, status: str = ""):
-            self.current = current
-            self.logger.progress_update(self.id, current, status)
-
-        def __exit__(self, *args):
-            self.logger.progress_end(self.id)
-
-    def progress(self, id: str, total: int, label: str = "") -> Progress:
-        return self.Progress(self, id, total, label)
+        self._history.flush()
+        with self._lock:
+            self._subscribers.clear()
 
 
 # ---------------------------------------------------------------------------
-# Session context manager
+# Progress context manager
 # ---------------------------------------------------------------------------
-class _Session:
-    def __init__(self, log: DarwinLogger, name: str):
-        self.logger = log
-        self.name = name
-        self._token = None
+class _ProgressContext:
+    def __init__(self, logger: DarwinLogger, id: str, total: int, label: str):
+        self.logger = logger
+        self.id = id
+        self.total = total
+        self.label = label
 
     def __enter__(self):
-        self._token = self.logger._session_var.set(self.name)
-        self.logger._emit(SessionStartEvent(name=self.name))
+        self.logger.progress_start(self.id, self.total, self.label)
         return self
 
+    def update(self, current: int, status: str = ""):
+        self.logger.progress_update(self.id, current, status)
+
     def __exit__(self, *args):
-        self.logger._emit(SessionEndEvent(name=self.name))
-        self.logger._session_var.reset(self._token)
-
-
-# ---------------------------------------------------------------------------
-# Fallback no-op bridge
-# ---------------------------------------------------------------------------
-class _FallbackBridge(EventSubscriber):
-    def __init__(self, ws=None, logger=None):
-        self._ws = ws
-        self._logger = logger
-
-    def on_log(self, event): pass
-    def on_progress_start(self, event): pass
-    def on_progress_update(self, event): pass
-    def on_progress_end(self, event): pass
-    def on_spinner_start(self, event): pass
-    def on_spinner_update(self, event): pass
-    def on_spinner_end(self, event): pass
-    def on_session_start(self, event): pass
-    def on_session_end(self, event): pass
+        self.logger.progress_end(self.id)
 
 
 # Global instance
-darwin = DarwinLogger()
+_darwin_instance: Optional[DarwinLogger] = None
+_darwin_lock = threading.Lock()
+
+
+def get_logger() -> DarwinLogger:
+    global _darwin_instance
+    if _darwin_instance is None:
+        with _darwin_lock:
+            if _darwin_instance is None:
+                _darwin_instance = DarwinLogger()
+    return _darwin_instance
+
+
+darwin = get_logger()

@@ -1,9 +1,3 @@
-# src/core/Models/ModelLoading/API/InferenceAPI.py
-"""
-Unified async inference API for embeddings, vision, and reranking.
-Uses LiteLLM. Relies on KeyManager for API key validation.
-"""
-
 import asyncio
 import os
 from pathlib import Path

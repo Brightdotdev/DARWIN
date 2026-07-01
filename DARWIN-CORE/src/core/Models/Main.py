@@ -1,6 +1,6 @@
 # src/core/Models/cli.py
 """
-🧠 Darwin Model Manager CLI — using the new unified ModelManager.
+Darwin Model Manager CLI — using the new unified ModelManager.
 """
 
 import argparse
@@ -9,7 +9,7 @@ import os
 from typing import Dict
 
 from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec, MODEL_SPECS
-from src.core.Models.ModelManager import ModelManager, ManagerStatus, ModelManagerError, modelManager
+from src.core.Models.ModelManager import ModelManager, ManagerStatus, modelManager
 
 from src.lib.KeyManager import (
     set_api_key,
@@ -45,7 +45,7 @@ def handle_models(args):
             all_models = {mid: spec for mid, spec in MODEL_SPECS.items() if spec.category == cat_enum}
             darwin.log(f"\nAll registered models in {category}:")
             for mid, spec in all_models.items():
-                status = "✅" if mid in available else "⏳" if not spec.requires_provider else "🔑"
+                status = "" if mid in available else "⏳" if not spec.requires_provider else "🔑"
                 darwin.log(f"  {status} {mid} ({spec.tier})")
         else:
             # Show all categories summary via initialize
@@ -63,7 +63,7 @@ def handle_models(args):
                     # Determine category from spec
                     spec = find_spec(model_id)
                     if not spec:
-                        darwin.log(f"❌ Unknown model: {model_id}", LogType.ERROR)
+                        darwin.log(f"  Unknown model: {model_id}", LogType.ERROR)
                         continue
                     category = spec.category
                     # Setup: download, load, set active
@@ -75,12 +75,12 @@ def handle_models(args):
                         required=False,
                     )
                     if result.success:
-                        darwin.log(f"✅ Installed and activated: {model_id}", LogType.SUCCESS)
+                        darwin.log(f" Installed and activated: {model_id}", LogType.SUCCESS)
                     else:
-                        darwin.log(f"❌ Failed to install {model_id}: {result.error}", LogType.ERROR)
+                        darwin.log(f"Failed to install {model_id}: {result.error}", LogType.ERROR)
       
                 except Exception as e:
-                    darwin.log(f"❌ Failed to install {model_id}: {e}", LogType.ERROR)
+                    darwin.log(f"  Failed to install {model_id}: {e}", LogType.ERROR)
                 # API key reminder for API models
                 spec = find_spec(model_id)
                 if spec and spec.requires_provider:
@@ -89,7 +89,7 @@ def handle_models(args):
                     env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
                     if env_var and not os.getenv(env_var):
                         darwin.log(
-                            f"⚠️  API key for {provider} is not set. "
+                            f"  API key for {provider} is not set. "
                             f"Use 'python -m src.core.Models.cli key set {provider} YOUR_KEY'",
                             LogType.WARNING,
                         )
@@ -108,11 +108,11 @@ def handle_models(args):
                     required=False,
                 )
                 if result.success:
-                    darwin.log(f"✅ Installed {default_id} as active for {args.category}", LogType.SUCCESS)
+                    darwin.log(f" Installed {default_id} as active for {args.category}", LogType.SUCCESS)
                 else:
-                    darwin.log(f"❌ Failed to install {default_id}: {result.error}", LogType.ERROR)
+                    darwin.log(f"  Failed to install {default_id}: {result.error}", LogType.ERROR)
             else:
-                darwin.log(f"❌ No default model found for {args.category}", LogType.ERROR)
+                darwin.log(f"  No default model found for {args.category}", LogType.ERROR)
         else:
             # No model or category: run full setup with recommended profile
             darwin.log("Running full setup with recommended models...", LogType.INFO)
@@ -125,9 +125,9 @@ def handle_models(args):
             )
             for cat, res in results.items():
                 if res.success:
-                    darwin.log(f"✅ {cat.name}: {res.model_id} ready", LogType.SUCCESS)
+                    darwin.log(f" {cat.name}: {res.model_id} ready", LogType.SUCCESS)
                 else:
-                    darwin.log(f"❌ {cat.name}: {res.error}", LogType.ERROR)
+                    darwin.log(f"  {cat.name}: {res.error}", LogType.ERROR)
 
     elif args.command == "setup":
         profile = getattr(args, "profile", "required")
@@ -147,24 +147,24 @@ def handle_models(args):
         )
         for cat, res in results.items():
             if res.success:
-                darwin.log(f"✅ {cat.name}: {res.model_id} ready", LogType.SUCCESS)
+                darwin.log(f" {cat.name}: {res.model_id} ready", LogType.SUCCESS)
             else:
-                darwin.log(f"❌ {cat.name}: {res.error}", LogType.ERROR)
+                darwin.log(f"  {cat.name}: {res.error}", LogType.ERROR)
 
     elif args.command == "uninstall":
         if not args.model:
-            darwin.log("❌ Specify --model to uninstall", LogType.ERROR)
+            darwin.log("  Specify --model to uninstall", LogType.ERROR)
             return
         for model_id in args.model:
             spec = find_spec(model_id)
             if not spec:
-                darwin.log(f"❌ Unknown model: {model_id}", LogType.ERROR)
+                darwin.log(f"  Unknown model: {model_id}", LogType.ERROR)
                 continue
             category = spec.category
             # Discard with delete=True, and also clear preference if active
             # The discard function already clears active if deleting.
             mgr.discard_model(category, model_id, delete=True)
-            darwin.log(f"✅ Uninstalled {model_id}", LogType.SUCCESS)
+            darwin.log(f" Uninstalled {model_id}", LogType.SUCCESS)
 
     elif args.command == "upgrade":
         # Upgrade = force re-download and reload
@@ -172,7 +172,7 @@ def handle_models(args):
             for model_id in args.model:
                 spec = find_spec(model_id)
                 if not spec:
-                    darwin.log(f"❌ Unknown model: {model_id}", LogType.ERROR)
+                    darwin.log(f"  Unknown model: {model_id}", LogType.ERROR)
                     continue
                 category = spec.category
                 darwin.log(f"Upgrading {model_id}...")
@@ -184,9 +184,9 @@ def handle_models(args):
                     required=False,
                 )
                 if result.success:
-                    darwin.log(f"✅ Upgraded {model_id}", LogType.SUCCESS)
+                    darwin.log(f" Upgraded {model_id}", LogType.SUCCESS)
                 else:
-                    darwin.log(f"❌ Upgrade failed for {model_id}: {result.error}", LogType.ERROR)
+                    darwin.log(f"  Upgrade failed for {model_id}: {result.error}", LogType.ERROR)
         elif args.category:
             cat_enum = ModelCategory(args.category)
             # Upgrade all installed models in that category
@@ -204,15 +204,15 @@ def handle_models(args):
                     required=False,
                 )
                 if result.success:
-                    darwin.log(f"✅ Upgraded {model_id}", LogType.SUCCESS)
+                    darwin.log(f" Upgraded {model_id}", LogType.SUCCESS)
                 else:
-                    darwin.log(f"❌ Upgrade failed for {model_id}: {result.error}", LogType.ERROR)
+                    darwin.log(f"  Upgrade failed for {model_id}: {result.error}", LogType.ERROR)
         else:
-            darwin.log("❌ Specify --model or --category to upgrade", LogType.ERROR)
+            darwin.log("  Specify --model or --category to upgrade", LogType.ERROR)
 
     elif args.command == "switch":
         if not args.category:
-            darwin.log("❌ Specify --category", LogType.ERROR)
+            darwin.log("  Specify --category", LogType.ERROR)
             return
         cat_enum = ModelCategory(args.category)
         migrate = getattr(args, "migrate", False)
@@ -226,17 +226,17 @@ def handle_models(args):
                 result = mgr.setup(cat_enum, model_id=model_id, auto_download=True, required=False)
                 if result.success:
                     mgr.set_preference(cat_enum, model_id, auto_download=False)
-                    darwin.log(f"✅ Switched to {model_id}", LogType.SUCCESS)
+                    darwin.log(f" Switched to {model_id}", LogType.SUCCESS)
                 else:
-                    darwin.log(f"❌ Failed to switch to {model_id}: {result.error}", LogType.ERROR)
+                    darwin.log(f"  Failed to switch to {model_id}: {result.error}", LogType.ERROR)
             except Exception as e:
-                darwin.log(f"❌ Switch failed: {e}", LogType.ERROR)
+                darwin.log(f"  Switch failed: {e}", LogType.ERROR)
 
     elif args.command == "switch-format":
         # Deprecated: format selection is not in new manager; we'll adapt by finding a model with that format.
         darwin.log("switch-format is deprecated. Use 'switch' with the exact model key.", LogType.WARNING)
         if not args.category or not args.base_model:
-            darwin.log("❌ Specify --category and --base-model", LogType.ERROR)
+            darwin.log("  Specify --category and --base-model", LogType.ERROR)
             return
         cat_enum = ModelCategory(args.category)
         format_pref = getattr(args, "format", None)
@@ -259,9 +259,9 @@ def handle_models(args):
         result = mgr.setup(cat_enum, model_id=selected, auto_download=True, required=False)
         if result.success:
             mgr.set_preference(cat_enum, selected, auto_download=False)
-            darwin.log(f"✅ Switched to {selected}", LogType.SUCCESS)
+            darwin.log(f" Switched to {selected}", LogType.SUCCESS)
         else:
-            darwin.log(f"❌ Failed: {result.error}", LogType.ERROR)
+            darwin.log(f"  Failed: {result.error}", LogType.ERROR)
 
     elif args.command == "setup-custom":
         # Keep interactive onboarding if available; otherwise fallback to setup required
@@ -271,7 +271,7 @@ def handle_models(args):
             asyncio.run(run_onboarding_async())
             darwin.log("  Custom setup complete. Run 'status' to see your models.")
         except ImportError:
-            darwin.log("❌ Onboarding module not available. Use setup instead:", LogType.ERROR)
+            darwin.log("  Onboarding module not available. Use setup instead:", LogType.ERROR)
             darwin.log("   python -m src.core.Models.cli setup --profile recommended", LogType.INFO)
 
     elif args.command == "validate":
@@ -280,13 +280,13 @@ def handle_models(args):
             for model_id in args.model:
                 spec = find_spec(model_id)
                 if not spec:
-                    darwin.log(f"❌ Unknown model: {model_id}", LogType.ERROR)
+                    darwin.log(f"  Unknown model: {model_id}", LogType.ERROR)
                     continue
                 category = spec.category
                 if mgr.is_downloaded(category, model_id):
                     darwin.log(f"  {model_id} — OK")
                 else:
-                    darwin.log(f"❌ {model_id}: not downloaded", LogType.ERROR)
+                    darwin.log(f"  {model_id}: not downloaded", LogType.ERROR)
         elif args.category:
             cat_enum = ModelCategory(args.category)
             available = mgr.list_available(cat_enum)
@@ -295,7 +295,7 @@ def handle_models(args):
                     if model_id in available:
                         darwin.log(f"  {model_id} — OK")
                     else:
-                        darwin.log(f"⚠️  {model_id}: not available", LogType.WARNING)
+                        darwin.log(f"  {model_id}: not available", LogType.WARNING)
         else:
             # Full validation: run initialize
             status = mgr.initialize(auto_setup=False)
@@ -303,7 +303,7 @@ def handle_models(args):
                 if cat_status.available:
                     darwin.log(f"  {cat_name}: OK (active: {cat_status.active_model_id})")
                 else:
-                    darwin.log(f"  {cat_name}: ❌ {cat_status.error}")
+                    darwin.log(f"  {cat_name}:   {cat_status.error}")
 
     else:
         darwin.log(f"Unknown command: {args.command}", LogType.ERROR)
@@ -315,11 +315,11 @@ def print_status(status: ManagerStatus):
     if status.warnings:
         darwin.log("\nWarnings:", LogType.WARNING)
         for w in status.warnings:
-            darwin.log(f"  ⚠️ {w}", LogType.WARNING)
+            darwin.log(f"   {w}", LogType.WARNING)
     if status.missing_required:
         darwin.log("\nMissing required models:", LogType.ERROR)
         for cat in status.missing_required:
-            darwin.log(f"  ❌ {cat}", LogType.ERROR)
+            darwin.log(f"    {cat}", LogType.ERROR)
         darwin.log("Run 'install' or 'setup' to resolve.", LogType.INFO)
 
 
@@ -394,9 +394,9 @@ def interactive_switch(mgr: ModelManager, category: str, migrate: bool = False):
             result = mgr.setup(cat_enum, model_id=selected, auto_download=True, required=False)
             if result.success:
                 mgr.set_preference(cat_enum, selected, auto_download=False)
-                darwin.log(f"✅ Switched to {selected}", LogType.SUCCESS)
+                darwin.log(f" Switched to {selected}", LogType.SUCCESS)
             else:
-                darwin.log(f"❌ Failed: {result.error}", LogType.ERROR)
+                darwin.log(f"  Failed: {result.error}", LogType.ERROR)
         else:
             darwin.log("Invalid selection.", LogType.ERROR)
     except ValueError:
@@ -408,7 +408,7 @@ def handle_keys(args):
     try:
         load_keys_from_keychain()
     except Exception as e:
-        darwin.log(f"⚠️  Could not load keychain: {e}", LogType.WARNING)
+        darwin.log(f"  Could not load keychain: {e}", LogType.WARNING)
 
     if args.key_command == "set":
         set_api_key(args.provider, args.key_value, validate=not args.no_validate)
@@ -420,7 +420,7 @@ def handle_keys(args):
         darwin.log("Providers and key status:")
         for provider, (env_var, _) in PROVIDER_REGISTRY.items():
             key_set = bool(os.getenv(env_var))
-            status = "🔑 set" if key_set else "❌ missing"
+            status = "set" if key_set else "  missing"
             darwin.log(f"  {provider}: {status}")
     else:
         darwin.log("Unknown key command.", LogType.ERROR)
@@ -430,7 +430,7 @@ def handle_keys(args):
 
 def create_parser():
     parser = argparse.ArgumentParser(
-        description="🧠 Darwin Model Manager — download, switch, and manage AI models",
+        description="Darwin Model Manager — download, switch, and manage AI models",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -518,12 +518,12 @@ def main():
         darwin.configure()
         handle_models(args)
     except KeyboardInterrupt:
-        darwin.log("\n\n⚠️  Operation cancelled by user", LogType.WARNING)
+        darwin.log("\n\n  Operation cancelled by user", LogType.WARNING)
         darwin.log("   Partial downloads are saved and will resume on next run.", LogType.WARNING)
         sys.exit(1)
 
     except Exception as e:
-        darwin.log(f"\n❌ Error: {e}", LogType.ERROR)
+        darwin.log(f"\n  Error: {e}", LogType.ERROR)
         sys.exit(1)
 
 

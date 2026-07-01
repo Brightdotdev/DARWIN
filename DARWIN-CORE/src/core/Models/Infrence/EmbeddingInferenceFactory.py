@@ -1,9 +1,3 @@
-# src/core/Models/ModelLoading/API/EmbeddingInferenceFactory.py
-"""
-Factory for creating the correct embedding inference backend
-based on model spec (requires_provider).
-"""
-
 from pathlib import Path
 from typing import Optional
 from src.core.Models.Lib.ModelRegistry import find_spec, ModelCategory

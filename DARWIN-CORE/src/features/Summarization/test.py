@@ -16,16 +16,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.features.Summarization.Summarizer import Summarizer
-from src.core.Logger.DarwinLogger import darwin, Verbosity
+from src.core.Logger.DarwinLogger import darwin
 import logging
 logging.getLogger("spacy").setLevel(logging.WARNING)
 
-darwin.configure(enable_websocket=False, verbosity_default=Verbosity.NORMAL)
+darwin.configure()
 
 
 def get_clean_text(url: str) -> str:
-    from src.features.Ingestion.Parsing.UrlFetcher import fetch_url
-    from src.features.Ingestion.Parsing.HtmlProcessor import extract_content
+    from src.pipleline.Ingestion.Parsing.UrlFetcher import fetch_url
+    from src.pipleline.Ingestion.Parsing.HtmlProcessor import extract_content
 
     data, _, err = fetch_url(url)
     if err:
