@@ -421,10 +421,10 @@ async def main() -> int:
         )
 
     # Dump errors/warnings to file
-    errors = darwin.get_logs(levels={LogType.ERROR, LogType.WARNING})
+    errors = darwin.get_logs(levels={LogType.ERROR, LogType.WARNING,LogType.SUCCESS})
     with open("sum.txt", "w", encoding="utf-8") as f:
         for log in errors:
-            f.write(f"[{log.log_type.value.upper()}] {log.message}\n")
+            f.write(f"[{log.session}] [{log.log_type.value.upper()}] {log.message}\n")
             if log.payload:
                 f.write(f"  → {log.payload}\n")
 

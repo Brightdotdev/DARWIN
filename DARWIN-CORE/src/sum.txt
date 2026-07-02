@@ -1,32 +1,110 @@
-[WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
-[WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
-[WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
-[WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
-[WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
-[ERROR] Batch NLP pipe failed: Unable to allocate 1012. MiB for an array with shape (921355, 288) and data type float32
-[ERROR] [output.html] Not registered — skipped
-[WARNING] Skipping url:url_en_wikipedia_org_a5249650 (fresh embeddings exist)
-[WARNING] Skipping url:url_en_wikipedia_org_16984a3b (fresh embeddings exist)
-[WARNING] Skipping Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf (fresh embeddings exist)
-[WARNING] Skipping TheGivingTreePoem.pdf (fresh embeddings exist)
-[WARNING] Skipping The-Holy-Bible-King-James-Version.pdf (fresh embeddings exist)
-[WARNING] Skipping sumsum.pdf (fresh embeddings exist)
-[WARNING] Skipping OpenClawEbookFinal.pdf (fresh embeddings exist)
-[WARNING] Skipping OpenClaw Ebook - Final.pdf (fresh embeddings exist)
-[WARNING] Skipping NVIDIA-Nemotron-3-Super-Technical-Report.pdf (fresh embeddings exist)
-[WARNING] Skipping FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf (fresh embeddings exist)
-[WARNING] Skipping Essential-GraphRAG.pdf (fresh embeddings exist)
-[WARNING] Skipping cursor_paper.pdf (fresh embeddings exist)
-[WARNING] Skipping CSB_Pew_Bible_2nd_Printing.pdf (fresh embeddings exist)
-[WARNING] Skipping cinderella-perrault-version.pdf (fresh embeddings exist)
-[WARNING] Skipping bws_book.pdf (fresh embeddings exist)
-[WARNING] Skipping book_of_enoch.pdf (fresh embeddings exist)
-[WARNING] Skipping anthropic_paper.pdf (fresh embeddings exist)
-[WARNING] Skipping 22-Science-Diplomacy-TR.pdf (fresh embeddings exist)
-[WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
-[WARNING] 'output.html' → 'output.html' has no chunks — skipping
-[ERROR] No documents available to chunk. Aborting.
-[WARNING]   ✗ output.html
-[WARNING] Skipping 1 failed parse(s)
-[WARNING] Failed: 1 item(s)
-[ERROR] Failed: 1 items
+[] [SUCCESS] Pipeline Complete
+[] [SUCCESS] Best configuration: experimental
+[] [SUCCESS] Results saved to retrieval_results_clean.json
+[] [SUCCESS] [Orchestrator] Done: 3 passages, 5855 chars, 3668ms
+[] [SUCCESS] Total: 20  |  sources: 5
+[] [SUCCESS] Total: 20 results in 3.50s
+[] [SUCCESS] Found 20 results
+[] [SUCCESS] done — 20 final results
+[] [SUCCESS] [ONNX Embedding] Model unloaded.
+[] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[] [SUCCESS] Results saved to retrieval_results_experimental.json
+[] [SUCCESS] [Orchestrator] Done: 3 passages, 7820 chars, 3948ms
+[] [SUCCESS] Total: 40  |  sources: 9
+[] [SUCCESS] Total: 40 results in 3.77s
+[] [SUCCESS] Found 40 results
+[] [SUCCESS] done — 40 final results
+[] [SUCCESS] [ONNX Embedding] Model unloaded.
+[] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[] [SUCCESS] Results saved to retrieval_results_recall.json
+[] [SUCCESS] [Orchestrator] Done: 6 passages, 11972 chars, 4800ms
+[] [SUCCESS] Total: 60  |  sources: 12
+[] [SUCCESS] Total: 60 results in 4.50s
+[] [SUCCESS] Found 60 results
+[] [SUCCESS] done — 60 final results
+[] [SUCCESS] [ONNX Embedding] Model unloaded.
+[] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[] [SUCCESS] Results saved to retrieval_results_precision.json
+[] [SUCCESS] [Orchestrator] Done: 2 passages, 3830 chars, 4883ms
+[] [SUCCESS] Total: 12  |  sources: 3
+[] [SUCCESS] Total: 12 results in 4.81s
+[] [SUCCESS] Found 12 results
+[] [SUCCESS] done — 12 final results
+[] [SUCCESS] [ONNX Embedding] Model unloaded.
+[] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[] [SUCCESS] Results saved to retrieval_results_balanced.json
+[] [SUCCESS] [Orchestrator] Done: 3 passages, 5855 chars, 10008ms
+[] [SUCCESS] Total: 20  |  sources: 5
+[] [SUCCESS] Total: 20 results in 9.69s
+[] [SUCCESS] Found 20 results
+[] [SUCCESS] done — 20 final results
+[] [SUCCESS] [ONNX Embedding] Model unloaded.
+[] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[] [SUCCESS] Pipeline OK: Pipeline OK | Completed: 3 | Failed: 0
+[pipeline_orchestrator] [SUCCESS] Pipeline complete: Pipeline OK | Completed: 3 | Failed: 0
+[pipeline_knowledge] [SUCCESS] ✓ Stage complete: knowledge
+[pipeline_knowledge] [ERROR] Batch NLP pipe failed: Unable to allocate 419. MiB for an array with shape (1144109, 96) and data type float32
+[pipeline_knowledge] [ERROR] [output.html] Not registered — skipped
+[pipeline_knowledge] [ERROR] [30163-AKINOLA BRIGHT BOLUWATIFE.pdf] Not registered — skipped
+[pipeline_knowledge] [SUCCESS] NLP model ready: en_core_web_md
+[pipeline_indexing] [SUCCESS] ✓ Stage complete: indexing
+[pipeline_indexing] [SUCCESS] Indexing complete
+[pipeline_indexing] [SUCCESS] Done — 2 embedded · 18 skipped · 0 failed
+[pipeline_indexing] [SUCCESS] [ONNX Embedding] Model unloaded.
+[pipeline_indexing] [WARNING] Skipping url:url_en_wikipedia_org_a5249650 (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping url:url_en_wikipedia_org_16984a3b (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping TheGivingTreePoem.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping The-Holy-Bible-King-James-Version.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping sumsum.pdf (fresh embeddings exist)
+[pipeline_indexing] [SUCCESS] Vector index saved: 9 vectors, 384d
+[pipeline_indexing] [SUCCESS] Embeddings saved: 9 vectors, 384d, float16
+[pipeline_indexing] [SUCCESS] Embedded 9 chunks → (9, 384) (model: multilingual-e5-small, batch_size=64)
+[pipeline_indexing] [WARNING] Skipping OpenClawEbookFinal.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping OpenClaw Ebook - Final.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping NVIDIA-Nemotron-3-Super-Technical-Report.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping Essential-GraphRAG.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping cursor_paper.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping CSB_Pew_Bible_2nd_Printing.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping cinderella-perrault-version.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping bws_book.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping book_of_enoch.pdf (fresh embeddings exist)
+[pipeline_indexing] [WARNING] Skipping anthropic_paper.pdf (fresh embeddings exist)
+[pipeline_indexing] [SUCCESS] Vector index saved: 1 vectors, 384d
+[pipeline_indexing] [SUCCESS] Embeddings saved: 1 vectors, 384d, float16
+[pipeline_indexing] [SUCCESS] Embedded 1 chunks → (1, 384) (model: multilingual-e5-small, batch_size=64)
+[pipeline_indexing] [WARNING] Skipping 22-Science-Diplomacy-TR.pdf (fresh embeddings exist)
+[pipeline_indexing] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[pipeline_indexing] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[pipeline_indexing] [SUCCESS] done — 2 indexed · 18 skipped · 0 failed
+[pipeline_indexing] [SUCCESS] Saved BM25 index for psykadelicish.csv
+[pipeline_indexing] [SUCCESS] Index built: 9 chunks, 774 terms, 37 domain stops
+[pipeline_indexing] [SUCCESS] Saved BM25 index for AKINOLA.pdf
+[pipeline_indexing] [SUCCESS] Index built: 1 chunks, 1 terms, 106 domain stops
+[pipeline_indexing] [WARNING] 'output.html' → 'output.html' has no chunks — skipping
+[pipeline_indexing] [WARNING] '30163-AKINOLA BRIGHT BOLUWATIFE.pdf' → '30163-AKINOLA BRIGHT BOLUWATIFE.pdf' has no chunks — skipping
+[pipeline_ingestion] [SUCCESS] ✓ Stage complete: ingestion
+[pipeline_ingestion] [SUCCESS]   INGESTION COMPLETE
+[pipeline_ingestion] [SUCCESS] done — 2 chunked · 0 failed
+[pipeline_ingestion] [SUCCESS] psykadelicish.csv — 9 chunks · avg 725 tokens · 0 links distributed
+[pipeline_ingestion] [SUCCESS] Records saved: 9 rows
+[pipeline_ingestion] [SUCCESS] AKINOLA.pdf — 1 chunks · avg 306 tokens · 0 links distributed
+[pipeline_ingestion] [SUCCESS] Records saved: 1 rows
+[pipeline_ingestion] [WARNING]   ✗ output.html
+[pipeline_ingestion] [WARNING]   ✗ 30163-AKINOLA BRIGHT BOLUWATIFE.pdf
+[pipeline_ingestion] [WARNING] Skipping 2 failed parse(s)
+[pipeline_ingestion] [SUCCESS] Saved markdown for psykadelicish.csv
+[pipeline_ingestion] [SUCCESS] Saved markdown for AKINOLA.pdf
+[pipeline_ingestion] [WARNING] Failed: 2 item(s)
+[pipeline_ingestion] [SUCCESS] Successfully parsed 2 item(s)
+[pipeline_ingestion] [ERROR] Failed: 2 items
+[pipeline_ingestion] [SUCCESS] Parsed: 2 items
+[pipeline_ingestion] [ERROR] Failed to fetch http://en.wikipedia.org/wiki/Amalthea_(mythology): HTTPConnectionPool(host='en.wikipedia.org', port=80): Max retries exceeded with url: /wiki/Amalthea_(mythology) (Caused by NameResolutionError("HTTPConnection(host='en.wikipedia.org', port=80): Failed to resolve 'en.wikipedia.org' ([Errno 11001] getaddrinfo failed)"))
+[pipeline_ingestion] [ERROR] Failed to fetch https://en.wikipedia.org/wiki/Book_of_Enoch: HTTPSConnectionPool(host='en.wikipedia.org', port=443): Max retries exceeded with url: /wiki/Book_of_Enoch (Caused by NameResolutionError("HTTPSConnection(host='en.wikipedia.org', port=443): Failed to resolve 'en.wikipedia.org' ([Errno 11001] getaddrinfo failed)"))
+[pipeline_orchestrator] [SUCCESS] Parameters validated. Stages: ['ingestion', 'indexing', 'knowledge']

@@ -207,6 +207,7 @@ def _parse_url_with_data(
 
         if not text or not is_good_enough(text, darwin):
             error_msg = metadata.get("error") or "extracted text is empty or garbled"
+            darwin.error(error_msg)
             return ParsedDocument(
                 display_text="", embedding_text="", filename=display_name or url,
                 page_count=0, file_type="html", error=error_msg,
@@ -217,7 +218,7 @@ def _parse_url_with_data(
             page_count=_words_to_pages(text), file_type="html",
             metadata=metadata, error=None,
         )
-
+    darwin.error(f"unsupported content type '{content_type}'")
     return ParsedDocument(
         display_text="", embedding_text="", filename=display_name or url,
         page_count=0, file_type="unsupported",

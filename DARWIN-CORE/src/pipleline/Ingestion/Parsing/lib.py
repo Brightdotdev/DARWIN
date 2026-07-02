@@ -91,15 +91,13 @@ def is_good_enough(text: str, darwin) -> bool:
         printable = sum(1 for c in text if c.isprintable() and not c.isspace())
         ok = printable > MIN_TEXT_LENGTH
         if not ok:
-            darwin.log(f"is_good_enough: non-latin doc rejected (printable={printable})",
-                       darwin.LogType.WARNING)
+            darwin.warning(f"is_good_enough: non-latin doc rejected (printable={printable})")
         return ok
 
     ok = ascii_ratio > ASCII_RATIO_THRESHOLD
     if not ok:
-        darwin.log(f"is_good_enough: rejected (ascii_ratio={ascii_ratio:.2f}, "
-                   f"threshold={ASCII_RATIO_THRESHOLD})",
-                   darwin.LogType.WARNING)
+        darwin.warning(f"is_good_enough: rejected (ascii_ratio={ascii_ratio:.2f}, "
+                   f"threshold={ASCII_RATIO_THRESHOLD})")
     return ok
 
 
