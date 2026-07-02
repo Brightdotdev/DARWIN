@@ -1,7 +1,7 @@
 
 from dataclasses import dataclass,field
 from typing import List,Optional,Dict,Any
-from src.features.Indexing.BM25.lib import BM25Data,compute_idf
+from src.pipleline.Indexing.BM25.lib import BM25Data,compute_idf
         
 
 

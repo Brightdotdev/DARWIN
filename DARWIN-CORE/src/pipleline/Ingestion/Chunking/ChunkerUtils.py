@@ -1,10 +1,10 @@
 import re
 import functools
 from typing import List, Optional, Tuple
-from src.features.Ingestion.Chunking.ChunkConfig import get_chunk_config
-from src.features.Ingestion.Chunking.ChunkCleaners import prepare_embedding_text
-from src.features.Ingestion.Chunking.lib import (OverlapDirection, ChunkLink, Chunk,count_page_seps, TABLE_OPEN_TOKEN, TABLE_EMB_TOKEN, CAPTION_TOKEN)
-from src.features.Ingestion.Chunking.StructuralClassifier import classify_structural_type
+from src.pipleline.Ingestion.Chunking.ChunkConfig import get_chunk_config
+from src.pipleline.Ingestion.Chunking.ChunkCleaners import prepare_embedding_text
+from src.pipleline.Ingestion.Chunking.lib import (OverlapDirection, ChunkLink, Chunk,count_page_seps, TABLE_OPEN_TOKEN, TABLE_EMB_TOKEN, CAPTION_TOKEN)
+from src.pipleline.Ingestion.Chunking.StructuralClassifier import classify_structural_type
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Link extraction

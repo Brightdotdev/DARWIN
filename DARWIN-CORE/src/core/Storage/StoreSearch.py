@@ -8,7 +8,16 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 
 
 class StoreSearch:
-    """Unified retrieval: vector, numpy fallback, and multi-file search."""
+    """Unified retrieval: vector, numpy fallback, and multi-file search.
+
+    Intended as a mixin for DarwinStore. Requires the host class to implement:
+    - query_records(filename, columns, **filters)
+    - search_vector(filename, query_vec, k)
+    - load_embeddings(filename, mmap)
+    - load_embedding_index_map(filename)
+    - has_vector(filename)
+    - has_embeddings(filename)
+    """
 
     def _finalize_matches(
         self,
@@ -28,8 +37,12 @@ class StoreSearch:
             row["_score"] = score_map.get(row.get("index", -1), 0.0)
 
         if cls is not None:
-            from src.core.Storage.StoreUtils import reconstruct_records
-            return reconstruct_records(rows, cls=cls)
+            try:
+                from src.core.Storage.StoreUtils import reconstruct_records
+                return reconstruct_records(rows, cls=cls)
+            except Exception:
+                # If reconstruction fails, fall back to raw dicts
+                pass
         return rows
 
     def retrieve_by_vector(
@@ -56,7 +69,17 @@ class StoreSearch:
             return []
 
         index_map = self.load_embedding_index_map(filename)
-        similarities = np.dot(vectors.astype(np.float32), query_vec.astype(np.float32))
+
+        # Cosine similarity via normalized dot product (matches USearch "cos" metric)
+        v = vectors.astype(np.float32)
+        q = query_vec.astype(np.float32)
+        v_norms = np.linalg.norm(v, axis=1, keepdims=True)
+        q_norm = np.linalg.norm(q)
+        if q_norm == 0:
+            return []
+        v_unit = np.divide(v, v_norms, out=np.zeros_like(v), where=v_norms != 0)
+        q_unit = q / q_norm
+        similarities = np.dot(v_unit, q_unit)
 
         n = len(similarities)
         if k >= n:

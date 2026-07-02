@@ -7,7 +7,7 @@ from src.pipleline.Indexing.BM25.BM25Utils import (
     tokenize_text,
     stream_tokenize_chunks,
 )
-from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
+from src.pipleline.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 from src.core.Storage import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 

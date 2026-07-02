@@ -1,141 +1,199 @@
 from __future__ import annotations
 
-import json
+import shutil
 import sqlite3
 import threading
-import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from src.lib.AppPaths import default_darwin_config_dir,get_darwin_dir
+from src.core.Storage.StoreUtils import now
 
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS stores (
-    id TEXT PRIMARY KEY,
-    slug TEXT UNIQUE,
-    name TEXT,
-    darwin_dir TEXT UNIQUE,
-    created_at TEXT,
-    updated_at TEXT,
-    last_opened TEXT,
-    is_default INTEGER DEFAULT 0,
-    cache_json TEXT
-);
-"""
+# ── Ambient in-memory registry for active store instances ───────────────
 
+class DarwinStoreRegistry:
+    """Ambient context registry for active DarwinStore instances.
+    Thin, global, and in-memory. Complements explicit injection;
+    it does NOT replace it.
+    """
+
+    _stores: Dict[str, Any] = {}
+    _default_key: Optional[str] = None
+
+    @classmethod
+    def register(cls, key: str, store: Any, *, default: bool = False) -> None:
+        cls._stores[key] = store
+        if default or cls._default_key is None:
+            cls._default_key = key
+
+    @classmethod
+    def get(cls, key: Optional[str] = None) -> Any:
+        target = key or cls._default_key
+        if target is None:
+            raise RuntimeError("No DarwinStore registered")
+        if target not in cls._stores:
+            raise KeyError(
+                f"Store '{target}' not found. Registered: {list(cls._stores)}"
+            )
+        return cls._stores[target]
+
+    @classmethod
+    def list_stores(cls) -> Dict[str, dict]:
+        """Health/status snapshot of all registered stores."""
+        return {
+            key: {
+                "path": str(store.darwin_dir),
+                "exists": store.darwin_dir.exists(),
+                "size_mb": cls._dir_size(store.darwin_dir),
+                "name": store.store_name,
+                "id": store.store_id,
+            }
+            for key, store in cls._stores.items()
+        }
+
+    @classmethod
+    def create_store(cls, key: str, path: Path) -> Any:
+        # Lazy import to avoid circular dependency
+        from src.core.Storage.DarwinStore import DarwinStore
+        store = DarwinStore(path, name=key)
+        cls.register(key, store)
+        return store
+
+    @classmethod
+    def delete_store(cls, key: str, *, nuke_disk: bool = False) -> None:
+        store = cls._stores.pop(key, None)
+        if store is None:
+            raise KeyError(f"Store '{key}' not registered")
+        if nuke_disk and store.darwin_dir.exists():
+            shutil.rmtree(store.darwin_dir)
+
+    @staticmethod
+    def _dir_size(path: Path) -> float:
+        total = 0
+        for f in path.rglob("*"):
+            if f.is_file():
+                total += f.stat().st_size
+        return round(total / (1024 * 1024), 2)
+
+
+# ── Persistent SQLite registry for store metadata ──────────────────────
 
 class StoreRegistry:
-    """Thread-safe SQLite registry for tracking DarwinStore instances (central)."""
+    """Persistent central registry for DarwinStore metadata.
 
-    def __init__(self, registry_path: Optional[Path] = None):
-        if registry_path is None:
-            registry_path = default_darwin_config_dir() / "stores_registry.db"
-        self.db_path = Path(registry_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+    Uses a SQLite database at ~/.darwin/stores_registry.db.
+    Singleton pattern — multiple instantiations share the same connection.
+    """
+
+    _instance: Optional[StoreRegistry] = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._init()
+        return cls._instance
+
+    def _init(self) -> None:
+        self._db_path = Path.home() / ".darwin" / "stores_registry.db"
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_db()
 
     def _init_db(self) -> None:
-        with self._lock:
-            self._conn.executescript(SCHEMA)
-            self._conn.execute("PRAGMA journal_mode=WAL;")
-            self._conn.execute("PRAGMA synchronous=NORMAL;")
-            self._conn.commit()
+        self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS stores (
+                id TEXT PRIMARY KEY,
+                slug TEXT UNIQUE,
+                name TEXT,
+                darwin_dir TEXT NOT NULL,
+                created_at TEXT,
+                updated_at TEXT,
+                last_opened TEXT,
+                is_default INTEGER DEFAULT 0,
+                cache_json TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_stores_name ON stores(name);
+            CREATE INDEX IF NOT EXISTS idx_stores_dir ON stores(darwin_dir);
+        """)
+        self._conn.execute("PRAGMA journal_mode=WAL;")
+        self._conn.execute("PRAGMA synchronous=NORMAL;")
+        self._conn.commit()
 
-    def _execute(self, sql: str, params=()) -> sqlite3.Cursor:
-        with self._lock:
-            return self._conn.execute(sql, params)
+    def register(self, darwin_dir: Path, store_id: str, name: Optional[str] = None) -> str:
+        ts = now()
+        slug = name or Path(darwin_dir).name
 
-    def _commit(self) -> None:
-        with self._lock:
-            self._conn.commit()
-
-    def register(self, darwin_dir: Path, store_id: Optional[str] = None, name: Optional[str] = None) -> str:
-        """Register a store. Returns its UUID. If store_id is None, generate one."""
-        darwin_dir = Path(darwin_dir).resolve()
-        if store_id is None:
-            store_id = str(uuid.uuid4())
-        # Generate slug from directory name if name not provided
-        slug = name if name else darwin_dir.name.lower().replace(" ", "_")
-        # Ensure slug is unique by appending a suffix if needed
-        base_slug = slug
-        counter = 1
-        while True:
-            existing = self._execute("SELECT id FROM stores WHERE slug = ?", (slug,)).fetchone()
-            if not existing or existing["id"] == store_id:
-                break
-            slug = f"{base_slug}_{counter}"
-            counter += 1
-
-        now = self._now()
-        # Check if store already exists by ID or path
-        existing = self._execute("SELECT * FROM stores WHERE darwin_dir = ? OR id = ?", (str(darwin_dir), store_id)).fetchone()
-        if existing:
-            # Update existing record
-            self._execute(
-                "UPDATE stores SET slug = ?, name = ?, darwin_dir = ?, updated_at = ?, last_opened = ? WHERE id = ?",
-                (slug, name, str(darwin_dir), now, now, existing["id"])
-            )
-            store_id = existing["id"]
-        else:
-            # Insert new
-            self._execute(
-                "INSERT INTO stores (id, slug, name, darwin_dir, created_at, updated_at, last_opened) VALUES (?,?,?,?,?,?,?)",
-                (store_id, slug, name, str(darwin_dir), now, now, now)
-            )
-
-        # If this is the default darwin directory, set as default
-        if darwin_dir == get_darwin_dir():
-            self._execute("UPDATE stores SET is_default = 0 WHERE is_default = 1 AND id != ?", (store_id,))
-            self._execute("UPDATE stores SET is_default = 1 WHERE id = ?", (store_id,))
-
-        self._commit()
-        return store_id
-
-    def get_store(self, store_id: str) -> Optional[dict]:
-        row = self._execute("SELECT * FROM stores WHERE id = ?", (store_id,)).fetchone()
-        return dict(row) if row else None
-
-    def get_store_by_path(self, darwin_dir: Path) -> Optional[dict]:
-        row = self._execute("SELECT * FROM stores WHERE darwin_dir = ?", (str(darwin_dir),)).fetchone()
-        return dict(row) if row else None
-
-    def get_store_by_slug(self, slug: str) -> Optional[dict]:
-        row = self._execute("SELECT * FROM stores WHERE slug = ?", (slug,)).fetchone()
-        return dict(row) if row else None
+        # Try update first, then insert if no row exists
+        cursor = self._conn.execute(
+            """
+            INSERT INTO stores (id, slug, name, darwin_dir, created_at, updated_at, last_opened, is_default)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(slug) DO UPDATE SET
+                name = excluded.name,
+                darwin_dir = excluded.darwin_dir,
+                updated_at = excluded.updated_at,
+                last_opened = excluded.last_opened
+            RETURNING id
+            """,
+            (store_id, slug, name, str(darwin_dir), ts, ts, ts, 0),
+        )
+        row = cursor.fetchone()
+        self._conn.commit()
+        return row[0]  # returns the actual id (either newly inserted or existing)
 
     def list_stores(self) -> list[dict]:
-        rows = self._execute("SELECT * FROM stores ORDER BY name").fetchall()
-        return [dict(r) for r in rows]
+        """Return all registered stores as a list of dicts."""
+        rows = self._conn.execute(
+            "SELECT * FROM stores ORDER BY name"
+        ).fetchall()
+        result = []
+        for row in rows:
+            d = dict(row)
+            d["is_default"] = bool(d.get("is_default", 0))
+            result.append(d)
+        return result
+
+    def get_store(self, store_id: str) -> Optional[dict]:
+        """Fetch a store by its UUID."""
+        row = self._conn.execute(
+            "SELECT * FROM stores WHERE id = ?", (store_id,)
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["is_default"] = bool(d.get("is_default", 0))
+        return d
 
     def get_default_store(self) -> Optional[dict]:
-        row = self._execute("SELECT * FROM stores WHERE is_default = 1").fetchone()
-        return dict(row) if row else None
+        """Return the default store, or the most recently opened one."""
+        row = self._conn.execute(
+            "SELECT * FROM stores WHERE is_default = 1 LIMIT 1"
+        ).fetchone()
+        if row:
+            d = dict(row)
+            d["is_default"] = bool(d.get("is_default", 0))
+            return d
+        # Fallback to most recently opened
+        row = self._conn.execute(
+            "SELECT * FROM stores ORDER BY last_opened DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            d = dict(row)
+            d["is_default"] = bool(d.get("is_default", 0))
+            return d
+        return None
 
-    def set_default_store(self, store_id: str) -> None:
-        self._execute("UPDATE stores SET is_default = 0 WHERE is_default = 1")
-        self._execute("UPDATE stores SET is_default = 1 WHERE id = ?", (store_id,))
-        self._commit()
-
-    def update_cache(self, store_id: str, cache_data: dict) -> None:
-        self._execute(
-            "UPDATE stores SET cache_json = ?, updated_at = ? WHERE id = ?",
-            (json.dumps(cache_data), self._now(), store_id)
+    def set_default(self, store_id: str) -> None:
+        """Mark a store as the default."""
+        self._conn.execute(
+            "UPDATE stores SET is_default = 0"
         )
-        self._commit()
-
-    def delete_store(self, store_id: str) -> None:
-        self._execute("DELETE FROM stores WHERE id = ?", (store_id,))
-        self._commit()
-
-    @staticmethod
-    def _now() -> str:
-        from src.core.Storage.StoreUtils import now
-        return now()
-
-    def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        self._conn.execute(
+            "UPDATE stores SET is_default = 1 WHERE id = ?",
+            (store_id,),
+        )
+        self._conn.commit()

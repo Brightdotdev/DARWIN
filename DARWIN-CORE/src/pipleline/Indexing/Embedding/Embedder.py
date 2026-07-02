@@ -10,7 +10,7 @@ from src.core.Models.EmbeddingConfig import (
     ModelPreset,
     get_preset,
 )
-from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
+from src.pipleline.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 from src.core.Models.ModelManager import modelManager
 from src.core.Models.Lib.ModelSpec import ModelCategory
 from src.core.Logger.DarwinLogger import darwin, LogType

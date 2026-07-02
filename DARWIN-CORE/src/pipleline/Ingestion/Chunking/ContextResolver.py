@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
-from src.features.Ingestion.Chunking.ChunkerUtils import (
+from src.pipleline.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     OverlapDirection,
     split_sentences,

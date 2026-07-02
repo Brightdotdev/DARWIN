@@ -200,7 +200,6 @@ def get_retrieval_config(
         "query": QUERY,
         "method": "hybrid",
         "files": processed_files or file_names,
-        "merge_strategy": MergeStrategy.ADJACENT,
         "fill_gaps": False,
         "structural_penalty_factor": 0.5,
         "include_metadata": True,
@@ -221,6 +220,7 @@ def get_retrieval_config(
     if mode == "precision":
         return OrchestratorConfig(
             **common,
+            merge_strategy=MergeStrategy.ADJACENT,
             top_k=3, max_chars=4000, max_passages=3,
             min_passage_score=0.6, max_per_source=1,
             prefer_diverse_sources=True, require_diverse_sources=False,
@@ -229,6 +229,7 @@ def get_retrieval_config(
     elif mode == "recall":
         return OrchestratorConfig(
             **common,
+            merge_strategy=MergeStrategy.ADJACENT,
             top_k=15, max_chars=12000, max_passages=8,
             min_passage_score=0.15, max_per_source=3,
             prefer_diverse_sources=True, require_diverse_sources=False,
@@ -237,26 +238,27 @@ def get_retrieval_config(
     elif mode == "experimental":
         return OrchestratorConfig(
             **common,
+            merge_strategy=MergeStrategy.NONE,
             top_k=10, max_chars=8000, max_passages=6,
             min_passage_score=0.2, max_per_source=2,
             prefer_diverse_sources=True, require_diverse_sources=False,
-            merge_strategy=MergeStrategy.NONE,
             filter_structural=True, include_raw_results=True,
         )
     elif mode == "clean":
         religious_sources = [f for f in (processed_files or file_names) if "bible" in f.lower() or "enoch" in f.lower()]
         return OrchestratorConfig(
             **common,
+            merge_strategy=MergeStrategy.ADJACENT,
             top_k=5, max_chars=6000, max_passages=5,
             min_passage_score=0.2, max_per_source=2,
             prefer_diverse_sources=True, require_diverse_sources=True,
             prefer_sources=religious_sources,
-            exclude_sources=TECHNICAL_FILES,
             filter_structural=True, include_raw_results=False,
         )
     else:
         return OrchestratorConfig(
             **common,
+            merge_strategy=MergeStrategy.ADJACENT,
             top_k=5, max_chars=6000, max_passages=5,
             min_passage_score=0.3, max_per_source=2,
             prefer_diverse_sources=True, require_diverse_sources=False,
@@ -314,7 +316,7 @@ async def main() -> int:
     for stage_key, logs in result.logs.items():
         darwin.log(f"\n--- Logs for '{stage_key}' ({len(logs)} entries) ---", LogType.INFO)
         for log in logs[:5]:  # cap preview
-            darwin.log(f"  [{log.level}] {log.message[:100]}", LogType.INFO)
+            darwin.log(f"  [{log.log_type.value}] {log.message[:100]}", LogType.INFO)
 
     if not result.success:
         darwin.error(f"Pipeline failed: {result.summary}")

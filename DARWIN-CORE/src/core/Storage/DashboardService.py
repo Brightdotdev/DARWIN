@@ -77,7 +77,7 @@ class DashboardService:
             for name, (stage, *keys) in path_map.items():
                 size = 0
                 if stage == "images" and keys[0] == "dir":
-                    p = self.store.paths.ensure_image_dir(h)
+                    p = self.store.paths.dir_for_hash(h) / "images"
                     if p.exists():
                         size = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
                 else:

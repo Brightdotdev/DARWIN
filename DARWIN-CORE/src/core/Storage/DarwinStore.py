@@ -11,36 +11,11 @@ import polars as pl
 from src.core.Storage.CacheManager import CacheManager
 from src.core.Storage.Constants import ARTIFACT_MANIFEST, CORE_STAGES
 from src.core.Storage.DataModels import Source
-from src.core.Storage.MetaManager import MetaManager
-from src.core.Storage.StorePaths import StorePaths
-from src.core.Storage.StoreRegistry import StoreRegistry
-from src.core.Storage.StoreUtils import (
-    get_current_embedding_model,
-    get_current_model_dimensions,
-    now,
-    read_json,
-    to_dict,
-    write_json,
-)
-from src.core.Storage.Transanctions import write_text_atomic
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.lib.AppPaths import get_darwin_dir
-
-from pathlib import Path
-from typing import Any, Callable, Iterator, Optional
-
-import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
-import polars as pl
-
-from src.core.Storage.CacheManager import CacheManager
-from src.core.Storage.Constants import ARTIFACT_MANIFEST, CORE_STAGES
-from src.core.Storage.DataModels import Source
 from src.core.Storage.LocalRegistry import LocalRegistry, SourceManager, ContentIndex
 from src.core.Storage.MetaManager import MetaManager
 from src.core.Storage.StorePaths import StorePaths
 from src.core.Storage.StoreRegistry import StoreRegistry
+from src.core.Storage.StoreSearch import StoreSearch
 from src.core.Storage.StoreUtils import (
     get_current_embedding_model,
     get_current_model_dimensions,
@@ -54,7 +29,7 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 from src.lib.AppPaths import get_darwin_dir
 
 
-class DarwinStore:
+class DarwinStore(StoreSearch):
     """
     Single unified storage class for Darwin RAG.
     Manages file registration, pipeline stages, search, integrity, and health.
@@ -78,12 +53,17 @@ class DarwinStore:
         self._store_name = name or self._darwin_dir.name
         self._store_id = self._register_self()
 
-        # Initialise models (if needed)
-        self._init_setup()
+    def bootstrap(self) -> None:
+        """Optional initialization: load models and print dashboard.
 
-    def _init_setup(self) -> None:
-        from src.core.Models.ModelManager import modelManager
-        modelManager.initialize()
+        Previously called automatically from __init__. Now explicit to avoid
+        side effects during store construction.
+        """
+        try:
+            from src.core.Models.ModelManager import modelManager
+            modelManager.initialize()
+        except Exception as e:
+            darwin.log(f"Model manager initialization skipped: {e}", LogType.WARNING)
         self.print_dashboard()
 
     def _register_self(self) -> str:
@@ -95,7 +75,7 @@ class DarwinStore:
             import uuid
             store_id = str(uuid.uuid4())
             store_id_file.write_text(store_id)
-        # Register/update in central registry, passing the user‑provided name
+        # Register/update in central registry, passing the user-provided name
         self._store_registry.register(
             self._darwin_dir,
             store_id,
@@ -112,7 +92,6 @@ class DarwinStore:
             return None
         return source.content_hash
 
-
     # --------------------------------------------------------------------
     # Source management (from StoreSources)
     # --------------------------------------------------------------------
@@ -121,7 +100,9 @@ class DarwinStore:
         return source
 
     def register_url(self, slug: str, url: str, content_hash: str, page_count: int = 0) -> Source:
-        return self._sources.register_url(slug, url, content_hash, page_count)
+        """Register a URL source. Returns the Source object (not a tuple)."""
+        source, _ = self._sources.register_url(slug, url, content_hash, page_count)
+        return source
 
     def get_or_register(self, file_path: str | Path) -> Source:
         path = Path(file_path)
@@ -137,7 +118,8 @@ class DarwinStore:
         self._sources.remove_by_name(filename)
         if self._sources.count_for_hash(source.content_hash) == 0:
             self.paths.delete_hash_dir(source.content_hash)
-            self._cache.invalidate(f"*:{source.content_hash}")
+        # Invalidate all cached artifacts for this hash
+        self._cache.invalidate(source.content_hash)
         return True
 
     def ensure_image_dir(self, filename: str) -> Path:
@@ -164,10 +146,10 @@ class DarwinStore:
         write_fn()
         self._meta.update(h, stage)
         self._contents.set_stage(h, stage)
-        self._cache.invalidate(f"{stage}:{h}")
+        self._cache.invalidate(h)
 
     def _read_artifact(self, h: str, stage: str, read_fn: Callable[[], Any]) -> Any | None:
-        cache_key = f"{stage}:{h}"
+        cache_key = f"{h}:{stage}"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
@@ -183,7 +165,7 @@ class DarwinStore:
                 p.unlink()
                 removed = True
         self._contents.set_stage(h, stage, complete=False)
-        self._cache.invalidate(f"{stage}:{h}")
+        self._cache.invalidate(h)
         return removed
 
     # --- Markdown ---
@@ -265,7 +247,7 @@ class DarwinStore:
         h = self._resolve_hash(filename)
         if h is None:
             return pa.table({})
-        cache_key = f"records:{h}"
+        cache_key = f"{h}:chunks"
         cached = self._cache.get(cache_key)
         if cached is not None and columns is None:
             return cached
@@ -291,11 +273,11 @@ class DarwinStore:
         if columns:
             lf = lf.select(columns)
 
-        # Simple filter: only equality and "in" for simplicity
+        # Simple filter: equality and "in"
         exprs = []
         for key, value in filters.items():
-            if "__in" in key:
-                field = key.replace("__in", "")
+            if key.endswith("__in"):
+                field = key.removesuffix("__in")
                 exprs.append(pl.col(field).is_in(list(value)))
             else:
                 exprs.append(pl.col(key) == value)
@@ -372,7 +354,7 @@ class DarwinStore:
         if h is None:
             return None
 
-        cache_key = f"embeddings:{h}"
+        cache_key = f"{h}:embeddings"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
@@ -454,7 +436,7 @@ class DarwinStore:
         if h is None:
             return None
 
-        cache_key = f"vector:{h}"
+        cache_key = f"{h}:vector"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
@@ -526,28 +508,17 @@ class DarwinStore:
         return False if h is None else self.paths.has_artifact(h, "bm25")
 
     def save_bm25(self, filename: str, data: Any) -> None:
-        if isinstance(data, dict):
-            tokens = data.get("tokens")
-            doc_lengths = data.get("doc_lengths")
-            doc_freqs = data.get("doc_freqs")
-            avgdl = data.get("avgdl")
-            chunk_count = data.get("chunk_count", len(tokens) if tokens else 0)
-            vocab_size = data.get("vocab_size", len(doc_freqs) if doc_freqs else 0)
-            threshold = data.get("threshold", 0.0)
-            idf_smoothing = data.get("idf_smoothing", 0.0)
-            domain_stopwords = data.get("domain_stopwords", [])
-            precomputed_idfs = data.get("precomputed_idfs")
-        else:
-            tokens = data.tokens
-            doc_lengths = data.doc_lengths
-            doc_freqs = data.doc_freqs
-            avgdl = data.avgdl
-            chunk_count = getattr(data, "chunk_count", len(tokens) if tokens else 0)
-            vocab_size = getattr(data, "vocab_size", len(doc_freqs) if doc_freqs else 0)
-            threshold = getattr(data, "threshold", 0.0)
-            idf_smoothing = getattr(data, "idf_smoothing", 0.0)
-            domain_stopwords = getattr(data, "domain_stopwords", [])
-            precomputed_idfs = getattr(data, "precomputed_idfs", None)
+        # Robust extraction: supports both dict and object with attributes
+        tokens = getattr(data, "tokens", None) if not isinstance(data, dict) else data.get("tokens")
+        doc_lengths = getattr(data, "doc_lengths", None) if not isinstance(data, dict) else data.get("doc_lengths")
+        doc_freqs = getattr(data, "doc_freqs", None) if not isinstance(data, dict) else data.get("doc_freqs")
+        avgdl = getattr(data, "avgdl", None) if not isinstance(data, dict) else data.get("avgdl")
+        chunk_count = getattr(data, "chunk_count", len(tokens) if tokens else 0) if not isinstance(data, dict) else data.get("chunk_count", len(tokens) if tokens else 0)
+        vocab_size = getattr(data, "vocab_size", len(doc_freqs) if doc_freqs else 0) if not isinstance(data, dict) else data.get("vocab_size", len(doc_freqs) if doc_freqs else 0)
+        threshold = getattr(data, "threshold", 0.0) if not isinstance(data, dict) else data.get("threshold", 0.0)
+        idf_smoothing = getattr(data, "idf_smoothing", 0.0) if not isinstance(data, dict) else data.get("idf_smoothing", 0.0)
+        domain_stopwords = getattr(data, "domain_stopwords", []) if not isinstance(data, dict) else data.get("domain_stopwords", [])
+        precomputed_idfs = getattr(data, "precomputed_idfs", None) if not isinstance(data, dict) else data.get("precomputed_idfs")
 
         if not tokens or not doc_lengths:
             darwin.log(f"No BM25 data to save for {filename}", LogType.ERROR)
@@ -591,7 +562,7 @@ class DarwinStore:
         if h is None:
             return None
 
-        cache_key = f"bm25:{h}"
+        cache_key = f"{h}:bm25"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
@@ -648,12 +619,13 @@ class DarwinStore:
         h = self._resolve_hash(filename)
         if h is None:
             return
-        path = self.paths.artifact_path(h, "stopwords", "file")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_json(path, {"stopwords": sorted(stopwords)})
-        self._meta.update(h, "stopwords")
-        self._contents.set_stage(h, "stopwords")
-        self._cache.invalidate(f"stopwords:{h}")
+
+        def _write():
+            path = self.paths.artifact_path(h, "stopwords", "file")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(path, {"stopwords": sorted(stopwords)})
+
+        self._write_artifact(h, "stopwords", _write)
 
     def load_stopwords(self, filename: str) -> set[str]:
         h = self._resolve_hash(filename)
@@ -716,19 +688,20 @@ class DarwinStore:
         h = self._resolve_hash(filename)
         if h is None:
             return
-        path = self.paths.artifact_path(h, "graph_vis", "file")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(path, html)
-        self._meta.update(h, "graph_vis")
-        self._contents.set_stage(h, "graph_vis")
-        self._cache.invalidate(f"graph_vis:{h}")
+
+        def _write():
+            path = self.paths.artifact_path(h, "graph_vis", "file")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            write_text_atomic(path, html)
+
+        self._write_artifact(h, "graph_vis", _write)
 
     def load_graph(self, filename: str) -> dict:
         h = self._resolve_hash(filename)
         if h is None:
             return {"nodes": [], "edges": []}
 
-        cache_key = f"graph:{h}"
+        cache_key = f"{h}:graph"
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
@@ -749,10 +722,13 @@ class DarwinStore:
         h = self._resolve_hash(filename)
         if h is None:
             return False
-        return self._delete_artifact(h, "graph", [
+        result = self._delete_artifact(h, "graph", [
             self.paths.artifact_path(h, "graph", "nodes"),
             self.paths.artifact_path(h, "graph", "edges"),
         ])
+        # Graph visualization is meaningless without graph data
+        self._contents.set_stage(h, "graph_vis", complete=False)
+        return result
 
     def delete_graph_html(self, filename: str) -> bool:
         h = self._resolve_hash(filename)
@@ -799,84 +775,6 @@ class DarwinStore:
         if h is None:
             return False
         return self._delete_artifact(h, "wiki", [self.paths.artifact_path(h, "wiki", "file")])
-
-    # --------------------------------------------------------------------
-    # Search (from StoreSearch)
-    # --------------------------------------------------------------------
-    def _finalize_matches(self, filename: str, matches: list[tuple[int, float]],
-                          columns: list[str] | None, cls: Any) -> list[Any]:
-        if not matches:
-            return []
-        indices, scores = zip(*matches)
-        rows = self.query_records(filename, columns=columns, index__in=list(indices))
-        score_map = {idx: sc for idx, sc in matches}
-        for row in rows:
-            row["_score"] = score_map.get(row.get("index", -1), 0.0)
-        return rows  # return dicts
-
-    def retrieve_by_vector(self, filename: str, query_vec: np.ndarray, k: int = 10,
-                           columns: list[str] | None = None, cls: Any = None) -> list[Any]:
-        matches = self.search_vector(filename, query_vec, k=k)
-        return self._finalize_matches(filename, matches, columns, cls)
-
-    def retrieve_by_numpy(self, filename: str, query_vec: np.ndarray, k: int = 10,
-                          columns: list[str] | None = None, cls: Any = None) -> list[Any]:
-        vectors = self.load_embeddings(filename, mmap=True)
-        if vectors is None or vectors.shape[0] == 0:
-            return []
-
-        index_map = self.load_embedding_index_map(filename)
-        similarities = np.dot(vectors.astype(np.float32), query_vec.astype(np.float32))
-
-        n = len(similarities)
-        if k >= n:
-            top_positions = np.argsort(similarities)[::-1][:k]
-        else:
-            top_positions = np.argpartition(similarities, -k)[-k:]
-            top_positions = top_positions[np.argsort(similarities[top_positions])[::-1]]
-
-        chunk_indices = [index_map[pos] if index_map else int(pos) for pos in top_positions.tolist()]
-        scores = similarities[top_positions].tolist()
-        matches = list(zip(chunk_indices, scores))
-
-        return self._finalize_matches(filename, matches, columns, cls)
-
-    def search_single(self, query_vec: np.ndarray, filename: str, k: int = 10,
-                      min_score: float = 0.0, columns: list[str] | None = None,
-                      force_numpy: bool = False) -> list[dict[str, Any]]:
-        rows: list[dict] = []
-        if not force_numpy and self.has_vector(filename):
-            try:
-                rows = self.retrieve_by_vector(filename, query_vec, k=k, columns=columns, cls=None)
-            except Exception as e:
-                darwin.log(f"USearch failed for {filename}: {e}", LogType.WARNING)
-        # If no vector index or forced numpy
-        if (force_numpy or not rows) and self.has_embeddings(filename):
-            try:
-                rows = self.retrieve_by_numpy(filename, query_vec, k=k, columns=columns, cls=None)
-            except Exception as e:
-                darwin.log(f"Numpy fallback failed for {filename}: {e}", LogType.WARNING)
-
-        return [r for r in rows if r.get("_score", 0.0) >= min_score]
-
-    def search_multi(self, query_vec: np.ndarray, filenames: list[str],
-                     top_k: int = 10, min_score: float = 0.0,
-                     columns: list[str] | None = None,
-                     force_numpy: bool = False) -> list[dict[str, Any]]:
-        if not filenames:
-            return []
-        unique = list(dict.fromkeys(filenames))
-        per_doc_k = max(5, top_k // len(unique) + 1)
-        all_results: list[dict] = []
-
-        for filename in unique:
-            rows = self.search_single(query_vec, filename, k=per_doc_k,
-                                      min_score=min_score, columns=columns,
-                                      force_numpy=force_numpy)
-            all_results.extend(rows)
-
-        all_results.sort(key=lambda r: r.get("_score", 0.0), reverse=True)
-        return all_results[:top_k]
 
     # --------------------------------------------------------------------
     # Status & Health (merged from StoreStatus + StoreHealth)
@@ -949,16 +847,16 @@ class DarwinStore:
                 "updated_at": source.updated_at,
             }
 
-            stats = {
-    "total_files": len(all_sources),
-    "files_needing_work": sum(
-        1 for s in files
-        if not self._get_content_status(self._sources.find_by_name(s).content_hash)["is_core_complete"]
-    ),
-    "keyword_searchable_files": kw_searchable,
-    "total_chunks": total_chunks,
-    "total_pages": total_pages,
-}
+        stats = {
+            "total_files": len(all_sources),
+            "files_needing_work": sum(
+                1 for s in files
+                if not self._get_content_status(self._sources.find_by_name(s).content_hash)["is_core_complete"]
+            ),
+            "keyword_searchable_files": kw_searchable,
+            "total_chunks": total_chunks,
+            "total_pages": total_pages,
+        }
 
         return {
             "darwin_dir": str(self._darwin_dir),
@@ -1060,7 +958,7 @@ class DarwinStore:
         return False
 
     def get_pipeline_report(self, filename: str | None = None) -> dict | list[dict]:
-        
+
         def _make(source) -> dict:
             st = self._get_content_status(source.content_hash)
             return {
@@ -1173,11 +1071,16 @@ class DarwinStore:
             core_missing = [s for s in CORE_STAGES if s in missing]
             if len(core_missing) == len(CORE_STAGES):
                 if not dry_run:
-                    self._registry.execute("DELETE FROM contents WHERE hash = ?", (h,))
-                    self._registry.commit()
-                    self.paths.delete_hash_dir(h)
-                    self._registry.execute("DELETE FROM sources WHERE content_hash = ?", (h,))
-                    self._registry.commit()
+                    # Remove all sources for this hash; _maybe_gc_content handles cleanup
+                    sources = self._sources.get_by_hash(h)
+                    if sources:
+                        for src in sources:
+                            self._sources.remove_by_name(src.display_name)
+                    else:
+                        # No sources — orphaned content. Clean up directly.
+                        self._registry.execute("DELETE FROM contents WHERE hash = ?", (h,))
+                        self._registry.commit()
+                        self.paths.delete_hash_dir(h)
                 result["removed"] += 1
                 result["repairs"].append({"hash": h, "action": "removed", "reason": "all core artifacts missing"})
                 continue
@@ -1363,9 +1266,8 @@ class DarwinStore:
 
     @staticmethod
     def load_store_by_name(name: str) -> DarwinStore:
-        """Load a store by its human‑readable name (case‑sensitive)."""
+        """Load a store by its human-readable name (case-sensitive)."""
         reg = StoreRegistry()
-        # We don't have a direct lookup by name in the registry, but we can list and match.
         stores = reg.list_stores()
         for s in stores:
             if s.get("name") == name:
@@ -1382,3 +1284,15 @@ class DarwinStore:
                 return f"{size:.1f} {unit}"
             size /= 1024
         return f"{size:.1f} PB"
+
+    @property
+    def darwin_dir(self) -> Path:
+        return self._darwin_dir
+
+    @property
+    def store_id(self) -> str:
+        return self._store_id
+
+    @property
+    def store_name(self) -> str:
+        return self._store_name

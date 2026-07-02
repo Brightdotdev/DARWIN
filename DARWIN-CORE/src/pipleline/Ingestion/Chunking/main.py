@@ -13,9 +13,9 @@ if __name__ == "__main__":
 
 
 from src.core.Storage.DarwinStore import DarwinStore
-from src.features.Ingestion.Chunking.Chunker import chunk_document
-from src.features.Ingestion.Chunking.lib import Chunk, ChunkingArgs
-from src.features.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
+from src.pipleline.Ingestion.Chunking.Chunker import chunk_document
+from src.pipleline.Ingestion.Chunking.lib import Chunk, ChunkingArgs
+from src.pipleline.Ingestion.Chunking.StructuralClassifier import is_structural_for_embedding
 from src.core.Logger.DarwinLogger import darwin, LogType
 
 
