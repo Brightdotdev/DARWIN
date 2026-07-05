@@ -20,7 +20,7 @@ litellm.telemetry = False
 litellm.turn_off_message_logging = True
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.features.LLM.LLMConfig import PROVIDER_ENV_MAP
+from src.agent.LLM.LLMConfig import PROVIDER_ENV_MAP
 
 
 

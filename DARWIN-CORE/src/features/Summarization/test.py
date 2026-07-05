@@ -24,8 +24,8 @@ darwin.configure()
 
 
 def get_clean_text(url: str) -> str:
-    from src.pipleline.Ingestion.Parsing.UrlFetcher import fetch_url
-    from src.pipleline.Ingestion.Parsing.HtmlProcessor import extract_content
+    from src.core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url
+    from src.core.Pipeline.Ingestion.Parsing.HtmlProcessor import extract_content
 
     data, _, err = fetch_url(url)
     if err:

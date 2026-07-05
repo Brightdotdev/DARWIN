@@ -1,0 +1,1033 @@
+[1783225972.5185342] [INFO] [Hybrid] Per‑doc limit: 2
+[1783225972.5210469] [INFO] 
+[1783225972.5220587] [INFO] Keyword Search
+[1783225972.524048] [INFO] Query: what is graph rag
+[1783225972.5260444] [INFO] BM25: k1=1.5, b=0.75
+[1783225972.527043] [INFO] Top-K: 20
+[1783225972.5280576] [INFO] Scope: 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225972.531043] [INFO] 
+[1783225972.5489764] [INFO] Searching across 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225972.5529678] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in kw mode
+[1783225972.563738] [WARNING] output.html is not searchable in kw mode
+[1783225972.5677347] [INFO] Searching 20 valid files for 'what is graph rag'
+[1783225972.5747514] [WARNING] No valid chunk_indices in BM25 data for 22-Science-Diplomacy-TR.pdf; assuming positional alignment
+[1783225972.5827262] [WARNING] No valid chunk_indices in BM25 data for AKINOLA.pdf; assuming positional alignment
+[1783225972.5887225] [WARNING] No valid chunk_indices in BM25 data for anthropic_paper.pdf; assuming positional alignment
+[1783225972.5987377] [WARNING] No valid chunk_indices in BM25 data for book_of_enoch.pdf; assuming positional alignment
+[1783225972.6392486] [WARNING] No valid chunk_indices in BM25 data for bws_book.pdf; assuming positional alignment
+[1783225972.68215] [WARNING] No valid chunk_indices in BM25 data for cinderella-perrault-version.pdf; assuming positional alignment
+[1783225972.794073] [WARNING] No valid chunk_indices in BM25 data for CSB_Pew_Bible_2nd_Printing.pdf; assuming positional alignment
+[1783225972.9258997] [WARNING] No valid chunk_indices in BM25 data for cursor_paper.pdf; assuming positional alignment
+[1783225972.9378927] [WARNING] No valid chunk_indices in BM25 data for Essential-GraphRAG.pdf; assuming positional alignment
+[1783225972.9538836] [WARNING] No valid chunk_indices in BM25 data for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf; assuming positional alignment
+[1783225972.9665616] [WARNING] No valid chunk_indices in BM25 data for NVIDIA-Nemotron-3-Super-Technical-Report.pdf; assuming positional alignment
+[1783225972.979553] [WARNING] No valid chunk_indices in BM25 data for OpenClaw Ebook - Final.pdf; assuming positional alignment
+[1783225972.986346] [WARNING] No valid chunk_indices in BM25 data for OpenClawEbookFinal.pdf; assuming positional alignment
+[1783225972.9923415] [WARNING] No valid chunk_indices in BM25 data for psykadelicish.csv; assuming positional alignment
+[1783225972.9973376] [WARNING] No valid chunk_indices in BM25 data for sumsum.pdf; assuming positional alignment
+[1783225973.0765457] [WARNING] No valid chunk_indices in BM25 data for The-Holy-Bible-King-James-Version.pdf; assuming positional alignment
+[1783225973.191551] [WARNING] No valid chunk_indices in BM25 data for TheGivingTreePoem.pdf; assuming positional alignment
+[1783225973.1965466] [WARNING] No valid chunk_indices in BM25 data for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf; assuming positional alignment
+[1783225973.2055628] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_16984a3b; assuming positional alignment
+[1783225973.21256] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_a5249650; assuming positional alignment
+[1783225973.2145545] [SUCCESS] Found 20 results in 0.65s
+[1783225973.2155752] [INFO] [Hybrid] Keyword: 20 results
+[1783225973.2195442] [INFO] 
+[1783225973.2205348] [INFO] Semantic Search
+[1783225973.2215533] [INFO] Query: 'what is graph rag'
+[1783225973.2225497] [INFO] Model: intfloat/multilingual-e5-small-onnx
+[1783225973.2245424] [INFO] Per‑doc limit: 2
+[1783225973.2425203] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in semantic mode
+[1783225973.247518] [WARNING] output.html is not searchable in semantic mode
+[1783225973.2510707] [INFO] Searching 20 valid files for 'what is graph rag'
+[1783225973.2530699] [INFO] 
+[1783225973.2567456] [INFO] [ONNX Embedding] Loading model from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx
+[1783225974.0954852] [INFO] [ONNX Embedding] Tokenizer loaded from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\tokenizer.json
+[1783225976.5274084] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[1783225976.5284057] [INFO] [ONNX Embedding] ONNX session loaded: C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\model.onnx | providers=['CPUExecutionProvider'] | vector_size=384
+[1783225976.5304055] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[1783225976.5324037] [INFO] EmbeddingSession acquired: intfloat/multilingual-e5-small
+[1783225976.5334039] [INFO] [ONNX Embedding] Encoding 1 text(s)
+[1783225976.5504062] [INFO] [ONNX Embedding] Applied mean pooling: (1, 384)
+[1783225976.5533926] [INFO] Searching USearch for 22-Science-Diplomacy-TR.pdf
+[1783225976.5623925] [INFO] USearch returned 2 results for 22-Science-Diplomacy-TR.pdf
+[1783225976.563392] [INFO] Searching USearch for AKINOLA.pdf
+[1783225976.569405] [INFO] USearch returned 1 results for AKINOLA.pdf
+[1783225976.5713873] [INFO] Searching USearch for anthropic_paper.pdf
+[1783225976.5763853] [INFO] USearch returned 2 results for anthropic_paper.pdf
+[1783225976.5783834] [INFO] Searching USearch for book_of_enoch.pdf
+[1783225976.5863802] [INFO] USearch returned 2 results for book_of_enoch.pdf
+[1783225976.5873806] [INFO] Searching USearch for bws_book.pdf
+[1783225976.6049304] [INFO] USearch returned 2 results for bws_book.pdf
+[1783225976.605931] [INFO] Searching USearch for cinderella-perrault-version.pdf
+[1783225976.6139245] [INFO] USearch returned 2 results for cinderella-perrault-version.pdf
+[1783225976.6149237] [INFO] Searching USearch for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225976.6299162] [INFO] USearch returned 2 results for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225976.6319158] [INFO] Searching USearch for cursor_paper.pdf
+[1783225976.6379123] [INFO] USearch returned 2 results for cursor_paper.pdf
+[1783225976.63991] [INFO] Searching USearch for Essential-GraphRAG.pdf
+[1783225976.6459064] [INFO] USearch returned 2 results for Essential-GraphRAG.pdf
+[1783225976.646906] [INFO] Searching USearch for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225976.6545124] [INFO] USearch returned 2 results for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225976.6565096] [INFO] Searching USearch for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225976.6636975] [INFO] USearch returned 2 results for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225976.6652305] [INFO] Searching USearch for OpenClaw Ebook - Final.pdf
+[1783225976.6722271] [INFO] USearch returned 2 results for OpenClaw Ebook - Final.pdf
+[1783225976.673225] [INFO] Searching USearch for OpenClawEbookFinal.pdf
+[1783225976.6782236] [INFO] USearch returned 2 results for OpenClawEbookFinal.pdf
+[1783225976.6792214] [INFO] Searching USearch for psykadelicish.csv
+[1783225976.6832216] [INFO] USearch returned 2 results for psykadelicish.csv
+[1783225976.6872196] [INFO] Searching USearch for sumsum.pdf
+[1783225976.6932144] [INFO] USearch returned 2 results for sumsum.pdf
+[1783225976.6952133] [INFO] Searching USearch for The-Holy-Bible-King-James-Version.pdf
+[1783225976.7089436] [INFO] USearch returned 2 results for The-Holy-Bible-King-James-Version.pdf
+[1783225976.7109427] [INFO] Searching USearch for TheGivingTreePoem.pdf
+[1783225976.7149417] [INFO] USearch returned 2 results for TheGivingTreePoem.pdf
+[1783225976.7189517] [INFO] Searching USearch for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225976.7239368] [INFO] USearch returned 2 results for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225976.724935] [INFO] Searching USearch for url_en_wikipedia_org_16984a3b
+[1783225976.7299328] [INFO] USearch returned 2 results for url_en_wikipedia_org_16984a3b
+[1783225976.7319314] [INFO] Searching USearch for url_en_wikipedia_org_a5249650
+[1783225976.7389276] [INFO] USearch returned 2 results for url_en_wikipedia_org_a5249650
+[1783225976.7399268] [INFO] Per-doc limited search: 20 results (pooled from 20 files)
+[1783225976.7429242] [INFO] [ONNX Embedding] Unloading model...
+[1783225977.2270744] [SUCCESS] [ONNX Embedding] Model unloaded.
+[1783225977.2280734] [INFO] Unloaded embedding/intfloat/multilingual-e5-small-onnx
+[1783225977.2300684] [INFO] Embedding model unloaded
+[1783225977.232067] [SUCCESS] Found 20 results
+[1783225977.2330503] [INFO] 
+[1783225977.23507] [INFO]   #    Score       Source                Page  Preview
+[1783225977.2360556] [INFO]   ---  ----------  --------------------  ----  -------
+[1783225977.2370691] [INFO]   1    0.854      Essential-GraphRAG.p  127   ---  [Page 66]  45 Generating Cypher queries from natural la...
+[1783225977.2380586] [INFO]   2    0.851      Essential-GraphRAG.p  127   ---  [Page 74]  53 4.4 Implementing a text2cypher generator ...
+[1783225977.240053] [INFO]   3    0.824      psykadelicish.csv     1     Bones Records 0.484 0.75 1 -4.176 1 0.0685 0.697 0.862 0.105...
+[1783225977.2410464] [INFO]   4    0.814      psykadelicish.csv     1     2006-06-28 212439 85 false 31b3gosgrokqngaquanh5osrny3m 2026...
+[1783225977.2420456] [INFO]   5    0.812      FF_ONE_HUNDRED_WAYS_  1     ---  [Page 125]  Tech knowledge: Beginner Cost My recommenda...
+[1783225977.243045] [INFO]   6    0.807      anthropic_paper.pdf   46    PALMS Prompt → Why are prisons full of Black and Brown peopl...
+[1783225977.245045] [INFO]   7    0.807      22-Science-Diplomacy  169   Dota 2 (32) is two-team zero-sum but with unlimited informat...
+[1783225977.2460437] [INFO]   8    0.804      bws_book.pdf          374   3.7. CARTESIAN PRODUCTS 189 3.7.3 Questions & Exercises Remi...
+[1783225977.2470434] [INFO]   9    0.803      bws_book.pdf          144   Well, since all of the terms are even, we can divide everyth...
+[1783225977.2520533] [INFO]   10   0.802      AKINOLA.pdf           1     [Page 1]  AKINOLA BRIGHT +2348115953228 Ibeju Lekki Lagos St...
+[1783225977.2540736] [INFO] 
+[1783225977.2550545] [INFO]   Min score threshold: 0.0
+[1783225977.2560499] [INFO]   Top score: 0.854
+[1783225977.2570496] [INFO]   Sources: 11 files
+[1783225977.2580485] [INFO] 
+[1783225977.2590477] [INFO] [Hybrid] Semantic: 20 results
+[1783225977.260048] [INFO] [Hybrid] Fused: 39 unique results
+[1783225977.2610471] [SUCCESS] [Hybrid] Done in 4745ms
+[1783225977.2620466] [INFO] Search: 20 results in 4.75s
+[1783225977.264608] [SUCCESS] Total: 20 results in 4.75s
+[1783225977.266609] [INFO] 
+======================================================================
+[1783225977.2676063] [INFO] Results: 'what is graph rag'  [HYBRID]
+[1783225977.2696054] [INFO] 
+======================================================================
+[1783225977.270604] [SUCCESS] Total: 20  |  sources: 10
+[1783225977.2716038] [INFO] Top score: 0.0271
+[1783225977.2726033] [INFO] ======================================================================
+
+[1783225977.2736018] [SUCCESS]     → 20 results
+[1783225977.2746015] [INFO]   Query: 'NVIDIA Nemotron'
+[1783225977.2756016] [INFO] 
+[1783225977.2756016] [INFO] ======================================================================
+[1783225977.2766004] [INFO] Retrieval
+[1783225977.2775996] [INFO] ======================================================================
+[1783225977.2805989] [INFO] Query  : 'NVIDIA Nemotron'
+[1783225977.2816021] [INFO] Method : hybrid
+[1783225977.2825968] [INFO] Top-K  : 20
+[1783225977.2835956] [INFO] Per‑doc limit: 2
+[1783225977.2856162] [INFO] Pool size: 20  |  rrf_k=60
+[1783225977.2866144] [INFO] [Hybrid] Query: 'NVIDIA Nemotron'
+[1783225977.2876086] [INFO] [Hybrid] Top-K: 20, Pool: 20
+[1783225977.288593] [INFO] [Hybrid] Per‑doc limit: 2
+[1783225977.2895937] [INFO] 
+[1783225977.290593] [INFO] Keyword Search
+[1783225977.290593] [INFO] Query: NVIDIA Nemotron
+[1783225977.2915916] [INFO] BM25: k1=1.5, b=0.75
+[1783225977.2925935] [INFO] Top-K: 20
+[1783225977.2955894] [INFO] Scope: 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225977.2985883] [INFO] 
+[1783225977.315559] [INFO] Searching across 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225977.3207138] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in kw mode
+[1783225977.32671] [WARNING] output.html is not searchable in kw mode
+[1783225977.3307223] [INFO] Searching 20 valid files for 'NVIDIA Nemotron'
+[1783225977.3377244] [WARNING] No valid chunk_indices in BM25 data for 22-Science-Diplomacy-TR.pdf; assuming positional alignment
+[1783225977.3457] [WARNING] No valid chunk_indices in BM25 data for AKINOLA.pdf; assuming positional alignment
+[1783225977.3526971] [WARNING] No valid chunk_indices in BM25 data for anthropic_paper.pdf; assuming positional alignment
+[1783225977.362285] [WARNING] No valid chunk_indices in BM25 data for book_of_enoch.pdf; assuming positional alignment
+[1783225977.4012625] [WARNING] No valid chunk_indices in BM25 data for bws_book.pdf; assuming positional alignment
+[1783225977.4414737] [WARNING] No valid chunk_indices in BM25 data for cinderella-perrault-version.pdf; assuming positional alignment
+[1783225977.574129] [WARNING] No valid chunk_indices in BM25 data for CSB_Pew_Bible_2nd_Printing.pdf; assuming positional alignment
+[1783225977.7070937] [WARNING] No valid chunk_indices in BM25 data for cursor_paper.pdf; assuming positional alignment
+[1783225977.7176979] [WARNING] No valid chunk_indices in BM25 data for Essential-GraphRAG.pdf; assuming positional alignment
+[1783225977.7336879] [WARNING] No valid chunk_indices in BM25 data for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf; assuming positional alignment
+[1783225977.7466815] [WARNING] No valid chunk_indices in BM25 data for NVIDIA-Nemotron-3-Super-Technical-Report.pdf; assuming positional alignment
+[1783225977.7599206] [WARNING] No valid chunk_indices in BM25 data for OpenClaw Ebook - Final.pdf; assuming positional alignment
+[1783225977.7679324] [WARNING] No valid chunk_indices in BM25 data for OpenClawEbookFinal.pdf; assuming positional alignment
+[1783225977.7728927] [WARNING] No valid chunk_indices in BM25 data for psykadelicish.csv; assuming positional alignment
+[1783225977.778911] [WARNING] No valid chunk_indices in BM25 data for sumsum.pdf; assuming positional alignment
+[1783225977.8540487] [WARNING] No valid chunk_indices in BM25 data for The-Holy-Bible-King-James-Version.pdf; assuming positional alignment
+[1783225977.9777477] [WARNING] No valid chunk_indices in BM25 data for TheGivingTreePoem.pdf; assuming positional alignment
+[1783225977.9827425] [WARNING] No valid chunk_indices in BM25 data for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf; assuming positional alignment
+[1783225977.9897559] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_16984a3b; assuming positional alignment
+[1783225977.9957561] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_a5249650; assuming positional alignment
+[1783225977.9993198] [SUCCESS] Found 20 results in 0.67s
+[1783225978.00174] [INFO] [Hybrid] Keyword: 20 results
+[1783225978.0062542] [INFO] 
+[1783225978.0072536] [INFO] Semantic Search
+[1783225978.0082533] [INFO] Query: 'NVIDIA Nemotron'
+[1783225978.0092528] [INFO] Model: intfloat/multilingual-e5-small-onnx
+[1783225978.0102525] [INFO] Per‑doc limit: 2
+[1783225978.026241] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in semantic mode
+[1783225978.0332532] [WARNING] output.html is not searchable in semantic mode
+[1783225978.038237] [INFO] Searching 20 valid files for 'NVIDIA Nemotron'
+[1783225978.039245] [INFO] 
+[1783225978.0422347] [INFO] [ONNX Embedding] Loading model from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx
+[1783225978.868754] [INFO] [ONNX Embedding] Tokenizer loaded from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\tokenizer.json
+[1783225981.2647822] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[1783225981.26578] [INFO] [ONNX Embedding] ONNX session loaded: C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\model.onnx | providers=['CPUExecutionProvider'] | vector_size=384
+[1783225981.2677798] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[1783225981.2697787] [INFO] EmbeddingSession acquired: intfloat/multilingual-e5-small
+[1783225981.270778] [INFO] [ONNX Embedding] Encoding 1 text(s)
+[1783225981.286772] [INFO] [ONNX Embedding] Applied mean pooling: (1, 384)
+[1783225981.2877676] [INFO] Searching USearch for 22-Science-Diplomacy-TR.pdf
+[1783225981.2947638] [INFO] USearch returned 2 results for 22-Science-Diplomacy-TR.pdf
+[1783225981.2957642] [INFO] Searching USearch for AKINOLA.pdf
+[1783225981.3017619] [INFO] USearch returned 1 results for AKINOLA.pdf
+[1783225981.303759] [INFO] Searching USearch for anthropic_paper.pdf
+[1783225981.3104613] [INFO] USearch returned 2 results for anthropic_paper.pdf
+[1783225981.3134546] [INFO] Searching USearch for book_of_enoch.pdf
+[1783225981.3254576] [INFO] USearch returned 2 results for book_of_enoch.pdf
+[1783225981.3274486] [INFO] Searching USearch for bws_book.pdf
+[1783225981.3421414] [INFO] USearch returned 2 results for bws_book.pdf
+[1783225981.3431427] [INFO] Searching USearch for cinderella-perrault-version.pdf
+[1783225981.3481388] [INFO] USearch returned 2 results for cinderella-perrault-version.pdf
+[1783225981.3501387] [INFO] Searching USearch for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225981.3647127] [INFO] USearch returned 2 results for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225981.3677118] [INFO] Searching USearch for cursor_paper.pdf
+[1783225981.3737106] [INFO] USearch returned 2 results for cursor_paper.pdf
+[1783225981.3747075] [INFO] Searching USearch for Essential-GraphRAG.pdf
+[1783225981.382705] [INFO] USearch returned 2 results for Essential-GraphRAG.pdf
+[1783225981.3847022] [INFO] Searching USearch for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225981.3916984] [INFO] USearch returned 2 results for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225981.392697] [INFO] Searching USearch for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225981.397695] [INFO] USearch returned 2 results for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225981.4013662] [INFO] Searching USearch for OpenClaw Ebook - Final.pdf
+[1783225981.4063628] [INFO] USearch returned 2 results for OpenClaw Ebook - Final.pdf
+[1783225981.408362] [INFO] Searching USearch for OpenClawEbookFinal.pdf
+[1783225981.4123595] [INFO] USearch returned 2 results for OpenClawEbookFinal.pdf
+[1783225981.4133596] [INFO] Searching USearch for psykadelicish.csv
+[1783225981.4193556] [INFO] USearch returned 2 results for psykadelicish.csv
+[1783225981.420355] [INFO] Searching USearch for sumsum.pdf
+[1783225981.4263515] [INFO] USearch returned 2 results for sumsum.pdf
+[1783225981.4273508] [INFO] Searching USearch for The-Holy-Bible-King-James-Version.pdf
+[1783225981.4485972] [INFO] USearch returned 2 results for The-Holy-Bible-King-James-Version.pdf
+[1783225981.450161] [INFO] Searching USearch for TheGivingTreePoem.pdf
+[1783225981.4561546] [INFO] USearch returned 2 results for TheGivingTreePoem.pdf
+[1783225981.457153] [INFO] Searching USearch for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225981.4611487] [INFO] USearch returned 2 results for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225981.4637306] [INFO] Searching USearch for url_en_wikipedia_org_16984a3b
+[1783225981.4697251] [INFO] USearch returned 2 results for url_en_wikipedia_org_16984a3b
+[1783225981.4717252] [INFO] Searching USearch for url_en_wikipedia_org_a5249650
+[1783225981.4757214] [INFO] USearch returned 2 results for url_en_wikipedia_org_a5249650
+[1783225981.476723] [INFO] Per-doc limited search: 20 results (pooled from 20 files)
+[1783225981.4827187] [INFO] [ONNX Embedding] Unloading model...
+[1783225981.9828713] [SUCCESS] [ONNX Embedding] Model unloaded.
+[1783225981.9838772] [INFO] Unloaded embedding/intfloat/multilingual-e5-small-onnx
+[1783225981.9858928] [INFO] Embedding model unloaded
+[1783225981.9878907] [SUCCESS] Found 20 results
+[1783225981.9888902] [INFO] 
+[1783225981.9908729] [INFO]   #    Score       Source                Page  Preview
+[1783225981.9918709] [INFO]   ---  ----------  --------------------  ----  -------
+[1783225981.9928706] [INFO]   1    0.890      NVIDIA-Nemotron-3-Su  40    Nemotron 3 Super : Open, Efficient Mixture-of-Experts Hybrid...
+[1783225981.9948697] [INFO]   2    0.881      NVIDIA-Nemotron-3-Su  48    SFT Data Selection: Select successful trajectories for SFT a...
+[1783225981.995872] [INFO]   3    0.828      cursor_paper.pdf      38    [59] Stuart H. Sul, Simran Arora, Benjamin F. Spector, and C...
+[1783225981.9978678] [INFO]   4    0.826      cursor_paper.pdf      16    Figure 9: Evolution of CursorBench across iterations. Each v...
+[1783225981.9988685] [INFO]   5    0.826      Essential-GraphRAG.p  127   ---  [Page 92]  71 6.1 Extracting structured data from text ...
+[1783225982.0018651] [INFO]   6    0.825      22-Science-Diplomacy  169   References and Notes  1. T. Brown et al., Language models ar...
+[1783225982.0038638] [INFO]   7    0.824      22-Science-Diplomacy  1     ---  [Page 40]  ing heated and/or contentious. Nonetheless, ...
+[1783225982.0048635] [INFO]   8    0.822      Essential-GraphRAG.p  308   A.4.2 Trying the online version There’s also an online read-...
+[1783225982.009431] [INFO]   9    0.821      OpenClaw Ebook - Fin  1     ---  [Page 18]  You need: - Meeting transcripts or Notion wo...
+[1783225982.0124097] [INFO]   10   0.821      OpenClaw Ebook - Fin  1     ---  [Page 18]  You need: - Meeting transcripts or Notion wo...
+[1783225982.0134084] [INFO] 
+[1783225982.0144165] [INFO]   Min score threshold: 0.0
+[1783225982.0154088] [INFO]   Top score: 0.890
+[1783225982.0164065] [INFO]   Sources: 10 files
+[1783225982.0174248] [INFO] 
+[1783225982.0184054] [INFO] [Hybrid] Semantic: 20 results
+[1783225982.0204139] [INFO] [Hybrid] Fused: 37 unique results
+[1783225982.0204139] [SUCCESS] [Hybrid] Done in 4734ms
+[1783225982.024402] [INFO] Search: 20 results in 4.74s
+[1783225982.025401] [SUCCESS] Total: 20 results in 4.74s
+[1783225982.0264168] [INFO] 
+======================================================================
+[1783225982.0274005] [INFO] Results: 'NVIDIA Nemotron'  [HYBRID]
+[1783225982.0283995] [INFO] 
+======================================================================
+[1783225982.0294127] [SUCCESS] Total: 20  |  sources: 8
+[1783225982.0303977] [INFO] Top score: 0.0274
+[1783225982.0313978] [INFO] ======================================================================
+
+[1783225982.032396] [SUCCESS]     → 20 results
+[1783225982.034396] [INFO]   Query: 'Bible summary'
+[1783225982.0353959] [INFO] 
+[1783225982.0353959] [INFO] ======================================================================
+[1783225982.0363946] [INFO] Retrieval
+[1783225982.0403922] [INFO] ======================================================================
+[1783225982.041397] [INFO] Query  : 'Bible summary'
+[1783225982.0423906] [INFO] Method : hybrid
+[1783225982.0444021] [INFO] Top-K  : 20
+[1783225982.0454104] [INFO] Per‑doc limit: 2
+[1783225982.0463982] [INFO] Pool size: 20  |  rrf_k=60
+[1783225982.0474088] [INFO] [Hybrid] Query: 'Bible summary'
+[1783225982.048388] [INFO] [Hybrid] Top-K: 20, Pool: 20
+[1783225982.050399] [INFO] [Hybrid] Per‑doc limit: 2
+[1783225982.052387] [INFO] 
+[1783225982.054983] [INFO] Keyword Search
+[1783225982.0559602] [INFO] Query: Bible summary
+[1783225982.0579605] [INFO] BM25: k1=1.5, b=0.75
+[1783225982.0589614] [INFO] Top-K: 20
+[1783225982.0599778] [INFO] Scope: 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225982.0619721] [INFO] 
+[1783225982.0789473] [INFO] Searching across 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225982.0819476] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in kw mode
+[1783225982.0909414] [WARNING] output.html is not searchable in kw mode
+[1783225982.0954225] [INFO] Searching 20 valid files for 'Bible summary'
+[1783225982.1031268] [WARNING] No valid chunk_indices in BM25 data for 22-Science-Diplomacy-TR.pdf; assuming positional alignment
+[1783225982.111102] [WARNING] No valid chunk_indices in BM25 data for AKINOLA.pdf; assuming positional alignment
+[1783225982.1181085] [WARNING] No valid chunk_indices in BM25 data for anthropic_paper.pdf; assuming positional alignment
+[1783225982.1271143] [WARNING] No valid chunk_indices in BM25 data for book_of_enoch.pdf; assuming positional alignment
+[1783225982.1646523] [WARNING] No valid chunk_indices in BM25 data for bws_book.pdf; assuming positional alignment
+[1783225982.2072423] [WARNING] No valid chunk_indices in BM25 data for cinderella-perrault-version.pdf; assuming positional alignment
+[1783225982.3053677] [WARNING] No valid chunk_indices in BM25 data for CSB_Pew_Bible_2nd_Printing.pdf; assuming positional alignment
+[1783225982.4413223] [WARNING] No valid chunk_indices in BM25 data for cursor_paper.pdf; assuming positional alignment
+[1783225982.4533348] [WARNING] No valid chunk_indices in BM25 data for Essential-GraphRAG.pdf; assuming positional alignment
+[1783225982.4679484] [WARNING] No valid chunk_indices in BM25 data for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf; assuming positional alignment
+[1783225982.4799428] [WARNING] No valid chunk_indices in BM25 data for NVIDIA-Nemotron-3-Super-Technical-Report.pdf; assuming positional alignment
+[1783225982.4909315] [WARNING] No valid chunk_indices in BM25 data for OpenClaw Ebook - Final.pdf; assuming positional alignment
+[1783225982.4979277] [WARNING] No valid chunk_indices in BM25 data for OpenClawEbookFinal.pdf; assuming positional alignment
+[1783225982.5039172] [WARNING] No valid chunk_indices in BM25 data for psykadelicish.csv; assuming positional alignment
+[1783225982.5106452] [WARNING] No valid chunk_indices in BM25 data for sumsum.pdf; assuming positional alignment
+[1783225982.5847554] [WARNING] No valid chunk_indices in BM25 data for The-Holy-Bible-King-James-Version.pdf; assuming positional alignment
+[1783225982.7137406] [WARNING] No valid chunk_indices in BM25 data for TheGivingTreePoem.pdf; assuming positional alignment
+[1783225982.7187338] [WARNING] No valid chunk_indices in BM25 data for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf; assuming positional alignment
+[1783225982.7257133] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_16984a3b; assuming positional alignment
+[1783225982.7347293] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_a5249650; assuming positional alignment
+[1783225982.7377272] [SUCCESS] Found 20 results in 0.64s
+[1783225982.7387211] [INFO] [Hybrid] Keyword: 20 results
+[1783225982.7437134] [INFO] 
+[1783225982.744703] [INFO] Semantic Search
+[1783225982.745702] [INFO] Query: 'Bible summary'
+[1783225982.7467017] [INFO] Model: intfloat/multilingual-e5-small-onnx
+[1783225982.748701] [INFO] Per‑doc limit: 2
+[1783225982.765738] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in semantic mode
+[1783225982.7727349] [WARNING] output.html is not searchable in semantic mode
+[1783225982.7767506] [INFO] Searching 20 valid files for 'Bible summary'
+[1783225982.7767506] [INFO] 
+[1783225982.7807286] [INFO] [ONNX Embedding] Loading model from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx
+[1783225983.5973113] [INFO] [ONNX Embedding] Tokenizer loaded from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\tokenizer.json
+[1783225985.9570336] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[1783225985.9580328] [INFO] [ONNX Embedding] ONNX session loaded: C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\model.onnx | providers=['CPUExecutionProvider'] | vector_size=384
+[1783225985.9610457] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[1783225985.9620318] [INFO] EmbeddingSession acquired: intfloat/multilingual-e5-small
+[1783225985.9637167] [INFO] [ONNX Embedding] Encoding 1 text(s)
+[1783225985.981725] [INFO] [ONNX Embedding] Applied mean pooling: (1, 384)
+[1783225985.9847093] [INFO] Searching USearch for 22-Science-Diplomacy-TR.pdf
+[1783225985.9927053] [INFO] USearch returned 2 results for 22-Science-Diplomacy-TR.pdf
+[1783225985.9957032] [INFO] Searching USearch for AKINOLA.pdf
+[1783225986.0017014] [INFO] USearch returned 1 results for AKINOLA.pdf
+[1783225986.0036986] [INFO] Searching USearch for anthropic_paper.pdf
+[1783225986.0101345] [INFO] USearch returned 2 results for anthropic_paper.pdf
+[1783225986.011139] [INFO] Searching USearch for book_of_enoch.pdf
+[1783225986.0201356] [INFO] USearch returned 2 results for book_of_enoch.pdf
+[1783225986.0231323] [INFO] Searching USearch for bws_book.pdf
+[1783225986.0421374] [INFO] USearch returned 2 results for bws_book.pdf
+[1783225986.0441356] [INFO] Searching USearch for cinderella-perrault-version.pdf
+[1783225986.052133] [INFO] USearch returned 2 results for cinderella-perrault-version.pdf
+[1783225986.0541303] [INFO] Searching USearch for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225986.0807066] [INFO] USearch returned 2 results for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225986.0827057] [INFO] Searching USearch for cursor_paper.pdf
+[1783225986.0927005] [INFO] USearch returned 2 results for cursor_paper.pdf
+[1783225986.0946984] [INFO] Searching USearch for Essential-GraphRAG.pdf
+[1783225986.1034422] [INFO] USearch returned 2 results for Essential-GraphRAG.pdf
+[1783225986.10544] [INFO] Searching USearch for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225986.112436] [INFO] USearch returned 2 results for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225986.1144361] [INFO] Searching USearch for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225986.1228101] [INFO] USearch returned 2 results for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225986.1238098] [INFO] Searching USearch for OpenClaw Ebook - Final.pdf
+[1783225986.1308045] [INFO] USearch returned 2 results for OpenClaw Ebook - Final.pdf
+[1783225986.1328042] [INFO] Searching USearch for OpenClawEbookFinal.pdf
+[1783225986.1408007] [INFO] USearch returned 2 results for OpenClawEbookFinal.pdf
+[1783225986.1427996] [INFO] Searching USearch for psykadelicish.csv
+[1783225986.1498377] [INFO] USearch returned 2 results for psykadelicish.csv
+[1783225986.151709] [INFO] Searching USearch for sumsum.pdf
+[1783225986.1597102] [INFO] USearch returned 2 results for sumsum.pdf
+[1783225986.16171] [INFO] Searching USearch for The-Holy-Bible-King-James-Version.pdf
+[1783225986.1796985] [INFO] USearch returned 2 results for The-Holy-Bible-King-James-Version.pdf
+[1783225986.1816983] [INFO] Searching USearch for TheGivingTreePoem.pdf
+[1783225986.1886942] [INFO] USearch returned 2 results for TheGivingTreePoem.pdf
+[1783225986.189693] [INFO] Searching USearch for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225986.1946902] [INFO] USearch returned 2 results for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225986.1956894] [INFO] Searching USearch for url_en_wikipedia_org_16984a3b
+[1783225986.2026854] [INFO] USearch returned 2 results for url_en_wikipedia_org_16984a3b
+[1783225986.2036853] [INFO] Searching USearch for url_en_wikipedia_org_a5249650
+[1783225986.2084641] [INFO] USearch returned 2 results for url_en_wikipedia_org_a5249650
+[1783225986.2104719] [INFO] Per-doc limited search: 20 results (pooled from 20 files)
+[1783225986.2134717] [INFO] [ONNX Embedding] Unloading model...
+[1783225986.698192] [SUCCESS] [ONNX Embedding] Model unloaded.
+[1783225986.6991959] [INFO] Unloaded embedding/intfloat/multilingual-e5-small-onnx
+[1783225986.7011943] [INFO] Embedding model unloaded
+[1783225986.7031896] [SUCCESS] Found 20 results
+[1783225986.7041945] [INFO] 
+[1783225986.706172] [INFO]   #    Score       Source                Page  Preview
+[1783225986.7071893] [INFO]   ---  ----------  --------------------  ----  -------
+[1783225986.7081811] [INFO]   1    0.902      CSB_Pew_Bible_2nd_Pr  1958  THE DAMASCUS ROAD 9  ­Now ­Saul ­was ­still breath­ing ­thre...
+[1783225986.7097328] [INFO]   2    0.891      The-Holy-Bible-King-  1098  Page 531 Amos the excellency of Jacob, and hate his palaces:...
+[1783225986.710741] [INFO]   3    0.888      CSB_Pew_Bible_2nd_Pr  2030  1 Corinthians GREETING 1  ­Paul, ­called ­as ­an apos­tle ­o...
+[1783225986.7117357] [INFO]   4    0.882      The-Holy-Bible-King-  1054  offering, saith the Lord GOD. {44:28} And it shall be unto t...
+[1783225986.71373] [INFO]   5    0.877      book_of_enoch.pdf     346   I hear the words, 'Araêl, imprison Sphandôr,' I at once retr...
+[1783225986.7147439] [INFO]   6    0.872      url_en_wikipedia_org  1     JewishEncyclopedia.com. Retrieved 24 February 2014. - 1 2 Pi...
+[1783225986.716729] [INFO]   7    0.872      book_of_enoch.pdf     14    Apparently the translator here wished to make this verse agr...
+[1783225986.717728] [INFO]   8    0.870      url_en_wikipedia_org  1     Oxford: Parker – via JohnPratt.com. - Nickelsburg, George W....
+[1783225986.7197354] [INFO]   9    0.854      bws_book.pdf          811   410 CHAPTER 6. RELATIONS AND MODULAR ARITHMETIC set N, say, ...
+[1783225986.7207358] [INFO]   10   0.854      bws_book.pdf          843   Example 6.5.14. Consider the following claim: ∀n ∈N. 6 | n3 ...
+[1783225986.7227347] [INFO] 
+[1783225986.7267225] [INFO]   Min score threshold: 0.0
+[1783225986.7277293] [INFO]   Top score: 0.902
+[1783225986.7287223] [INFO]   Sources: 10 files
+[1783225986.729731] [INFO] 
+[1783225986.73072] [INFO] [Hybrid] Semantic: 20 results
+[1783225986.7327244] [INFO] [Hybrid] Fused: 39 unique results
+[1783225986.7337246] [SUCCESS] [Hybrid] Done in 4686ms
+[1783225986.7357323] [INFO] Search: 20 results in 4.69s
+[1783225986.7367272] [SUCCESS] Total: 20 results in 4.69s
+[1783225986.737731] [INFO] 
+======================================================================
+[1783225986.7407227] [INFO] Results: 'Bible summary'  [HYBRID]
+[1783225986.7427185] [INFO] 
+======================================================================
+[1783225986.7437131] [SUCCESS] Total: 20  |  sources: 7
+[1783225986.7447126] [INFO] Top score: 0.0164
+[1783225986.7457118] [INFO] ======================================================================
+
+[1783225986.74771] [SUCCESS]     → 20 results
+[1783225986.7493532] [INFO]   Query: 'anthropic paper'
+[1783225986.7513719] [INFO] 
+[1783225986.752375] [INFO] ======================================================================
+[1783225986.7553768] [INFO] Retrieval
+[1783225986.7563653] [INFO] ======================================================================
+[1783225986.7574067] [INFO] Query  : 'anthropic paper'
+[1783225986.7583714] [INFO] Method : hybrid
+[1783225986.7593653] [INFO] Top-K  : 20
+[1783225986.760369] [INFO] Per‑doc limit: 2
+[1783225986.7613535] [INFO] Pool size: 20  |  rrf_k=60
+[1783225986.7623532] [INFO] [Hybrid] Query: 'anthropic paper'
+[1783225986.763353] [INFO] [Hybrid] Top-K: 20, Pool: 20
+[1783225986.7643533] [INFO] [Hybrid] Per‑doc limit: 2
+[1783225986.7653527] [INFO] 
+[1783225986.7663553] [INFO] Keyword Search
+[1783225986.7673504] [INFO] Query: anthropic paper
+[1783225986.7683525] [INFO] BM25: k1=1.5, b=0.75
+[1783225986.772348] [INFO] Top-K: 20
+[1783225986.7733495] [INFO] Scope: 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225986.7763667] [INFO] 
+[1783225986.793932] [INFO] Searching across 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783225986.796931] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in kw mode
+[1783225986.8049464] [WARNING] output.html is not searchable in kw mode
+[1783225986.808924] [INFO] Searching 20 valid files for 'anthropic paper'
+[1783225986.8159344] [WARNING] No valid chunk_indices in BM25 data for 22-Science-Diplomacy-TR.pdf; assuming positional alignment
+[1783225986.824915] [WARNING] No valid chunk_indices in BM25 data for AKINOLA.pdf; assuming positional alignment
+[1783225986.8299336] [WARNING] No valid chunk_indices in BM25 data for anthropic_paper.pdf; assuming positional alignment
+[1783225986.840927] [WARNING] No valid chunk_indices in BM25 data for book_of_enoch.pdf; assuming positional alignment
+[1783225986.876906] [WARNING] No valid chunk_indices in BM25 data for bws_book.pdf; assuming positional alignment
+[1783225986.9219265] [WARNING] No valid chunk_indices in BM25 data for cinderella-perrault-version.pdf; assuming positional alignment
+[1783225987.0190892] [WARNING] No valid chunk_indices in BM25 data for CSB_Pew_Bible_2nd_Printing.pdf; assuming positional alignment
+[1783225987.150046] [WARNING] No valid chunk_indices in BM25 data for cursor_paper.pdf; assuming positional alignment
+[1783225987.1625834] [WARNING] No valid chunk_indices in BM25 data for Essential-GraphRAG.pdf; assuming positional alignment
+[1783225987.1775749] [WARNING] No valid chunk_indices in BM25 data for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf; assuming positional alignment
+[1783225987.1925688] [WARNING] No valid chunk_indices in BM25 data for NVIDIA-Nemotron-3-Super-Technical-Report.pdf; assuming positional alignment
+[1783225987.205558] [WARNING] No valid chunk_indices in BM25 data for OpenClaw Ebook - Final.pdf; assuming positional alignment
+[1783225987.2132373] [WARNING] No valid chunk_indices in BM25 data for OpenClawEbookFinal.pdf; assuming positional alignment
+[1783225987.220761] [WARNING] No valid chunk_indices in BM25 data for psykadelicish.csv; assuming positional alignment
+[1783225987.2277584] [WARNING] No valid chunk_indices in BM25 data for sumsum.pdf; assuming positional alignment
+[1783225987.3028252] [WARNING] No valid chunk_indices in BM25 data for The-Holy-Bible-King-James-Version.pdf; assuming positional alignment
+[1783225987.4145265] [WARNING] No valid chunk_indices in BM25 data for TheGivingTreePoem.pdf; assuming positional alignment
+[1783225987.4195218] [WARNING] No valid chunk_indices in BM25 data for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf; assuming positional alignment
+[1783225987.4265387] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_16984a3b; assuming positional alignment
+[1783225987.437172] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_a5249650; assuming positional alignment
+[1783225987.4401953] [SUCCESS] Found 20 results in 0.63s
+[1783225987.442159] [INFO] [Hybrid] Keyword: 20 results
+[1783225987.444173] [INFO] 
+[1783225987.4451563] [INFO] Semantic Search
+[1783225987.4468143] [INFO] Query: 'anthropic paper'
+[1783225987.4478338] [INFO] Model: intfloat/multilingual-e5-small-onnx
+[1783225987.4488182] [INFO] Per‑doc limit: 2
+[1783225987.4655092] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in semantic mode
+[1783225987.4734898] [WARNING] output.html is not searchable in semantic mode
+[1783225987.4765093] [INFO] Searching 20 valid files for 'anthropic paper'
+[1783225987.4775028] [INFO] 
+[1783225987.481488] [INFO] [ONNX Embedding] Loading model from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx
+[1783225988.2864182] [INFO] [ONNX Embedding] Tokenizer loaded from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\tokenizer.json
+[1783225990.6124976] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[1783225990.6134968] [INFO] [ONNX Embedding] ONNX session loaded: C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\model.onnx | providers=['CPUExecutionProvider'] | vector_size=384
+[1783225990.618494] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[1783225990.6205022] [INFO] EmbeddingSession acquired: intfloat/multilingual-e5-small
+[1783225990.621491] [INFO] [ONNX Embedding] Encoding 1 text(s)
+[1783225990.6384907] [INFO] [ONNX Embedding] Applied mean pooling: (1, 384)
+[1783225990.64048] [INFO] Searching USearch for 22-Science-Diplomacy-TR.pdf
+[1783225990.6474762] [INFO] USearch returned 2 results for 22-Science-Diplomacy-TR.pdf
+[1783225990.6494796] [INFO] Searching USearch for AKINOLA.pdf
+[1783225990.654193] [INFO] USearch returned 1 results for AKINOLA.pdf
+[1783225990.656192] [INFO] Searching USearch for anthropic_paper.pdf
+[1783225990.6611884] [INFO] USearch returned 2 results for anthropic_paper.pdf
+[1783225990.6631885] [INFO] Searching USearch for book_of_enoch.pdf
+[1783225990.6701834] [INFO] USearch returned 2 results for book_of_enoch.pdf
+[1783225990.6721992] [INFO] Searching USearch for bws_book.pdf
+[1783225990.6861947] [INFO] USearch returned 2 results for bws_book.pdf
+[1783225990.688193] [INFO] Searching USearch for cinderella-perrault-version.pdf
+[1783225990.6938553] [INFO] USearch returned 2 results for cinderella-perrault-version.pdf
+[1783225990.6959052] [INFO] Searching USearch for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225990.7099056] [INFO] USearch returned 2 results for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225990.711907] [INFO] Searching USearch for cursor_paper.pdf
+[1783225990.7189028] [INFO] USearch returned 2 results for cursor_paper.pdf
+[1783225990.7199006] [INFO] Searching USearch for Essential-GraphRAG.pdf
+[1783225990.7278988] [INFO] USearch returned 2 results for Essential-GraphRAG.pdf
+[1783225990.728896] [INFO] Searching USearch for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225990.735892] [INFO] USearch returned 2 results for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225990.7378902] [INFO] Searching USearch for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225990.7428877] [INFO] USearch returned 2 results for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225990.744887] [INFO] Searching USearch for OpenClaw Ebook - Final.pdf
+[1783225990.750883] [INFO] USearch returned 2 results for OpenClaw Ebook - Final.pdf
+[1783225990.751882] [INFO] Searching USearch for OpenClawEbookFinal.pdf
+[1783225990.756879] [INFO] USearch returned 2 results for OpenClawEbookFinal.pdf
+[1783225990.7588785] [INFO] Searching USearch for psykadelicish.csv
+[1783225990.7633715] [INFO] USearch returned 2 results for psykadelicish.csv
+[1783225990.765907] [INFO] Searching USearch for sumsum.pdf
+[1783225990.7728832] [INFO] USearch returned 2 results for sumsum.pdf
+[1783225990.7748823] [INFO] Searching USearch for The-Holy-Bible-King-James-Version.pdf
+[1783225990.7928724] [INFO] USearch returned 2 results for The-Holy-Bible-King-James-Version.pdf
+[1783225990.794888] [INFO] Searching USearch for TheGivingTreePoem.pdf
+[1783225990.8028684] [INFO] USearch returned 2 results for TheGivingTreePoem.pdf
+[1783225990.8038669] [INFO] Searching USearch for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225990.809815] [INFO] USearch returned 2 results for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225990.8118126] [INFO] Searching USearch for url_en_wikipedia_org_16984a3b
+[1783225990.8197336] [INFO] USearch returned 2 results for url_en_wikipedia_org_16984a3b
+[1783225990.821729] [INFO] Searching USearch for url_en_wikipedia_org_a5249650
+[1783225990.826727] [INFO] USearch returned 2 results for url_en_wikipedia_org_a5249650
+[1783225990.8277254] [INFO] Per-doc limited search: 20 results (pooled from 20 files)
+[1783225990.8317215] [INFO] [ONNX Embedding] Unloading model...
+[1783225991.3194435] [SUCCESS] [ONNX Embedding] Model unloaded.
+[1783225991.3204527] [INFO] Unloaded embedding/intfloat/multilingual-e5-small-onnx
+[1783225991.3214447] [INFO] Embedding model unloaded
+[1783225991.3234615] [SUCCESS] Found 20 results
+[1783225991.327202] [INFO] 
+[1783225991.3282068] [INFO]   #    Score       Source                Page  Preview
+[1783225991.329208] [INFO]   ---  ----------  --------------------  ----  -------
+[1783225991.3302052] [INFO]   1    0.834      anthropic_paper.pdf   30    We used this method to train models that are both harmless a...
+[1783225991.332206] [INFO]   2    0.828      url_en_wikipedia_org  1     This section is said to have been composed in the 4th or 3rd...
+[1783225991.3332047] [INFO]   3    0.827      url_en_wikipedia_org  1     See also [edit]- Aramaic Enoch Scroll - Egregore - El Shadda...
+[1783225991.334204] [INFO]   4    0.823      url_en_wikipedia_org  1     1. Hyginus also states that these three are "the ones that a...
+[1783225991.3352032] [INFO]   5    0.820      url_en_wikipedia_org  1     53. References [edit]- Astour, Michael C., "Aegean Place-Nam...
+[1783225991.3362033] [INFO]   6    0.820      Essential-GraphRAG.p  105   When a user poses a question, the system computes the query’...
+[1783225991.338202] [INFO]   7    0.819      The-Holy-Bible-King-  537   As for me, in the uprightness of mine heart I have willingly...
+[1783225991.3392] [INFO]   8    0.819      The-Holy-Bible-King-  86    And he gave [it] her, and came in unto her, and she conceive...
+[1783225991.3422] [INFO]   9    0.819      22-Science-Diplomacy  1     ---  [Page 17]  C Rules of the game of Diplomacy Diplomacy i...
+[1783225991.3442686] [INFO]   10   0.818      22-Science-Diplomacy  169   Dota 2 (32) is two-team zero-sum but with unlimited informat...
+[1783225991.3452342] [INFO] 
+[1783225991.3462331] [INFO]   Min score threshold: 0.0
+[1783225991.3472342] [INFO]   Top score: 0.834
+[1783225991.349234] [INFO]   Sources: 11 files
+[1783225991.3502338] [INFO] 
+[1783225991.3512323] [INFO] [Hybrid] Semantic: 20 results
+[1783225991.3522303] [INFO] [Hybrid] Fused: 40 unique results
+[1783225991.3532293] [SUCCESS] [Hybrid] Done in 4590ms
+[1783225991.35423] [INFO] Search: 20 results in 4.59s
+[1783225991.3552287] [SUCCESS] Total: 20 results in 4.59s
+[1783225991.3562295] [INFO] 
+======================================================================
+[1783225991.3599365] [INFO] Results: 'anthropic paper'  [HYBRID]
+[1783225991.3609369] [INFO] 
+======================================================================
+[1783225991.361936] [SUCCESS] Total: 20  |  sources: 11
+[1783225991.363933] [INFO] Top score: 0.0164
+[1783225991.3659372] [INFO] ======================================================================
+
+[1783225991.3669708] [SUCCESS]     → 20 results
+[1783225991.3679771] [INFO] 
+--- Testing method: SEMANTIC ---
+[1783225991.3689759] [INFO]   Query: 'book of enoch'
+[1783225991.3699756] [INFO] 
+[1783225991.3709745] [INFO] ======================================================================
+[1783225991.3739786] [INFO] Retrieval
+[1783225991.374971] [INFO] ======================================================================
+[1783225991.3769705] [INFO] Query  : 'book of enoch'
+[1783225991.3769705] [INFO] Method : semantic
+[1783225991.377971] [INFO] Top-K  : 20
+[1783225991.37897] [INFO] Per‑doc limit: 2
+[1783225991.3799698] [INFO] Min score: 0.0
+[1783225991.3839664] [INFO] 
+[1783225991.3839664] [INFO] Semantic Search
+[1783225991.3849657] [INFO] Query: 'book of enoch'
+[1783225991.3859656] [INFO] Model: intfloat/multilingual-e5-small-onnx
+[1783225991.386965] [INFO] Per‑doc limit: 2
+[1783225991.4029553] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in semantic mode
+[1783225991.4094958] [WARNING] output.html is not searchable in semantic mode
+[1783225991.4124937] [INFO] Searching 20 valid files for 'book of enoch'
+[1783225991.4134943] [INFO] 
+[1783225991.416492] [INFO] [ONNX Embedding] Loading model from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx
+[1783225992.2186115] [INFO] [ONNX Embedding] Tokenizer loaded from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\tokenizer.json
+[1783225994.451882] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[1783225994.451882] [INFO] [ONNX Embedding] ONNX session loaded: C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\model.onnx | providers=['CPUExecutionProvider'] | vector_size=384
+[1783225994.4548798] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[1783225994.4559007] [INFO] EmbeddingSession acquired: intfloat/multilingual-e5-small
+[1783225994.4568784] [INFO] [ONNX Embedding] Encoding 1 text(s)
+[1783225994.4741094] [INFO] [ONNX Embedding] Applied mean pooling: (1, 384)
+[1783225994.4760878] [INFO] Searching USearch for 22-Science-Diplomacy-TR.pdf
+[1783225994.4860792] [INFO] USearch returned 2 results for 22-Science-Diplomacy-TR.pdf
+[1783225994.4881017] [INFO] Searching USearch for AKINOLA.pdf
+[1783225994.494076] [INFO] USearch returned 1 results for AKINOLA.pdf
+[1783225994.4950774] [INFO] Searching USearch for anthropic_paper.pdf
+[1783225994.5020723] [INFO] USearch returned 2 results for anthropic_paper.pdf
+[1783225994.5040708] [INFO] Searching USearch for book_of_enoch.pdf
+[1783225994.510678] [INFO] USearch returned 2 results for book_of_enoch.pdf
+[1783225994.5126843] [INFO] Searching USearch for bws_book.pdf
+[1783225994.5279129] [INFO] USearch returned 2 results for bws_book.pdf
+[1783225994.5299108] [INFO] Searching USearch for cinderella-perrault-version.pdf
+[1783225994.534909] [INFO] USearch returned 2 results for cinderella-perrault-version.pdf
+[1783225994.5369084] [INFO] Searching USearch for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225994.5574832] [INFO] USearch returned 2 results for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225994.558489] [INFO] Searching USearch for cursor_paper.pdf
+[1783225994.5664911] [INFO] USearch returned 2 results for cursor_paper.pdf
+[1783225994.5674846] [INFO] Searching USearch for Essential-GraphRAG.pdf
+[1783225994.5744839] [INFO] USearch returned 2 results for Essential-GraphRAG.pdf
+[1783225994.5754797] [INFO] Searching USearch for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225994.5824761] [INFO] USearch returned 2 results for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225994.5834744] [INFO] Searching USearch for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225994.5894701] [INFO] USearch returned 2 results for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225994.59047] [INFO] Searching USearch for OpenClaw Ebook - Final.pdf
+[1783225994.595466] [INFO] USearch returned 2 results for OpenClaw Ebook - Final.pdf
+[1783225994.5974758] [INFO] Searching USearch for OpenClawEbookFinal.pdf
+[1783225994.6024635] [INFO] USearch returned 2 results for OpenClawEbookFinal.pdf
+[1783225994.6036286] [INFO] Searching USearch for psykadelicish.csv
+[1783225994.6091387] [INFO] USearch returned 2 results for psykadelicish.csv
+[1783225994.610138] [INFO] Searching USearch for sumsum.pdf
+[1783225994.6161335] [INFO] USearch returned 2 results for sumsum.pdf
+[1783225994.617134] [INFO] Searching USearch for The-Holy-Bible-King-James-Version.pdf
+[1783225994.6354935] [INFO] USearch returned 2 results for The-Holy-Bible-King-James-Version.pdf
+[1783225994.6364942] [INFO] Searching USearch for TheGivingTreePoem.pdf
+[1783225994.6424909] [INFO] USearch returned 2 results for TheGivingTreePoem.pdf
+[1783225994.6434896] [INFO] Searching USearch for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225994.6494853] [INFO] USearch returned 2 results for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225994.6521053] [INFO] Searching USearch for url_en_wikipedia_org_16984a3b
+[1783225994.6571019] [INFO] USearch returned 2 results for url_en_wikipedia_org_16984a3b
+[1783225994.658101] [INFO] Searching USearch for url_en_wikipedia_org_a5249650
+[1783225994.6630986] [INFO] USearch returned 2 results for url_en_wikipedia_org_a5249650
+[1783225994.6650972] [INFO] Per-doc limited search: 20 results (pooled from 20 files)
+[1783225994.6710958] [INFO] [ONNX Embedding] Unloading model...
+[1783225995.1493342] [SUCCESS] [ONNX Embedding] Model unloaded.
+[1783225995.1503189] [INFO] Unloaded embedding/intfloat/multilingual-e5-small-onnx
+[1783225995.1513202] [INFO] Embedding model unloaded
+[1783225995.154316] [SUCCESS] Found 20 results
+[1783225995.1553295] [INFO] 
+[1783225995.156331] [INFO]   #    Score       Source                Page  Preview
+[1783225995.1573346] [INFO]   ---  ----------  --------------------  ----  -------
+[1783225995.158329] [INFO]   1    0.908      url_en_wikipedia_org  1     Most Qumran fragments are relatively early, with none writte...
+[1783225995.1593149] [INFO]   2    0.894      book_of_enoch.pdf     352   And having heard my wisdom, she glorified the God of Israel,...
+[1783225995.160313] [INFO]   3    0.893      url_en_wikipedia_org  1     Edinburgh: Edinburgh University Press. ISBN 978-1-3995-0865-...
+[1783225995.1626308] [INFO]   4    0.878      book_of_enoch.pdf     346   I hear the words, 'Araêl, imprison Sphandôr,' I at once retr...
+[1783225995.1661413] [INFO]   5    0.844      The-Holy-Bible-King-  1382  [his] hands the thing which is good, that he may have to giv...
+[1783225995.1681418] [INFO]   6    0.835      The-Holy-Bible-King-  726   Psalms Page 344 upon the heavens by his name JAH, and rejoic...
+[1783225995.1701393] [INFO]   7    0.823      CSB_Pew_Bible_2nd_Pr  1618  until he comes  and sends righteousness 	 	 on you like the ...
+[1783225995.1711385] [INFO]   8    0.823      CSB_Pew_Bible_2nd_Pr  1958  THE DAMASCUS ROAD 9  ­Now ­Saul ­was ­still breath­ing ­thre...
+[1783225995.1736963] [INFO]   9    0.823      url_en_wikipedia_org  1     - ↑ Bernabé 2004, p. 182. - ↑ Smith, s.v. Amalthea; Diodorus...
+[1783225995.1757174] [INFO]   10   0.820      url_en_wikipedia_org  1     The sculpture was the central element of the dairy at Rambou...
+[1783225995.1767113] [INFO] 
+[1783225995.177715] [INFO]   Min score threshold: 0.0
+[1783225995.1817043] [INFO]   Top score: 0.908
+[1783225995.182701] [INFO]   Sources: 11 files
+[1783225995.1837003] [INFO] 
+[1783225995.1846995] [INFO] Search: 20 results in 3.80s
+[1783225995.186698] [SUCCESS] Total: 20 results in 3.81s
+[1783225995.186698] [INFO] 
+======================================================================
+[1783225995.1876972] [INFO] Results: 'book of enoch'  [SEMANTIC]
+[1783225995.1886966] [INFO] 
+======================================================================
+[1783225995.1896956] [SUCCESS] Total: 20  |  sources: 11
+[1783225995.1906939] [INFO] Top score: 0.9077
+[1783225995.1916945] [INFO] ======================================================================
+
+[1783225995.1946938] [SUCCESS]     → 20 results
+[1783225995.1967013] [INFO]   Query: 'what is graph rag'
+[1783225995.197691] [INFO] 
+[1783225995.198702] [INFO] ======================================================================
+[1783225995.1996927] [INFO] Retrieval
+[1783225995.2006884] [INFO] ======================================================================
+[1783225995.2016907] [INFO] Query  : 'what is graph rag'
+[1783225995.2026896] [INFO] Method : semantic
+[1783225995.2026896] [INFO] Top-K  : 20
+[1783225995.2036889] [INFO] Per‑doc limit: 2
+[1783225995.2046895] [INFO] Min score: 0.0
+[1783225995.2067077] [INFO] 
+[1783225995.2094474] [INFO] Semantic Search
+[1783225995.2104332] [INFO] Query: 'what is graph rag'
+[1783225995.2124403] [INFO] Model: intfloat/multilingual-e5-small-onnx
+[1783225995.213429] [INFO] Per‑doc limit: 2
+[1783225995.231418] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in semantic mode
+[1783225995.2364173] [WARNING] output.html is not searchable in semantic mode
+[1783225995.2414122] [INFO] Searching 20 valid files for 'what is graph rag'
+[1783225995.2424116] [INFO] 
+[1783225995.2464097] [INFO] [ONNX Embedding] Loading model from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx
+[1783225996.1139796] [INFO] [ONNX Embedding] Tokenizer loaded from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\tokenizer.json
+[1783225998.2989702] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[1783225998.2999642] [INFO] [ONNX Embedding] ONNX session loaded: C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\model.onnx | providers=['CPUExecutionProvider'] | vector_size=384
+[1783225998.302944] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[1783225998.3039424] [INFO] EmbeddingSession acquired: intfloat/multilingual-e5-small
+[1783225998.305952] [INFO] [ONNX Embedding] Encoding 1 text(s)
+[1783225998.323051] [INFO] [ONNX Embedding] Applied mean pooling: (1, 384)
+[1783225998.325033] [INFO] Searching USearch for 22-Science-Diplomacy-TR.pdf
+[1783225998.334025] [INFO] USearch returned 2 results for 22-Science-Diplomacy-TR.pdf
+[1783225998.335045] [INFO] Searching USearch for AKINOLA.pdf
+[1783225998.3400216] [INFO] USearch returned 1 results for AKINOLA.pdf
+[1783225998.341023] [INFO] Searching USearch for anthropic_paper.pdf
+[1783225998.3490167] [INFO] USearch returned 2 results for anthropic_paper.pdf
+[1783225998.3510163] [INFO] Searching USearch for book_of_enoch.pdf
+[1783225998.3591871] [INFO] USearch returned 2 results for book_of_enoch.pdf
+[1783225998.3611817] [INFO] Searching USearch for bws_book.pdf
+[1783225998.372178] [INFO] USearch returned 2 results for bws_book.pdf
+[1783225998.3741555] [INFO] Searching USearch for cinderella-perrault-version.pdf
+[1783225998.3801508] [INFO] USearch returned 2 results for cinderella-perrault-version.pdf
+[1783225998.3821504] [INFO] Searching USearch for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225998.3981407] [INFO] USearch returned 2 results for CSB_Pew_Bible_2nd_Printing.pdf
+[1783225998.4001412] [INFO] Searching USearch for cursor_paper.pdf
+[1783225998.405136] [INFO] USearch returned 2 results for cursor_paper.pdf
+[1783225998.407711] [INFO] Searching USearch for Essential-GraphRAG.pdf
+[1783225998.4147065] [INFO] USearch returned 2 results for Essential-GraphRAG.pdf
+[1783225998.4157057] [INFO] Searching USearch for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225998.420702] [INFO] USearch returned 2 results for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783225998.4237015] [INFO] Searching USearch for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225998.4296982] [INFO] USearch returned 2 results for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783225998.4316974] [INFO] Searching USearch for OpenClaw Ebook - Final.pdf
+[1783225998.435695] [INFO] USearch returned 2 results for OpenClaw Ebook - Final.pdf
+[1783225998.4376948] [INFO] Searching USearch for OpenClawEbookFinal.pdf
+[1783225998.4426923] [INFO] USearch returned 2 results for OpenClawEbookFinal.pdf
+[1783225998.4436934] [INFO] Searching USearch for psykadelicish.csv
+[1783225998.4496868] [INFO] USearch returned 2 results for psykadelicish.csv
+[1783225998.4506874] [INFO] Searching USearch for sumsum.pdf
+[1783225998.456403] [INFO] USearch returned 2 results for sumsum.pdf
+[1783225998.4584012] [INFO] Searching USearch for The-Holy-Bible-King-James-Version.pdf
+[1783225998.4809737] [INFO] USearch returned 2 results for The-Holy-Bible-King-James-Version.pdf
+[1783225998.4841719] [INFO] Searching USearch for TheGivingTreePoem.pdf
+[1783225998.491165] [INFO] USearch returned 2 results for TheGivingTreePoem.pdf
+[1783225998.4931633] [INFO] Searching USearch for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225998.4991603] [INFO] USearch returned 2 results for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783225998.5011592] [INFO] Searching USearch for url_en_wikipedia_org_16984a3b
+[1783225998.5061557] [INFO] USearch returned 2 results for url_en_wikipedia_org_16984a3b
+[1783225998.5081542] [INFO] Searching USearch for url_en_wikipedia_org_a5249650
+[1783225998.5133247] [INFO] USearch returned 2 results for url_en_wikipedia_org_a5249650
+[1783225998.5158434] [INFO] Per-doc limited search: 20 results (pooled from 20 files)
+[1783225998.5188413] [INFO] [ONNX Embedding] Unloading model...
+[1783225998.994678] [SUCCESS] [ONNX Embedding] Model unloaded.
+[1783225998.995678] [INFO] Unloaded embedding/intfloat/multilingual-e5-small-onnx
+[1783225998.9976778] [INFO] Embedding model unloaded
+[1783225998.9998083] [SUCCESS] Found 20 results
+[1783225999.0008075] [INFO] 
+[1783225999.0018196] [INFO]   #    Score       Source                Page  Preview
+[1783225999.0028064] [INFO]   ---  ----------  --------------------  ----  -------
+[1783225999.0038052] [INFO]   1    0.854      Essential-GraphRAG.p  127   ---  [Page 66]  45 Generating Cypher queries from natural la...
+[1783225999.0048046] [INFO]   2    0.851      Essential-GraphRAG.p  127   ---  [Page 74]  53 4.4 Implementing a text2cypher generator ...
+[1783225999.0068696] [INFO]   3    0.824      psykadelicish.csv     1     Bones Records 0.484 0.75 1 -4.176 1 0.0685 0.697 0.862 0.105...
+[1783225999.010389] [INFO]   4    0.814      psykadelicish.csv     1     2006-06-28 212439 85 false 31b3gosgrokqngaquanh5osrny3m 2026...
+[1783225999.0133946] [INFO]   5    0.812      FF_ONE_HUNDRED_WAYS_  1     ---  [Page 125]  Tech knowledge: Beginner Cost My recommenda...
+[1783225999.0143883] [INFO]   6    0.807      anthropic_paper.pdf   46    PALMS Prompt → Why are prisons full of Black and Brown peopl...
+[1783225999.0166714] [INFO]   7    0.807      22-Science-Diplomacy  169   Dota 2 (32) is two-team zero-sum but with unlimited informat...
+[1783225999.0182495] [INFO]   8    0.804      bws_book.pdf          374   3.7. CARTESIAN PRODUCTS 189 3.7.3 Questions & Exercises Remi...
+[1783225999.0192564] [INFO]   9    0.803      bws_book.pdf          144   Well, since all of the terms are even, we can divide everyth...
+[1783225999.020256] [INFO]   10   0.802      AKINOLA.pdf           1     [Page 1]  AKINOLA BRIGHT +2348115953228 Ibeju Lekki Lagos St...
+[1783225999.0252523] [INFO] 
+[1783225999.0262527] [INFO]   Min score threshold: 0.0
+[1783225999.0292509] [INFO]   Top score: 0.854
+[1783225999.030252] [INFO]   Sources: 11 files
+[1783225999.0322495] [INFO] 
+[1783225999.0332484] [INFO] Search: 20 results in 3.83s
+[1783225999.0342486] [SUCCESS] Total: 20 results in 3.83s
+[1783225999.0357685] [INFO] 
+======================================================================
+[1783225999.0362763] [INFO] Results: 'what is graph rag'  [SEMANTIC]
+[1783225999.0382836] [INFO] 
+======================================================================
+[1783225999.0422802] [SUCCESS] Total: 20  |  sources: 11
+[1783225999.0432906] [INFO] Top score: 0.8535
+[1783225999.0452795] [INFO] ======================================================================
+
+[1783225999.0477767] [SUCCESS]     → 20 results
+[1783225999.048741] [INFO]   Query: 'NVIDIA Nemotron'
+[1783225999.0501363] [INFO] 
+[1783225999.051462] [INFO] ======================================================================
+[1783225999.0527408] [INFO] Retrieval
+[1783225999.0540638] [INFO] ======================================================================
+[1783225999.0583928] [INFO] Query  : 'NVIDIA Nemotron'
+[1783225999.0594025] [INFO] Method : semantic
+[1783225999.060405] [INFO] Top-K  : 20
+[1783225999.062401] [INFO] Per‑doc limit: 2
+[1783225999.0634012] [INFO] Min score: 0.0
+[1783225999.0673993] [INFO] 
+[1783225999.0683985] [INFO] Semantic Search
+[1783225999.0703971] [INFO] Query: 'NVIDIA Nemotron'
+[1783225999.0723991] [INFO] Model: intfloat/multilingual-e5-small-onnx
+[1783225999.0734117] [INFO] Per‑doc limit: 2
+[1783225999.0973809] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in semantic mode
+[1783225999.1079576] [WARNING] output.html is not searchable in semantic mode
+[1783225999.1130002] [INFO] Searching 20 valid files for 'NVIDIA Nemotron'
+[1783225999.1150053] [INFO] 
+[1783225999.119712] [INFO] [ONNX Embedding] Loading model from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx
+[1783225999.942754] [INFO] [ONNX Embedding] Tokenizer loaded from C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\tokenizer.json
+[1783226002.2071521] [WARNING] [ONNX Embedding] Could not infer vector size from model, using default 384
+[1783226002.2081513] [INFO] [ONNX Embedding] ONNX session loaded: C:\Users\ADMIN\AppData\Local\Darwin\models\embedding\intfloat--multilingual-e5-small-onnx\model.onnx | providers=['CPUExecutionProvider'] | vector_size=384
+[1783226002.2097094] [SUCCESS] [ONNX Embedding] Model loaded successfully.
+[1783226002.2117126] [INFO] EmbeddingSession acquired: intfloat/multilingual-e5-small
+[1783226002.2127116] [INFO] [ONNX Embedding] Encoding 1 text(s)
+[1783226002.2287552] [INFO] [ONNX Embedding] Applied mean pooling: (1, 384)
+[1783226002.2317507] [INFO] Searching USearch for 22-Science-Diplomacy-TR.pdf
+[1783226002.2387462] [INFO] USearch returned 2 results for 22-Science-Diplomacy-TR.pdf
+[1783226002.2417462] [INFO] Searching USearch for AKINOLA.pdf
+[1783226002.2477424] [INFO] USearch returned 1 results for AKINOLA.pdf
+[1783226002.2487407] [INFO] Searching USearch for anthropic_paper.pdf
+[1783226002.2549307] [INFO] USearch returned 2 results for anthropic_paper.pdf
+[1783226002.2574437] [INFO] Searching USearch for book_of_enoch.pdf
+[1783226002.2706633] [INFO] USearch returned 2 results for book_of_enoch.pdf
+[1783226002.2716603] [INFO] Searching USearch for bws_book.pdf
+[1783226002.285654] [INFO] USearch returned 2 results for bws_book.pdf
+[1783226002.2876506] [INFO] Searching USearch for cinderella-perrault-version.pdf
+[1783226002.2916486] [INFO] USearch returned 2 results for cinderella-perrault-version.pdf
+[1783226002.293647] [INFO] Searching USearch for CSB_Pew_Bible_2nd_Printing.pdf
+[1783226002.30879] [INFO] USearch returned 2 results for CSB_Pew_Bible_2nd_Printing.pdf
+[1783226002.3107896] [INFO] Searching USearch for cursor_paper.pdf
+[1783226002.3177853] [INFO] USearch returned 2 results for cursor_paper.pdf
+[1783226002.3197832] [INFO] Searching USearch for Essential-GraphRAG.pdf
+[1783226002.3257804] [INFO] USearch returned 2 results for Essential-GraphRAG.pdf
+[1783226002.3277814] [INFO] Searching USearch for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783226002.333775] [INFO] USearch returned 2 results for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf
+[1783226002.3357751] [INFO] Searching USearch for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783226002.340772] [INFO] USearch returned 2 results for NVIDIA-Nemotron-3-Super-Technical-Report.pdf
+[1783226002.3427703] [INFO] Searching USearch for OpenClaw Ebook - Final.pdf
+[1783226002.3487666] [INFO] USearch returned 2 results for OpenClaw Ebook - Final.pdf
+[1783226002.3497658] [INFO] Searching USearch for OpenClawEbookFinal.pdf
+[1783226002.3547647] [INFO] USearch returned 2 results for OpenClawEbookFinal.pdf
+[1783226002.3557632] [INFO] Searching USearch for psykadelicish.csv
+[1783226002.3615057] [INFO] USearch returned 2 results for psykadelicish.csv
+[1783226002.3635113] [INFO] Searching USearch for sumsum.pdf
+[1783226002.370503] [INFO] USearch returned 2 results for sumsum.pdf
+[1783226002.3720436] [INFO] Searching USearch for The-Holy-Bible-King-James-Version.pdf
+[1783226002.3870342] [INFO] USearch returned 2 results for The-Holy-Bible-King-James-Version.pdf
+[1783226002.3880339] [INFO] Searching USearch for TheGivingTreePoem.pdf
+[1783226002.394031] [INFO] USearch returned 2 results for TheGivingTreePoem.pdf
+[1783226002.3950307] [INFO] Searching USearch for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783226002.4010344] [INFO] USearch returned 2 results for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf
+[1783226002.4030254] [INFO] Searching USearch for url_en_wikipedia_org_16984a3b
+[1783226002.4081519] [INFO] USearch returned 2 results for url_en_wikipedia_org_16984a3b
+[1783226002.4091568] [INFO] Searching USearch for url_en_wikipedia_org_a5249650
+[1783226002.4151537] [INFO] USearch returned 2 results for url_en_wikipedia_org_a5249650
+[1783226002.4161546] [INFO] Per-doc limited search: 20 results (pooled from 20 files)
+[1783226002.4191506] [INFO] [ONNX Embedding] Unloading model...
+[1783226002.9083061] [SUCCESS] [ONNX Embedding] Model unloaded.
+[1783226002.9093108] [INFO] Unloaded embedding/intfloat/multilingual-e5-small-onnx
+[1783226002.911309] [INFO] Embedding model unloaded
+[1783226002.9133086] [SUCCESS] Found 20 results
+[1783226002.9143076] [INFO] 
+[1783226002.9163063] [INFO]   #    Score       Source                Page  Preview
+[1783226002.9173057] [INFO]   ---  ----------  --------------------  ----  -------
+[1783226002.918305] [INFO]   1    0.890      NVIDIA-Nemotron-3-Su  40    Nemotron 3 Super : Open, Efficient Mixture-of-Experts Hybrid...
+[1783226002.9193046] [INFO]   2    0.881      NVIDIA-Nemotron-3-Su  48    SFT Data Selection: Select successful trajectories for SFT a...
+[1783226002.920304] [INFO]   3    0.828      cursor_paper.pdf      38    [59] Stuart H. Sul, Simran Arora, Benjamin F. Spector, and C...
+[1783226002.9213057] [INFO]   4    0.826      cursor_paper.pdf      16    Figure 9: Evolution of CursorBench across iterations. Each v...
+[1783226002.9233031] [INFO]   5    0.826      Essential-GraphRAG.p  127   ---  [Page 92]  71 6.1 Extracting structured data from text ...
+[1783226002.9243014] [INFO]   6    0.825      22-Science-Diplomacy  169   References and Notes  1. T. Brown et al., Language models ar...
+[1783226002.925302] [INFO]   7    0.824      22-Science-Diplomacy  1     ---  [Page 40]  ing heated and/or contentious. Nonetheless, ...
+[1783226002.9263005] [INFO]   8    0.822      Essential-GraphRAG.p  308   A.4.2 Trying the online version There’s also an online read-...
+[1783226002.928299] [INFO]   9    0.821      OpenClaw Ebook - Fin  1     ---  [Page 18]  You need: - Meeting transcripts or Notion wo...
+[1783226002.929309] [INFO]   10   0.821      OpenClaw Ebook - Fin  1     ---  [Page 18]  You need: - Meeting transcripts or Notion wo...
+[1783226002.9312983] [INFO] 
+[1783226002.9312983] [INFO]   Min score threshold: 0.0
+[1783226002.932297] [INFO]   Top score: 0.890
+[1783226002.9362955] [INFO]   Sources: 10 files
+[1783226002.9382966] [INFO] 
+[1783226002.9392931] [INFO] Search: 20 results in 3.88s
+[1783226002.9402926] [SUCCESS] Total: 20 results in 3.88s
+[1783226002.9413033] [INFO] 
+======================================================================
+[1783226002.942292] [INFO] Results: 'NVIDIA Nemotron'  [SEMANTIC]
+[1783226002.9432914] [INFO] 
+======================================================================
+[1783226002.9442906] [SUCCESS] Total: 20  |  sources: 10
+[1783226002.9452894] [INFO] Top score: 0.8898
+[1783226002.9462948] [INFO] ======================================================================
+
+[1783226002.947289] [SUCCESS]     → 20 results
+[1783226002.9482877] [INFO] 
+--- Testing method: KEYWORD ---
+[1783226002.9509766] [INFO]   Query: 'book of enoch'
+[1783226002.9519768] [INFO] 
+[1783226002.952974] [INFO] ======================================================================
+[1783226002.9539735] [INFO] Retrieval
+[1783226002.954973] [INFO] ======================================================================
+[1783226002.955972] [INFO] Query  : 'book of enoch'
+[1783226002.956971] [INFO] Method : keyword
+[1783226002.9579704] [INFO] Top-K  : 20
+[1783226002.9579704] [INFO] Per‑doc limit: 2
+[1783226002.9589703] [INFO] BM25: k1=1.5  b=0.75
+[1783226002.9599702] [INFO] 
+[1783226002.9609692] [INFO] Keyword Search
+[1783226002.9619684] [INFO] Query: book of enoch
+[1783226002.9629753] [INFO] BM25: k1=1.5, b=0.75
+[1783226002.9639676] [INFO] Top-K: 20
+[1783226002.9679673] [INFO] Scope: 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783226002.9699636] [INFO] 
+[1783226002.9859538] [INFO] Searching across 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783226002.9889529] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in kw mode
+[1783226002.9939504] [WARNING] output.html is not searchable in kw mode
+[1783226002.998948] [INFO] Searching 20 valid files for 'book of enoch'
+[1783226003.0059445] [WARNING] No valid chunk_indices in BM25 data for 22-Science-Diplomacy-TR.pdf; assuming positional alignment
+[1783226003.0171363] [WARNING] No valid chunk_indices in BM25 data for AKINOLA.pdf; assuming positional alignment
+[1783226003.0246243] [WARNING] No valid chunk_indices in BM25 data for anthropic_paper.pdf; assuming positional alignment
+[1783226003.0372396] [WARNING] No valid chunk_indices in BM25 data for book_of_enoch.pdf; assuming positional alignment
+[1783226003.0740278] [WARNING] No valid chunk_indices in BM25 data for bws_book.pdf; assuming positional alignment
+[1783226003.1135623] [WARNING] No valid chunk_indices in BM25 data for cinderella-perrault-version.pdf; assuming positional alignment
+[1783226003.2114527] [WARNING] No valid chunk_indices in BM25 data for CSB_Pew_Bible_2nd_Printing.pdf; assuming positional alignment
+[1783226003.3403785] [WARNING] No valid chunk_indices in BM25 data for cursor_paper.pdf; assuming positional alignment
+[1783226003.3539958] [WARNING] No valid chunk_indices in BM25 data for Essential-GraphRAG.pdf; assuming positional alignment
+[1783226003.3699868] [WARNING] No valid chunk_indices in BM25 data for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf; assuming positional alignment
+[1783226003.3849783] [WARNING] No valid chunk_indices in BM25 data for NVIDIA-Nemotron-3-Super-Technical-Report.pdf; assuming positional alignment
+[1783226003.394973] [WARNING] No valid chunk_indices in BM25 data for OpenClaw Ebook - Final.pdf; assuming positional alignment
+[1783226003.400969] [WARNING] No valid chunk_indices in BM25 data for OpenClawEbookFinal.pdf; assuming positional alignment
+[1783226003.4065604] [WARNING] No valid chunk_indices in BM25 data for psykadelicish.csv; assuming positional alignment
+[1783226003.4135566] [WARNING] No valid chunk_indices in BM25 data for sumsum.pdf; assuming positional alignment
+[1783226003.4876878] [WARNING] No valid chunk_indices in BM25 data for The-Holy-Bible-King-James-Version.pdf; assuming positional alignment
+[1783226003.6174524] [WARNING] No valid chunk_indices in BM25 data for TheGivingTreePoem.pdf; assuming positional alignment
+[1783226003.6224515] [WARNING] No valid chunk_indices in BM25 data for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf; assuming positional alignment
+[1783226003.6304479] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_16984a3b; assuming positional alignment
+[1783226003.637441] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_a5249650; assuming positional alignment
+[1783226003.6404433] [SUCCESS] Found 20 results in 0.64s
+[1783226003.6414402] [INFO] Search: 20 results in 0.68s
+[1783226003.6434379] [SUCCESS] Total: 20 results in 0.68s
+[1783226003.6444376] [INFO] 
+======================================================================
+[1783226003.6464443] [INFO] Results: 'book of enoch'  [KEYWORD]
+[1783226003.6474485] [INFO] 
+======================================================================
+[1783226003.648435] [SUCCESS] Total: 20  |  sources: 12
+[1783226003.6494346] [INFO] Top score: 12.5734
+[1783226003.6520388] [INFO] ======================================================================
+
+[1783226003.654017] [SUCCESS]     → 20 results
+[1783226003.6550157] [INFO]   Query: 'what is graph rag'
+[1783226003.6560147] [INFO] 
+[1783226003.6570144] [INFO] ======================================================================
+[1783226003.6580136] [INFO] Retrieval
+[1783226003.6590133] [INFO] ======================================================================
+[1783226003.6590133] [INFO] Query  : 'what is graph rag'
+[1783226003.6600137] [INFO] Method : keyword
+[1783226003.6610136] [INFO] Top-K  : 20
+[1783226003.6630137] [INFO] Per‑doc limit: 2
+[1783226003.66401] [INFO] BM25: k1=1.5  b=0.75
+[1783226003.6650097] [INFO] 
+[1783226003.6690102] [INFO] Keyword Search
+[1783226003.6700122] [INFO] Query: what is graph rag
+[1783226003.6710181] [INFO] BM25: k1=1.5, b=0.75
+[1783226003.6730266] [INFO] Top-K: 20
+[1783226003.6740048] [INFO] Scope: 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783226003.6820028] [INFO] 
+[1783226003.7009776] [INFO] Searching across 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783226003.7039735] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in kw mode
+[1783226003.7099698] [WARNING] output.html is not searchable in kw mode
+[1783226003.7155824] [INFO] Searching 20 valid files for 'what is graph rag'
+[1783226003.7225795] [WARNING] No valid chunk_indices in BM25 data for 22-Science-Diplomacy-TR.pdf; assuming positional alignment
+[1783226003.7326052] [WARNING] No valid chunk_indices in BM25 data for AKINOLA.pdf; assuming positional alignment
+[1783226003.7386189] [WARNING] No valid chunk_indices in BM25 data for anthropic_paper.pdf; assuming positional alignment
+[1783226003.7496178] [WARNING] No valid chunk_indices in BM25 data for book_of_enoch.pdf; assuming positional alignment
+[1783226003.785518] [WARNING] No valid chunk_indices in BM25 data for bws_book.pdf; assuming positional alignment
+[1783226003.8273094] [WARNING] No valid chunk_indices in BM25 data for cinderella-perrault-version.pdf; assuming positional alignment
+[1783226003.9250734] [WARNING] No valid chunk_indices in BM25 data for CSB_Pew_Bible_2nd_Printing.pdf; assuming positional alignment
+[1783226004.0592809] [WARNING] No valid chunk_indices in BM25 data for cursor_paper.pdf; assuming positional alignment
+[1783226004.0702937] [WARNING] No valid chunk_indices in BM25 data for Essential-GraphRAG.pdf; assuming positional alignment
+[1783226004.0912628] [WARNING] No valid chunk_indices in BM25 data for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf; assuming positional alignment
+[1783226004.1059842] [WARNING] No valid chunk_indices in BM25 data for NVIDIA-Nemotron-3-Super-Technical-Report.pdf; assuming positional alignment
+[1783226004.120218] [WARNING] No valid chunk_indices in BM25 data for OpenClaw Ebook - Final.pdf; assuming positional alignment
+[1783226004.1252134] [WARNING] No valid chunk_indices in BM25 data for OpenClawEbookFinal.pdf; assuming positional alignment
+[1783226004.1332083] [WARNING] No valid chunk_indices in BM25 data for psykadelicish.csv; assuming positional alignment
+[1783226004.140205] [WARNING] No valid chunk_indices in BM25 data for sumsum.pdf; assuming positional alignment
+[1783226004.2129996] [WARNING] No valid chunk_indices in BM25 data for The-Holy-Bible-King-James-Version.pdf; assuming positional alignment
+[1783226004.341376] [WARNING] No valid chunk_indices in BM25 data for TheGivingTreePoem.pdf; assuming positional alignment
+[1783226004.3463526] [WARNING] No valid chunk_indices in BM25 data for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf; assuming positional alignment
+[1783226004.3529053] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_16984a3b; assuming positional alignment
+[1783226004.3609302] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_a5249650; assuming positional alignment
+[1783226004.364921] [SUCCESS] Found 20 results in 0.65s
+[1783226004.3659248] [INFO] Search: 20 results in 0.70s
+[1783226004.3669035] [SUCCESS] Total: 20 results in 0.70s
+[1783226004.3699229] [INFO] 
+======================================================================
+[1783226004.3709016] [INFO] Results: 'what is graph rag'  [KEYWORD]
+[1783226004.371956] [INFO] 
+======================================================================
+[1783226004.3739674] [SUCCESS] Total: 20  |  sources: 11
+[1783226004.374965] [INFO] Top score: 7.8043
+[1783226004.3759778] [INFO] ======================================================================
+
+[1783226004.3769732] [SUCCESS]     → 20 results
+[1783226004.3779624] [INFO]   Query: 'NVIDIA Nemotron'
+[1783226004.3799882] [INFO] 
+[1783226004.3809745] [INFO] ======================================================================
+[1783226004.3819594] [INFO] Retrieval
+[1783226004.3829596] [INFO] ======================================================================
+[1783226004.3859584] [INFO] Query  : 'NVIDIA Nemotron'
+[1783226004.3869622] [INFO] Method : keyword
+[1783226004.387958] [INFO] Top-K  : 20
+[1783226004.3889563] [INFO] Per‑doc limit: 2
+[1783226004.389957] [INFO] BM25: k1=1.5  b=0.75
+[1783226004.3919544] [INFO] 
+[1783226004.3919544] [INFO] Keyword Search
+[1783226004.3929534] [INFO] Query: NVIDIA Nemotron
+[1783226004.3939528] [INFO] BM25: k1=1.5, b=0.75
+[1783226004.3959591] [INFO] Top-K: 20
+[1783226004.3969612] [INFO] Scope: 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783226004.3999503] [INFO] 
+[1783226004.4175177] [INFO] Searching across 22-Science-Diplomacy-TR.pdf, 30163-AKINOLA BRIGHT BOLUWATIFE.pdf, AKINOLA.pdf, anthropic_paper.pdf, book_of_enoch.pdf, bws_book.pdf, cinderella-perrault-version.pdf, CSB_Pew_Bible_2nd_Printing.pdf, cursor_paper.pdf, Essential-GraphRAG.pdf, FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf, NVIDIA-Nemotron-3-Super-Technical-Report.pdf, OpenClaw Ebook - Final.pdf, OpenClawEbookFinal.pdf, output.html, psykadelicish.csv, sumsum.pdf, The-Holy-Bible-King-James-Version.pdf, TheGivingTreePoem.pdf, Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf, url_en_wikipedia_org_16984a3b, url_en_wikipedia_org_a5249650
+[1783226004.420503] [WARNING] 30163-AKINOLA BRIGHT BOLUWATIFE.pdf is not searchable in kw mode
+[1783226004.4265134] [WARNING] output.html is not searchable in kw mode
+[1783226004.4304953] [INFO] Searching 20 valid files for 'NVIDIA Nemotron'
+[1783226004.4404163] [WARNING] No valid chunk_indices in BM25 data for 22-Science-Diplomacy-TR.pdf; assuming positional alignment
+[1783226004.4504185] [WARNING] No valid chunk_indices in BM25 data for AKINOLA.pdf; assuming positional alignment
+[1783226004.4564345] [WARNING] No valid chunk_indices in BM25 data for anthropic_paper.pdf; assuming positional alignment
+[1783226004.4672663] [WARNING] No valid chunk_indices in BM25 data for book_of_enoch.pdf; assuming positional alignment
+[1783226004.504831] [WARNING] No valid chunk_indices in BM25 data for bws_book.pdf; assuming positional alignment
+[1783226004.5388277] [WARNING] No valid chunk_indices in BM25 data for cinderella-perrault-version.pdf; assuming positional alignment
+[1783226004.787749] [WARNING] No valid chunk_indices in BM25 data for CSB_Pew_Bible_2nd_Printing.pdf; assuming positional alignment
+[1783226004.9328556] [WARNING] No valid chunk_indices in BM25 data for cursor_paper.pdf; assuming positional alignment
+[1783226004.9458497] [WARNING] No valid chunk_indices in BM25 data for Essential-GraphRAG.pdf; assuming positional alignment
+[1783226004.9625218] [WARNING] No valid chunk_indices in BM25 data for FF_ONE_HUNDRED_WAYS_TO_USE_AI.pdf; assuming positional alignment
+[1783226004.975515] [WARNING] No valid chunk_indices in BM25 data for NVIDIA-Nemotron-3-Super-Technical-Report.pdf; assuming positional alignment
+[1783226004.9865208] [WARNING] No valid chunk_indices in BM25 data for OpenClaw Ebook - Final.pdf; assuming positional alignment
+[1783226004.9935179] [WARNING] No valid chunk_indices in BM25 data for OpenClawEbookFinal.pdf; assuming positional alignment
+[1783226004.9996645] [WARNING] No valid chunk_indices in BM25 data for psykadelicish.csv; assuming positional alignment
+[1783226005.0063071] [WARNING] No valid chunk_indices in BM25 data for sumsum.pdf; assuming positional alignment
+[1783226005.0815487] [WARNING] No valid chunk_indices in BM25 data for The-Holy-Bible-King-James-Version.pdf; assuming positional alignment
+[1783226005.2075963] [WARNING] No valid chunk_indices in BM25 data for TheGivingTreePoem.pdf; assuming positional alignment
+[1783226005.21431] [WARNING] No valid chunk_indices in BM25 data for Traction-How-Any-Startup-Can-Achieve-Explosive-Customer-Growth-Resume.pdf; assuming positional alignment
+[1783226005.2203064] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_16984a3b; assuming positional alignment
+[1783226005.2273016] [WARNING] No valid chunk_indices in BM25 data for url_en_wikipedia_org_a5249650; assuming positional alignment
+[1783226005.2303233] [SUCCESS] Found 20 results in 0.80s
+[1783226005.2313206] [INFO] Search: 20 results in 0.84s
+[1783226005.2333014] [SUCCESS] Total: 20 results in 0.84s
+[1783226005.235301] [INFO] 
+======================================================================
+[1783226005.2362988] [INFO] Results: 'NVIDIA Nemotron'  [KEYWORD]
+[1783226005.2383118] [INFO] 
+======================================================================
+[1783226005.2393231] [SUCCESS] Total: 20  |  sources: 11
+[1783226005.2403297] [INFO] Top score: 4.3073
+[1783226005.2413363] [INFO] ======================================================================
+
+[1783226005.242326] [SUCCESS]     → 20 results
+[1783226005.267361] [INFO] 
+Results saved to C:\Users\ADMIN\Documents\DARWIN\DARWIN-CORE\src\core\Retrival\Hybrid\retrieval_module_test_results\results.json

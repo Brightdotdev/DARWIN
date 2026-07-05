@@ -68,7 +68,7 @@ class DarwinStore(StoreSearch):
 
     def _register_self(self) -> str:
         """Register this store in the central registry and write .darwin_store_id."""
-        store_id_file = self._darwin_dir / ".darwin_store_id"
+        store_id_file = self.paths.indexes_dir / ".darwin_store_id"
         if store_id_file.exists():
             store_id = store_id_file.read_text().strip()
         else:
@@ -507,6 +507,7 @@ class DarwinStore(StoreSearch):
         h = self._resolve_hash(filename)
         return False if h is None else self.paths.has_artifact(h, "bm25")
 
+    
     def save_bm25(self, filename: str, data: Any) -> None:
         # Robust extraction: supports both dict and object with attributes
         tokens = getattr(data, "tokens", None) if not isinstance(data, dict) else data.get("tokens")
@@ -519,6 +520,8 @@ class DarwinStore(StoreSearch):
         idf_smoothing = getattr(data, "idf_smoothing", 0.0) if not isinstance(data, dict) else data.get("idf_smoothing", 0.0)
         domain_stopwords = getattr(data, "domain_stopwords", []) if not isinstance(data, dict) else data.get("domain_stopwords", [])
         precomputed_idfs = getattr(data, "precomputed_idfs", None) if not isinstance(data, dict) else data.get("precomputed_idfs")
+        # FIX: Extract chunk_indices
+        chunk_indices = getattr(data, "chunk_indices", None) if not isinstance(data, dict) else data.get("chunk_indices")
 
         if not tokens or not doc_lengths:
             darwin.log(f"No BM25 data to save for {filename}", LogType.ERROR)
@@ -543,7 +546,7 @@ class DarwinStore(StoreSearch):
             tokens_table = pa.Table.from_pylist(tokens_records)
             pq.write_table(tokens_table, tokens_path, compression="zstd")
 
-            write_json(meta_path, {
+            meta_data = {
                 "avgdl": avgdl,
                 "chunk_count": chunk_count,
                 "vocab_size": vocab_size,
@@ -552,11 +555,18 @@ class DarwinStore(StoreSearch):
                 "domain_stopwords": list(domain_stopwords),
                 "doc_freqs": doc_freqs,
                 "precomputed_idfs": precomputed_idfs or {},
-            }, compact=True)
+            }
+            
+            # FIX: Save chunk_indices if present
+            if chunk_indices is not None:
+                meta_data["chunk_indices"] = chunk_indices
+                
+            write_json(meta_path, meta_data, compact=True)
 
         self._write_artifact(h, "bm25", _write)
         darwin.log(f"Saved BM25 index for {filename}", LogType.SUCCESS)
 
+   
     def load_bm25(self, filename: str) -> dict | None:
         h = self._resolve_hash(filename)
         if h is None:
@@ -592,6 +602,7 @@ class DarwinStore(StoreSearch):
                 "vocab_size": meta.get("vocab_size", 0),
                 "idf_smoothing": meta.get("idf_smoothing", 0.0),
                 "precomputed_idfs": meta.get("precomputed_idfs") or None,
+                "chunk_indices": meta.get("chunk_indices"),
             }
 
             self._cache.put(cache_key, result)
@@ -599,7 +610,6 @@ class DarwinStore(StoreSearch):
         except Exception as e:
             darwin.log(f"Failed to load BM25 for {filename}: {e}", LogType.ERROR)
             return None
-
     def delete_bm25(self, filename: str) -> bool:
         h = self._resolve_hash(filename)
         if h is None:
@@ -643,138 +653,8 @@ class DarwinStore(StoreSearch):
             return False
         return self._delete_artifact(h, "stopwords", [self.paths.artifact_path(h, "stopwords", "file")])
 
-    # --- Graph ---
-    def has_graph(self, filename: str) -> bool:
-        h = self._resolve_hash(filename)
-        if h is None:
-            return False
-        return self.paths.has_artifact(h, "graph") and self.paths.has_artifact(h, "graph_vis")
-
-    def save_graph(self, filename: str, nodes: list[Any], edges: list[Any]) -> None:
-        if not nodes and not edges:
-            darwin.log(f"No graph data to save for {filename}", LogType.ERROR)
-            return
-        h = self._resolve_hash(filename)
-        if h is None:
-            return
-
-        def _write():
-            nodes_path = self.paths.artifact_path(h, "graph", "nodes")
-            edges_path = self.paths.artifact_path(h, "graph", "edges")
-            nodes_path.parent.mkdir(parents=True, exist_ok=True)
-
-            if nodes:
-                nodes_table = pa.Table.from_pylist([to_dict(n) for n in nodes])
-                pq.write_table(nodes_table, nodes_path, compression="zstd")
-            if edges:
-                edges_table = pa.Table.from_pylist([to_dict(e) for e in edges])
-                pq.write_table(edges_table, edges_path, compression="zstd")
-
-            self._meta.update(h, "graph", extras={
-                "graph": {
-                    "node_count": len(nodes),
-                    "edge_count": len(edges),
-                    "built_at": now(),
-                }
-            })
-
-        self._write_artifact(h, "graph", _write)
-        darwin.log(f"Graph saved: {len(nodes)} nodes, {len(edges)} edges", LogType.SUCCESS)
-
-    def save_graph_html(self, filename: str, html: str) -> None:
-        if html is None:
-            darwin.log(f"No graph HTML to save for {filename}", LogType.ERROR)
-            return
-        h = self._resolve_hash(filename)
-        if h is None:
-            return
-
-        def _write():
-            path = self.paths.artifact_path(h, "graph_vis", "file")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            write_text_atomic(path, html)
-
-        self._write_artifact(h, "graph_vis", _write)
-
-    def load_graph(self, filename: str) -> dict:
-        h = self._resolve_hash(filename)
-        if h is None:
-            return {"nodes": [], "edges": []}
-
-        cache_key = f"{h}:graph"
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        nodes_path = self.paths.artifact_path(h, "graph", "nodes")
-        edges_path = self.paths.artifact_path(h, "graph", "edges")
-
-        result: dict[str, list] = {"nodes": [], "edges": []}
-        if nodes_path.exists():
-            result["nodes"] = pq.read_table(nodes_path).to_pydict()
-        if edges_path.exists():
-            result["edges"] = pq.read_table(edges_path).to_pydict()
-
-        self._cache.put(cache_key, result)
-        return result
-
-    def delete_graph(self, filename: str) -> bool:
-        h = self._resolve_hash(filename)
-        if h is None:
-            return False
-        result = self._delete_artifact(h, "graph", [
-            self.paths.artifact_path(h, "graph", "nodes"),
-            self.paths.artifact_path(h, "graph", "edges"),
-        ])
-        # Graph visualization is meaningless without graph data
-        self._contents.set_stage(h, "graph_vis", complete=False)
-        return result
-
-    def delete_graph_html(self, filename: str) -> bool:
-        h = self._resolve_hash(filename)
-        if h is None:
-            return False
-        return self._delete_artifact(h, "graph_vis", [self.paths.artifact_path(h, "graph_vis", "file")])
-
-    # --- Wiki ---
-    def has_wiki(self, filename: str) -> bool:
-        h = self._resolve_hash(filename)
-        if h is None:
-            return False
-        if not self.paths.has_artifact(h, "wiki"):
-            return False
-        return self.paths.artifact_path(h, "wiki", "file").exists()
-
-    def save_wiki(self, filename: str, wiki: dict) -> None:
-        if not wiki:
-            darwin.log(f"No wiki pages to save for {filename}", LogType.ERROR)
-            return
-        h = self._resolve_hash(filename)
-        if h is None:
-            return
-
-        def _write():
-            wiki_path = self.paths.artifact_path(h, "wiki", "file")
-            wiki_path.parent.mkdir(parents=True, exist_ok=True)
-            write_json(wiki_path, wiki)
-
-        self._write_artifact(h, "wiki", _write)
-        darwin.log(f"Wiki saved for {filename}", LogType.SUCCESS)
-
-    def load_wiki(self, filename: str) -> dict | None:
-        h = self._resolve_hash(filename)
-        if h is None:
-            return None
-        path = self.paths.artifact_path(h, "wiki", "file")
-        if not path.exists():
-            return None
-        return read_json(path)
-
-    def delete_wiki(self, filename: str) -> bool:
-        h = self._resolve_hash(filename)
-        if h is None:
-            return False
-        return self._delete_artifact(h, "wiki", [self.paths.artifact_path(h, "wiki", "file")])
+ 
+ 
 
     # --------------------------------------------------------------------
     # Status & Health (merged from StoreStatus + StoreHealth)

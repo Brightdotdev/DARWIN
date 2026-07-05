@@ -5,7 +5,6 @@ Optimized: batch NLP, parallel post-processing, pre-compiled regexes,
 auto-chunking for long documents, sentence-boundary overlap.
 """
 
-import concurrent.futures
 import html
 import json
 import math

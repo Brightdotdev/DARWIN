@@ -30,25 +30,25 @@ class StorePaths:
         darwin_dir.mkdir(parents=True, exist_ok=True)
         self.root = darwin_dir.resolve()
 
-    @property
-    def file_registry_path(self) -> Path:
-        return self.root / "file_registry.json"
-
-    @property
-    def registry_db_path(self) -> Path:
-        return self.root / "registry.db"
-
     @cached_property
     def indexes_dir(self) -> Path:
         return self.root / "indexes"
 
+    @property
+    def file_registry_path(self) -> Path:
+     return self.indexes_dir / "file_registry.json"
+
+    @property
+    def registry_db_path(self) -> Path:
+     return self.indexes_dir / "registry.db"
+
     @cached_property
     def checkpoints_dir(self) -> Path:
-        return self.root / "checkpoints"
+     return self.indexes_dir / "checkpoints"
 
     @cached_property
     def conversations_dir(self) -> Path:
-        return self.root / "conversations"
+     return self.indexes_dir / "conversations"
 
     def dir_for_hash(self, file_hash: str) -> Path:
         if not is_file_hash(file_hash):
@@ -65,9 +65,6 @@ class StorePaths:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def url_cache_dir(self) -> Path:
-        self.root.mkdir(parents=True, exist_ok=True)
-        return self.root / "url_cache"
 
     # --- Unified artifact path resolution ---
     def artifact_path(self, content_hash: str, stage: str, key: str) -> Path:

@@ -1,6 +1,6 @@
 """
 Darwin PipelineOrchestrator — end-to-end pipeline execution.
-Typed parameters, per-stage session logging, stage purge, and knowledge wiring.
+Typed parameters, per-stage session logging, stage purge.
 """
 
 import traceback
@@ -12,14 +12,11 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Storage.DarwinStore import DarwinStore
 
 # ── Stage handlers ─────────────────────────────────────────────────────────────
-from src.pipleline.Ingestion.Parsing.lib import ParsingArgs
-from src.pipleline.Ingestion.Chunking.lib import ChunkingArgs
-from src.pipleline.Indexing.lib import IndexingArgs
-from src.pipleline.Ingestion.main import handle_ingestion
-from src.pipleline.Indexing.main import handle_indexing
-
-# ── Knowledge ────────────────────────────────────────────────────────────────
-from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator, create_wiki_orchestrator
+from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
+from src.core.Pipeline.Ingestion.Chunking.lib import ChunkingArgs
+from src.core.Pipeline.Indexing.lib import IndexingArgs
+from src.core.Pipeline.Ingestion.main import handle_ingestion
+from src.core.Pipeline.Indexing.main import handle_indexing
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -30,24 +27,8 @@ class PipelineStage(str, Enum):
     """IntelliSense-friendly stage identifiers. Comparable to plain strings."""
     INGESTION = "ingestion"
     INDEXING = "indexing"
-    KNOWLEDGE = "knowledge"
 
 
-@dataclass
-class KnowledgeArgs:
-    """Parameters forwarded to WikiOrchestrator."""
-    files: List[str] = field(default_factory=list)
-    rerun: bool = False
-    knowledge_stages: List[str] = field(default_factory=lambda: ["wiki", "graph", "html"])
-    similarity_threshold: float = 0.82
-    window_size: int = 5
-    min_mentions: int = 1
-    min_entropy: float = 0.3
-    max_entity_len: int = 60
-    pmi_threshold: Optional[float] = None
-    max_nodes_html: int = 150
-    html_title: str = "Knowledge Graph"
-    skip_labels: Optional[Set[str]] = None
 
 
 @dataclass
@@ -59,7 +40,6 @@ class PipelineParameters:
     parsing: Optional[ParsingArgs] = None
     chunking: Optional[ChunkingArgs] = None
     indexing: Optional[IndexingArgs] = None
-    knowledge: Optional[KnowledgeArgs] = None
 
 
 @dataclass
@@ -78,27 +58,26 @@ class PipelineResult:
 
 class PipelineOrchestrator:
     """
-    Stages: ingestion → indexing → knowledge
-    Per-stage session logging via DarwinLogger. Knowledge stage wired in.
+    Stages: ingestion → indexing
     """
 
     STAGE_ORDER: List[PipelineStage] = [
         PipelineStage.INGESTION,
         PipelineStage.INDEXING,
-        PipelineStage.KNOWLEDGE,
     ]
 
     def __init__(
         self,
         store: DarwinStore,
-        wiki_orchestrator: Optional[WikiOrchestrator] = None,
     ):
         self.store = store
-        self.wiki = wiki_orchestrator or create_wiki_orchestrator(store)
+        
+        if not self.store:
+            raise ValueError("A valid DarwinStore instance is required.")
+        store.repair_registry()
         self._handlers = {
             PipelineStage.INGESTION: self._run_ingestion,
             PipelineStage.INDEXING: self._run_indexing,
-            PipelineStage.KNOWLEDGE: self._run_knowledge,
         }
 
     # ── Coercion & Validation ─────────────────────────────────────────────────
@@ -137,11 +116,7 @@ class PipelineOrchestrator:
             elif stage == PipelineStage.INDEXING:
                 if params.indexing is None:
                     return "Indexing stage requires PipelineParameters.indexing"
-            elif stage == PipelineStage.KNOWLEDGE:
-                if params.knowledge is None:
-                    return "Knowledge stage requires PipelineParameters.knowledge"
-                if not params.knowledge.files:
-                    return "Knowledge stage requires at least one file in KnowledgeArgs.files"
+            
         return None
 
     def _log_levels(self, mode: str) -> Set[LogType]:
@@ -175,15 +150,17 @@ class PipelineOrchestrator:
             PipelineResult with per-stage logs under result.logs[stage.value].
             Orchestrator-level logs live under result.logs["orchestrator"].
         """
+
         if log_mode not in ("quiet", "normal"):
-            raise ValueError(f"log_mode must be 'quiet' or 'normal', got {log_mode}")
+            darwin.log(f"Got {log_mode} instead of 'quiet' or 'normal' for log_mode. Defaulting to 'quiet'", LogType.WARNING)
+            log_mode = "quiet"
 
         result = PipelineResult(success=True, parameters_validated=False)
         stages = self._coerce_stages(stages)
         levels = self._log_levels(log_mode)
 
         # ── Orchestrator session wraps everything ──
-        with darwin.session("pipeline_orchestrator"):
+        with darwin.session("PIPLEINE"):
             # 1. Pre-validate
             validation_error = self._validate(params, stages)
             if validation_error:
@@ -191,7 +168,7 @@ class PipelineOrchestrator:
                 result.success = False
                 result.summary = f"Validation failed: {validation_error}"
                 result.logs["orchestrator"] = darwin.get_logs(
-                    session="pipeline_orchestrator", levels=levels
+                    session="PIPLEINE", levels=levels
                 )
                 return result
 
@@ -208,7 +185,7 @@ class PipelineOrchestrator:
             for stage in ordered:
                 session_name = f"pipeline_{stage.value}"
                 with darwin.session(session_name):
-                    darwin.info(f"▶ Stage starting: {stage.value}")
+                    darwin.info(f"Stage starting: {stage.value}")
                     try:
                         self._handlers[stage](params)
                         darwin.success(f"✓ Stage complete: {stage.value}")
@@ -240,7 +217,7 @@ class PipelineOrchestrator:
 
             # Capture orchestrator-level logs
             result.logs["orchestrator"] = darwin.get_logs(
-                session="pipeline_orchestrator", levels=levels
+                session="PIPLEINE", levels=levels
             )
 
         return result
@@ -274,8 +251,7 @@ class PipelineOrchestrator:
                         self.store.delete_vector(filename)
                         self.store.delete_bm25(filename)
                         self.store.delete_stopwords(filename)
-                    elif stage == PipelineStage.KNOWLEDGE:
-                        self.wiki.delete_knowledge(filename)
+                        
                     darwin.success(f"[purge] {stage.value}/{filename} removed")
                 except Exception as e:
                     darwin.error(f"[purge] {stage.value}/{filename} failed: {e}")
@@ -306,24 +282,3 @@ class PipelineOrchestrator:
             raise ValueError("IndexingArgs required")
         handle_indexing(params.indexing, self.store)
 
-    def _run_knowledge(self, params: PipelineParameters) -> None:
-        if not params.knowledge:
-            raise ValueError("KnowledgeArgs required")
-        args = params.knowledge
-        if not args.files:
-            darwin.warning("Knowledge stage: no files specified — skipping")
-            return
-        self.wiki.handle_knowledge_batch(
-            filenames=args.files,
-            rerun=args.rerun,
-            stages=args.knowledge_stages,
-            similarity_threshold=args.similarity_threshold,
-            window_size=args.window_size,
-            min_mentions=args.min_mentions,
-            min_entropy=args.min_entropy,
-            max_entity_len=args.max_entity_len,
-            pmi_threshold=args.pmi_threshold,
-            max_nodes_html=args.max_nodes_html,
-            html_title=args.html_title,
-            skip_labels=args.skip_labels,
-        )

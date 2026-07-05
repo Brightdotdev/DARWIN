@@ -123,7 +123,6 @@ def register_pipeline_tools(mcp):
                     },
                     "chunking": {
                         "files": "list[str]",
-                        "inspect": "bool",
                         "rerun": "bool",
                     },
                     "indexing": {
@@ -133,7 +132,6 @@ def register_pipeline_tools(mcp):
                         "path": "str",
                         "only_semantic": "bool",
                         "files": "list[str]",
-                        "inspect": "bool",
                         "rerun": "bool",
                     },
                 },
