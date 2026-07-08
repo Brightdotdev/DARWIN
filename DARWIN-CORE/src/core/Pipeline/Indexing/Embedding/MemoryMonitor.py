@@ -53,11 +53,7 @@ class MemoryMonitor:
             return
         self._initialized = True
         self.refresh()
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Detection helpers (no PyTorch)
-    # ──────────────────────────────────────────────────────────────────────
-
+        
     @staticmethod
     def _detect_gpu() -> Tuple[Optional[str], float, float]:
         """
@@ -121,8 +117,8 @@ class MemoryMonitor:
             vram_total_gb=vram_total,
             vram_free_gb=vram_free,
             onnx_providers=providers,
-            is_cuda=False,          # no PyTorch → no CUDA
-            is_mps=False,           # no PyTorch → no MPS
+            is_cuda=False,         
+            is_mps=False,          
         )
         return self._profile
 

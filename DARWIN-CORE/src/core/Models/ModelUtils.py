@@ -1,5 +1,3 @@
-
-
 class DownloadError(Exception):
     def __init__(self, message: str, hint: str = "", recoverable: bool = True):
         self.hint = hint
@@ -9,4 +7,3 @@ class DownloadError(Exception):
 
 class IntegrityError(Exception):
     pass
-

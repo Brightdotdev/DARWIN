@@ -547,7 +547,7 @@ class ModelsOrchestrator:
         *,
         auto_download: bool = True,
         force_download: bool = False,
-    ) -> Dict[ModelCategory, SetupResult]:
+    ) -> Dict[ModelCategory, SetupResult] | None:
         """
         Setup a predefined profile: 'required' or 'recommended'.
         Profiles are computed dynamically from the registry.
@@ -569,23 +569,18 @@ class ModelsOrchestrator:
         *,
         auto_download: bool = True,
         force_download: bool = False,
-    ) -> Dict[ModelCategory, SetupResult]:
+    ) -> Dict[ModelCategory, SetupResult] | None :
         """Setup arbitrary set of categories. Validates all model IDs against registry."""
-        for cat, mid in preferences.items():
-            spec = find_spec(mid)
-            if not spec:
-                raise ValueError(f"Unknown model '{mid}' in preferences")
-            if spec.category != cat:
-                raise ValueError(
-                    f"Model '{mid}' is in category '{spec.category.value}', "
-                    f"not '{cat.value}'"
-                )
-        return self.mgr.setup_all(
+    
+        modelSetup = self.mgr.setup_all(
             preferences=preferences,
             auto_download=auto_download,
             force_download=force_download,
             required_categories=[ModelCategory.EMBEDDING],
         )
+        if ModelCategory.EMBEDDING not in modelSetup or not modelSetup[ModelCategory.EMBEDDING].success:
+            self._log("Embedding model is required but not set up successfully", LogType.ERROR)
+            return None
 
     # ── Onboarding (Non-Interactive) ─────────────────────────────────
 

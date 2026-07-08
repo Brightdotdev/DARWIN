@@ -253,6 +253,7 @@ class ModelManager:
                     if model_id:
                         preferences[cat] = model_id
                     else:
+                        darwin.warning(f"Could not auto-select default for {cat_name}")
                         warnings.append(f"Could not auto-select default for {cat_name}")
                         continue
 
@@ -293,6 +294,7 @@ class ModelManager:
                 "Some features will be disabled.",
                 LogType.WARNING,
             )
+        
         return status_obj
 
     # ────────────────────────────────────────────────────────────────
@@ -401,7 +403,7 @@ class ModelManager:
         force_download: bool = False,
         required_categories: Optional[List[ModelCategory]] = None,
         **kwargs,
-    ) -> Dict[ModelCategory, SetupResult]:
+    ) -> Dict[ModelCategory, SetupResult] | None:
         if preferences is None:
             preferences = {}
         if not preferences:
@@ -417,7 +419,8 @@ class ModelManager:
         if ModelCategory.EMBEDDING not in preferences:
             darwin.log("Embedding model is required but not specified.", LogType.ERROR)
             if ModelCategory.EMBEDDING in required_set or not required_set:
-                raise ModelManagerError("Embedding model is required but not specified", "embedding")
+                darwin.error("Embedding model is required but not specified", "embedding")
+                return
 
         for cat, mid in preferences.items():
             is_required = cat in required_set or cat == ModelCategory.EMBEDDING

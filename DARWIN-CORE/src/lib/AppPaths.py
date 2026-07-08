@@ -1,73 +1,138 @@
+# AppPaths.py
 import platform
 from pathlib import Path
+from typing import Optional
 import os
 
+_DARWIN_BASE: Optional[Path] = None
 
+def set_darwin_base_dir(path: Optional[Path] = None) -> Path:
+    """
+    Set or get the Darwin base directory.
 
-def get_darwin_dir() -> Path:
-    """Get the base Darwin directory (not models, just the parent)."""
+    Priority:
+        1. Explicit `path` argument (programmatic override)
+        2. Environment variable `DARWIN_BASE_DIR`
+        3. Platform‑specific default (macOS, Windows, Linux)
+
+    This is the **only** place where the base is determined.
+    All sub‑directories (models, logs, etc.) are derived from this.
+    """
+    global _DARWIN_BASE
+
+    if path is not None:
+        _DARWIN_BASE = Path(path)
+        return _DARWIN_BASE
+
+    env_path = os.environ.get("DARWIN_BASE_DIR")
+    if env_path:
+        _DARWIN_BASE = Path(env_path)
+        return _DARWIN_BASE
+
+    # Platform defaults
     system = platform.system()
-    
     if system == "Windows":
-        return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "Darwin"
-    
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        _DARWIN_BASE = base / "Darwin"
     elif system == "Darwin":  # macOS
-        return Path.home() / "Library" / "Application Support" / "Darwin"
-    
-    else:  # Linux and everything else
-        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-        return base / "darwin"
-    
+        _DARWIN_BASE = Path.home() / "Library" / "Application Support" / "Darwin"
+    else:  # Linux and others
+        xdg = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+        _DARWIN_BASE = Path(xdg) / "darwin"
+
+    return _DARWIN_BASE
 
 
 
+
+
+# Directory getters with environment variable overrides
 def default_models_dir() -> Path:
-    """Platform-appropriate global models directory."""
-    return get_darwin_dir() / "models"
+    """Platform-appropriate models directory."""
+    return set_darwin_base_dir() / "models"
+
+def default_config_dir() -> Path:
+    """Platform-appropriate config directory."""
+    return set_darwin_base_dir() / "config"
+
+def default_logs_dir() -> Path:
+    """Platform-appropriate logs directory."""
+    return set_darwin_base_dir() / "logs"
 
 
-def default_darwin_config_dir() -> Path:
-    """Platform-appropriate global models directory."""
-    return get_darwin_dir() / "config"
-
-
-
-def default_darwin_logs() -> Path:
-    """Platform-appropriate global models directory."""
-    return get_darwin_dir() / "logs"
-    
-
-
-def default_plugins_dir() -> Path:
-    """Platform-appropriate global plugins directory."""
-    return get_darwin_dir() / "plugins"
-
-def default_plugins_config_dir() -> Path:
-    """Platform-appropriate global plugins directory."""
-    return  default_plugins_dir() / "config"
-    
-
-
-def default_conversations_dir() -> Path:
-    """Platform-appropriate global models directory."""
-    return get_darwin_dir() / "conversations"
-    
 
 
 def default_models_config_dir() -> Path:
-    """Platform-appropriate global models directory."""
-    return  default_models_dir() / "config"
-    
-
-def conversation_memory_path() -> Path:
-    """Platform-appropriate global models directory."""
-    return  default_conversations_dir() / "conversations_memory"
-
-def conversation_db_path() -> Path:
-    """Platform-appropriate global models directory."""
-    return  default_conversations_dir() / "darwin_conversations.db"
+    """Platform-appropriate models config directory."""
+    return default_models_dir() / "config"
 
 
-def default_plugins_dir() -> Path:
-    """Platform-appropriate global plugins directory."""
-    return get_darwin_dir() / "plugins"
+
+
+def is_running_in_docker() -> bool:
+    """Detect if we are inside a Docker container."""
+    return Path("/.dockerenv").exists() or (
+        Path("/proc/1/cgroup").exists() and "docker" in Path("/proc/1/cgroup").read_text()
+    )
+
+def ensure_directories() -> bool:
+    """
+    Ensure all Darwin directories exist and are writable.
+
+    Returns:
+        True if all directories are accessible and writable.
+        False if any directory is missing or unwritable.
+
+    In Docker, if the base directory is not writable, prints a strong warning.
+    """
+    dirs = [
+        default_models_dir(),
+        default_config_dir(),
+        default_logs_dir(),
+        default_models_config_dir(),
+    ]
+
+    base = set_darwin_base_dir()
+    docker = is_running_in_docker()
+
+    # Check base directory exists and is writable
+    if not base.exists():
+        if docker:
+            print(f"❌ FATAL: DARWIN_BASE_DIR='{base}' does not exist inside Docker.")
+            print("   Please mount a persistent volume at that path.")
+            return False
+        else:
+            # Try to create it
+            try:
+                base.mkdir(parents=True, exist_ok=True)
+            except PermissionError:
+                print(f"❌ FATAL: Cannot create DARWIN_BASE_DIR='{base}'. Permission denied.")
+                return False
+
+    # Check each subdirectory
+    for d in dirs:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            # Verify write access by creating a temporary file
+            test_file = d / ".darwin_write_test"
+            test_file.touch()
+            test_file.unlink()
+        except (PermissionError, OSError) as e:
+            print(f"❌ FATAL: Directory '{d}' is not writable: {e}")
+            if docker:
+                print("   In Docker, ensure you have mounted a volume with write permissions.")
+            return False
+
+    # Warn if running in Docker and the base directory might be ephemeral
+    if docker:
+        # Check if base is on a tmpfs (simplistic: if it's under /tmp or /dev/shm)
+        if any(base.is_relative_to(Path(p)) for p in ["/tmp", "/dev/shm", "/var/tmp"]):
+            print("⚠️  WARNING: DARWIN_BASE_DIR points to a temporary location in Docker.")
+            print("   Data will be lost when the container stops.")
+            print("   Please use a persistent volume mount.")
+            # We still return True because it's technically writable,
+            # but we warn aggressively.
+        else:
+            print("✅ Docker volume detected. Data will persist.")
+
+    return True

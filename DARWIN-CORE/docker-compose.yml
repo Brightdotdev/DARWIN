@@ -1,0 +1,11 @@
+services:
+  darwin:
+    build: .
+    environment:
+      - DARWIN_BASE_DIR=/data
+    volumes:
+      - darwin_data:/data
+    command: ["darwin", "setup", "--auto-install"]
+
+volumes:
+  darwin_data:

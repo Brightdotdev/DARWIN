@@ -6,7 +6,6 @@ A background thread in the main process reads them and emits via Darwin.
 """
 import multiprocessing
 import threading
-import time
 from typing import Optional
 
 from src.core.Logger.DarwinLogger import darwin, LogType

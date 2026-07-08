@@ -1,39 +1,24 @@
-/**
-DarwinLogViewer.tsx — Complete React reference for Darwin Logger SSE API.
+// DarwinStream.client.tsx
+// Usage: point <DarwinStream url="http://localhost:8765/stream" /> at the UnifiedSSEServer
 
-Consumes: http://localhost:8765/stream  (SSE)
-Queries:   http://localhost:8765/history?session=&levels=&limit=
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
-Renders every event type Darwin exposes:
-  • LogEvent (plain, json, list)
-  • ProgressStart/Update/End
-  • SpinnerStart/Update/End  
-  • SessionStart/End
+// ─── Schemas (mirror the Python event protocol) ─────────────────────
 
-Uses special log-type chips for json/list payloads so you know how to handle
-different data types in your own frontend.
-**/
+type LogLevel = "debug" | "info" | "success" | "warning" | "error";
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// TYPES — mirrors Darwin's event protocol exactly
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export type LogType = "info" | "warning" | "error" | "success";
-
-export interface LogEvent {
+interface LogEvent {
   type: "LogEvent";
   message: string;
-  log_type: LogType;
+  log_type: LogLevel;
   session: string;
   timestamp: number;
-  datetime: string;
-  payload: any | null;
-  format: "" | "json" | "list";
+  datetime?: string;
+  payload?: unknown;
+  format?: "json" | "list" | "";
 }
 
-export interface ProgressStartEvent {
+interface ProgressStartEvent {
   type: "ProgressStartEvent";
   id: string;
   total: number;
@@ -42,7 +27,7 @@ export interface ProgressStartEvent {
   timestamp: number;
 }
 
-export interface ProgressUpdateEvent {
+interface ProgressUpdateEvent {
   type: "ProgressUpdateEvent";
   id: string;
   current: number;
@@ -51,14 +36,14 @@ export interface ProgressUpdateEvent {
   timestamp: number;
 }
 
-export interface ProgressEndEvent {
+interface ProgressEndEvent {
   type: "ProgressEndEvent";
   id: string;
   session: string;
   timestamp: number;
 }
 
-export interface SpinnerStartEvent {
+interface SpinnerStartEvent {
   type: "SpinnerStartEvent";
   id: string;
   message: string;
@@ -66,7 +51,7 @@ export interface SpinnerStartEvent {
   timestamp: number;
 }
 
-export interface SpinnerUpdateEvent {
+interface SpinnerUpdateEvent {
   type: "SpinnerUpdateEvent";
   id: string;
   message: string;
@@ -74,7 +59,7 @@ export interface SpinnerUpdateEvent {
   timestamp: number;
 }
 
-export interface SpinnerEndEvent {
+interface SpinnerEndEvent {
   type: "SpinnerEndEvent";
   id: string;
   success: boolean;
@@ -82,19 +67,19 @@ export interface SpinnerEndEvent {
   timestamp: number;
 }
 
-export interface SessionStartEvent {
+interface SessionStartEvent {
   type: "SessionStartEvent";
   name: string;
   timestamp: number;
 }
 
-export interface SessionEndEvent {
+interface SessionEndEvent {
   type: "SessionEndEvent";
   name: string;
   timestamp: number;
 }
 
-export type DarwinEvent =
+type DarwinEvent =
   | LogEvent
   | ProgressStartEvent
   | ProgressUpdateEvent
@@ -105,805 +90,626 @@ export type DarwinEvent =
   | SessionStartEvent
   | SessionEndEvent;
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// SSE HOOK — reusable, handles reconnect, tracks connection state
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Helpers ────────────────────────────────────────────────────────
 
-interface UseDarwinSSEOptions {
-  url?: string;
-  onEvent?: (event: DarwinEvent) => void;
+const LOG_ICON: Record<LogLevel, string> = {
+  debug: "🐛",
+  info: "ℹ️",
+  success: "✅",
+  warning: "⚠️",
+  error: "❌",
+};
+
+const LOG_COLOR: Record<LogLevel, string> = {
+  debug: "#888",
+  info: "#58a6ff",
+  success: "#3fb950",
+  warning: "#d29922",
+  error: "#f85149",
+};
+
+function formatTime(ts: number): string {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString();
 }
 
-interface UseDarwinSSEReturn {
+// ─── useDarwinStream hook ───────────────────────────────────────────
+
+interface StreamState {
+  connected: boolean;
   events: DarwinEvent[];
-  isConnected: boolean;
-  error: string | null;
-  reconnect: () => void;
-  clear: () => void;
+  sessions: Map<string, { start: number; logCount: number }>;
+  progress: Map<string, { current: number; total: number; label: string }>;
+  spinners: Set<string>;
 }
 
-function useDarwinSSE(options: UseDarwinSSEOptions = {}): UseDarwinSSEReturn {
-  const { url = "http://localhost:8765/stream", onEvent } = options;
-
-  const [events, setEvents] = useState<DarwinEvent[]>([]);
-  const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
+export function useDarwinStream(url: string) {
+  const [state, setState] = useState<StreamState>({
+    connected: false,
+    events: [],
+    sessions: new Map(),
+    progress: new Map(),
+    spinners: new Set(),
+  });
   const esRef = useRef<EventSource | null>(null);
-  const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
 
-  const connect = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-    }
-
+  useEffect(() => {
     const es = new EventSource(url);
     esRef.current = es;
-    setError(null);
 
-    es.onopen = () => {
-      setIsConnected(true);
-      setError(null);
-    };
+    es.onopen = () => setState((s) => ({ ...s, connected: true }));
 
-    es.onmessage = (e) => {
+    es.onmessage = (msg) => {
+      // SSE keepalives are empty lines
+      if (!msg.data || msg.data.trim() === "") return;
+
+      let raw: Record<string, unknown>;
       try {
-        const data: DarwinEvent = JSON.parse(e.data);
-        setEvents((prev) => [...prev, data]);
-        onEventRef.current?.(data);
-      } catch (err) {
-        console.error("Failed to parse SSE data:", err);
+        raw = JSON.parse(msg.data);
+      } catch {
+        return;
       }
+
+      const event = raw as DarwinEvent;
+      setState((prev) => {
+        const next = { ...prev, events: [...prev.events, event] };
+
+        // ── Track sessions ──
+        if (event.type === "SessionStartEvent") {
+          const sessions = new Map(next.sessions);
+          sessions.set(event.name, { start: event.timestamp, logCount: 0 });
+          return { ...next, sessions };
+        }
+        if (event.type === "SessionEndEvent") {
+          // session remains in map with final state
+          return next;
+        }
+
+        // ── Track progress bars ──
+        if (event.type === "ProgressStartEvent") {
+          const progress = new Map(next.progress);
+          progress.set(event.id, {
+            current: 0,
+            total: event.total,
+            label: event.label,
+          });
+          return { ...next, progress };
+        }
+        if (event.type === "ProgressUpdateEvent") {
+          const progress = new Map(next.progress);
+          const existing = progress.get(event.id);
+          if (existing) {
+            progress.set(event.id, { ...existing, current: event.current });
+          }
+          return { ...next, progress };
+        }
+        if (event.type === "ProgressEndEvent") {
+          const progress = new Map(next.progress);
+          progress.delete(event.id);
+          return { ...next, progress };
+        }
+
+        // ── Track spinners ──
+        if (event.type === "SpinnerStartEvent") {
+          const spinners = new Set(next.spinners);
+          spinners.add(event.id);
+          return { ...next, spinners };
+        }
+        if (event.type === "SpinnerEndEvent") {
+          const spinners = new Set(next.spinners);
+          spinners.delete(event.id);
+          return { ...next, spinners };
+        }
+
+        // ── Track log count per session ──
+        if (
+          event.type === "LogEvent" &&
+          event.session &&
+          next.sessions.has(event.session)
+        ) {
+          const sessions = new Map(next.sessions);
+          const s = sessions.get(event.session)!;
+          sessions.set(event.session, { ...s, logCount: s.logCount + 1 });
+          return { ...next, sessions };
+        }
+
+        return next;
+      });
     };
 
     es.onerror = () => {
-      setIsConnected(false);
-      if (es.readyState === EventSource.CLOSED) {
-        setError("Connection closed. Reconnecting...");
-      }
+      setState((s) => ({ ...s, connected: false }));
+    };
+
+    return () => {
+      es.close();
+      esRef.current = null;
     };
   }, [url]);
 
-  const reconnect = useCallback(() => {
-    connect();
-  }, [connect]);
-
   const clear = useCallback(() => {
-    setEvents([]);
+    setState({
+      connected: false,
+      events: [],
+      sessions: new Map(),
+      progress: new Map(),
+      spinners: new Set(),
+    });
   }, []);
 
-  useEffect(() => {
-    connect();
-    return () => {
-      esRef.current?.close();
-    };
-  }, [connect]);
-
-  return { events, isConnected, error, reconnect, clear };
+  return { ...state, clear };
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// HISTORY QUERY — fetch past logs via HTTP GET
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── Renderers ───────────────────────────────────────────────────────
 
-interface HistoryQuery {
-  session?: string;
-  levels?: LogType[];
-  limit?: number;
-}
+function LogLine({ event }: { event: LogEvent }) {
+  const icon = LOG_ICON[event.log_type] ?? " ";
+  const color = LOG_COLOR[event.log_type] ?? "#fff";
+  const tag = event.session ? `[${event.session}]` : "";
 
-async function fetchHistory(
-  baseUrl = "http://localhost:8765",
-  query: HistoryQuery = {}
-): Promise<LogEvent[]> {
-  const params = new URLSearchParams();
-  if (query.session) params.set("session", query.session);
-  if (query.levels) params.set("levels", query.levels.join(","));
-  if (query.limit) params.set("limit", String(query.limit));
+  if (event.payload && event.format === "json") {
+    return (
+      <div style={{ color, fontFamily: "monospace", margin: "2px 0" }}>
+        <span>{icon}</span>{" "}
+        <span style={{ opacity: 0.6, fontSize: "0.8em" }}>{tag}</span>{" "}
+        <StructuredView data={event.payload} />
+      </div>
+    );
+  }
 
-  const res = await fetch(`${baseUrl}/history?${params}`);
-  if (!res.ok) throw new Error(`History fetch failed: ${res.status}`);
-  return res.json();
-}
+  if (event.payload && event.format === "list") {
+    return (
+      <div style={{ color, fontFamily: "monospace", margin: "2px 0" }}>
+        <span>{icon}</span>{" "}
+        <span style={{ opacity: 0.6, fontSize: "0.8em" }}>{tag}</span>{" "}
+        <span>{event.message}</span>
+        <ListView data={event.payload} />
+      </div>
+    );
+  }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// RENDERERS — one per event type, so you can copy/paste what you need
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const LOG_TYPE_COLORS: Record<LogType, string> = {
-  info: "#3b82f6",
-  warning: "#f59e0b",
-  error: "#ef4444",
-  success: "#22c55e",
-};
-
-const LOG_TYPE_BG: Record<LogType, string> = {
-  info: "rgba(59,130,246,0.1)",
-  warning: "rgba(245,158,11,0.1)",
-  error: "rgba(239,68,68,0.1)",
-  success: "rgba(34,197,94,0.1)",
-};
-
-/** Renders a plain log line */
-function PlainLog({ event }: { event: LogEvent }) {
   return (
-    <div
-      style={{
-        padding: "6px 12px",
-        borderLeft: `3px solid ${LOG_TYPE_COLORS[event.log_type]}`,
-        background: LOG_TYPE_BG[event.log_type],
-        marginBottom: 2,
-        fontFamily: "monospace",
-        fontSize: 13,
-      }}
-    >
-      <span style={{ color: "#888", fontSize: 11 }}>
-        {new Date(event.timestamp * 1000).toLocaleTimeString()}
+    <div style={{ color, fontFamily: "monospace", margin: "2px 0" }}>
+      <span>{icon}</span>{" "}
+      <span style={{ opacity: 0.6, fontSize: "0.8em" }}>
+        {formatTime(event.timestamp)} {tag}
       </span>{" "}
-      <span
-        style={{
-          textTransform: "uppercase",
-          fontSize: 10,
-          fontWeight: 700,
-          color: LOG_TYPE_COLORS[event.log_type],
-          marginRight: 8,
-        }}
-      >
-        {event.log_type}
-      </span>
-      {event.session && (
-        <span
-          style={{
-            background: "#333",
-            color: "#aaa",
-            padding: "1px 6px",
-            borderRadius: 4,
-            fontSize: 10,
-            marginRight: 8,
-          }}
-        >
-          {event.session}
-        </span>
-      )}
-      <span style={{ color: "#e2e8f0" }}>{event.message}</span>
+      <span>{event.message}</span>
     </div>
   );
 }
 
-/** Renders structured JSON payload with __darwin_type__ badge */
-function JsonLog({ event }: { event: LogEvent }) {
-  const dtype = event.payload?.__darwin_type__ || "dict";
-  return (
-    <div
-      style={{
-        padding: "8px 12px",
-        borderLeft: `3px solid ${LOG_TYPE_COLORS[event.log_type]}`,
-        background: LOG_TYPE_BG[event.log_type],
-        marginBottom: 4,
-        fontFamily: "monospace",
-        fontSize: 13,
-      }}
-    >
-      <div style={{ marginBottom: 4 }}>
-        <span style={{ color: "#888", fontSize: 11 }}>
-          {new Date(event.timestamp * 1000).toLocaleTimeString()}
-        </span>{" "}
-        <span
-          style={{
-            textTransform: "uppercase",
-            fontSize: 10,
-            fontWeight: 700,
-            color: LOG_TYPE_COLORS[event.log_type],
-            marginRight: 8,
-          }}
-        >
-          {event.log_type}
-        </span>
-        {/* SPECIAL: data-type chip so you know this is structured */}
-        <span
-          style={{
-            background: "#7c3aed",
-            color: "#fff",
-            padding: "2px 8px",
-            borderRadius: 4,
-            fontSize: 10,
-            fontWeight: 600,
-            marginRight: 8,
-          }}
-        >
-          📦 json
-        </span>
-        {dtype !== "dict" && (
-          <span
-            style={{
-              background: "#0891b2",
-              color: "#fff",
-              padding: "2px 8px",
-              borderRadius: 4,
-              fontSize: 10,
-              fontWeight: 600,
-              marginRight: 8,
-            }}
-          >
-            🏷️ {dtype}
-          </span>
-        )}
-        {event.session && (
-          <span
-            style={{
-              background: "#333",
-              color: "#aaa",
-              padding: "1px 6px",
-              borderRadius: 4,
-              fontSize: 10,
-            }}
-          >
-            {event.session}
-          </span>
-        )}
-      </div>
-      <pre
-        style={{
-          margin: 0,
-          padding: 8,
-          background: "#0f172a",
-          borderRadius: 6,
-          color: "#94a3b8",
-          fontSize: 12,
-          overflowX: "auto",
-        }}
-      >
-        {JSON.stringify(event.payload, null, 2)}
-      </pre>
-    </div>
-  );
+// ─── Type renderer registry ─────────────────────────────────────────
+// Register a React component for any __darwin_type__ marker.
+// Unknown types fall back to the generic JSON tree view.
+
+type DarwinTypeRenderer = React.ComponentType<{ data: Record<string, unknown> }>;
+
+class DarwinTypeRegistry {
+  private _map = new Map<string, DarwinTypeRenderer>();
+
+  register(typeName: string, component: DarwinTypeRenderer): void {
+    this._map.set(typeName, component);
+  }
+
+  get(typeName: string): DarwinTypeRenderer | undefined {
+    return this._map.get(typeName);
+  }
+
+  has(typeName: string): boolean {
+    return this._map.has(typeName);
+  }
 }
 
-/** Renders list payload with __darwin_type__: "list" badge */
-function ListLog({ event }: { event: LogEvent }) {
-  const items = event.payload?.items || [];
-  return (
-    <div
-      style={{
-        padding: "8px 12px",
-        borderLeft: `3px solid ${LOG_TYPE_COLORS[event.log_type]}`,
-        background: LOG_TYPE_BG[event.log_type],
-        marginBottom: 4,
-        fontFamily: "monospace",
-        fontSize: 13,
-      }}
-    >
-      <div style={{ marginBottom: 4 }}>
-        <span style={{ color: "#888", fontSize: 11 }}>
-          {new Date(event.timestamp * 1000).toLocaleTimeString()}
-        </span>{" "}
-        <span
-          style={{
-            textTransform: "uppercase",
-            fontSize: 10,
-            fontWeight: 700,
-            color: LOG_TYPE_COLORS[event.log_type],
-            marginRight: 8,
-          }}
-        >
-          {event.log_type}
-        </span>
-        {/* SPECIAL: list-type chip */}
-        <span
-          style={{
-            background: "#db2777",
-            color: "#fff",
-            padding: "2px 8px",
-            borderRadius: 4,
-            fontSize: 10,
-            fontWeight: 600,
-            marginRight: 8,
-          }}
-        >
-          📋 list ({items.length} items)
-        </span>
-        {event.session && (
-          <span
-            style={{
-              background: "#333",
-              color: "#aaa",
-              padding: "1px 6px",
-              borderRadius: 4,
-              fontSize: 10,
-            }}
-          >
-            {event.session}
-          </span>
-        )}
-      </div>
-      <pre
-        style={{
-          margin: 0,
-          padding: 8,
-          background: "#0f172a",
-          borderRadius: 6,
-          color: "#94a3b8",
-          fontSize: 12,
-          overflowX: "auto",
-        }}
-      >
-        {JSON.stringify(event.payload, null, 2)}
-      </pre>
-    </div>
-  );
-}
+// Global default registry — extend it at app init:
+//   darwinTypes.register("User", UserCard);
+//   darwinTypes.register("Address", AddressBlock);
+export const darwinTypes = new DarwinTypeRegistry();
 
-/** Progress bar renderer */
-function ProgressBar({
-  event,
+// ─── StructuredView with registry-aware rendering ───────────────────
+
+function StructuredView({
+  data,
+  registry,
 }: {
-  event: ProgressStartEvent | ProgressUpdateEvent | ProgressEndEvent;
+  data: unknown;
+  registry?: DarwinTypeRegistry;
 }) {
-  const [progress, setProgress] = useState<{
-    total: number;
-    current: number;
-    label: string;
-    status: string;
-    done: boolean;
-  } | null>(null);
+  const ctxRegistry = useDarwinTypeRegistry();
+  registry = registry ?? ctxRegistry;
+  if (typeof data !== "object" || data === null) {
+    return <span>{String(data)}</span>;
+  }
 
-  useEffect(() => {
-    if (event.type === "ProgressStartEvent") {
-      setProgress({
-        total: event.total,
-        current: 0,
-        label: event.label,
-        status: "",
-        done: false,
-      });
-    } else if (event.type === "ProgressUpdateEvent" && progress) {
-      setProgress({ ...progress, current: event.current, status: event.status });
-    } else if (event.type === "ProgressEndEvent") {
-      setProgress((p) => (p ? { ...p, current: p.total, done: true } : null));
-    }
-  }, [event]);
+  const dict = data as Record<string, unknown>;
+  const darwinType = dict["__darwin_type__"] as string | undefined;
 
-  if (!progress) return null;
-
-  const pct = progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
-
-  return (
-    <div
-      style={{
-        padding: "8px 12px",
-        background: "#1e293b",
-        borderRadius: 6,
-        marginBottom: 4,
-        fontFamily: "monospace",
-        fontSize: 12,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-        <span style={{ color: "#94a3b8" }}>
-          ⏳ {progress.label} {progress.status && `— ${progress.status}`}
-        </span>
-        <span style={{ color: "#64748b", fontSize: 11 }}>
-          {progress.current}/{progress.total} ({pct.toFixed(0)}%)
-        </span>
-      </div>
-      <div
-        style={{
-          width: "100%",
-          height: 6,
-          background: "#334155",
-          borderRadius: 3,
-          overflow: "hidden",
-        }}
-      >
-        <div
-          style={{
-            width: `${pct}%`,
-            height: "100%",
-            background: progress.done ? "#22c55e" : "#3b82f6",
-            borderRadius: 3,
-            transition: "width 0.2s ease",
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
-/** Spinner renderer */
-function Spinner({
-  event,
-}: {
-  event: SpinnerStartEvent | SpinnerUpdateEvent | SpinnerEndEvent;
-}) {
-  const [spinner, setSpinner] = useState<{
-    message: string;
-    done: boolean;
-    success: boolean;
-  } | null>(null);
-
-  useEffect(() => {
-    if (event.type === "SpinnerStartEvent") {
-      setSpinner({ message: event.message, done: false, success: true });
-    } else if (event.type === "SpinnerUpdateEvent" && spinner) {
-      setSpinner({ ...spinner, message: event.message });
-    } else if (event.type === "SpinnerEndEvent") {
-      setSpinner((s) =>
-        s ? { ...s, done: true, success: event.success } : null
-      );
-    }
-  }, [event]);
-
-  if (!spinner) return null;
-
-  return (
-    <div
-      style={{
-        padding: "6px 12px",
-        background: spinner.done
-          ? spinner.success
-            ? "rgba(34,197,94,0.1)"
-            : "rgba(239,68,68,0.1)"
-          : "#1e293b",
-        borderRadius: 6,
-        marginBottom: 4,
-        fontFamily: "monospace",
-        fontSize: 12,
-        display: "flex",
-        alignItems: "center",
-        gap: 8,
-      }}
-    >
-      {spinner.done ? (
-        <span style={{ fontSize: 14 }}>{spinner.success ? "✅" : "❌"}</span>
-      ) : (
-        <span style={{ fontSize: 14, animation: "spin 1s linear infinite" }}>⏳</span>
-      )}
-      <span style={{ color: spinner.done ? "#e2e8f0" : "#94a3b8" }}>
-        {spinner.message}
-      </span>
-    </div>
-  );
-}
-
-/** Session marker */
-function SessionMarker({
-  event,
-}: {
-  event: SessionStartEvent | SessionEndEvent;
-}) {
-  const isStart = event.type === "SessionStartEvent";
-  return (
-    <div
-      style={{
-        padding: "4px 12px",
-        background: isStart ? "rgba(59,130,246,0.15)" : "rgba(100,116,139,0.15)",
-        borderLeft: `3px solid ${isStart ? "#3b82f6" : "#64748b"}`,
-        marginBottom: 4,
-        fontFamily: "monospace",
-        fontSize: 11,
-        color: "#94a3b8",
-      }}
-    >
-      {isStart ? "▶️" : "⏹️"} Session {isStart ? "started" : "ended"}:{" "}
-      <strong style={{ color: "#e2e8f0" }}>{event.name}</strong>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// MAIN COMPONENT — Darwin Log Viewer
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export default function DarwinLogViewer() {
-  const { events, isConnected, error, reconnect, clear } = useDarwinSSE();
-  const [historySession, setHistorySession] = useState("");
-  const [historyLevels, setHistoryLevels] = useState<LogType[]>([]);
-  const [historyEvents, setHistoryEvents] = useState<LogEvent[]>([]);
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll to bottom
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [events]);
-
-  // Fetch history on demand
-  const loadHistory = useCallback(async () => {
-    try {
-      const logs = await fetchHistory("http://localhost:8765", {
-        session: historySession || undefined,
-        levels: historyLevels.length > 0 ? historyLevels : undefined,
-        limit: 100,
-      });
-      setHistoryEvents(logs);
-    } catch (e: any) {
-      alert(e.message);
-    }
-  }, [historySession, historyLevels]);
-
-  // Render a single event based on its type
-  const renderEvent = (event: DarwinEvent, key: number) => {
-    switch (event.type) {
-      case "LogEvent":
-        if (event.format === "json") return <JsonLog key={key} event={event} />;
-        if (event.format === "list") return <ListLog key={key} event={event} />;
-        return <PlainLog key={key} event={event} />;
-
-      case "ProgressStartEvent":
-      case "ProgressUpdateEvent":
-      case "ProgressEndEvent":
-        return <ProgressBar key={key} event={event} />;
-
-      case "SpinnerStartEvent":
-      case "SpinnerUpdateEvent":
-      case "SpinnerEndEvent":
-        return <Spinner key={key} event={event} />;
-
-      case "SessionStartEvent":
-      case "SessionEndEvent":
-        return <SessionMarker key={key} event={event} />;
-
-      default:
-        return (
-          <div key={key} style={{ color: "#888", padding: 4, fontSize: 11 }}>
-            Unknown event: {JSON.stringify(event)}
+  // ── Built-in types ──
+  if (darwinType === "list") {
+    const items = (dict["items"] ?? []) as unknown[];
+    return (
+      <details>
+        <summary>list ({items.length} items)</summary>
+        {items.map((item, i) => (
+          <div key={i} style={{ paddingLeft: 16 }}>
+            <StructuredView data={item} registry={registry} />
           </div>
-        );
-    }
-  };
+        ))}
+      </details>
+    );
+  }
+
+  if (darwinType === "max_depth" || darwinType === "cycle") {
+    return (
+      <span style={{ fontStyle: "italic", opacity: 0.5 }}>
+        {darwinType}
+      </span>
+    );
+  }
+
+  // ── Registered custom renderer wins over generic JSON ──
+  if (darwinType && registry.has(darwinType)) {
+    const Renderer = registry.get(darwinType)!;
+    return <Renderer data={dict} />;
+  }
+
+  // ── Dataclass with no registered renderer — generic tree fallback ──
+  if (darwinType) {
+    return (
+      <details>
+        <summary style={{ fontWeight: "bold" }}>{darwinType}</summary>
+        {Object.entries(dict)
+          .filter(([k]) => k !== "__darwin_type__")
+          .map(([k, v]) => (
+            <div key={k} style={{ paddingLeft: 16 }}>
+              <span style={{ opacity: 0.7 }}>{k}:</span>{" "}
+              <StructuredView data={v} registry={registry} />
+            </div>
+          ))}
+      </details>
+    );
+  }
+
+  // ── Plain dict — generic ──
+  return (
+    <details>
+      <summary>{"{}"}</summary>
+      {Object.entries(dict).map(([k, v]) => (
+        <div key={k} style={{ paddingLeft: 16 }}>
+          <span style={{ opacity: 0.7 }}>{k}:</span>{" "}
+          <StructuredView data={v} registry={registry} />
+        </div>
+      ))}
+    </details>
+  );
+}
+
+function ListView({
+  data,
+  registry,
+}: {
+  data: unknown;
+  registry?: DarwinTypeRegistry;
+}) {
+  const ctxRegistry = useDarwinTypeRegistry();
+  registry = registry ?? ctxRegistry;
+  if (typeof data !== "object" || data === null) return null;
+  const dict = data as Record<string, unknown>;
+  const items = (dict["items"] ?? []) as unknown[];
+  return (
+    <div style={{ paddingLeft: 16 }}>
+      {items.map((item, i) => (
+        <div key={i} style={{ display: "flex", gap: 8, margin: "1px 0" }}>
+          <span style={{ opacity: 0.4 }}>#{i + 1}</span>
+          <StructuredView data={item} registry={registry} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Example: custom renderer for User dataclass ─────────────────────
+//
+// Register it anywhere before the stream mounts:
+//
+//   import { darwinTypes } from "./DarwinStream.client";
+//   darwinTypes.register("User", UserCard);
+//
+// When darwin.logjson(user_obj) fires, the stream sees:
+//   {"__darwin_type__": "User", "name": "Alice", "age": 30, ...}
+// and renders <UserCard /> instead of the generic tree.
+
+interface UserData {
+  __darwin_type__: "User";
+  name: string;
+  age: number;
+  email: string;
+  addresses?: { __darwin_type__: "Address"; street: string; city: string }[];
+  metadata?: Record<string, unknown>;
+}
+
+export function UserCard({ data }: { data: Record<string, unknown> }) {
+  const user = data as unknown as UserData;
+  return (
+    <div
+      style={{
+        border: "1px solid #30363d",
+        borderRadius: 6,
+        padding: 8,
+        margin: "2px 0",
+        background: "#161b22",
+      }}
+    >
+      <div style={{ fontWeight: "bold", fontSize: 14, color: "#f0883e" }}>
+        {user.name}
+      </div>
+      <div style={{ fontSize: 12, opacity: 0.7 }}>
+        {user.email} · age {user.age}
+      </div>
+      {user.addresses && user.addresses.length > 0 && (
+        <div style={{ marginTop: 4, fontSize: 11, opacity: 0.5 }}>
+          {user.addresses.map((a, i) => (
+            <div key={i}>
+              {a.street}, {a.city}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── React context variant (optional — for prop-drilling avoidance) ──
+// Wrap <DarwinStreamProvider registry={myRegistry}> at the root,
+// and any StructuredView inside will pick it up automatically.
+
+const RegistryCtx = createContext<DarwinTypeRegistry>(darwinTypes);
+
+export function DarwinStreamProvider({
+  registry = darwinTypes,
+  children,
+}: {
+  registry?: DarwinTypeRegistry;
+  children: React.ReactNode;
+}) {
+  return <RegistryCtx.Provider value={registry}>{children}</RegistryCtx.Provider>;
+}
+
+function useDarwinTypeRegistry(): DarwinTypeRegistry {
+  return useContext(RegistryCtx);
+}
+
+function ProgressBar({ id, current, total, label }: {
+  id: string;
+  current: number;
+  total: number;
+  label: string;
+}) {
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  const barLen = 30;
+  const filled = Math.round((barLen * pct) / 100);
+  const bar =
+    "█".repeat(filled) + "░".repeat(Math.max(0, barLen - filled));
+  return (
+    <div style={{ fontFamily: "monospace", margin: "2px 0", color: "#58a6ff" }}>
+      <span>{label}</span>{" "}
+      <span style={{ color: "#3fb950" }}>{bar}</span>{" "}
+      <span>
+        {current}/{total} ({pct}%)
+      </span>
+    </div>
+  );
+}
+
+function SpinnerLine({ id, message }: { id: string; message: string }) {
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  const [i, setI] = useState(0);
+
+  useEffect(() => {
+    const h = setInterval(() => setI((x) => (x + 1) % frames.length), 80);
+    return () => clearInterval(h);
+  }, []);
+
+  return (
+    <div style={{ fontFamily: "monospace", margin: "2px 0", color: "#888" }}>
+      {frames[i]} {message}
+    </div>
+  );
+}
+
+// ─── Main component ─────────────────────────────────────────────────
+
+interface Props {
+  url: string;
+  maxEvents?: number;
+}
+
+export default function DarwinStream({ url, maxEvents = 500 }: Props) {
+  const { connected, events, sessions, progress, spinners, clear } =
+    useDarwinStream(url);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+
+  const visible = maxEvents ? events.slice(-maxEvents) : events;
+
+  useEffect(() => {
+    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [visible.length, autoScroll]);
 
   return (
     <div
       style={{
+        background: "#0d1117",
+        color: "#c9d1d9",
+        fontFamily: "monospace",
+        fontSize: 13,
         height: "100vh",
         display: "flex",
         flexDirection: "column",
-        background: "#0f172a",
-        color: "#e2e8f0",
-        fontFamily: "system-ui, -apple-system, sans-serif",
       }}
     >
-      {/* HEADER */}
+      {/* ── Header ── */}
       <div
         style={{
-          padding: "12px 16px",
-          borderBottom: "1px solid #1e293b",
           display: "flex",
           alignItems: "center",
           gap: 12,
-          flexWrap: "wrap",
+          padding: "8px 12px",
+          borderBottom: "1px solid #30363d",
+          background: "#161b22",
         }}
       >
-        <h1 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>🧬 Darwin Logger</h1>
-
-        {/* Connection status */}
-        <div
+        <span
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "4px 10px",
-            borderRadius: 12,
-            background: isConnected ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-            fontSize: 12,
-          }}
-        >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background: isConnected ? "#22c55e" : "#ef4444",
-              display: "inline-block",
-            }}
-          />
-          {isConnected ? "Connected" : "Disconnected"}
-        </div>
-
-        {error && (
-          <span style={{ color: "#ef4444", fontSize: 12 }}>{error}</span>
-        )}
-
-        <div style={{ flex: 1 }} />
-
-        {/* History query controls */}
-        <input
-          type="text"
-          placeholder="Session filter..."
-          value={historySession}
-          onChange={(e) => setHistorySession(e.target.value)}
-          style={{
-            padding: "4px 10px",
-            borderRadius: 4,
-            border: "1px solid #334155",
-            background: "#1e293b",
-            color: "#e2e8f0",
-            fontSize: 12,
-            width: 140,
+            width: 10,
+            height: 10,
+            borderRadius: "50%",
+            background: connected ? "#3fb950" : "#f85149",
           }}
         />
-        <select
-          multiple
-          size={1}
-          onChange={(e) => {
-            const opts = Array.from(e.target.selectedOptions).map((o) => o.value as LogType);
-            setHistoryLevels(opts);
-          }}
-          style={{
-            padding: "4px 10px",
-            borderRadius: 4,
-            border: "1px solid #334155",
-            background: "#1e293b",
-            color: "#e2e8f0",
-            fontSize: 12,
-          }}
-        >
-          <option value="">all levels</option>
-          <option value="info">info</option>
-          <option value="warning">warning</option>
-          <option value="error">error</option>
-          <option value="success">success</option>
-        </select>
-        <button
-          onClick={loadHistory}
-          style={{
-            padding: "4px 12px",
-            borderRadius: 4,
-            border: "none",
-            background: "#3b82f6",
-            color: "#fff",
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
-          📜 Load History
-        </button>
-        <button
-          onClick={reconnect}
-          style={{
-            padding: "4px 12px",
-            borderRadius: 4,
-            border: "1px solid #334155",
-            background: "#1e293b",
-            color: "#e2e8f0",
-            fontSize: 12,
-            cursor: "pointer",
-          }}
-        >
-          🔄 Reconnect
-        </button>
+        <span>{connected ? "Connected" : "Disconnected"}</span>
+        <span style={{ opacity: 0.5 }}>|</span>
+        <span>{events.length} events</span>
+        <span style={{ opacity: 0.5 }}>|</span>
+        <span>{sessions.size} sessions</span>
+        {progress.size > 0 && (
+          <>
+            <span style={{ opacity: 0.5 }}>|</span>
+            <span style={{ color: "#58a6ff" }}>
+              {progress.size} progress bar(s)
+            </span>
+          </>
+        )}
+        {spinners.size > 0 && (
+          <>
+            <span style={{ opacity: 0.5 }}>|</span>
+            <span style={{ color: "#d29922" }}>
+              {spinners.size} spinner(s)
+            </span>
+          </>
+        )}
+        <div style={{ flex: 1 }} />
+        <label style={{ fontSize: 11, cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={autoScroll}
+            onChange={(e) => setAutoScroll(e.target.checked)}
+          />{" "}
+          auto-scroll
+        </label>
         <button
           onClick={clear}
           style={{
-            padding: "4px 12px",
-            borderRadius: 4,
-            border: "1px solid #334155",
-            background: "#1e293b",
-            color: "#e2e8f0",
-            fontSize: 12,
+            background: "#21262d",
+            border: "1px solid #30363d",
+            color: "#c9d1d9",
             cursor: "pointer",
+            fontSize: 11,
+            padding: "2px 8px",
           }}
         >
-          🗑️ Clear
+          clear
         </button>
       </div>
 
-      {/* HISTORY SECTION (if loaded) */}
-      {historyEvents.length > 0 && (
+      {/* ── Active progress bars ── */}
+      {progress.size > 0 && (
         <div
           style={{
-            padding: "8px 16px",
-            borderBottom: "1px solid #1e293b",
-            background: "#1e293b",
+            padding: "4px 12px",
+            borderBottom: "1px solid #30363d",
+            background: "#0d1117",
           }}
         >
-          <div
-            style={{
-              fontSize: 11,
-              color: "#64748b",
-              marginBottom: 6,
-              display: "flex",
-              justifyContent: "space-between",
-            }}
-          >
-            <span>
-              📜 History ({historyEvents.length} logs)
-              {historySession && ` | session: ${historySession}`}
-              {historyLevels.length > 0 && ` | levels: ${historyLevels.join(",")}`}
-            </span>
-            <button
-              onClick={() => setHistoryEvents([])}
-              style={{
-                background: "none",
-                border: "none",
-                color: "#64748b",
-                cursor: "pointer",
-                fontSize: 11,
-              }}
-            >
-              dismiss
-            </button>
-          </div>
-          <div style={{ maxHeight: 200, overflowY: "auto" }}>
-            {historyEvents.map((e, i) => renderEvent(e, i))}
-          </div>
+          {[...progress.entries()].map(([id, p]) => (
+            <ProgressBar key={id} id={id} {...p} />
+          ))}
         </div>
       )}
 
-      {/* LIVE EVENT STREAM */}
-      <div style={{ flex: 1, overflowY: "auto", padding: "8px 0" }}>
-        {events.length === 0 && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: 60,
-              color: "#475569",
-              fontSize: 14,
-            }}
-          >
-            Waiting for events from Darwin...
-            <br />
-            <code style={{ fontSize: 11 }}>curl http://localhost:8765/stream</code>
-          </div>
-        )}
-        {events.map((e, i) => renderEvent(e, i))}
+      {/* ── Active spinners ── */}
+      {spinners.size > 0 && (
+        <div
+          style={{
+            padding: "4px 12px",
+            borderBottom: "1px solid #30363d",
+            background: "#0d1117",
+          }}
+        >
+          {[...spinners].map((id) => (
+            <SpinnerLine key={id} id={id} message="running..." />
+          ))}
+        </div>
+      )}
+
+      {/* ── Event log ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "4px 12px" }}>
+        {visible.map((ev, i) => {
+          if (ev.type === "LogEvent") return <LogLine key={i} event={ev} />;
+          if (ev.type === "SessionStartEvent")
+            return (
+              <div
+                key={i}
+                style={{
+                  borderTop: "1px solid #30363d",
+                  color: "#58a6ff",
+                  fontWeight: "bold",
+                  marginTop: 8,
+                  paddingTop: 4,
+                }}
+              >
+                Session: {ev.name}
+              </div>
+            );
+          if (ev.type === "SessionEndEvent")
+            return (
+              <div
+                key={i}
+                style={{
+                  borderBottom: "1px solid #30363d",
+                  color: "#8b949e",
+                  paddingBottom: 4,
+                  marginBottom: 8,
+                }}
+              >
+                [Session ended: {ev.name}]
+              </div>
+            );
+          // Progress/Spinner events are shown live in the header, skip in log
+          if (
+            ev.type === "ProgressStartEvent" ||
+            ev.type === "ProgressUpdateEvent" ||
+            ev.type === "ProgressEndEvent" ||
+            ev.type === "SpinnerStartEvent" ||
+            ev.type === "SpinnerUpdateEvent" ||
+            ev.type === "SpinnerEndEvent"
+          )
+            return null;
+          return null;
+        })}
         <div ref={bottomRef} />
       </div>
 
-      {/* FOOTER */}
-      <div
-        style={{
-          padding: "6px 16px",
-          borderTop: "1px solid #1e293b",
-          fontSize: 11,
-          color: "#475569",
-          display: "flex",
-          justifyContent: "space-between",
-        }}
-      >
-        <span>{events.length} events received</span>
-        <span>Darwin SSE @ localhost:8765</span>
-      </div>
-
-      {/* CSS for spinner animation */}
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
+      {/* ── Sessions sidebar (minimal) ── */}
+      {sessions.size > 0 && (
+        <div
+          style={{
+            borderTop: "1px solid #30363d",
+            padding: "4px 12px",
+            fontSize: 11,
+            background: "#161b22",
+            display: "flex",
+            gap: 16,
+            flexWrap: "wrap",
+          }}
+        >
+          {[...sessions.entries()].map(([name, s]) => (
+            <span key={name} style={{ opacity: 0.6 }}>
+              {name}: {s.logCount} logs
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// EXPORTS — everything you might need in your own app
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export {
-  useDarwinSSE,
-  fetchHistory,
-  // renderers for copy/paste into your own components
-  PlainLog,
-  JsonLog,
-  ListLog,
-  ProgressBar,
-  Spinner,
-  SessionMarker,
-};
-
-export type {
-  LogType,
-  LogEvent,
-  ProgressStartEvent,
-  ProgressUpdateEvent,
-  ProgressEndEvent,
-  SpinnerStartEvent,
-  SpinnerUpdateEvent,
-  SpinnerEndEvent,
-  SessionStartEvent,
-  SessionEndEvent,
-  DarwinEvent,
-  UseDarwinSSEReturn,
-  HistoryQuery,
-};

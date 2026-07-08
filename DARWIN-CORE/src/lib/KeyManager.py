@@ -199,7 +199,7 @@ def load_keys_from_keychain(log: bool = True) -> None:
         except Exception as e:
             # Only warn if there was a real read error, not "not found"
             if log:
-                darwin.log(f"Keychain error for {provider}: {e}", LogType.WARNING)
+                darwin.warning(f"Keychain error for {provider}: {e}")
             continue
 
         if key and key.strip():

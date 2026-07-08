@@ -1,0 +1,146 @@
+"""
+End-to-end smoke test for Darwin.
+Verifies: CLI, init, store, models, search, pipeline orchestration, MCP.
+
+Run:  python -m pytest tests/smoke_test.py -v
+"""
+
+import sys
+import json
+from pathlib import Path
+
+import pytest
+
+
+# ── Helpers ──
+
+
+def _cli(*args, expect_fail=False):
+    """Run darwin CLI with args, return (exit_code, stdout, stderr)."""
+    import io
+    from src.cli import main
+
+    old_argv = sys.argv
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.argv = ["darwin"] + list(args)
+    out = io.StringIO()
+    err = io.StringIO()
+    sys.stdout = out
+    sys.stderr = err
+    try:
+        main()
+        code = 0
+    except SystemExit as e:
+        code = e.code or 0
+    except Exception as e:
+        err.write(f"{type(e).__name__}: {e}")
+        code = 1
+    finally:
+        sys.argv = old_argv
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+    if not expect_fail and code != 0:
+        pytest.fail(f"CLI {' '.join(args)} exited {code}: {err.getvalue()}")
+    return code, out.getvalue(), err.getvalue()
+
+
+# ── Tests ──
+
+
+class TestCLI:
+    def test_help(self):
+        code, out, err = _cli("--help")
+        assert "darwin" in out or "usage" in out
+
+    def test_init_no_download(self):
+        code, out, err = _cli("init", "--no-download")
+        assert code == 0
+
+
+class TestStore:
+    def test_list_files(self):
+        code, out, err = _cli("admin", "store", "files")
+        assert code == 0
+
+    def test_store_status(self):
+        code, out, err = _cli("admin", "store", "status")
+        assert code == 0
+
+
+class TestModels:
+    def test_models_status(self):
+        code, out, err = _cli("admin", "models", "status")
+        assert code == 0
+
+    def test_models_list(self):
+        code, out, err = _cli("admin", "models", "list")
+        assert code == 0
+        # Should contain known models
+        assert "intfloat/multilingual-e5-small" in out or "en_core_web" in out
+
+    def test_system_info(self):
+        code, out, err = _cli("admin", "system", "info")
+        assert code == 0
+        assert "RAM" in out
+        assert "Tier" in out
+
+
+class TestSearch:
+    def test_search_empty(self):
+        """Search with no ingested docs should return empty gracefully."""
+        from src.core.Storage.DarwinStore import DarwinStore
+        from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+        from src.core.Retrival.OrchestratorTypes import OrchestratorConfig
+
+        store = DarwinStore()
+        store.bootstrap()
+        orch = RetrievalOrchestrator(store=store)
+        ctx = orch.retrieve_and_resolve(OrchestratorConfig(query="test", top_k=3))
+        assert ctx is not None
+        assert ctx.total_passages >= 0  # 0 is valid with no data
+
+
+class TestMCP:
+    def test_mcp_imports(self):
+        """MCP module initialises without crashing."""
+        from src.mcp.Server import mcp, _init_ok
+
+        assert _init_ok
+        assert mcp.name == "darwin"
+
+    def test_mcp_10_tools(self):
+        from src.mcp.Server import mcp
+
+        # FastMCP stores tools internally
+        assert len(mcp._tool_manager._tools) == 10
+
+    def test_mcp_search_tool_schema(self):
+        """Search tool accepts expected params."""
+        from src.mcp.Server import mcp
+
+        tool = mcp._tool_manager._tools.get("search_darwin")
+        assert tool is not None
+        assert "query" in tool.parameters["properties"]
+        assert "method" in tool.parameters["properties"]
+
+
+class TestPipeline:
+    def test_pipeline_schema(self):
+        """Admin pipeline commands parse correctly."""
+        code, out, err = _cli("admin", "pipeline", "--help")
+        assert code == 0
+        for cmd in ["run", "ingest", "index", "purge"]:
+            assert cmd in out
+
+
+class TestEdgeCases:
+    def test_unknown_command(self):
+        code, out, err = _cli("nonexistent", expect_fail=True)
+        assert code != 0
+
+    def test_admin_passthrough(self):
+        """Admin subcommand passthrough works."""
+        code, out, err = _cli("admin", "system", "info")
+        assert code == 0
+        assert "RAM" in out
