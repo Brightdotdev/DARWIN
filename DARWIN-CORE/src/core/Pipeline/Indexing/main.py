@@ -8,7 +8,7 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.core.Pipeline.Indexing.lib import IndexingArgs
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.lib.Utils import ensure_writable_directory
 from src.core.Storage.DarwinStore import DarwinStore
 
@@ -41,8 +41,8 @@ def _resolve_input_files(
         if store.has_records(candidate):
             resolved.append(candidate)
         else:
-            from src.core.Logger.DarwinLogger import darwin, LogType
-            darwin.log(f"'{r_str}' → '{candidate}' has no chunks — skipping", LogType.WARNING)
+            from src.core.Logger.DarwinLogger import darwin
+            darwin.warning(f"'{r_str}' has no chunks — skipping")
 
     # Deduplicate while preserving order
     seen: set[str] = set()
@@ -62,7 +62,7 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
     # Resolve user‑provided input (paths or basenames) to registered filenames with chunks
     files = _resolve_input_files(args.files, store)
     if args.files is not None and files == []:
-        darwin.log("No valid input files have chunks. Aborting indexing.", LogType.ERROR)
+        darwin.error("No valid input files have chunks — aborting")
         return
 
     run_kw = not args.only_semantic
@@ -75,20 +75,19 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
         idx = steps.index(name) + 1
         return f"[{idx}/{step_count}]"
 
-    darwin.log("Indexing", LogType.INFO)
-    darwin.log(
+    darwin.info("Indexing pipeline started")
+    darwin.info(
         f"Threshold: {args.threshold} | IDF smoothing: {args.idf_smoothing} | "
-        f"Rerun: {args.rerun}",
-        LogType.INFO,
+        f"Rerun: {args.rerun}"
     )
     if files:
-        darwin.log(f"Files: {files}", LogType.INFO)
+        darwin.info(f"Files: {files}")
     else:
-        darwin.log("Indexing all files with chunks", LogType.INFO)
-    darwin.log("")
+        darwin.info("Indexing all chunked files")
+    darwin.info("")
 
     if run_kw:
-        darwin.log(f"{step_label(' KW')} Keyword (BM25) indexing", LogType.INFO)
+        darwin.info(f"{step_label(' KW')} Running BM25 keyword indexing")
         try:
             handle_bm25_indexing(BM25IndexingArgs(
                 files=files,          # None means all stored files
@@ -98,12 +97,12 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
             ), store=store)
         except Exception as e:
             import traceback
-            darwin.log(f"BM25 indexing failed — {type(e).__name__}: {e}", LogType.ERROR)
-            darwin.log(traceback.format_exc())
-        darwin.log("")
+            darwin.error(f"BM25 indexing failed — {type(e).__name__}: {e}")
+            darwin.info(traceback.format_exc())
+        darwin.info("")
 
     if run_semantic:
-        darwin.log(f"{step_label('Semantic')} Semantic embedding", LogType.INFO)
+        darwin.info(f"{step_label('Semantic')} Running semantic embedding")
         try:
             handle_embedding(EmbeddingArgs(
                 files=files,
@@ -111,11 +110,11 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
             ), store=store)
         except Exception as e:
             import traceback
-            darwin.log(f"Embedding failed — {type(e).__name__}: {e}", LogType.ERROR)
-            darwin.log(traceback.format_exc(), LogType.ERROR)
-        darwin.log("")
+            darwin.error(f"Embedding failed — {type(e).__name__}: {e}")
+            darwin.error(traceback.format_exc())
+        darwin.info("")
 
-    darwin.log("Indexing complete", LogType.SUCCESS)
+    darwin.success("Indexing complete")
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
@@ -183,13 +182,13 @@ async def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!", LogType.INFO)
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

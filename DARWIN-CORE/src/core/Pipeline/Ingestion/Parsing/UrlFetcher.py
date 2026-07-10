@@ -89,7 +89,7 @@ def parse_url(
     """
     Fetch a URL, extract its main content, and return a ParsedDocument.
     """
-    darwin.log(f"Fetching {url}...", LogType.INFO)
+    darwin.info(f"Fetching {url}...")
 
     err = validate_url(url)
     if err:
@@ -190,7 +190,7 @@ def _dispatch_parser(
             error=f"no parser registered for type '{file_type}'",
         )
     try:
-        darwin.log(f"Parsing {display_name} as {file_type}...", LogType.INFO)
+        darwin.info(f"Parsing {display_name} as {file_type}...")
         display_text, embedding_text, page_count, metadata, all_images = parser(
             path, images_dir=images_dir, caption=caption, precise=precise
         )

@@ -8,23 +8,36 @@ Built by [BrightDotDev](https://github.com/brightdotdev).
 
 ---
 
-## Quick Start
+## Dev Quick Start
+
+> **Not a published package yet.** Clone and run directly for development/testing.
 
 ```bash
-# Install
-pip install -e .
+# 1. Clone
+git clone <repo-url>
+cd DARWIN-CORE
 
-# One-time setup
-darwin init
+# 2. Create virtual environment (Python 3.11+)
+python -m venv .venv
 
-# Ingest documents
-darwin ingest ./my-docs/
+# 3. Activate
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate     # macOS/Linux
 
-# Search
-darwin search "what is graph rag"
+# 4. Install deps
+pip install -r requirements.txt   # or just install as you go
 
-# Start MCP server for AI agents
-darwin mcp
+# 5. Bootstrap
+python -m src.cli init
+
+# 6. Ingest documents
+python -m src.cli ingest ./my-docs/
+
+# 7. Search
+python -m src.cli search "what is graph rag"
+
+# 8. Start MCP server for AI agents
+python -m src.cli mcp
 ```
 
 ---
@@ -32,11 +45,11 @@ darwin mcp
 ## Architecture
 
 ```
-CLI (src/cli.py) ──> darwin init | setup | mcp | admin | ingest | search
+CLI (src/cli.py) ──> init | mcp | admin | ingest | search
                         │
 MCP Server (FastMCP) ──> 10 tools: search, pipeline, models, store
                         │
-Orchestrators ──> RetrievalOrch | PipelineOrch | ModelOrch | StoreOrch | LoggerOrch
+Orchestrators ──> RetrievalOrch | PipelineOrch | ModelOrch | StoreOrch
                         │
 Core Engine:
   ┌─────────────────────────────────────────────┐
@@ -53,170 +66,122 @@ Core Engine:
 
 | Layer | What | For |
 |---|---|---|
-| **CLI** | `darwin` command | Users |
+| **CLI** | `python -m src.cli` | Users |
 | **MCP** | 10 agent tools | AI agents |
 | **Admin** | 17 orchestrator commands | Power users |
-| **Orchestrators** | Retrieval, Pipeline, Models, Store, Logger | Programmatic API |
+| **Orchestrators** | Retrieval, Pipeline, Models, Store | Programmatic API |
+| **lib.py** | Typed params with Literal enums | Single source of truth for defaults |
 | **Store** | Parquet, NumPy, USearch, BM25 persistence | Local disk |
 
 ---
 
 ## Modules
 
-| Module | Path | Lines | Purpose |
-|---|---|---|---|
-| **CLI** | `src/cli.py` | 156 | Main entry point (`darwin` command) |
-| **Setup** | `src/Setup.py` | ~400 | Interactive setup wizard |
-| **Admin** | `src/admin/cli.py` | 919 | Full orchestrator control |
-| **MCP** | `src/mcp/` | — | FastMCP server + tools |
-| **Logger** | `src/core/Logger/` | 8 files | Structured logging (SQLite, SSE, terminal) |
-| **Storage** | `src/core/Storage/` | 17 files | DarwinStore — file registry, artifacts, indices |
-| **Orchestrators** | `src/core/Orchestrators/` | 5 files | High-level orchestration |
-| **Pipeline** | `src/core/Pipeline/` | ~25 files | Ingestion (parse + chunk), Indexing (BM25 + embeddings) |
-| **Retrival** | `src/core/Retrival/` | ~15 files | Hybrid, semantic, keyword search with reranking |
-| **Models** | `src/core/Models/` | ~25 files | Model registry (40+), 5 inference factories, downloaders |
-| **Features** | `src/features/` | 4 files | Knowledge graphs, summarization, image OCR/vision |
-| **Agent** | `src/agent/LLM/` | 9 files | LLM client, config, manager |
-| **Lib** | `src/lib/` | 6 files | Path resolution, key management, utilities |
+| Module | Path | Purpose |
+|---|---|---|
+| **CLI** | `src/cli.py` | Main entry point |
+| **Admin** | `src/admin/cli.py` | Full orchestrator control (17 commands) |
+| **MCP** | `src/mcp/` | FastMCP server + 10 tools |
+| **Orchestrators** | `src/core/Orchestrators/` | Retrieval, Pipeline, Models, Store |
+| **Orchestrators/lib.py** | `src/core/Orchestrators/lib.py` | Parameter library with Literal types |
+| **Storage** | `src/core/Storage/` | DarwinStore — file registry, artifacts, indices |
+| **Pipeline** | `src/core/Pipeline/` | Ingestion (parse + chunk), Indexing (BM25 + embeddings) |
+| **Retrival** | `src/core/Retrival/` | Hybrid, semantic, keyword search with reranking |
+| **Models** | `src/core/Models/` | Model registry (40+), inference factories, downloaders |
+| **Logger** | `src/core/Logger/` | Structured session logging |
+| **Features** | `src/features/` | Knowledge graphs, summarization, image OCR/vision |
+| **Agent** | `src/agent/LLM/` | LLM client, config, manager |
+| **Lib** | `src/lib/` | Path resolution, key management, utilities |
 
 ---
 
 ## CLI Reference
 
-### `darwin init`
+### `python -m src.cli init`
 
 Bootstrap store + download required models.
 
 ```bash
-darwin init                     # default: required models only
-darwin init --profile recommended  # also install OCR, reranker, vision
-darwin init --no-download          # register models without downloading
+python -m src.cli init                          # default: required models only
+python -m src.cli init --profile recommended    # also install OCR, reranker, vision
+python -m src.cli init --no-download            # register models without downloading
 ```
 
-Delegates to `src.core.init.run_init()`.
+### `python -m src.cli mcp`
 
-### `darwin setup`
-
-One-shot setup via Click CLI. Delegates to `src/Setup.py`.
-
-```
-darwin setup [OPTIONS] COMMAND [ARGS]...
-```
-
-| Command | Description |
-|---|---|
-| `run` | Guided interactive onboarding |
-| `preset <name>` | One-shot preset (minimal, recommended, complete, local-only, api-only, server) |
-| `models` | Install/update specific models |
-| `embeddings` | Set embedding model only |
-| `logs` | Configure logging |
-| `storage` | Set storage directory |
-| `paths` | Show all derived paths |
-| `validate` | Validate current configuration |
-
-### `darwin mcp`
-
-Start the MCP server so AI agents can search, ingest, and manage models.
+Start the MCP server for AI agent integration.
 
 ```bash
-darwin mcp                       # stdio mode (for agent subprocess)
-darwin mcp --sse --port 8080     # SSE mode (for network/Docker)
+python -m src.cli mcp                        # stdio (for agent subprocess)
+python -m src.cli mcp --sse --port 8080      # SSE (for network/Docker)
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `--sse` | `false` | Use SSE transport instead of stdio |
-| `--port` | `8080` | SSE server port |
+| `--sse` | false | Use SSE transport instead of stdio |
+| `--port` | 8080 | SSE server port |
 
-**MCP Tools:**
+### `python -m src.cli admin`
 
-| Tool | File | Description |
-|---|---|---|
-| `search_darwin` | `mcp/tools/Search.py` | Full-featured search with configurable method, merging, fallback, reranking |
-| `run_pipeline` | `mcp/tools/Pipeline.py` | Run ingestion/indexing pipeline stages |
-| `purge_artifacts` | `mcp/tools/Pipeline.py` | Delete pipeline artifacts for specific files |
-| `pipeline_report` | `mcp/tools/Pipeline.py` | Get pipeline report for files |
-| `model_status` | `mcp/tools/Models.py` | Show model status across categories |
-| `install_model` | `mcp/tools/Models.py` | Install a model |
-| `switch_model` | `mcp/tools/Models.py` | Switch active model for a category |
-| `recommend_models` | `mcp/tools/Models.py` | Get model recommendations based on hardware |
-| `list_files` | `mcp/tools/Store.py` | List all files with pipeline status |
-| `file_status` | `mcp/tools/Store.py` | Detailed status for one file |
-
-### `darwin admin`
-
-Full orchestrator control for power users.
-
-```
-darwin admin <command> [ARGS]...
-```
-
-| Group | Commands | Description |
-|---|---|---|
-| `setup` | `interactive`, `profile`, `onboard` | Onboarding and configuration |
-| `models` | `status`, `list`, `install`, `uninstall`, `switch`, `keys` | Model lifecycle |
-| `store` | `status`, `files`, `file`, `audit`, `health`, `repair` | Store management |
-| `pipeline` | `run`, `ingest`, `index`, `purge` | Pipeline operations |
-| `logs` | `query`, `sessions`, `stats`, `purge`, `export`, `compact`, `set-retention` | Log management |
-| `system` | `info` | System information |
+Full orchestrator control — 17 commands across 5 groups.
 
 ```bash
-darwin admin models status
-darwin admin store files
-darwin admin pipeline run ./docs --ocr --recursive
-darwin admin pipeline purge myfile.pdf --stages ingestion
-darwin admin logs query --levels error --limit 10
-darwin admin system info
+python -m src.cli admin setup interactive
+python -m src.cli admin models status
+python -m src.cli admin store files
+python -m src.cli admin pipeline run ./docs --ocr --recursive
+python -m src.cli admin system info
 ```
 
-### `darwin ingest`
+See [src/admin/README.md](src/admin/README.md) for full reference.
+
+### `python -m src.cli ingest`
 
 Quick one-off ingest shortcut.
 
 ```bash
-darwin ingest <target> [--ocr] [--recursive]
+python -m src.cli ingest <target> [--ocr] [--recursive]
 ```
-
-| Argument | Description |
-|---|---|
-| `target` | File path, directory, or URL to ingest |
-| `--ocr` | Enable OCR for images in documents |
-| `--recursive` | Recursively ingest directories |
 
 Delegates to admin pipeline ingest under the hood.
 
-### `darwin search`
+### `python -m src.cli search`
 
 Quick one-off search.
 
 ```bash
-darwin search <query> [--method <method>] [--top-k <n>]
-darwin search "book of enoch"
-darwin search "NVIDIA Nemotron" --method semantic --top-k 10
+python -m src.cli search "what is Darwin?"
+python -m src.cli search "NVIDIA Nemotron" --method semantic --top-k 10
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `--method` | `hybrid` | Search method: hybrid, semantic, keyword |
-| `--top-k` | `10` | Number of results |
-| `--store` | default | Store ID to search |
+| `--method` | hybrid | Search method: hybrid, semantic, keyword |
+| `--top-k` | 5 | Number of results |
 
 ---
 
-## Development
+## Orchestrator Parameters (`lib.py`)
 
-```bash
-git clone <repo-url>
-cd darwin-core
-python -m venv .venv
-.venv\Scripts\activate    # Windows
-pip install -e .
+All orchestrator parameters are defined in `src/core/Orchestrators/lib.py` — the single source of truth. Option-based string values use `Literal` types for IDE intellisense and MCP JSON Schema enum generation.
 
-# Run tests
-python -m pytest tests/smoke_test.py -v
+```python
+from src.core.Orchestrators.lib import RetrievalParameters, PipelineParameters
+
+# IDE shows valid options for Literal fields
+params = RetrievalParameters(
+    query="what is Darwin?",
+    method="hybrid",              # Literal["hybrid", "semantic", "keyword"]
+    merge_strategy="adjacent",    # Literal["none", "adjacent", "aggressive"]
+    fallback_strategy="both",     # Literal["expand", "relax", "both"]
+)
+cfg = params.build()
+ctx = orchestrator.retrieve_and_resolve(cfg)
 ```
 
-### Docker
+---
+
+## Docker
 
 ```bash
 # Build
@@ -244,49 +209,29 @@ docker run -p 8080:8080 -v darwin-data:/data/darwin darwin mcp --sse
 ## Storage Layout
 
 ```
-%LOCALAPPDATA%/Darwin/           # Windows
-~/Library/Application Support/Darwin/   # macOS
-~/.local/share/darwin/           # Linux
+%LOCALAPPDATA%/Darwin/                     # Windows
+~/Library/Application Support/Darwin/      # macOS
+~/.local/share/darwin/                     # Linux
   ├── config/
-  │   ├── logging.json
-  │   └── stores_registry.db     # Central multi-store registry
   ├── indexes/
-  │   ├── registry.db            # Per-store SQLite (sources, content)
-  │   └── <sha256-hash>/         # Artifacts per unique file content
-  │       ├── meta.json          # Source metadata
-  │       ├── markdown.md        # Parsed markdown
-  │       ├── chunks.parquet     # Chunk records (Polars)
-  │       ├── bm25.npz           # BM25 sparse matrix
-  │       ├── bm25_tokens.parquet
-  │       ├── vectors/           # USearch index + NumPy embeddings
-  │       └── images/            # Extracted images
+  │   ├── registry.db
+  │   └── <sha256-hash>/
+  │       ├── meta.json
+  │       ├── markdown.md
+  │       ├── chunks.parquet
+  │       ├── bm25.npz
+  │       └── vectors/
   ├── logs/
-  │   └── logs.db                # SQLite log history
   └── models/
-      ├── config/models.json     # Active model configuration
-      ├── embedding/             # ONNX embedding models
-      ├── nlp/                   # spaCy NLP models
-      ├── reranker/              # ONNX cross-encoder models
-      ├── vision/                # ONNX vision models
-      └── ocr/                   # ONNX OCR models
 ```
 
 ---
 
-## Key Dependencies
+## Running Tests
 
-| Category | Packages |
-|---|---|
-| **ONNX Inference** | `onnxruntime` |
-| **MCP Protocol** | `fastmcp`, `uvicorn`, `starlette`, `sse-starlette` |
-| **Vector Search** | `usearch` |
-| **NLP** | `spacy`, `pytextrank` |
-| **PDF** | `pymupdf`, `pymupdf4llm` |
-| **Data** | `polars`, `pyarrow`, `numpy` |
-| **Terminal UI** | `rich`, `click` |
-| **LLM API** | `litellm` |
-| **OCR** | `rapidocr-onnxruntime` |
-| **Security** | `keyring` |
+```bash
+python -m pytest tests/smoke_test.py -v
+```
 
 ---
 

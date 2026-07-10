@@ -3,6 +3,8 @@ import platform
 from pathlib import Path
 import subprocess
 
+from src.core.Logger.DarwinLogger import darwin
+
 
 
 def open_in_explorer(path: str | Path):
@@ -13,7 +15,8 @@ def open_in_explorer(path: str | Path):
     path = Path(path).resolve()
 
     if not path.exists():
-        raise FileNotFoundError(f"Path does not exist: {path}")
+        darwin.error(f"Path does not exist: {path}")
+        return None
 
     system = platform.system()
 

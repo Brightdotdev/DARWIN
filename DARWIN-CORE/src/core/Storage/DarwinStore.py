@@ -64,7 +64,7 @@ class DarwinStore(StoreSearch):
 
             modelManager.initialize()
         except Exception as e:
-            darwin.log(f"Model manager initialization skipped: {e}", LogType.WARNING)
+            darwin.warning(f"Model manager initialization skipped: {e}")
         self.print_dashboard()
 
     def _register_self(self) -> str:
@@ -84,9 +84,9 @@ class DarwinStore(StoreSearch):
     def _resolve_hash(self, filename: str) -> str | None:
         source = self._sources.find_by_name(filename)
         if not source:
-            darwin.log(f"File not registered: {filename}", LogType.ERROR)
-            darwin.log("All operations will be aborted.", LogType.ERROR)
-            darwin.log("[TIP] Try parsing the file first.")
+            darwin.error(f"File not registered: {filename}")
+            darwin.error("All operations aborted")
+            darwin.info("Try parsing the file first")
             return None
         return source.content_hash
 
@@ -127,7 +127,8 @@ class DarwinStore(StoreSearch):
     def ensure_image_dir(self, filename: str) -> Path:
         h = self._resolve_hash(filename)
         if h is None:
-            raise ValueError(f"File not registered: {filename}")
+            darwin.error(f"File not registered: {filename}")
+            return None
         return self.paths.ensure_image_dir(h)
 
     def get_source(self, display_name: str) -> Optional[Source]:
@@ -189,7 +190,7 @@ class DarwinStore(StoreSearch):
             doc.get("error") if isinstance(doc, dict) else None
         )
         if error:
-            darwin.log(f"Skip markdown save for {filename}: {error}", LogType.INFO)
+            darwin.info(f"Skipped markdown for {filename}: {error}")
             return
         h = self._resolve_hash(filename)
         if h is None:
@@ -220,7 +221,7 @@ class DarwinStore(StoreSearch):
             self._meta.update(h, "markdown", extras=extras)
 
         self._write_artifact(h, "markdown", _write)
-        darwin.log(f"Saved markdown for {filename}", LogType.SUCCESS)
+        darwin.success(f"Saved markdown for {filename}")
 
     def load_markdown(self, filename: str) -> str | None:
         h = self._resolve_hash(filename)
@@ -232,7 +233,7 @@ class DarwinStore(StoreSearch):
         try:
             return path.read_text(encoding="utf-8")
         except Exception as e:
-            darwin.log(f"Error reading markdown for {filename}: {e}", LogType.ERROR)
+            darwin.error(f"Error reading markdown for {filename}: {e}")
             return None
 
     def delete_markdown(self, filename: str) -> bool:
@@ -255,7 +256,7 @@ class DarwinStore(StoreSearch):
 
     def save_records(self, filename: str, records: list[Any]) -> None:
         if not records:
-            darwin.log(f"No records to save for {filename}", LogType.ERROR)
+            darwin.error(f"No records to save for {filename}")
             return
         h = self._resolve_hash(filename)
         if h is None:
@@ -277,7 +278,7 @@ class DarwinStore(StoreSearch):
             self._contents.update_meta(h, chunk_count=len(records))
 
         self._write_artifact(h, "chunks", _write)
-        darwin.log(f"Records saved: {len(records)} rows", LogType.SUCCESS)
+        darwin.success(f"Records saved: {len(records)} rows")
 
     def load_records(self, filename: str, columns: list[str] | None = None) -> pa.Table:
         h = self._resolve_hash(filename)
@@ -363,7 +364,7 @@ class DarwinStore(StoreSearch):
         self, filename: str, vectors: np.ndarray, indices: list[int] | None = None
     ) -> None:
         if vectors is None or len(vectors) == 0:
-            darwin.log(f"No vectors to save for {filename}", LogType.ERROR)
+            darwin.error(f"No vectors to save for {filename}")
             return
         h = self._resolve_hash(filename)
         if h is None:
@@ -396,9 +397,8 @@ class DarwinStore(StoreSearch):
             self._contents.update_meta(h, embedding_model=model_name)
 
         self._write_artifact(h, "embeddings", _write)
-        darwin.log(
-            f"Embeddings saved: {len(vectors)} vectors, {vectors.shape[1]}d, float16",
-            LogType.SUCCESS,
+        darwin.success(
+            f"Embeddings saved: {len(vectors)} vectors, {vectors.shape[1]}d"
         )
 
     def load_embeddings(self, filename: str, mmap: bool = True) -> np.ndarray | None:
@@ -419,9 +419,8 @@ class DarwinStore(StoreSearch):
         stored_model = meta.get("embedding_model", "unknown")
         current_model = get_current_embedding_model()
         if stored_model not in ("unknown", current_model):
-            darwin.log(
-                f"Model mismatch for '{filename}': {stored_model} vs {current_model}",
-                LogType.WARNING,
+            darwin.warning(
+                f"Model mismatch for '{filename}': stored {stored_model}, current {current_model}"
             )
             return None
 
@@ -494,9 +493,8 @@ class DarwinStore(StoreSearch):
             )
 
         self._write_artifact(h, "vector", _write)
-        darwin.log(
-            f"Vector index saved: {len(vectors)} vectors, {vectors.shape[1]}d",
-            LogType.SUCCESS,
+        darwin.success(
+            f"Vector index saved: {len(vectors)} vectors, {vectors.shape[1]}d"
         )
 
     def load_vector(self, filename: str):
@@ -518,16 +516,15 @@ class DarwinStore(StoreSearch):
         stored_model = meta.get("embedding_model", "unknown")
         current_model = get_current_embedding_model()
         if stored_model not in ("unknown", current_model):
-            darwin.log(f"Vector model mismatch for '{filename}'", LogType.WARNING)
+            darwin.warning(f"Vector model mismatch for '{filename}'")
             return None
 
         vector_meta = read_json(meta_path) or {}
         stored_dim = vector_meta.get("dimension", 0)
         expected_dim = get_current_model_dimensions()
         if expected_dim and stored_dim != expected_dim:
-            darwin.log(
-                f"Vector dimension mismatch: {stored_dim} vs {expected_dim}",
-                LogType.WARNING,
+            darwin.warning(
+                f"Vector dimension mismatch: stored {stored_dim}, expected {expected_dim}"
             )
             return None
 
@@ -645,7 +642,7 @@ class DarwinStore(StoreSearch):
         )
 
         if not tokens or not doc_lengths:
-            darwin.log(f"No BM25 data to save for {filename}", LogType.ERROR)
+            darwin.error(f"No BM25 data to save for {filename}")
             return
 
         h = self._resolve_hash(filename)
@@ -687,7 +684,7 @@ class DarwinStore(StoreSearch):
             write_json(meta_path, meta_data, compact=True)
 
         self._write_artifact(h, "bm25", _write)
-        darwin.log(f"Saved BM25 index for {filename}", LogType.SUCCESS)
+        darwin.success(f"Saved BM25 index for {filename}")
 
     def load_bm25(self, filename: str) -> dict | None:
         h = self._resolve_hash(filename)
@@ -730,7 +727,7 @@ class DarwinStore(StoreSearch):
             self._cache.put(cache_key, result)
             return result
         except Exception as e:
-            darwin.log(f"Failed to load BM25 for {filename}: {e}", LogType.ERROR)
+            darwin.error(f"Failed to load BM25 for {filename}: {e}")
             return None
 
     def delete_bm25(self, filename: str) -> bool:
@@ -1018,7 +1015,8 @@ class DarwinStore(StoreSearch):
         if filename:
             src = self._sources.find_by_name(filename)
             if not src:
-                raise KeyError(f"File not registered: {filename}")
+                darwin.error(f"File not registered: {filename}")
+                return None
             return _make(src)
 
         return [_make(s) for s in self._sources.list_all()]
@@ -1027,24 +1025,24 @@ class DarwinStore(StoreSearch):
         data = self.get_pipeline_report(filename)
         files = [data] if filename else data
 
-        darwin.log("[PIPELINE REPORT]")
+        darwin.info("Pipeline Report")
 
         for f in files:
             icon = "✓" if f["core_complete"] else "○"
-            darwin.log(f"{icon} {f['filename']}")
-            darwin.log(
-                f"   Hash {f['hash']}  |  "
-                f"Progress {f['progress_percent']}%  |  "
+            darwin.info(f"{icon} {f['filename']}")
+            darwin.info(
+                f"Hash {f['hash']} | "
+                f"Progress {f['progress_percent']}% | "
                 f"Chunks {f['chunk_count']}"
             )
 
             stage_str = " | ".join(
                 f"{'✓' if done else '·'} {name}" for name, done in f["stages"].items()
             )
-            darwin.log(f"   {stage_str}")
+            darwin.info(f"{stage_str}")
 
             if f["missing"]:
-                darwin.log(f"   Missing: {', '.join(f['missing'])}", LogType.WARNING)
+                darwin.warning(f"Missing stages: {', '.join(f['missing'])}")
 
     # --- Integrity & Repair ---
     def check_integrity(self, content_hash: str) -> dict:
@@ -1197,7 +1195,7 @@ class DarwinStore(StoreSearch):
         if filename:
             h = self._resolve_hash(filename)
             if h is None:
-                darwin.log("File not registered.", LogType.ERROR)
+                darwin.error("File not registered")
                 return {}
             return self.repair(h, dry_run=dry_run)
         return self.repair(dry_run=dry_run)
@@ -1301,8 +1299,8 @@ class DarwinStore(StoreSearch):
         stats = status["stats"]
         health = self.full_registry_health_check()
 
-        darwin.log(f"[DARWIN DIRECTORY] {self._darwin_dir}")
-        darwin.log(
+        darwin.info(f"Darwin directory: {self._darwin_dir}")
+        darwin.info(
             f"Files Registered: {stats['total_files']} | "
             f"Searchable: {stats['keyword_searchable_files']} | "
             f"Needs work: {stats['files_needing_work']} | "
@@ -1311,10 +1309,9 @@ class DarwinStore(StoreSearch):
         )
 
         if health["summary"]["broken"] > 0:
-            darwin.log(
-                f" Registry integrity issue: {health['summary']['broken']} hash(es) "
-                f"have missing artifacts but the registry thinks they're done.",
-                LogType.WARNING,
+            darwin.warning(
+                f"Registry integrity issue: {health['summary']['broken']} hash(es) "
+                f"have missing artifacts but are marked done"
             )
 
     # --------------------------------------------------------------------
@@ -1350,7 +1347,8 @@ class DarwinStore(StoreSearch):
         for s in stores:
             if s.get("name") == name:
                 return DarwinStore(Path(s["darwin_dir"]))
-        raise ValueError(f"Store with name '{name}' not found")
+        darwin.error(f"Store with name '{name}' not found")
+        return None
 
     # --------------------------------------------------------------------
     # Helpers

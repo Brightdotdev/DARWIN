@@ -152,30 +152,32 @@ def set_api_key(provider: str, key: str, validate: bool = True) -> None:
     """
     provider = provider.lower().strip()
     if provider not in PROVIDER_REGISTRY:
-        raise ValueError(
-            f"Unsupported provider: '{provider}'. Supported: {list(PROVIDER_REGISTRY)}"
-        )
+        darwin.error(f"Unsupported provider: '{provider}'. Supported: {list(PROVIDER_REGISTRY)}")
+        return None
     key = key.strip()
     if not key:
-        raise ValueError("API key must not be empty")
+        darwin.error("API key must not be empty")
+        return None
 
     env_var, validator = PROVIDER_REGISTRY[provider]
 
     if validate:
-        darwin.log(f"Validating key for {provider}…")
+        darwin.info(f"Validating API key for {provider}...")
         try:
             validator(key)
-            darwin.log("Key is valid.")
+            darwin.success("API key is valid")
         except Exception as e:
-            raise ValueError(f"Invalid API key for {provider}: {e}") from e
+            darwin.error(f"Invalid API key for {provider}: {e}")
+            return None
 
     try:
         keyring.set_password(APP_NAME, provider, key)
     except Exception as e:
-        raise RuntimeError(f"Failed to store key in keychain: {e}") from e
+        darwin.error(f"Failed to store key in keychain: {e}")
+        return None
 
     os.environ[env_var] = key
-    darwin.log(f"API key for {provider} saved and activated.")
+    darwin.success(f"API key for {provider} saved and activated")
 
 
 
@@ -206,23 +208,24 @@ def load_keys_from_keychain(log: bool = True) -> None:
             os.environ[env_var] = key.strip()
             loaded += 1
             if log:
-                darwin.log(f"Loaded {env_var} from keychain.")
+                darwin.info(f"Loaded {env_var} from keychain")
 
     if log:
-        darwin.log(
-            f"Keychain: {loaded} loaded, {skipped} already present.",
-            LogType.INFO if loaded else LogType.WARNING,
-        )
+        if loaded:
+            darwin.info(f"Keychain: {loaded} loaded, {skipped} already present")
+        else:
+            darwin.warning(f"Keychain: {loaded} loaded, {skipped} already present")
 
 def clear_api_key(provider: str) -> None:
     """Remove a saved API key from the keychain and the current environment."""
     provider = provider.lower().strip()
     env_var = PROVIDER_ENV_MAP.get(provider)
     if not env_var:
-        raise ValueError(f"Unknown provider: '{provider}'")
+        darwin.error(f"Unknown provider: '{provider}'")
+        return None
     try:
         keyring.delete_password(APP_NAME, provider)
     except keyring.errors.PasswordDeleteError:
         pass
     os.environ.pop(env_var, None)
-    darwin.log(f"Removed API key for {provider}.")
+    darwin.info(f"Removed API key for {provider}")

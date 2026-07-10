@@ -74,9 +74,9 @@ async def run_pipeline_test() -> int:
     darwin.configure()
     store = DarwinStore(name="test")
 
-    darwin.log("═" * 60, LogType.INFO)
-    darwin.log("Darwin Pipeline Test — Ingestion → Indexing", LogType.INFO)
-    darwin.log("═" * 60, LogType.INFO)
+    darwin.info("═" * 60)
+    darwin.info("Darwin Pipeline Test: Ingestion → Indexing")
+    darwin.info("═" * 60)
 
     pipeline = PipelineOrchestrator(store)
 
@@ -107,9 +107,9 @@ async def run_pipeline_test() -> int:
 
     # ── Dump per-stage logs ──────────────────────────────────────────────────
     for stage_key, logs in result.logs.items():
-        darwin.log(f"\n--- Logs for '{stage_key}' ({len(logs)} entries) ---", LogType.INFO)
+        darwin.info(f"\n--- Logs for '{stage_key}' ({len(logs)} entries) ---")
         for log in logs[:10]:
-            darwin.log(f"  [{log.log_type.value}] {log.message[:120]}", LogType.INFO)
+            darwin.info(f"  [{log.log_type.value}] {log.message[:120]}")
 
     # ── Result status ──────────────────────────────────────────────────────────
     if not result.success:
@@ -124,9 +124,9 @@ async def run_pipeline_test() -> int:
     processed = [f for f in FILE_NAMES if store.has_markdown(f)]
     missing = [f for f in FILE_NAMES if not store.has_markdown(f)]
 
-    darwin.log(f"\nFiles with markdown: {len(processed)}/{len(FILE_NAMES)}", LogType.INFO)
+    darwin.info(f"\nFiles with markdown: {len(processed)}/{len(FILE_NAMES)}")
     if missing:
-        darwin.log(f"Missing: {missing}", LogType.WARNING)
+        darwin.warning(f"Missing: {missing}")
 
 
 
@@ -136,7 +136,7 @@ async def run_pipeline_test() -> int:
         with open("pipeline_test_issues.log", "w", encoding="utf-8") as f:
             for log in report:
                 f.write(f"[{log.log_type.value.upper()}] {log.message}\n")
-        darwin.log(f"Issues logged to pipeline_test_issues.log ({len(report)} items)", LogType.WARNING)
+        darwin.warning(f"Issues logged to pipeline_test_issues.log ({len(report)} items)")
 
     darwin.shutdown()
     return 0

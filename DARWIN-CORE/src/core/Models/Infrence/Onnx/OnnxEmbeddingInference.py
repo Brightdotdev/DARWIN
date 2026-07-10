@@ -37,7 +37,9 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
         self._onnx_runtime_version = "unknown"
 
     def _log(self, msg: str, level: LogType = LogType.INFO):
-        darwin.log(f"[ONNX Embedding] {msg}", level)
+        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
+         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
+         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     def __enter__(self):
         self.load()
@@ -54,7 +56,8 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
             return self
 
         if not self.model_path.exists():
-            raise FileNotFoundError(f"Model path not found: {self.model_path}")
+            self._log(f"Model path not found: {self.model_path}", LogType.ERROR)
+            return self
 
         self._log(f"Loading model from {self.model_path}")
         self._load_tokenizer()
@@ -81,12 +84,12 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
             from tokenizers import Tokenizer
         except ImportError:
             self._log("tokenizers library required. pip install tokenizers", LogType.ERROR)
-            raise ImportError("tokenizers library required. pip install tokenizers")
+            return
 
         tokenizer_path = self.model_path / "tokenizer.json"
         if not tokenizer_path.exists():
             self._log(f"Tokenizer not found in {self.model_path}", LogType.ERROR)
-            raise FileNotFoundError(f"Tokenizer not found in {self.model_path}")
+            return
 
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self._log(f"Tokenizer loaded from {tokenizer_path}")
@@ -96,11 +99,12 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
             import onnxruntime as ort
         except ImportError:
             self._log("onnxruntime required", LogType.ERROR)
-            raise ImportError("onnxruntime required")
+            return
 
         model_file = self.model_path / "model.onnx"
         if not model_file.exists():
-            raise FileNotFoundError(f"ONNX model not found: {model_file}")
+            self._log(f"ONNX model not found: {model_file}", LogType.ERROR)
+            return
 
         available = ort.get_available_providers()
         preferred = ["CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
@@ -143,7 +147,7 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
 
         if not self.is_loaded():
             self._log("Model not loaded. Call .load() first.", LogType.ERROR)
-            raise RuntimeError("Model not loaded. Call .load() first.")
+            return None
 
         self._log(f"Encoding {len(texts)} text(s)")
 
@@ -223,10 +227,11 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
             pass
 
         else:
-            raise ValueError(
+            self._log(
                 f"Unexpected embedding dimensions: {embeddings.ndim}D shape {embeddings.shape}. "
-                f"Expected 2D (pooled) or 3D (raw hidden states)."
+                f"Expected 2D (pooled) or 3D (raw hidden states).", LogType.ERROR
             )
+            return np.zeros((0, 0), dtype=np.float32)
 
         return embeddings
 

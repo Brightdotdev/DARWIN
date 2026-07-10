@@ -176,7 +176,7 @@ class ImageHandler:
             return False
         except Exception as e:
             darwin.spinner_stop(spinner_id, success=False)
-            darwin.log(f"Failed to ensure OCR model: {e}", LogType.ERROR)
+            darwin.error(f"Failed to load OCR model: {e}")
             return False
 
     def ensure_vision(self, auto_download: bool = True, force_download: bool = False) -> bool:
@@ -199,7 +199,7 @@ class ImageHandler:
             return False
         except Exception as e:
             darwin.spinner_stop(spinner_id, success=False)
-            darwin.log(f"Failed to ensure vision model: {e}", LogType.ERROR)
+            darwin.error(f"Failed to load vision model: {e}")
             return False
 
     def ensure_for_stages(
@@ -339,7 +339,7 @@ class ImageHandler:
         except Exception as e:
             error = f"Inference failed: {e}"
             _notify(stream_callback, error)
-            darwin.log(error, LogType.ERROR)
+            darwin.error(error)
 
         elapsed = int(time.time() * 1000) - start_ms
 
@@ -586,12 +586,14 @@ class ImageHandler:
         elif isinstance(image_input, (str, Path)):
             path = Path(image_input)
             if not path.exists():
-                raise FileNotFoundError(f"Image not found: {path}")
+                darwin.error(f"Image not found: {path}")
+                return None
             return Image.open(path).convert("RGB")
         elif isinstance(image_input, bytes):
             return Image.open(io.BytesIO(image_input)).convert("RGB")
         else:
-            raise TypeError(f"Unsupported image type: {type(image_input)}")
+            darwin.error(f"Unsupported image type: {type(image_input)}")
+            return None
 
     def _resize(self, image: Image.Image) -> Tuple[Image.Image, bool]:
         w, h = image.size
@@ -679,7 +681,7 @@ class ImageHandler:
 
     def clear_cache(self) -> None:
         self._result_cache.clear()
-        darwin.log("Image result cache cleared", LogType.INFO)
+        darwin.info("Image result cache cleared")
 
     def get_cache_size(self) -> int:
         return len(self._result_cache)

@@ -145,7 +145,12 @@ class StepLogger:
 
         # Also log to darwin
         log_type = getattr(LogType, level, LogType.INFO)
-        darwin.log(f"{step}: {message}", log_type)
+        {
+            LogType.ERROR: darwin.error,
+            LogType.WARNING: darwin.warning,
+            LogType.SUCCESS: darwin.success,
+            LogType.INFO: darwin.info,
+        }[log_type](f"{step}: {message}")
 
     def get_steps(self) -> List[Dict[str, Any]]:
         return self.steps

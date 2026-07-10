@@ -148,12 +148,12 @@ class MemoryMonitor:
 
     def log_summary(self) -> None:
         """Pretty-print hardware summary via darwin logger."""
-        from src.core.Logger.DarwinLogger import darwin, LogType
+        from src.core.Logger.DarwinLogger import darwin
         p = self.profile
-        darwin.log(f"Platform: {p.platform}", LogType.INFO)
-        darwin.log(f"CPUs: {p.cpu_count}, RAM: {p.ram_total_gb:.1f}GB total, {p.ram_free_gb:.1f}GB free", LogType.INFO)
+        darwin.info(f"Platform: {p.platform}")
+        darwin.info(f"CPUs: {p.cpu_count}, RAM: {p.ram_total_gb:.1f}GB total, {p.ram_free_gb:.1f}GB free")
         if p.gpu_vendor:
-            darwin.log(f"GPU: {p.gpu_vendor}, VRAM: {p.vram_free_gb:.1f}GB free", LogType.SUCCESS)
+            darwin.success(f"GPU: {p.gpu_vendor}, VRAM: {p.vram_free_gb:.1f}GB free")
         else:
-            darwin.log("GPU: not detected", LogType.INFO)
-        darwin.log(f"ONNX providers: {p.onnx_providers}", LogType.INFO)
+            darwin.info("GPU: not detected")
+        darwin.info(f"ONNX providers: {p.onnx_providers}")

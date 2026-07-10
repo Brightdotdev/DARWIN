@@ -4,6 +4,7 @@ import hashlib
 from functools import cached_property
 from pathlib import Path
 
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Storage.Constants import ARTIFACT_MANIFEST, OPTIONAL_ARTIFACT_KEYS
 from src.core.Storage.Transanctions import delete_tree
 
@@ -23,10 +24,14 @@ def is_file_hash(value: str) -> bool:
 class StorePaths:
     def __init__(self, darwin_dir: str | Path):
         if darwin_dir is None:
-            raise ValueError("darwin_dir cannot be None")
+            darwin.error("darwin_dir cannot be None")
+            self.root = Path()
+            return
         darwin_dir = Path(darwin_dir)
         if darwin_dir.exists() and not darwin_dir.is_dir():
-            raise NotADirectoryError(f"{darwin_dir} exists and is not a directory")
+            darwin.error(f"{darwin_dir} exists and is not a directory")
+            self.root = Path()
+            return
         darwin_dir.mkdir(parents=True, exist_ok=True)
         self.root = darwin_dir.resolve()
 
@@ -52,7 +57,8 @@ class StorePaths:
 
     def dir_for_hash(self, file_hash: str) -> Path:
         if not is_file_hash(file_hash):
-            raise ValueError(f"Invalid file hash: {file_hash}")
+            darwin.error(f"Invalid file hash: {file_hash}")
+            return Path()
         return self.indexes_dir / file_hash
 
     def ensure_dir_for_hash(self, file_hash: str) -> Path:

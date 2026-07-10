@@ -11,7 +11,7 @@ import argparse
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Storage.DarwinStore import DarwinStore
 
 from src.core.Retrival.Keyword.main import handle_keyword_search
@@ -176,11 +176,10 @@ def handle_hybrid_search(
     """
     start_time = time.perf_counter()
 
-    darwin.log(f"[Hybrid] Query: '{args.query}'", LogType.INFO)
-    darwin.log(f"[Hybrid] Top-K: {args.top_k}, Pool: {args.pool_size}", LogType.INFO)
-    darwin.log(
-        f"[Hybrid] Per‑doc limit: {args.per_doc_top_k if args.per_doc_top_k is not None else 'unlimited'}",
-        LogType.INFO,
+    darwin.info(f"Query: '{args.query}'")
+    darwin.info(f"Top-K: {args.top_k}, Pool: {args.pool_size}")
+    darwin.info(
+        f"Per-doc limit: {args.per_doc_top_k if args.per_doc_top_k is not None else 'unlimited'}"
     )
 
     # Keyword search
@@ -193,7 +192,7 @@ def handle_hybrid_search(
         per_doc_top_k=args.per_doc_top_k,
     )
     keyword_raw = handle_keyword_search(kw_args, store=store) or []
-    darwin.log(f"[Hybrid] Keyword: {len(keyword_raw)} results", LogType.INFO)
+    darwin.info(f"Keyword: {len(keyword_raw)} results")
 
     # Semantic search
     sem_args = SemanticSearchArgs(
@@ -204,10 +203,10 @@ def handle_hybrid_search(
         per_doc_top_k=args.per_doc_top_k,
     )
     semantic_raw = handle_semantic_search(sem_args, store=store) or []
-    darwin.log(f"[Hybrid] Semantic: {len(semantic_raw)} results", LogType.INFO)
+    darwin.info(f"Semantic: {len(semantic_raw)} results")
 
     if not keyword_raw and not semantic_raw:
-        darwin.log("[Hybrid] No results from either search", LogType.WARNING)
+        darwin.warning("No results from either keyword or semantic search")
         return []
 
     # Convert to dicts for fusion
@@ -256,7 +255,7 @@ def handle_hybrid_search(
     semantic_dicts = [d for d in semantic_dicts if d.get("score") is not None]
 
     if not keyword_dicts and not semantic_dicts:
-        darwin.log("[Hybrid] No valid scores after normalization", LogType.WARNING)
+        darwin.warning("No valid scores after normalization")
         return []
 
     fused = _rrf_fusion(
@@ -267,7 +266,7 @@ def handle_hybrid_search(
         keyword_weight=args.keyword_weight,
     )
 
-    darwin.log(f"[Hybrid] Fused: {len(fused)} unique results", LogType.INFO)
+    darwin.info(f"RRF fusion produced {len(fused)} unique results")
 
     # Normalize RRF scores to [0,1] so orchestrator thresholds work correctly
     if fused:
@@ -287,7 +286,7 @@ def handle_hybrid_search(
     top_results = fused[: args.top_k] if args.top_k > 0 else fused
 
     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-    darwin.log(f"[Hybrid] Done in {elapsed_ms}ms", LogType.SUCCESS)
+    darwin.success(f"Hybrid search complete in {elapsed_ms}ms")
 
     return top_results
 
@@ -363,24 +362,24 @@ def main() -> int:
             results = handle_hybrid_search(search_args, store)
             # Display results (basic)
             if results:
-                darwin.log("")
-                darwin.log("Top hybrid results:")
+                darwin.info("")
+                darwin.info("Top hybrid results:")
                 for i, r in enumerate(results[:10], 1):
                     preview = r.text[:60].replace("\n", " ")
-                    darwin.log(
+                    darwin.info(
                         f"{i:3}. {r.final_score:.4f} | {r.source}:{r.page} | {preview}..."
                     )
             else:
-                darwin.log("No results found.", LogType.WARNING)
+                darwin.warning("No results found")
         return 0
     except KeyboardInterrupt:
-        darwin.log("Goodbye!")
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
 
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

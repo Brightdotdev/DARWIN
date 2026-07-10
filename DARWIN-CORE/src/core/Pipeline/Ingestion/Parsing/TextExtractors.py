@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List
 
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Ingestion.Parsing.lib import ExtractedImage
 
 
@@ -130,7 +131,8 @@ def parse_spreadsheet(
         data = pyexcel_ods.get_data(str(path))
         return _parse_ods(path, images_dir, caption, precise)
     else:
-        raise ValueError(f"Unsupported spreadsheet extension: {ext}")
+        darwin.error(f"Unsupported spreadsheet extension: {ext}")
+        return "", "", 0, {}, []
 
     md_parts = []
     for sheet_name in wb.sheetnames:

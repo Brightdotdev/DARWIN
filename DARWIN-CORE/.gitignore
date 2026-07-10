@@ -22,6 +22,8 @@ teststore/
 /darwinstoretest
 darwinstoretest/
 **/darwinstoretest/
+
+**/retrieval_test_results/
 ephemeral_output/**
 /ephemeral_output/**
 **/ephemeral_output/**

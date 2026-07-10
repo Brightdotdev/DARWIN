@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
+from src.core.Logger.DarwinLogger import darwin
+
 
 @dataclass
 class LLMResponse:
@@ -14,7 +16,9 @@ class LLMResponse:
         """True if the call succeeded and no error is present."""
         return self.error is None and (bool(self.text) or self.json is not None)
 
-    def raise_for_error(self) -> None:
-        """Convenience helper to raise a RuntimeError if the response carries an error."""
+    def raise_for_error(self) -> str:
+        """Convenience helper to log and return the error message if the response carries an error."""
         if self.error:
-            raise RuntimeError(f"LLM call failed: {self.error}")
+            darwin.error(f"LLM call failed: {self.error}")
+            return f"LLM call failed: {self.error}"
+        return ""

@@ -142,10 +142,9 @@ async def _resolve_links_async(
             except Exception as e:
                 return None, f"{type(e).__name__}: {e}"
 
-    darwin.log(
+    darwin.info(
         f"  Resolving {len(unique_urls)} unique link(s) "
-        f"({len(tokens)} total) with concurrency={_MAX_LINK_CONCURRENCY}...",
-        LogType.INFO,
+        f"({len(tokens)} total) with concurrency={_MAX_LINK_CONCURRENCY}..."
     )
 
     results = await asyncio.gather(*[_fetch_one(url) for url in unique_urls])
@@ -161,9 +160,9 @@ async def _resolve_links_async(
 
         domain = url_to_tokens[url][0].domain
         if content:
-            darwin.log(f"    {domain}: {len(content)} chars", LogType.SUCCESS)
+            darwin.success(f"    {domain}: {len(content)} chars")
         else:
-            darwin.log(f"    {domain} FAILED: {error}", LogType.WARNING)
+            darwin.warning(f"    {domain} failed: {error}")
 
 
 def resolve_link_content(url: str, timeout: float = _MAX_LINK_FETCH_TIME) -> Tuple[Optional[str], Optional[str]]:
@@ -308,9 +307,8 @@ class BlobHandler:
         # ── Size guard ─────────────────────────────────────────────────
         raw_bytes = text.encode("utf-8", errors="replace")
         if len(raw_bytes) > _MAX_BLOB_BYTES:
-            darwin.log(
-                f"Blob exceeds {_MAX_BLOB_BYTES / 1_048_576:.1f} MB — truncating",
-                LogType.WARNING,
+            darwin.warning(
+                f"Blob exceeds {_MAX_BLOB_BYTES / 1_048_576:.1f} MB, truncating"
             )
             text = raw_bytes[:_MAX_BLOB_BYTES].decode("utf-8", errors="ignore")
 
@@ -328,7 +326,7 @@ class BlobHandler:
             )
             images.extend(extracted_imgs)
             for log_msg in img_logs:
-                darwin.log(f"  {log_msg}", LogType.INFO)
+                darwin.info(f"  {log_msg}")
 
         # ── Step 2: Clean HTML blobs ───────────────────────────────────
         if mime_hint in ("text/html", "application/xhtml+xml"):
@@ -338,11 +336,11 @@ class BlobHandler:
             if cleaned:
                 text = cleaned
             else:
-                darwin.log("  Could not extract blob HTML content", LogType.WARNING)
+                darwin.warning("  Could not extract blob HTML content")
 
         # ── Step 3: Extract links (deduplicated) ─────────────────────
         link_matches = _extract_links(text)
-        darwin.log(f"  Found {len(link_matches)} unique link(s) in blob", LogType.INFO)
+        darwin.info(f"  Found {len(link_matches)} unique link(s) in blob")
 
         # Build segmented text (no fragile string replacement)
         segments: List[Union[str, _LinkToken]] = []
@@ -360,7 +358,7 @@ class BlobHandler:
                 timeout=blob.link_timeout,
             )
         elif link_matches and not blob.resolve_links:
-            darwin.log("  Link resolution disabled", LogType.INFO)
+            darwin.info("  Link resolution disabled")
 
         # ── Step 5: Quality check ──────────────────────────────────────
         assembled = _assemble_text(segments)

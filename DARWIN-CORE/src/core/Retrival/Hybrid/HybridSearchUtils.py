@@ -2,6 +2,7 @@ from typing import List, Dict, Optional, Tuple,Any
 import copy
 
 from src.core.Retrival.lib import DEFAULT_RRF_K, ChunkLink, HybridSearchResult,SemanticSearchResult,KeywordSearchResult, OverlapDirection
+from src.core.Logger.DarwinLogger import darwin
 
 
 
@@ -24,12 +25,14 @@ def reciprocal_rank_fusion(
         weights = [1.0] * len(result_lists)
 
     if len(weights) != len(result_lists):
-        raise ValueError(
+        darwin.error(
             f"weights length ({len(weights)}) must match result_lists ({len(result_lists)})"
         )
+        return []
 
     if any(w < 0 for w in weights):
-        raise ValueError("weights must be non-negative")
+        darwin.error("weights must be non-negative")
+        return []
 
     rank_maps = [
         {(item.source, item.page, item.chunk_index): rank

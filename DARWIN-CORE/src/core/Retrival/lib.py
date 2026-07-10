@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Any
 from enum import Enum
 
+from src.core.Logger.DarwinLogger import darwin
+
 # FIXED: Spelling error (Retrival -> Retrieval)
 # from src.core.Retrieval.Keyword.KeywordUtilities import DEFAULT_B  # <-- Remove this import entirely
 
@@ -135,15 +137,20 @@ class HybridSearchArgs:
     def __post_init__(self) -> None:
         """Runtime validation to ensure safe blending."""
         if self.semantic_weight < 0 or self.keyword_weight < 0:
-            raise ValueError("Weights cannot be negative.")
+            darwin.error("Weights cannot be negative.")
+            return
         if self.pool_size < self.top_k:
-            raise ValueError(f"pool_size ({self.pool_size}) must be >= top_k ({self.top_k}) for RRF to function.")
+            darwin.error(f"pool_size ({self.pool_size}) must be >= top_k ({self.top_k}) for RRF to function.")
+            return
         if not 0.0 <= self.b <= 1.0:
-            raise ValueError(f"BM25 'b' parameter must be between 0.0 and 1.0. Got {self.b}.")
+            darwin.error(f"BM25 'b' parameter must be between 0.0 and 1.0. Got {self.b}.")
+            return
         if self.k1 <= 0:
-            raise ValueError(f"BM25 'k1' parameter must be positive. Got {self.k1}.")
+            darwin.error(f"BM25 'k1' parameter must be positive. Got {self.k1}.")
+            return
         if self.per_doc_top_k is not None and self.per_doc_top_k < 1:
-            raise ValueError(f"per_doc_top_k must be >= 1 or None. Got {self.per_doc_top_k}.")
+            darwin.error(f"per_doc_top_k must be >= 1 or None. Got {self.per_doc_top_k}.")
+            return
 
 @dataclass
 class KeywordSearchArgs:
@@ -156,11 +163,14 @@ class KeywordSearchArgs:
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.b <= 1.0:
-            raise ValueError(f"BM25 'b' must be between 0.0 and 1.0. Got {self.b}.")
+            darwin.error(f"BM25 'b' must be between 0.0 and 1.0. Got {self.b}.")
+            return
         if self.k1 <= 0:
-            raise ValueError(f"BM25 'k1' must be positive. Got {self.k1}.")
+            darwin.error(f"BM25 'k1' must be positive. Got {self.k1}.")
+            return
         if self.per_doc_top_k is not None and self.per_doc_top_k < 1:
-            raise ValueError(f"per_doc_top_k must be >= 1 or None. Got {self.per_doc_top_k}.")
+            darwin.error(f"per_doc_top_k must be >= 1 or None. Got {self.per_doc_top_k}.")
+            return
 
 @dataclass
 class SemanticSearchArgs:
@@ -174,4 +184,5 @@ class SemanticSearchArgs:
     
     def __post_init__(self) -> None:
         if self.per_doc_top_k is not None and self.per_doc_top_k < 1:
-            raise ValueError(f"per_doc_top_k must be >= 1 or None. Got {self.per_doc_top_k}.")
+            darwin.error(f"per_doc_top_k must be >= 1 or None. Got {self.per_doc_top_k}.")
+            return

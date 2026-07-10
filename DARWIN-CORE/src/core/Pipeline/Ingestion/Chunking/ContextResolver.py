@@ -71,7 +71,8 @@ def _to_chunk(obj: Union[Chunk, Dict[str, Any]]) -> Chunk:
             overlap_direction=od,
             links=obj.get("links", []),
         )
-    raise TypeError(f"Expected Chunk or dict, got {type(obj).__name__}")
+    darwin.error(f"Expected Chunk or dict, got {type(obj).__name__}")
+    return {}
 
 
 def _fetch_chunks_by_index(
@@ -146,14 +147,12 @@ def get_full_context(
 
     # Paranoid warnings
     if needs_prev and prev_chunk is None:
-        darwin.log(
-            f"ContextResolver: missing prev chunk {center.index - 1} for {filename}",
-            LogType.WARNING,
+        darwin.warning(
+            f"Missing previous chunk {center.index - 1} for {filename}"
         )
     if needs_next and next_chunk is None:
-        darwin.log(
-            f"ContextResolver: missing next chunk {center.index + 1} for {filename}",
-            LogType.WARNING,
+        darwin.warning(
+            f"Missing next chunk {center.index + 1} for {filename}"
         )
 
     # Build contributors list

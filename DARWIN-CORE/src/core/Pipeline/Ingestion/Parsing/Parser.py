@@ -128,7 +128,7 @@ def parse_url(
     display_name: Optional[str] = None,
 ) -> ParsedDocument:
     """Fetch a URL and parse its content."""
-    darwin.log(f"Fetching {url}...", LogType.INFO)
+    darwin.info(f"Fetching {url}...")
 
     err = validate_url(url)
     if err:
@@ -244,7 +244,7 @@ def _dispatch_parser(
             error=f"no parser registered for type '{file_type}'",
         )
     try:
-        darwin.log(f"Parsing {display_name} as {file_type}...", LogType.INFO)
+        darwin.info(f"Parsing {display_name} as {file_type}...")
         display_text, embedding_text, page_count, metadata, all_images = parser(
             path, images_dir=images_dir, caption=caption, precise=precise
         )
@@ -278,13 +278,13 @@ def _words_to_pages(text: str, words_per_page: int = 500) -> int:
 def scan_directory(target: str | Path, recursive: bool = False) -> list[Path]:
     path = Path(target).resolve()
     if not path.exists():
-        darwin.log(f"Path does not exist: {path}", LogType.ERROR)
+        darwin.error(f"Path does not exist: {path}")
         return []
     if path.is_file():
         if is_supported(path):
             return [path]
         else:
-            darwin.log(f"File type not supported: {path.suffix}", LogType.WARNING)
+            darwin.warning(f"File type not supported: {path.suffix}")
             return []
     if path.is_dir():
         pattern = "**/*" if recursive else "*"
@@ -293,8 +293,8 @@ def scan_directory(target: str | Path, recursive: bool = False) -> list[Path]:
             if p.is_file() and is_supported(p) and not any(part.startswith(".") for part in p.parts)
         ]
         if found:
-            darwin.log(f"Scanner found {len(found)} supported files in {path.name}", LogType.INFO)
+            darwin.info(f"Scanner found {len(found)} supported files in {path.name}")
         else:
-            darwin.log(f"No supported files found in directory: {path}", LogType.WARNING)
+            darwin.warning(f"No supported files found in directory: {path}")
         return found
     return []

@@ -30,7 +30,7 @@ def check_internet_robust(verbose: bool = False) -> bool:
                     return True
         except Exception as e:
             if verbose:
-                darwin.log(f"Check failed for {host}: {e}")
+                darwin.info(f"Connectivity check failed for {host}: {e}")
             continue
     return False
 
@@ -39,11 +39,11 @@ def _check_socket(host: str, port: int, timeout: float, verbose: bool) -> bool:
         sock = socket.create_connection((host, port), timeout=timeout)
         sock.close()
         if verbose:
-            darwin.log(f"Socket OK: {host}:{port}")
+            darwin.info(f"Socket reachable: {host}:{port}")
         return True
     except OSError as e:
         if verbose:
-            darwin.log(f"Socket failed: {host}:{port} - {e}",LogType.ERROR)
+            darwin.error(f"Socket connection failed: {host}:{port} - {e}")
         return False
 
 def _check_http(url: str, timeout: float, verbose: bool) -> bool:
@@ -52,15 +52,15 @@ def _check_http(url: str, timeout: float, verbose: bool) -> bool:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             if 200 <= resp.status < 400:
                 if verbose:
-                    darwin.log(f"HTTP OK: {url} (Status: {resp.status})")
+                    darwin.info(f"HTTP reachable: {url} (Status: {resp.status})")
                 return True
             else:
                 if verbose:
-                    darwin.log(f"HTTP bad status: {url} (Status: {resp.status})",LogType.WARNING)
+                    darwin.warning(f"HTTP unexpected status: {url} (Status: {resp.status})")
                 return False
     except Exception as e:
         if verbose:
-            darwin.log(f"HTTP failed: {url} - {e}")
+            darwin.info(f"HTTP request failed: {url} - {e}")
         return False
 
 def wait_for_internet(
@@ -83,18 +83,18 @@ def wait_for_internet(
         elapsed = int(time.time() - start)
         if max_wait:
             remaining = max_wait - elapsed
-            darwin.log(f"Internet check attempt {attempt} (elapsed {elapsed}s, remaining {remaining}s)...")
+            darwin.info(f"Internet connectivity check attempt {attempt} ({elapsed}s elapsed, {remaining}s remaining)")
         else:
-            darwin.log(f"Internet check attempt {attempt}...")
+            darwin.info(f"Internet connectivity check attempt {attempt}")
 
         if check_internet_robust(verbose=False):
-            darwin.log("✓ Internet connection established.")
+            darwin.success("Internet connection established")
             return True
 
         if max_wait and elapsed >= max_wait:
-            darwin.log(f"✗ No internet after waiting {max_wait} seconds. Check your network.",LogType.ERROR)
+            darwin.error(f"No internet connection after {max_wait} seconds — check your network")
             return False
 
-        darwin.log(f"Waiting {pause} seconds before retry...")
+        darwin.info(f"Waiting {pause} seconds before retrying...")
         time.sleep(pause)
 

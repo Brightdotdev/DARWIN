@@ -1,109 +1,57 @@
-# MCP Server — AI Agent Integration
+# Darwin MCP Server
 
-**What it is:** A FastMCP server that exposes Darwin's full functionality as 10 MCP tools. AI agents (Claude, etc.) can search, ingest, index, manage models, and inspect the store through the Model Context Protocol.
+Model Context Protocol server exposing Darwin as AI-agent tools.
 
-**Why it exists:** Darwin is designed as an MCP server first. AI agents need a standard protocol (not a CLI) to interact with the RAG engine. FastMCP implements the MCP spec with stdio and SSE transports.
-
-## Entry Points
+## Quick start
 
 ```bash
-# Via CLI
-darwin mcp                    # stdio (stdin/stdout)
-darwin mcp --sse --port 8080  # HTTP SSE on port 8080
+# stdio (default — for subprocess by AI assistants)
+python -m src.mcp
 
-# Directly
-python -m src.mcp             # stdio mode (via __main__.py)
+# SSE (network — for Docker / remote clients)
+python -m src.mcp --sse --port 8080
 ```
 
-## Files
+## Available tools (10)
 
-| File | Purpose |
-|---|---|
-| `__init__.py` | Package init |
-| `__main__.py` | Entry: `python -m src.mcp` |
-| `Server.py` | FastMCP server bootstrap — creates store, orchestrators, registers 10 tools |
-| `clibase.py` | MCP logging configuration helper |
-| `tools/Search.py` | `search_darwin` tool |
-| `tools/Pipeline.py` | `run_pipeline`, `purge_artifacts`, `pipeline_report` tools |
-| `tools/Models.py` | `model_status`, `install_model`, `switch_model`, `recommend_models` tools |
-| `tools/Store.py` | `list_files`, `file_status` tools |
+### Search
+- **`search_darwin`** — Query the knowledge base with hybrid/semantic/keyword search. Returns merged passages with source metadata. All option fields use `Literal` types — your IDE shows valid choices.
 
-## Tools
+### Pipeline
+- **`run_pipeline`** — Ingest + index documents from a path or URL.
+- **`purge_artifacts`** — Delete pipeline artifacts for specific files.
+- **`pipeline_report`** — Get processing status for files.
 
-| Tool | Description | Key Parameters |
-|---|---|---|
-| `search_darwin` | Retrieve passages for a query | query, method, top_k, max_passages, rerank, files, merge_strategy |
-| `run_pipeline` | Run ingestion/indexing pipeline | parsing, chunking, indexing, stages |
-| `purge_artifacts` | Delete artifacts for files | stages, filenames |
-| `pipeline_report` | Get pipeline report for a file | filename |
-| `model_status` | Show model status across categories | — |
-| `install_model` | Install a model | model_id |
-| `switch_model` | Switch active model | category, model_id |
-| `recommend_models` | Hardware-aware recommendations | — |
-| `list_files` | List all files with pipeline status | — |
-| `file_status` | Detailed status for one file | filename |
+### Models
+- **`model_status`** — Check which models are installed per category.
+- **`install_model`** — Download and register a model.
+- **`switch_model`** — Change the active model for a category.
+- **`recommend_models`** — Get model recommendations for your hardware.
 
-## Usage
+### Store
+- **`list_files`** — All files with pipeline status.
+- **`file_status`** — Detailed status for one file.
 
-### From Python (FastMCP client)
+## Transports
 
-```python
-import asyncio
-from mcp import Client
-from mcp.transport import StdioClientTransport
+| Transport | Use case | Command |
+|-----------|----------|---------|
+| stdio | AI agent subprocess (Claude, Cursor) | `python -m src.mcp` |
+| SSE | Network / Docker / remote clients | `python -m src.mcp --sse --port 8080` |
 
-async def main():
-    transport = StdioClientTransport(["darwin", "mcp"])
-    client = Client(transport)
-    await client.connect()
+## Adding a new tool
 
-    result = await client.call_tool("search_darwin", {
-        "query": "machine learning",
-        "method": "hybrid",
-        "top_k": 5,
-    })
-    print(result)
+1. Create or edit a file in `src/mcp/tools/`
+2. Add a `register(mcp, ...)` function with `@mcp.tool()` decorators
+3. Wire it in `src/mcp/Server.py`:
+   ```python
+   import src.mcp.tools.MyTool as MyTool
+   MyTool.register(mcp, dependency)
+   ```
 
-asyncio.run(main())
-```
+## Parameter types
 
-### From Claude Desktop
-
-Add to your `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "darwin": {
-      "command": "darwin",
-      "args": ["mcp"]
-    }
-  }
-}
-```
-
-### From CLI (for testing)
-
-```bash
-# Start SSE server
-darwin mcp --sse --port 8080
-
-# Test with curl
-curl -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_darwin","arguments":{"query":"test"}}}'
-```
-
-## Internal MCP Server
-
-There's also a separate logger MCP server at `src/core/Logger/McpServer.py` that exposes 11 tools for pipeline, retrieval, store, and model operations. This is used internally and by the old MCP stack.
-
-## Architecture
-
-```
-AI Agent ──> FastMCP transport ──> Server.py
-  (stdio/SSE)                       ├── DarwinStore
-                                    ├── RetrievalOrchestrator
-                                    ├── PipelineOrchestrator
-                                    └── ModelOrchestrator
-```
+Tools that accept option-based string values (method, merge strategy, fallback strategy, log mode) use `Literal` type hints. This means:
+- Your IDE shows valid choices via autocomplete
+- MCP client sees `enum` in the JSON Schema
+- Invalid values are caught at the type-checker level

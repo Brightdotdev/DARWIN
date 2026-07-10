@@ -115,23 +115,32 @@ class ModelsOrchestrator:
             try:
                 load_keys_from_keychain()
             except Exception as e:
-                self._log(f"Could not load keychain: {e}", LogType.WARNING)
+                self._log(f"Failed to load API keys from keychain: {e}", LogType.WARNING)
 
     # ── Internal helpers ───────────────────────────────────────────
 
     def _log(self, msg: str, level: LogType = LogType.INFO):
-        if self.darwin:
-            self.darwin.log(msg, level)
+        if not self.darwin:
+            return
+        if level == LogType.ERROR:
+            self.darwin.error(msg)
+        elif level == LogType.WARNING:
+            self.darwin.warning(msg)
+        elif level == LogType.SUCCESS:
+            self.darwin.success(msg)
+        else:
+            self.darwin.info(msg)
 
     def _spec_or_raise(self, model_id: str):
         """Validate a model_id exists in the registry."""
         spec = find_spec(model_id)
         if not spec:
             registered = [s.model_id for s in MODEL_SPECS]
-            raise ValueError(
+            darwin.error(
                 f"Unknown model: '{model_id}'. "
                 f"Registered models: {registered}"
             )
+            return None
         return spec
 
     def _wrap_setup_result(self, result: SetupResult) -> OperationResult:
@@ -263,7 +272,7 @@ class ModelsOrchestrator:
         spec = self._spec_or_raise(model_id)
         category = spec.category
 
-        self._log(f"Installing {model_id}...", LogType.INFO)
+        self._log(f"Installing model '{model_id}'...", LogType.INFO)
         result = self.mgr.setup(
             category,
             model_id=model_id,
@@ -280,16 +289,16 @@ class ModelsOrchestrator:
             env_var = PROVIDER_REGISTRY.get(provider, (None,))[0]
             if env_var and not os.getenv(env_var):
                 self._log(
-                    f"API key for {provider} is not set. "
+                    f"API key for provider '{provider}' is not set. "
                     f"Use set_api_key('{provider}', 'YOUR_KEY')",
                     LogType.WARNING,
                 )
 
         op = self._wrap_setup_result(result)
         if not op.success:
-            self._log(f"Failed to install {model_id}: {op.error}", LogType.ERROR)
+            self._log(f"Failed to install model '{model_id}': {op.error}", LogType.ERROR)
         else:
-            self._log(f"Installed {model_id}", LogType.SUCCESS)
+            self._log(f"Model '{model_id}' installed successfully", LogType.SUCCESS)
         return op
 
     def install_batch(
@@ -478,7 +487,7 @@ class ModelsOrchestrator:
         )
         if result.success:
             self.mgr.set_preference(category, model_id, auto_download=False)
-            self._log(f"Switched {category.value} -> {model_id}", LogType.SUCCESS)
+            self._log(f"Switched active model for '{category.value}' to '{model_id}'", LogType.SUCCESS)
 
         return self._wrap_setup_result(result)
 
@@ -504,7 +513,7 @@ class ModelsOrchestrator:
         )
         op = self._wrap_setup_result(result)
         if op.success:
-            self._log(f"Upgraded {model_id}", LogType.SUCCESS)
+            self._log(f"Model '{model_id}' upgraded successfully", LogType.SUCCESS)
         return op
 
     def upgrade_category(self, category: ModelCategory) -> BatchResult:
@@ -554,7 +563,7 @@ class ModelsOrchestrator:
         """
         preferences = self._build_preferences(profile)
         if not preferences:
-            self._log(f"Profile '{profile}' yielded no preferences from registry", LogType.WARNING)
+            self._log(f"Profile '{profile}' resolved to no preferences from the registry", LogType.WARNING)
 
         return self.mgr.setup_all(
             preferences=preferences,
@@ -579,7 +588,7 @@ class ModelsOrchestrator:
             required_categories=[ModelCategory.EMBEDDING],
         )
         if ModelCategory.EMBEDDING not in modelSetup or not modelSetup[ModelCategory.EMBEDDING].success:
-            self._log("Embedding model is required but not set up successfully", LogType.ERROR)
+            self._log("Embedding model setup failed, it is required for all pipelines", LogType.ERROR)
             return None
 
     # ── Onboarding (Non-Interactive) ─────────────────────────────────
@@ -612,7 +621,8 @@ class ModelsOrchestrator:
             }
 
         if not preferences:
-            raise ValueError("No preferences provided and system detection disabled.")
+            darwin.error("No preferences provided and system detection disabled.")
+            return {}
 
         enum_prefs: Dict[ModelCategory, str] = {}
         for cat_str, mid in preferences.items():
@@ -623,8 +633,8 @@ class ModelsOrchestrator:
                 continue
             if spec.category != cat_enum:
                 self._log(
-                    f"Model '{mid}' is registered under '{spec.category.value}', "
-                    f"not '{cat_enum.value}'. Skipping.",
+                    f"Model '{mid}' belongs to category '{spec.category.value}', "
+                    f"not '{cat_enum.value}', skipping",
                     LogType.WARNING,
                 )
                 continue
@@ -745,7 +755,7 @@ class ModelsOrchestrator:
             set_api_key(provider, key, validate=validate)
             return True
         except Exception as e:
-            self._log(f"Failed to set key for {provider}: {e}", LogType.ERROR)
+            self._log(f"Failed to set API key for provider '{provider}': {e}", LogType.ERROR)
             return False
 
     def remove_key(self, provider: str) -> bool:

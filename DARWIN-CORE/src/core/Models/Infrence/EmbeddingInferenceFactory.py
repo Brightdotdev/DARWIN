@@ -44,13 +44,13 @@ def get_embedding_inference(
     if model_id is None or model_id == "":
         model_id = get_active_model(EMBEDDING_CATEGORY)
         if model_id is None:
-            darwin.log("No embedding model specified and no active model set.", LogType.ERROR)
+            darwin.error("No embedding model specified and no active model set")
             return None
     
     spec = find_spec(model_id, category=ModelCategory.EMBEDDING)
 
     if spec is None:
-        darwin.log(f"Unknown embedding model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown embedding model: {model_id}")
         return None
 
     # Route to appropriate backend
@@ -58,8 +58,8 @@ def get_embedding_inference(
         # API-based model
         load_keys_from_keychain(log=False)
         if not is_key_set(spec.requires_provider):
-            darwin.log(f"Missing key for provider: {spec.requires_provider}", LogType.ERROR)
-            darwin.log(f"Model Loading Failed", LogType.ERROR)
+            darwin.error(f"Missing API key for provider: {spec.requires_provider}")
+            darwin.error("Model loading failed")
             return None
         api_embed =APIEmbeddingInference(model_id=spec.model_id, normalize=normalize)
         api_embed.load()
@@ -68,14 +68,14 @@ def get_embedding_inference(
         # Local ONNX model
         model_path = ensure_model_path(model_id, category=EMBEDDING_CATEGORY)
         if model_path is None:
-            darwin.log(f"Failed to get path for model: {model_id}", LogType.ERROR)
-            darwin.log(f"Model Loading Failed", LogType.ERROR)
+            darwin.error(f"No local path found for model: {model_id}")
+            darwin.error("Model loading failed")
             return None
             
         # Check if model file exists
         if not model_path.exists():
-            darwin.log(f"Model file not found at: {model_path}", LogType.ERROR)
-            darwin.log(f"Model Loading Failed", LogType.ERROR)
+            darwin.error(f"Model file not found at: {model_path}")
+            darwin.error("Model loading failed")
             return None
             
         onnx_embed = OnnxEmbeddingInference(model_id=spec.model_id,model_path=model_path, normalize=normalize)
@@ -95,18 +95,19 @@ def set_embedding_preference(model_id: str, auto_download: bool = True, force: b
     model_spec = find_spec(model_id, category=ModelCategory.EMBEDDING)
 
     if model_spec is None:
-        raise ValueError(f"Unknown embedding model: {model_id}")
+        darwin.error(f"Unknown embedding model: {model_id}")
+        return
 
     # Handle API-based models
     if model_spec.requires_provider:
         load_keys_from_keychain(log=False)
         if not is_key_set(model_spec.requires_provider):
-            darwin.log(f"Missing key for provider: {model_spec.requires_provider}", LogType.ERROR)
-            darwin.log(f"Model will not be set as active", LogType.ERROR)
+            darwin.error(f"Missing API key for provider: {model_spec.requires_provider}")
+            darwin.error("Model will not be set as active")
             return
         
         set_active_model(EMBEDDING_CATEGORY,model_spec.model_id,)
-        darwin.log(f"Model set as active: {model_spec.model_id}", LogType.INFO)
+        darwin.info(f"Model set as active: {model_spec.model_id}")
         return
 
     # Handle local ONNX models
@@ -114,8 +115,8 @@ def set_embedding_preference(model_id: str, auto_download: bool = True, force: b
     model_path = ensure_model_path(model_id, category=EMBEDDING_CATEGORY)
     
     if model_path is None:
-        darwin.log(f"Failed to get path for model: {model_id}", LogType.ERROR)
-        darwin.log(f"Model will not be set as active", LogType.ERROR)
+        darwin.error(f"No local path found for model: {model_id}")
+        darwin.error("Model will not be set as active")
         return
 
     # Check if model exists, and download if needed
@@ -123,24 +124,24 @@ def set_embedding_preference(model_id: str, auto_download: bool = True, force: b
     
     if not model_path.exists():
         if not auto_download:
-            darwin.log(f"Model not found at: {model_path}", LogType.ERROR)
-            darwin.log(f"Model will not be set as active", LogType.ERROR)
+            darwin.error(f"Model not found at: {model_path}")
+            darwin.error("Model will not be set as active")
             return
         
-        darwin.log(f"Model not found. Attempting auto-download...", LogType.INFO)
+        darwin.info("Model not found locally, attempting auto-download...")
     
     # Ensure the model is downloaded
     is_downloaded = model_downloader.ensure(force=force)
     
     if not is_downloaded:
-        darwin.log(f"Failed to download model: {model_id}", LogType.ERROR)
-        darwin.log(f"Model will not be set as active", LogType.ERROR)
-        darwin.log(f"Try using the recache or force options to cleanup and redownload", LogType.ERROR)
+        darwin.error(f"Failed to download model: {model_id}")
+        darwin.error("Model will not be set as active")
+        darwin.error("Try using recache or force to re-download")
         return
     
     # Set as active model
     set_active_model(EMBEDDING_CATEGORY,model_spec.model_id)
-    darwin.log(f"Model set as active: {model_path}", LogType.INFO)
+    darwin.info(f"Model set as active: {model_path}")
 
 
 def discard_embedding_model(model_id: str, delete: bool = False) -> None:
@@ -157,39 +158,39 @@ def discard_embedding_model(model_id: str, delete: bool = False) -> None:
     # Validate model exists in registry
     model_spec = find_spec(model_id, category=ModelCategory.EMBEDDING)
     if model_spec is None:
-        darwin.log(f"Unknown model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown model: {model_id}")
         return
     
     # Check if it's an API-based model
     if model_spec.requires_provider:
-        darwin.log(f"Model {model_id} is an API-based model. Nothing to discard locally.", LogType.INFO)
-        darwin.log(f"To remove this model, clear the key for {model_spec.requires_provider}", LogType.INFO)
+        darwin.info(f"Model {model_id} is API-based, nothing to discard locally")
+        darwin.info(f"To remove this model, clear the key for {model_spec.requires_provider}")
         
         # Still remove from preferences if it's the active model
         current_model = get_active_model(EMBEDDING_CATEGORY)
         if current_model == model_id:
             set_active_model(EMBEDDING_CATEGORY,None)
-            darwin.log(f"Removed {model_id} from active preferences", LogType.INFO)
+            darwin.info(f"Removed {model_id} from active preferences")
         return
     
     # Handle local model
     model_path = get_model_path(model_id, None, EMBEDDING_CATEGORY)
     
     if model_path is None:
-        darwin.log(f"Model path not found for: {model_id}", LogType.ERROR)
+        darwin.error(f"Model path not found for: {model_id}")
         return
     
     # Check if we're trying to delete the active model
     current_model = get_active_model(EMBEDDING_CATEGORY)
     if current_model == str(model_path) or current_model == model_id:
         if delete:
-            darwin.log(f"Cannot delete the currently active model: {model_id}", LogType.ERROR)
-            darwin.log(f"Please set a different model as active first", LogType.ERROR)
+            darwin.error(f"Cannot delete the currently active model: {model_id}")
+            darwin.error("Set a different model as active first")
             return
         else:
             # Just remove from preferences if not deleting
             set_active_model(EMBEDDING_CATEGORY,None)
-            darwin.log(f"Removed {model_id} from active preferences", LogType.INFO)
+            darwin.info(f"Removed {model_id} from active preferences")
             return
     
     # Delete if requested
@@ -198,23 +199,23 @@ def discard_embedding_model(model_id: str, delete: bool = False) -> None:
             try:
                 if model_path.is_dir():
                     shutil.rmtree(model_path)
-                    darwin.log(f"Model directory deleted: {model_path}", LogType.INFO)
+                    darwin.info(f"Model directory deleted: {model_path}")
                 else:
                     model_path.unlink()
-                    darwin.log(f"Model file deleted: {model_path}", LogType.INFO)
+                    darwin.info(f"Model file deleted: {model_path}")
                     
-                darwin.log(f"Model {model_id} has been deleted from disk", LogType.INFO)
+                darwin.info(f"Model {model_id} deleted from disk")
             except Exception as e:
-                darwin.log(f"Failed to delete model at {model_path}: {e}", LogType.ERROR)
+                darwin.error(f"Failed to delete model at {model_path}: {e}")
                 return
         else:
-            darwin.log(f"Model path does not exist: {model_path}", LogType.WARNING)
-            darwin.log(f"Nothing to delete", LogType.INFO)
+            darwin.warning(f"Model path does not exist: {model_path}")
+            darwin.info("Nothing to delete")
     
     # Remove from preferences if it was set as active (shouldn't be, but just in case)
     if current_model == str(model_path) or current_model == model_id:
         set_active_model(EMBEDDING_CATEGORY,None)
-        darwin.log(f"Removed {model_id} from active preferences", LogType.INFO)
+        darwin.info(f"Removed {model_id} from active preferences")
 
 
 def get_embedding_model_path(model_id: str) -> Optional[Path]:
@@ -230,11 +231,11 @@ def get_embedding_model_path(model_id: str) -> Optional[Path]:
     spec = find_spec(model_id, category=ModelCategory.EMBEDDING)
     
     if spec is None:
-        darwin.log(f"Unknown embedding model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown embedding model: {model_id}")
         return None
     
     if spec.requires_provider:
-        darwin.log(f"Model {model_id} is API-based and has no local path", LogType.INFO)
+        darwin.info(f"Model {model_id} is API-based and has no local path")
         return None
     
     return get_model_path(model_id, None, EMBEDDING_CATEGORY)

@@ -28,22 +28,26 @@ _models = None
 console = Console()
 
 
-def _get_store():
+def _get_store(store_ref: str | None = None):
     global _store
-    if _store is None:
+    if _store is None or store_ref is not None:
         from src.core.Storage.DarwinStore import DarwinStore
+        from src.core.Orchestrators.lib import resolve_store
 
-        _store = DarwinStore()
-        _store.bootstrap()
+        resolved = resolve_store(store_ref)
+        resolved.bootstrap()
+        if store_ref is None:
+            _store = resolved
+        return resolved
     return _store
 
 
-def _get_pipeline():
+def _get_pipeline(store_ref: str | None = None):
     global _pipeline
-    if _pipeline is None:
+    if _pipeline is None or store_ref is not None:
         from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
 
-        _pipeline = PipelineOrchestrator(store=_get_store())
+        _pipeline = PipelineOrchestrator(store=_get_store(store_ref))
     return _pipeline
 
 
@@ -427,42 +431,29 @@ def _run_pipeline_stages(
     only_kw,
     only_semantic,
     rerun,
+    store_ref=None,
 ):
-    pipe = _get_pipeline()
-    from src.core.Orchestrators.PipelineOrchestrator import (
-        PipelineParameters,
-        ParsingArgs,
-        ChunkingArgs,
-        IndexingArgs,
-    )
+    pipe = _get_pipeline(store_ref)
+    from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
     from src.core.Logger.DarwinLogger import darwin
     darwin.configure()
-    file_list = [files] if files else []
-    params = PipelineParameters()
 
-    if "ingestion" in stages:
-        params.parsing = ParsingArgs(
-            target=target,
-            files=file_list,
-            ocr=ocr,
-            recursive=recursive,
-            precise=precise,
-            rerun=rerun,
-        )
-        params.chunking = ChunkingArgs(files=file_list, rerun=rerun)
-
-    if "indexing" in stages:
-        params.indexing = IndexingArgs(
-            threshold=threshold or 0.5,
-            idf_smoothing=idf_smoothing or 1.5,
-            only_kw=only_kw,
-            only_semantic=only_semantic,
-            files=file_list,
-            rerun=rerun,
-        )
-
+    params = PipelineInput(
+        target=target or "",
+        store=store_ref,
+        stages=stages,
+        files=[files] if files else None,
+        ocr=ocr,
+        recursive=recursive,
+        precise=precise,
+        rerun=rerun,
+        threshold=threshold or 0.5,
+        idf_smoothing=idf_smoothing or 1.5,
+        only_kw=only_kw,
+        only_semantic=only_semantic,
+    )
     console.print(f"Running pipeline stages: {stages}")
-    result = pipe.build_pipeline(params, stages)
+    result = pipe.build_pipeline(params)
     if result.success:
         _ok(f"{', '.join(s.value for s in result.stages_completed)} complete")
     if result.stages_failed:
@@ -484,6 +475,7 @@ def cmd_pipeline_run(args):
         args.only_kw,
         args.only_semantic,
         args.rerun,
+        store_ref=getattr(args, "store", None),
     )
 
 
@@ -500,6 +492,7 @@ def cmd_pipeline_ingest(args):
         False,
         False,
         args.rerun,
+        store_ref=getattr(args, "store", None),
     )
 
 
@@ -666,6 +659,83 @@ def cmd_system_info(args):
     )
 
 
+def cmd_status(args):
+    """Comprehensive overview: store files, installed models, preferences."""
+
+    # ── Store files ──
+    try:
+        store = _get_store()
+        report = store.get_pipeline_report()
+        if isinstance(report, dict):
+            report = [report]
+        file_count = len(report) if report else 0
+        ready_count = sum(
+            1 for r in (report or []) if r.get("search_ready")
+        )
+        source_count = store.status().get("source_count", 0)
+    except Exception:
+        file_count = 0
+        ready_count = 0
+        source_count = 0
+
+    # ── Models ──
+    try:
+        models = _get_models()
+        model_status = models.status()
+        installed = {}
+        for name, cs in model_status.categories.items():
+            if cs.active_model_id:
+                installed[name] = cs.active_model_id
+        installed_count = len(installed)
+    except Exception:
+        installed_count = 0
+        installed = {}
+
+    # ── Preferences (from config) ──
+    try:
+        from src.Setup import DarwinSetup
+
+        setup = DarwinSetup()
+        config = setup.load_config() or {}
+        prefs = config.get("models", {})
+    except Exception:
+        prefs = {}
+
+    # ── Display ──
+    console.print()
+    _panel(
+        "Darwin Status Overview",
+        f"[bold]Store:[/bold] {source_count} sources, {file_count} files ({ready_count} search-ready)\n"
+        f"[bold]Models:[/bold] {installed_count} installed\n"
+        f"[bold]Preferences:[/bold] {len(prefs)} configured",
+    )
+
+    if installed:
+        _print_table(
+            "Installed Models",
+            ["Category", "Model ID"],
+            [(cat, mid) for cat, mid in installed.items()],
+        )
+
+    if prefs:
+        _print_table(
+            "Model Preferences (config)",
+            ["Category", "Model ID"],
+            [(cat, mid) for cat, mid in prefs.items()],
+        )
+
+    if file_count:
+        _print_table(
+            "Store File Summary",
+            ["Status", "Count"],
+            [
+                ("Total", str(file_count)),
+                ("Search Ready", str(ready_count)),
+                ("Pending", str(file_count - ready_count)),
+            ],
+        )
+
+
 # ══════════════════════════════════════════════════════════════
 # CLI PARSER
 # ══════════════════════════════════════════════════════════════
@@ -742,7 +812,8 @@ def _add_pipeline_args(sub):
     sp = p.add_subparsers(dest="pipeline_action", required=True)
 
     r = sp.add_parser("run", help="Full ingest + index pipeline")
-    r.add_argument("target", help="Path or URL to ingest")
+    r.add_argument("target", help="Path or static URL to ingest")
+    r.add_argument("--store", help="Store ID, name, or path (default: auto)")
     r.add_argument("--files", "-f", help="Specific files (comma-separated)")
     r.add_argument("--ocr", action="store_true", help="Enable OCR for scanned docs")
     r.add_argument("--recursive", action="store_true", help="Recursive directory scan")
@@ -764,7 +835,8 @@ def _add_pipeline_args(sub):
     r.set_defaults(func=cmd_pipeline_run)
 
     i = sp.add_parser("ingest", help="Ingestion only (parse + chunk)")
-    i.add_argument("target", help="Path or URL to ingest")
+    i.add_argument("target", help="Path or static URL to ingest")
+    i.add_argument("--store", help="Store ID, name, or path (default: auto)")
     i.add_argument("--files", "-f", help="Specific files")
     i.add_argument("--ocr", action="store_true")
     i.add_argument("--recursive", action="store_true")
@@ -883,9 +955,10 @@ def main():
         prog="darwin-admin",
         description="Darwin Admin — Full orchestrator control for power users",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
+    epilog="""
 Examples:
   python -m src.admin setup interactive
+  python -m src.admin status
   python -m src.admin models status
   python -m src.admin models install intfloat/multilingual-e5-small-onnx
   python -m src.admin models keys set openai sk-...
@@ -894,7 +967,7 @@ Examples:
   python -m src.admin pipeline run ./docs --ocr
   python -m src.admin pipeline purge myfile.pdf --stages ingestion
   python -m src.admin system info
-        """,
+    """,
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -904,6 +977,10 @@ Examples:
     _add_pipeline_args(sub)
     _add_logs_args(sub)
     _add_system_args(sub)
+
+    # Top-level status
+    sp = sub.add_parser("status", help="Overview: store files, installed models, preferences")
+    sp.set_defaults(func=cmd_status)
 
     args = parser.parse_args()
 

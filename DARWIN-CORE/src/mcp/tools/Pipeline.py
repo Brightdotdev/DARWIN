@@ -15,12 +15,13 @@ import mcp.types as types
 
 from src.core.Orchestrators.PipelineOrchestrator import (
     PipelineOrchestrator,
-    PipelineParameters,
+    StageParameters,
     PipelineStage,
     PipelineResult,
 )
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Storage.StoreRegistry import DarwinStoreRegistry
+from src.core.Logger.DarwinLogger import darwin
 from src.mcp.clibase import configure, OutputMode, LogFilter
 
 # ── Server instance ────────────────────────────────────────────────
@@ -38,7 +39,8 @@ def get_store(store_id: Optional[str] = None) -> DarwinStore:
         else:
             ds = DarwinStore.get_default_store()
             if ds is None:
-                raise ValueError("No default store found. Provide store_id.")
+                darwin.error("No default store found. Provide store_id.")
+                return None
             _store = ds
     return _store
 
@@ -120,17 +122,25 @@ async def call_tool(name: str, arguments: Any) -> List[types.TextContent]:
     orchestrator = PipelineOrchestrator(store)
 
     if name == "run_pipeline":
-        params = PipelineParameters(
-            parsing=arguments.get("parsing"),
-            chunking=arguments.get("chunking"),
-            indexing=arguments.get("indexing"),
+        from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
+        parsing = arguments.get("parsing") or {}
+        stages = arguments.get("stages", ["ingestion", "indexing"])
+        params = PipelineInput(
+            target=parsing.get("target", ""),
+            stages=stages,
+            files=parsing.get("files"),
+            ocr=parsing.get("ocr", False),
+            recursive=parsing.get("recursive", False),
+            precise=parsing.get("precise", False),
+            rerun=parsing.get("rerun", False),
+            threshold=(arguments.get("indexing") or {}).get("threshold", 0.5),
+            idf_smoothing=(arguments.get("indexing") or {}).get("idf_smoothing", 1.5),
+            only_kw=(arguments.get("indexing") or {}).get("only_kw", False),
+            only_semantic=(arguments.get("indexing") or {}).get("only_semantic", False),
+            strict=arguments.get("strict", True),
+            log_mode=arguments.get("log_mode", "quiet"),
         )
-        stages = arguments.get("stages", [])
-        strict = arguments.get("strict", True)
-        log_mode = arguments.get("log_mode", "quiet")
-        result: PipelineResult = orchestrator.build_pipeline(
-            params, stages, strict=strict, log_mode=log_mode
-        )
+        result: PipelineResult = orchestrator.build_pipeline(params)
         return [
             types.TextContent(
                 type="text", text=json.dumps(result.__dict__, default=str)
@@ -148,10 +158,14 @@ async def call_tool(name: str, arguments: Any) -> List[types.TextContent]:
         report = store.get_pipeline_report(filename)
         return [types.TextContent(type="text", text=json.dumps(report, default=str))]
 
-    raise ValueError(f"Unknown tool: {name}")
+    return [types.TextContent(type="text", text=json.dumps({"success": False, "error": f"Unknown tool: {name}"}))]
 
 
 # ── FastMCP registration (used by src.mcp.Server) ─────────────────
+
+
+from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
+from src.core.Orchestrators.lib import PipelineMode, resolve_store
 
 
 def register(mcp, pipeline):
@@ -159,9 +173,9 @@ def register(mcp, pipeline):
 
     @mcp.tool()
     def run_pipeline(
-        stages: List[str],
-        store_id: Optional[str] = None,
-        target: Optional[str] = None,
+        stages: list[str],
+        target: str = "",
+        store: Optional[str] = None,
         files: Optional[str] = None,
         ocr: bool = False,
         recursive: bool = False,
@@ -171,42 +185,37 @@ def register(mcp, pipeline):
         idf_smoothing: float = 1.5,
         only_kw: bool = False,
         only_semantic: bool = False,
+        strict: bool = True,
+        log_mode: PipelineMode = "quiet",
     ) -> str:
         """Run ingestion/indexing pipeline stages."""
-        params = PipelineParameters()
-        if "ingestion" in stages:
-            from src.core.Orchestrators.PipelineOrchestrator import (
-                ParsingArgs,
-                ChunkingArgs,
-            )
-
-            file_list = [files] if files else []
-            params.parsing = ParsingArgs(
-                target=target,
-                files=file_list,
-                ocr=ocr,
-                recursive=recursive,
-                precise=precise,
-                rerun=rerun,
-            )
-            params.chunking = ChunkingArgs(files=file_list, rerun=rerun)
-        if "indexing" in stages:
-            from src.core.Orchestrators.PipelineOrchestrator import IndexingArgs
-
-            file_list = [files] if files else []
-            params.indexing = IndexingArgs(
-                threshold=threshold,
-                idf_smoothing=idf_smoothing,
-                only_kw=only_kw,
-                only_semantic=only_semantic,
-                files=file_list,
-                rerun=rerun,
-            )
-        result = pipeline.build_pipeline(params, stages)
+        params = PipelineInput(
+            target=target,
+            store=store,
+            stages=stages,
+            files=[files] if files else None,
+            ocr=ocr,
+            recursive=recursive,
+            precise=precise,
+            rerun=rerun,
+            threshold=threshold,
+            idf_smoothing=idf_smoothing,
+            only_kw=only_kw,
+            only_semantic=only_semantic,
+            strict=strict,
+            log_mode=log_mode,
+        )
+        if store:
+            from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+            resolved = resolve_store(store)
+            resolved.bootstrap()
+            result = PipelineOrchestrator(store=resolved).build_pipeline(params)
+        else:
+            result = pipeline.build_pipeline(params)
         return json.dumps(result.__dict__, default=str)
 
     @mcp.tool()
-    def purge_artifacts(stages: List[str], filenames: List[str]) -> str:
+    def purge_artifacts(stages: list[str], filenames: list[str]) -> str:
         """Delete pipeline artifacts for specific files."""
         pipeline.purge(stages, filenames)
         return "Purge completed"

@@ -32,7 +32,7 @@ def reconstruct_records(rows: list[dict], cls: Any) -> list[Any]:
             # Try direct instantiation with all fields
             return [cls(**row) for row in rows]
     except Exception as e:
-        darwin.warning(f"Reconstruction failed: {e}")
+        darwin.warning(f"Record reconstruction failed: {e}")
         return rows
 
 
@@ -74,15 +74,15 @@ class StoreSearch:
             else:
                 row["_score"] = 0.0
                 darwin.warning(
-                    f"Row with index {idx} not found in score map for {filename}. "
-                    f"Available indices: {list(score_map.keys())[:10]}..."
+                    f"Row index {idx} not in score map for {filename}; "
+                    f"available indices: {list(score_map.keys())[:10]}..."
                 )
 
         if cls is not None:
             try:
                 return reconstruct_records(rows, cls=cls)
             except Exception as e:
-                darwin.warning(f"Reconstruction failed for {filename}: {e}")
+                darwin.warning(f"Record reconstruction failed for {filename}: {e}")
                 # Fall through to return raw rows
         return rows
 
@@ -135,8 +135,8 @@ class StoreSearch:
         # Map positions back to original chunk indices
         if index_map is None:
             darwin.warning(
-                f"No index map found for {filename}; assuming positions match record indices. "
-                "This may be incorrect if records have been reordered or deleted."
+                f"No index map for {filename}; using position-based mapping, "
+                "which may be incorrect after reordering or deletion"
             )
             chunk_indices = [int(pos) for pos in top_positions.tolist()]
         else:
@@ -145,7 +145,8 @@ class StoreSearch:
                 chunk_indices = [index_map[pos] for pos in top_positions.tolist()]
             except IndexError as e:
                 darwin.error(
-                    f"Index map lookup failed for {filename}: {e}. Falling back to position mapping."
+                    f"Index map lookup failed for {filename}: {e}; "
+                    "falling back to position mapping"
                 )
                 chunk_indices = [int(pos) for pos in top_positions.tolist()]
 
@@ -168,40 +169,38 @@ class StoreSearch:
 
         if not force_numpy and self.has_vector(filename):
             try:
-                darwin.log(f"Searching USearch for {filename}", LogType.INFO)
+                darwin.info(f"Searching USearch index for {filename}")
                 rows = self.retrieve_by_vector(
                     filename, query_vec, k=k, columns=columns, cls=None
                 )
                 if rows:
-                    darwin.log(
-                        f"USearch returned {len(rows)} results for {filename}",
-                        LogType.INFO,
+                    darwin.info(
+                        f"USearch returned {len(rows)} results for {filename}"
                     )
             except Exception as e:
                 error_msg = f"USearch failed for {filename}: {e}"
-                darwin.log(error_msg, LogType.WARNING)
+                darwin.warning(error_msg)
 
         if not rows and self.has_embeddings(filename):
             try:
-                darwin.log(
-                    f"Falling back to numpy search for {filename}", LogType.WARNING
+                darwin.warning(
+                    f"Falling back to numpy search for {filename}"
                 )
                 rows = self.retrieve_by_numpy(
                     filename, query_vec, k=k, columns=columns, cls=None
                 )
                 if rows:
-                    darwin.log(
-                        f"Numpy search returned {len(rows)} results for {filename}",
-                        LogType.INFO,
+                    darwin.info(
+                        f"Numpy search returned {len(rows)} results for {filename}"
                     )
             except Exception as e:
                 error_msg = f"Numpy fallback failed for {filename}: {e}"
-                darwin.log(error_msg, LogType.WARNING)
+                darwin.warning(error_msg)
 
         if not rows and error_msg:
-            darwin.log(f"No results for {filename}: {error_msg}", LogType.WARNING)
+            darwin.warning(f"No results for {filename}: {error_msg}")
         elif not rows:
-            darwin.log(f"No results found for {filename}", LogType.INFO)
+            darwin.info(f"No results found for {filename}")
 
         # Filter by min_score and ensure _score exists
         filtered = []
@@ -210,9 +209,8 @@ class StoreSearch:
             if score >= min_score:
                 filtered.append(r)
             else:
-                darwin.log(
-                    f"Filtering out result with score {score} < {min_score} for {filename}",
-                    LogType.DEBUG,
+                darwin.debug(
+                    f"Result filtered out: score {score} below threshold {min_score} for {filename}"
                 )
 
         return filtered
@@ -247,23 +245,22 @@ class StoreSearch:
                 )
                 all_results.extend(rows)
                 if rows:
-                    darwin.log(f"Got {len(rows)} results from {filename}", LogType.INFO)
+                    darwin.info(f"Got {len(rows)} results from {filename}")
             except Exception as e:
                 error_msg = f"Search failed for {filename}: {e}"
                 errors.append(error_msg)
-                darwin.log(error_msg, LogType.ERROR)
+                darwin.error(error_msg)
 
         if errors:
-            darwin.log(
-                f"{len(errors)} files failed during multi-search", LogType.WARNING
+            darwin.warning(
+                f"{len(errors)} file(s) failed during multi-file search"
             )
 
         # Sort by _score (highest first)
         all_results.sort(key=lambda r: r.get("_score", 0.0), reverse=True)
 
         results = all_results[:top_k]
-        darwin.log(
-            f"Multi-search: {len(results)} results across {len(unique)} files",
-            LogType.INFO,
+        darwin.info(
+            f"Multi-search: {len(results)} results across {len(unique)} files"
         )
         return results

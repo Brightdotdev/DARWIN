@@ -2,51 +2,56 @@ import json
 import traceback
 from typing import Optional
 
-from src.core.Retrival.OrchestratorTypes import (
-    OrchestratorConfig,
-    MergeStrategy,
-    FallbackStrategy,
-)
+from src.core.Orchestrators.lib import RetrievalParameters, resolve_store
+from src.core.Orchestrators.lib import Method, MergeStrategy, FallbackStrategy
 
 
 def register(mcp, retrieval_orch):
     @mcp.tool()
     def search_darwin(
         query: str,
-        method: str = "hybrid",
+        method: Method = "hybrid",
+        store: Optional[str] = None,
         files: Optional[str] = None,
         top_k: int = 5,
         max_passages: int = 5,
         max_chars: int = 6000,
         min_passage_score: float = 0.3,
-        merge_strategy: str = "adjacent",
+        merge_strategy: MergeStrategy = "adjacent",
         fill_gaps: bool = False,
         max_per_source: int = 2,
         prefer_sources: Optional[str] = None,
         exclude_sources: Optional[str] = None,
         filter_structural: bool = True,
-        fallback_strategy: str = "both",
+        fallback_strategy: FallbackStrategy = "both",
         rerank: bool = False,
     ) -> dict:
         try:
-            cfg = OrchestratorConfig(
+            params = RetrievalParameters(
                 query=query,
                 method=method,
+                store=store,
                 files=[files] if files else None,
                 top_k=top_k,
                 max_passages=max_passages,
                 max_chars=max_chars,
                 min_passage_score=min_passage_score,
-                merge_strategy=MergeStrategy(merge_strategy),
+                merge_strategy=merge_strategy,
                 fill_gaps=fill_gaps,
                 max_per_source=max_per_source,
                 prefer_sources=[prefer_sources] if prefer_sources else None,
                 exclude_sources=[exclude_sources] if exclude_sources else None,
                 filter_structural=filter_structural,
-                fallback_strategy=FallbackStrategy(fallback_strategy),
+                fallback_strategy=fallback_strategy,
                 rerank=rerank,
             )
-            ctx = retrieval_orch.retrieve_and_resolve(cfg)
+            if store:
+                from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                resolved = resolve_store(store)
+                resolved.bootstrap()
+                ctx = RetrievalOrchestrator(store=resolved).retrieve_and_resolve(params)
+            else:
+                ctx = retrieval_orch.retrieve_and_resolve(params)
             if ctx is None or ctx.is_empty():
                 return {"success": True, "data": {"passages": [], "total": 0}}
 

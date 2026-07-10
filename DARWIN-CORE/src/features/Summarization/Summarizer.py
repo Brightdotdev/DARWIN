@@ -79,15 +79,15 @@ class _SpacyPipelineFactory:
 
                 spacy_wrapper = modelManager.get(ModelCategory.NLP)
                 if spacy_wrapper is None:
-                    darwin.log("Spacy not available for Summarizer", LogType.ERROR)
+                    darwin.error("spaCy pipeline not available — summarizer disabled")
                     return None
 
                 cls._base_nlp = spacy_wrapper.nlp
                 cls._base_model_name = getattr(spacy_wrapper, 'model_name', 'unknown')
-                darwin.log(f"Summarizer base spaCy model: {cls._base_model_name}", LogType.INFO)
+                darwin.info(f"Base spaCy model loaded: {cls._base_model_name}")
 
             except Exception as e:
-                darwin.log(f"[Summarizer] spaCy load failed: {e}", LogType.ERROR)
+                darwin.error(f"spaCy load failed: {e}")
                 return None
 
         return cls._base_nlp
@@ -107,7 +107,7 @@ class _SpacyPipelineFactory:
         try:
             nlp = base.copy()
         except Exception as e:
-            darwin.log(f"[Summarizer] Failed to copy spaCy pipeline: {e}", LogType.ERROR)
+            darwin.error(f"Failed to copy spaCy pipeline: {e}")
             return None
 
         # Add textrank to this isolated pipeline
@@ -115,16 +115,16 @@ class _SpacyPipelineFactory:
             try:
                 nlp.add_pipe("textrank")
             except Exception as e:
-                darwin.log(f"[Summarizer] Failed to add textrank: {e}", LogType.ERROR)
+                darwin.error(f"Failed to add textrank: {e}")
                 return None
 
         # Apply POS filter to THIS pipeline only
         if pos_filter:
             try:
                 nlp.get_pipe("textrank").pos_keep = {"NOUN", "PROPN", "ADJ"}
-                darwin.log("TextRank POS filter set to NOUN, PROPN, ADJ", LogType.INFO)
+                darwin.info("TextRank POS filter set to NOUN, PROPN, ADJ")
             except Exception as e:
-                darwin.log(f"[Summarizer] Failed to set POS filter: {e}", LogType.WARNING)
+                darwin.warning(f"Failed to set POS filter: {e}")
 
         return nlp
 
@@ -164,13 +164,17 @@ class Summarizer:
         batch_size: int = 16,
     ):
         if min_sentence_words < 1:
-            raise ValueError(f"min_sentence_words must be >= 1, got {min_sentence_words}")
+            darwin.error(f"min_sentence_words must be >= 1, got {min_sentence_words}")
+            return None
         if chunk_sentences < 1:
-            raise ValueError(f"chunk_sentences must be >= 1, got {chunk_sentences}")
+            darwin.error(f"chunk_sentences must be >= 1, got {chunk_sentences}")
+            return None
         if chunk_size < 1000:
-            raise ValueError(f"chunk_size must be >= 1000, got {chunk_size}")
+            darwin.error(f"chunk_size must be >= 1000, got {chunk_size}")
+            return None
         if batch_size < 1:
-            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
+            darwin.error(f"batch_size must be >= 1, got {batch_size}")
+            return None
 
         self.min_sentence_words = min_sentence_words
         self.chunk_sentences = chunk_sentences
@@ -190,7 +194,7 @@ class Summarizer:
         try:
             import pytextrank  # noqa: F401 — verifies installation
         except ImportError:
-            darwin.log("pytextrank not installed — summarizer disabled", LogType.WARNING)
+            darwin.warning("pytextrank not installed — summarizer disabled")
             self._nlp = None
             return
 
@@ -199,7 +203,7 @@ class Summarizer:
         )
 
         if self._nlp is None:
-            darwin.log("spaCy pipeline not available — summarizer disabled", LogType.WARNING)
+            darwin.warning("spaCy pipeline not available — summarizer disabled")
 
     @property
     def available(self) -> bool:
@@ -212,10 +216,11 @@ class Summarizer:
         if not self.available or len(text) < MIN_CHARS_TO_SUMMARIZE:
             return text
         if max_sentences < 1:
-            raise ValueError(f"max_sentences must be >= 1, got {max_sentences}")
+            darwin.error(f"max_sentences must be >= 1, got {max_sentences}")
+            return ""
 
         if len(text) > LARGE_TEXT_THRESHOLD:
-            darwin.log("Large text — switching to chunked summarization", LogType.INFO)
+            darwin.info("Text is large — switching to chunked summarization")
             return self.summarize_long(text, max_sentences)
 
         return self._textrank(text, max_sentences)
@@ -228,7 +233,8 @@ class Summarizer:
         if not self.available or len(text) <= target_chars:
             return text
         if target_chars < 1:
-            raise ValueError(f"target_chars must be >= 1, got {target_chars}")
+            darwin.error(f"target_chars must be >= 1, got {target_chars}")
+            return ""
 
         if len(text) > LARGE_TEXT_THRESHOLD:
             result = self.summarize_long(text, max_sentences=10)
@@ -261,7 +267,8 @@ class Summarizer:
         if not self.available or len(text) < MIN_CHARS_TO_SUMMARIZE:
             return text
         if max_sentences < 1:
-            raise ValueError(f"max_sentences must be >= 1, got {max_sentences}")
+            darwin.error(f"max_sentences must be >= 1, got {max_sentences}")
+            return ""
 
         if len(text) <= self.chunk_size:
             return self._textrank(text, max_sentences)
@@ -339,7 +346,7 @@ class Summarizer:
         try:
             from sklearn.cluster import KMeans
         except ImportError:
-            darwin.log("scikit-learn not installed — falling back to TextRank", LogType.WARNING)
+            darwin.warning("scikit-learn not installed — falling back to TextRank")
             return self._textrank(text, max_sentences)
 
         sentences = self._extract_sentences_with_ranks(text)
@@ -354,7 +361,7 @@ class Summarizer:
         vectors = []
         for s in sentences:
             if s.vector is None or not np.any(s.vector):
-                darwin.log("Sentence vectors unavailable — falling back to TextRank", LogType.WARNING)
+                darwin.warning("Sentence vectors unavailable — falling back to TextRank")
                 return self._textrank(text, max_sentences)
             vectors.append(s.vector)
 
@@ -365,7 +372,7 @@ class Summarizer:
             kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init="auto")
             clusters = kmeans.fit_predict(vectors)
         except Exception as e:
-            darwin.log(f"KMeans clustering failed: {e} — falling back to TextRank", LogType.WARNING)
+            darwin.warning(f"KMeans clustering failed: {e} — falling back to TextRank")
             return self._textrank(text, max_sentences)
 
         # For each cluster, pick the sentence with highest TextRank score
@@ -431,10 +438,9 @@ class Summarizer:
 
         # Warn if all ranks are zero (indicates pytextrank misconfiguration)
         if sentences and all(s.rank == 0.0 for s in sentences):
-            darwin.log(
-                "[Summarizer] All TextRank scores are zero — "
-                "check pytextrank version and pipeline configuration",
-                LogType.WARNING
+            darwin.warning(
+                "All TextRank scores are zero — "
+                "check pytextrank version and pipeline configuration"
             )
 
         return sentences

@@ -54,31 +54,31 @@ def get_reranker_inference(
     if not model_id:
         model_id = get_active_model(RERANKER_CATEGORY)
         if model_id is None:
-            darwin.log("No reranker model specified and no active model set.", LogType.ERROR)
+            darwin.error("No reranker model specified and no active model set")
             return None
 
     # Look up spec
     spec = find_spec(model_id, category=ModelCategory.RERANKER)
     if spec is None:
-        darwin.log(f"Unknown reranker model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown reranker model: {model_id}")
         return None
 
     # Get local path
     model_path = get_model_path(model_id, None, RERANKER_CATEGORY)
     if model_path is None:
-        darwin.log(f"Could not determine path for reranker model: {model_id}", LogType.ERROR)
+        darwin.error(f"Could not determine path for reranker model: {model_id}")
         return None
 
     # Ensure model files exist
     if not model_path.exists():
-        darwin.log(f"Reranker model not found at: {model_path}", LogType.ERROR)
-        darwin.log("Please download it first using set_reranker_preference()", LogType.ERROR)
+        darwin.error(f"Reranker model not found at: {model_path}")
+        darwin.error("Download it first using set_reranker_preference()")
         return None
 
     # Instantiate and load
     model_integrity_downloader = OnnxRerankerDownloader(model_path)
     if not model_integrity_downloader.ensure():
-        darwin.log(f"Reranker model not complete", LogType.ERROR)
+        darwin.error("Reranker model files are incomplete")
         return None
 
     try:
@@ -91,7 +91,7 @@ def get_reranker_inference(
         inference.load()
         return inference
     except Exception as e:
-        darwin.log(f"Failed to load reranker model {model_id}: {e}", LogType.ERROR)
+        darwin.error(f"Failed to load reranker model {model_id}: {e}")
         return None
 
 
@@ -110,34 +110,35 @@ def set_reranker_preference(
     """
     spec = find_spec(model_id, category=ModelCategory.RERANKER)
     if spec is None:
-        raise ValueError(f"Unknown reranker model: {model_id}")
+        darwin.error(f"Unknown reranker model: {model_id}")
+        return
 
     # Local model only – no API path
     model_path = ensure_model_path(model_id, category=RERANKER_CATEGORY)
     if model_path is None:
-        darwin.log(f"Failed to get path for reranker model: {model_id}", LogType.ERROR)
-        darwin.log("Model will not be set as active", LogType.ERROR)
+        darwin.error(f"Failed to get path for reranker model: {model_id}")
+        darwin.error("Model will not be set as active")
         return
 
     # Check if already downloaded
     if not model_path.exists():
         if not auto_download:
-            darwin.log(f"Reranker model not found at: {model_path}", LogType.ERROR)
-            darwin.log("Model will not be set as active", LogType.ERROR)
+            darwin.error(f"Reranker model not found at: {model_path}")
+            darwin.error("Model will not be set as active")
             return
-        darwin.log(f"Reranker model missing. Downloading...", LogType.INFO)
+        darwin.info("Reranker model missing, downloading...")
 
     # Download/ensure
     downloader = OnnxRerankerDownloader(target_dir=model_path, repo_id=spec.repo_id)
     success = downloader.ensure(force=force)
     if not success:
-        darwin.log(f"Failed to download reranker model: {model_id}", LogType.ERROR)
-        darwin.log("Model will not be set as active", LogType.ERROR)
+        darwin.error(f"Failed to download reranker model: {model_id}")
+        darwin.error("Model will not be set as active")
         return
 
     # Set active
     set_active_model(RERANKER_CATEGORY,spec.model_id)
-    darwin.log(f"Reranker model set as active: {model_path}", LogType.SUCCESS)
+    darwin.success(f"Reranker model set as active: {model_path}")
 
 
 def discard_reranker_model(
@@ -160,7 +161,7 @@ def discard_reranker_model(
 
     spec = find_spec(model_id, category=ModelCategory.RERANKER)
     if spec is None:
-        darwin.log(f"Unknown reranker model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown reranker model: {model_id}")
         return
 
     current = get_active_model(RERANKER_CATEGORY)
@@ -174,20 +175,20 @@ def discard_reranker_model(
         if model_path and model_path.exists():
             try:
                 shutil.rmtree(model_path)
-                darwin.log(f"Reranker model deleted from disk: {model_path}", LogType.INFO)
+                darwin.info(f"Reranker model deleted from disk: {model_path}")
             except Exception as e:
-                darwin.log(f"Failed to delete reranker model: {e}", LogType.ERROR)
+                darwin.error(f"Failed to delete reranker model: {e}")
                 # Still proceed to clear active preference if needed
         else:
-            darwin.log(f"Reranker model path not found: {model_path}", LogType.WARNING)
+            darwin.warning(f"Reranker model path not found: {model_path}")
     else:
         # If not deleting, just mention we're keeping files
-        darwin.log(f"Reranker model removed from preferences only (files kept)", LogType.INFO)
+        darwin.info("Reranker model removed from preferences only (files kept)")
 
     # ── Clear active preference if it was the active model ────────────────
     if is_active:
         set_active_model(RERANKER_CATEGORY,None)
-        darwin.log(f"Removed {model_id} from active reranker preferences", LogType.INFO)
+        darwin.info(f"Removed {model_id} from active reranker preferences")
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +203,7 @@ def get_reranker_model_path(model_id: str) -> Optional[Path]:
     """
     spec = find_spec(model_id, category=ModelCategory.RERANKER)
     if spec is None:
-        darwin.log(f"Unknown reranker model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown reranker model: {model_id}")
         return None
     return get_model_path(model_id, None, RERANKER_CATEGORY)
 

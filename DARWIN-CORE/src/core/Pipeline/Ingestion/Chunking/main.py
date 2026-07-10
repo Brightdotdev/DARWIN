@@ -41,14 +41,12 @@ def _resolve_files(raw_inputs: list[str], status: dict) -> list[str]:
             if parsed_files[candidate].get("is_parsed", False):
                 resolved.append(candidate)
             else:
-                darwin.log(
-                    f"'{raw}' → '{candidate}' exists but is not parsed yet — skipping",
-                    LogType.WARNING,
+                darwin.warning(
+                    f"'{raw}' resolves to '{candidate}' but it is not parsed yet, skipping"
                 )
         else:
-            darwin.log(
-                f"'{raw}' → '{candidate}' not found in store — skipping",
-                LogType.WARNING,
+            darwin.warning(
+                f"'{raw}' resolves to '{candidate}' which was not found in the store, skipping"
             )
 
     # deduplicate, preserve order
@@ -67,10 +65,10 @@ def _resolve_files(raw_inputs: list[str], status: dict) -> list[str]:
 def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
     status = store.status()
 
-    darwin.log("")
-    darwin.log("Chunking", LogType.INFO)
-    darwin.log(f"Rerun: {args.rerun}", LogType.INFO)
-    darwin.log("")
+    darwin.info("")
+    darwin.info("Chunking")
+    darwin.info(f"Rerun: {args.rerun}")
+    darwin.info("")
 
     if args.files:
         filenames = _resolve_files(args.files, status)
@@ -82,11 +80,11 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
                 if info.get("is_parsed", False)
             ]
         except Exception as e:
-            darwin.log(f"Failed to read store status: {e}", LogType.ERROR)
+            darwin.error(f"Failed to read store status: {e}")
             return
 
     if not filenames:
-        darwin.log("No parsed files found. Run parsing first.", LogType.ERROR)
+        darwin.error("No parsed files found. Run parsing first.")
         return
 
     succeeded = failed = 0
@@ -95,21 +93,21 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
         # ── v2 API: resolve name → source → content hash ─────────────────
         source = store._sources.find_by_name(filename)
         if source is None:
-            darwin.log(f"{filename} — not registered, run parsing first", LogType.ERROR)
+            darwin.error(f"{filename} is not registered, run parsing first")
             failed += 1
             continue
 
         content_hash = source.content_hash
 
         if not args.rerun and store.has_records(filename):
-            darwin.log(f"{filename} — already chunked (use --rerun to rechunk)", LogType.INFO)
+            darwin.info(f"{filename} already chunked (use --rerun to re-chunk)")
             succeeded += 1
             continue
 
         tobe_chunked = store.load_markdown(filename)
 
         if tobe_chunked is None:
-            darwin.log(f"{filename} — no markdown found, skipping", LogType.ERROR)
+            darwin.error(f"{filename} has no markdown, skipping")
             failed += 1
             continue
 
@@ -118,9 +116,8 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
         elif isinstance(tobe_chunked, str):
             chunk_text = tobe_chunked
         else:
-            darwin.log(
-                f"{filename} — unexpected markdown type: {type(tobe_chunked)}",
-                LogType.ERROR,
+            darwin.error(
+                f"{filename} has unexpected markdown type: {type(tobe_chunked)}"
             )
             failed += 1
             continue
@@ -134,10 +131,10 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
             )
 
             elapsed = time.perf_counter() - t0
-            darwin.log(f"  chunk:{filename} — {elapsed:.2f}s", LogType.INFO)
+            darwin.info(f"  Chunked {filename} in {elapsed:.2f}s")
 
             if not chunks:
-                darwin.log(f"{filename} — produced 0 chunks", LogType.ERROR)
+                darwin.error(f"{filename} produced 0 chunks")
                 failed += 1
                 continue
 
@@ -152,11 +149,10 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
             
 
             avg_tokens = sum(c.token_count for c in chunks) // len(chunks)
-            darwin.log(
-                f"{filename} — {len(chunks)} chunks · "
-                f"avg {avg_tokens} tokens · "
-                f"{total_links} links distributed",
-                LogType.SUCCESS,
+            darwin.success(
+                f"{filename}: {len(chunks)} chunks, "
+                f"avg {avg_tokens} tokens, "
+                f"{total_links} links"
             )
 
     
@@ -167,12 +163,12 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
 
         except Exception as e:
             import traceback
-            darwin.log(f"{filename} — {type(e).__name__}: {e}", LogType.ERROR)
-            darwin.log(traceback.format_exc(), LogType.ERROR)
+            darwin.error(f"{filename}: {type(e).__name__}: {e}")
+            darwin.error(traceback.format_exc())
             failed += 1
 
-    darwin.log("")
-    darwin.log(f"done — {succeeded} chunked · {failed} failed", LogType.SUCCESS)
+    darwin.info("")
+    darwin.success(f"Done: {succeeded} chunked, {failed} failed")
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
@@ -221,13 +217,13 @@ async def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!", LogType.INFO)
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

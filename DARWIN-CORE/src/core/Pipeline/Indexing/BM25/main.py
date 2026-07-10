@@ -23,7 +23,7 @@ from src.core.Pipeline.Indexing.BM25.lib import (
 )
 
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 
@@ -32,14 +32,13 @@ from src.core.Logger.DarwinLogger import darwin, LogType
 
 def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
 
-    darwin.log("")
-    darwin.log("BM25 indexing", LogType.INFO)
-    darwin.log(
+    darwin.info("")
+    darwin.info("BM25 keyword indexing started")
+    darwin.info(
         f"Threshold: {args.threshold} | IDF smoothing: {args.idf_smoothing} | "
-        f"Rerun: {args.rerun}",
-        LogType.INFO
+        f"Rerun: {args.rerun}"
     )
-    darwin.log("")
+    darwin.info("")
 
     status = store.status()
     filenames = []
@@ -53,17 +52,17 @@ def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
         ]
     
     if not filenames:
-        darwin.log("No chunked files found. Run chunking first.", LogType.ERROR)
+        darwin.error("No chunked files found — run chunking first")
         return
 
-    darwin.log(f"Indexing {len(filenames)} file(s)", LogType.INFO)
+    darwin.info(f"Indexing {len(filenames)} file(s)")
     
 
     succeeded = failed = skipped = 0
 
     for filename in filenames:
         if not args.rerun and store.has_bm25(filename):
-            darwin.log(f"Skipping {filename} (fresh index exists)", LogType.INFO)
+            darwin.info(f"Skipping {filename} — fresh index already exists")
             skipped += 1
             continue
 
@@ -71,7 +70,7 @@ def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
             chunks_rows = store.query_records(filename=filename, columns=["clean"])
             
         except FileNotFoundError:
-            darwin.log(f"{filename} — no chunks found, skipping", LogType.ERROR)
+            darwin.error(f"{filename} has no chunks, skipping")
             failed += 1
             continue
 
@@ -90,11 +89,11 @@ def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
                 skipped += 1
 
         except Exception as e:
-            darwin.log(f"{filename} — {type(e).__name__}: {e}", LogType.ERROR)
+            darwin.error(f"{filename} — {type(e).__name__}: {e}")
             failed += 1
 
-    darwin.log("")
-    darwin.log(f"done — {succeeded} indexed · {skipped} skipped · {failed} failed", LogType.SUCCESS)
+    darwin.info("")
+    darwin.success(f"Done — {succeeded} indexed / {skipped} skipped / {failed} failed")
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -149,13 +148,13 @@ async def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!", LogType.INFO)
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error(''.join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

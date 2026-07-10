@@ -164,7 +164,7 @@ def _parse_pdf_single(
     )
 
     mode = "fitz_extract (precise)" if precise else "fitz_raw_extract (fast)"
-    darwin.log(f"Extraction mode: {mode}")
+    darwin.info(f"Extraction mode: {mode}")
 
     all_images: List[ExtractedImage] = []
     if images_dir and extracted_imgs:
@@ -205,7 +205,7 @@ def _parse_pdf_chunked(
     ]
 
     n_chunks = len(page_chunks)
-    darwin.log(f"Processing {n_chunks} chunks in parallel...")
+    darwin.info(f"Processing {n_chunks} chunks in parallel...")
 
     # FIX: Use threads for chunk parallelism (fitz releases GIL, so this works)
     # Zero spawn overhead vs ProcessPool, and threads share memory.
@@ -230,9 +230,9 @@ def _parse_pdf_chunked(
             try:
                 result = future.result()
                 chunk_results.append((chunk_idx, result))
-                darwin.log(f"Chunk {chunk_idx + 1}/{n_chunks} complete")
+                darwin.info(f"Chunk {chunk_idx + 1}/{n_chunks} complete")
             except Exception as e:
-                darwin.log(f"Chunk {chunk_idx + 1}/{n_chunks} failed: {e}", LogType.WARNING)
+                darwin.warning(f"Chunk {chunk_idx + 1}/{n_chunks} failed: {e}")
                 chunk_results.append((chunk_idx, {
                     "display_text": "", "embedding_text": "",
                     "images": [], "img_count": 0, "error": str(e),
@@ -285,7 +285,7 @@ def _parse_pdf_chunked(
                 height=img_dict.get("height", 0),
             ))
 
-    darwin.log(f"Merged {n_chunks} chunks — {page_count} pages, {len(all_images)} images")
+    darwin.info(f"Merged {n_chunks} chunks: {page_count} pages, {len(all_images)} images")
     return display_text, embedding_text, page_count, metadata, all_images
 
 
@@ -313,7 +313,7 @@ def parse_pdf(
     doc.close()
 
     mode_label = "precise" if precise else "fast"
-    darwin.log(f"Parsing {path.name} ({page_count} pages) [{mode_label} mode]...")
+    darwin.info(f"Parsing {path.name} ({page_count} pages) [{mode_label} mode]...")
 
     if page_count <= LARGE_PDF_PAGE_THRESHOLD:
         return _parse_pdf_single(
@@ -322,7 +322,7 @@ def parse_pdf(
         )
     else:
         n_chunks = -(-page_count // LARGE_PDF_CHUNK_PAGES)
-        darwin.log(f"Large PDF — {n_chunks} chunks [{mode_label} mode]...")
+        darwin.info(f"Large PDF: {n_chunks} chunks [{mode_label} mode]...")
         return _parse_pdf_chunked(
             path=path, images_dir=images_dir, caption=False,
             page_count=page_count, metadata=metadata, precise=precise

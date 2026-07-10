@@ -24,13 +24,13 @@ class APIEmbeddingInference(EmbeddingInferenceInterface):
     def load(self) -> "APIEmbeddingInference":
         """No-op for API: always ready. Chainable."""
         self._ready = True
-        darwin.log(f"[APIEmbedding] {self.model_id} ready (API)", LogType.INFO)
+        darwin.info(f"{self.model_id} ready (API)")
         return self
 
     def unload(self) -> None:
         """No-op for API: nothing to release."""
         self._ready = False
-        darwin.log(f"[APIEmbedding] {self.model_id} unloaded (API)", LogType.INFO)
+        darwin.info(f"{self.model_id} unloaded (API)")
 
     def is_loaded(self) -> bool:
         return self._ready
@@ -46,8 +46,9 @@ class APIEmbeddingInference(EmbeddingInferenceInterface):
         Encode text(s) via API. Returns unified result.
         """
         if not self.is_loaded():
-            darwin.log(f"APIEmbeddingInference for {self.model_id} not ready", LogType.ERROR)
-            raise RuntimeError(f"APIEmbeddingInference for {self.model_id} not ready")
+            darwin.error(f"{self.model_id} not ready")
+            darwin.error(f"APIEmbeddingInference for {self.model_id} not ready")
+            return self._empty_result(0)
 
         texts_list = self._coerce_texts(texts)
         if not texts_list:
@@ -62,7 +63,7 @@ class APIEmbeddingInference(EmbeddingInferenceInterface):
                 batch_size=batch_size,
             )
         except Exception as e:
-            darwin.log(f"API embedding failed for {self.model_id}: {e}", LogType.ERROR)
+            darwin.error(f"API embedding failed for {self.model_id}: {e}")
             raise
 
         embeddings = np.array(embeddings_list, dtype=np.float32)

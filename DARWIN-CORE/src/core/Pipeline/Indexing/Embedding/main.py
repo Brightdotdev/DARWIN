@@ -15,7 +15,7 @@ from src.core.Pipeline.Indexing.Embedding.lib import EmbeddingArgs
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Models.ModelConfig import get_active_model
 from src.core.Models.Lib.ModelRegistry import ModelCategory
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.lib.Utils import ensure_writable_directory
 
 
@@ -28,12 +28,12 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
     monitor = MemoryMonitor()
     monitor.log_summary()
 
-    darwin.log("")
-    darwin.log("Embedding pipeline", LogType.INFO)
-    darwin.log(f"Rerun={args.rerun} | "
+    darwin.info("")
+    darwin.info("Embedding pipeline started")
+    darwin.info(f"Rerun={args.rerun} | "
                 f"Batch={args.batch_size or 'auto'} | "
-                f"LengthBatching={args.use_length_batching}", LogType.INFO)
-    darwin.log("")
+                f"LengthBatching={args.use_length_batching}")
+    darwin.info("")
 
     # ── Resolve files ──
     if args.files:
@@ -45,35 +45,35 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
         ]
 
     if not filenames:
-        darwin.log("No chunked files found. Run chunking first.", LogType.ERROR)
+        darwin.error("No chunked files found — run chunking first")
         return
 
     model_key = get_active_model(ModelCategory.EMBEDDING.value.lower())
     if not model_key:
-        darwin.log("No embedding model configured. Run setup first.", LogType.ERROR)
+        darwin.error("No embedding model configured — run setup first")
         return
 
-    darwin.log(f"Embedding {len(filenames)} file(s)", LogType.INFO)
+    darwin.info(f"Embedding {len(filenames)} file(s)")
 
     # ── FIXED: model loaded ONCE via session, not per-file (Audit #4) ──
     succeeded = skipped = failed = 0
 
     with EmbeddingSession(model_key=model_key) as session:
         if not session.embedder:
-            darwin.log("Failed to acquire embedding model", LogType.ERROR)
+            darwin.error("Failed to acquire embedding model")
             return
 
         for i, filename in enumerate(filenames):
             # Skip logic
             if not args.rerun and store.has_embeddings(filename):
-                darwin.log(f"Skipping {filename} (fresh embeddings exist)", LogType.WARNING)
+                darwin.warning(f"Skipping {filename} — embeddings already exist")
                 skipped += 1
                 continue
 
             chunks = store.query_records(filename=filename, columns=["clean", "index"])
 
             if not chunks:
-                darwin.log(f"{filename} — no chunks found", LogType.ERROR)
+                darwin.error(f"{filename} has no chunks")
                 failed += 1
                 continue
 
@@ -94,14 +94,14 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
                     skipped += 1
 
             except Exception as e:
-                darwin.log(f"{filename} — {type(e).__name__}: {e}", LogType.ERROR)
+                darwin.error(f"{filename} — {type(e).__name__}: {e}")
                 failed += 1
 
     # ── Batching history from shared singleton (Audit #3) ─────────────
     strategy = BatchingStrategy()  # returns same singleton instance
     history = strategy.get_history()
     if history:
-        darwin.log(f"Batching history: {history}", LogType.INFO)
+        darwin.info(f"Batching history: {history}")
 
     profiles = []
     for mk in history:
@@ -109,12 +109,11 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
         if prof:
             profiles.append(f"{mk}: {prof}")
     if profiles:
-        darwin.log(f"Throughput profiles: {' | '.join(profiles)}", LogType.INFO)
+        darwin.info(f"Throughput profiles: {' | '.join(profiles)}")
 
-    darwin.log("")
-    darwin.log(
-        f"Done — {succeeded} embedded · {skipped} skipped · {failed} failed",
-        LogType.SUCCESS,
+    darwin.info("")
+    darwin.success(
+        f"Done — {succeeded} embedded / {skipped} skipped / {failed} failed"
     )
 
 
@@ -206,14 +205,14 @@ async def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!", LogType.INFO)
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
 
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
 
     finally:

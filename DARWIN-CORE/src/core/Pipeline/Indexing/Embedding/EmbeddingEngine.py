@@ -5,7 +5,7 @@ from typing import Any, List, Optional
 
 import numpy as np
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Indexing.Embedding.MemoryMonitor import MemoryMonitor
 from src.core.Pipeline.Indexing.Embedding.BatchingStrategy import BatchingStrategy
 
@@ -51,16 +51,18 @@ class EmbeddingEngine:
         arr = vecs.astype(np.float32, copy=False) if hasattr(vecs, "astype") else np.array(vecs, dtype=np.float32)
 
         if arr.ndim != 2:
-            raise ValueError(
+            darwin.error(
                 f"Expected 2D embeddings (batch, dim), got {arr.ndim}D shape {arr.shape}. "
                 f"The model may be outputting raw hidden states instead of pooled embeddings."
             )
+            return None
 
         if expected_dim and arr.shape[1] != expected_dim:
-            raise ValueError(
+            darwin.error(
                 f"Embedding dimension mismatch: expected {expected_dim}, got {arr.shape[1]}. "
                 f"Shape: {arr.shape}"
             )
+            return None
 
         return arr
 
@@ -120,9 +122,8 @@ class EmbeddingEngine:
             profiled_size = self.strategy.profile_batch_size(
                 model, sample, base_size, model_key, device
             )
-            darwin.log(
-                f"Profiled {model_key}: optimal batch size ≈ {profiled_size}",
-                LogType.INFO,
+            darwin.info(
+                f"Profiled {model_key}: optimal batch size ≈ {profiled_size}"
             )
 
         # ── Determine batching mode ────────────────────────────────────
@@ -131,10 +132,9 @@ class EmbeddingEngine:
             index_batches = self.strategy.make_length_batches(
                 texts, token_budget, preset_max_tokens=token_budget
             )
-            darwin.log(
+            darwin.info(
                 f"Length-aware batching: {len(texts)} texts → {len(index_batches)} batches "
-                f"(budget={token_budget} tokens)",
-                LogType.INFO,
+                f"(budget={token_budget} tokens)"
             )
         else:
             # Legacy item-count mode
@@ -194,10 +194,10 @@ class EmbeddingEngine:
                     darwin.progress_end(progress_id)
                     raise
 
-                darwin.log(f"OOM at batch_size={batch_size}, reducing and retrying", LogType.WARNING)
+                darwin.warning(f"OOM at batch_size={batch_size}, reducing and retrying")
 
                 if batch_size <= 1:
-                    darwin.log("Cannot reduce batch below 1, skipping remaining chunks", LogType.ERROR)
+                    darwin.error("Cannot reduce batch below 1, skipping remaining chunks")
                     break
 
                 current_size = self.strategy.on_failure(batch_size, model_key, device, len(batch_indices))

@@ -12,7 +12,7 @@ from src.core.Pipeline.Indexing.BM25.BM25Utils import (
     stream_tokenize_chunks,
 )
 from src.core.Storage import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 def index_chunks_for_bm25(
@@ -22,11 +22,11 @@ def index_chunks_for_bm25(
     idf_smoothing: float = DEFAULT_IDF_SMOOTHING,
 ) -> Optional[BM25Data]:
     if not chunks:
-        darwin.log(f"No chunks to index for {filename}", LogType.WARNING)
+        darwin.warning(f"No chunks to index for {filename}")
         return None
 
-    darwin.log(
-        f"Building BM25 index for {filename} ({len(chunks)} chunks)", LogType.INFO
+    darwin.info(
+        f"Building BM25 index for {filename} ({len(chunks)} chunks)"
     )
     darwin.progress_start(f"bm25_{filename}", 3, f"BM25: {filename}")
     darwin.progress_update(f"bm25_{filename}", 1, "Detecting domain stopwords")
@@ -39,7 +39,7 @@ def index_chunks_for_bm25(
 
     should_stream = len(chunks) > 5_000
     if should_stream:
-        darwin.log(f"Streaming mode ({len(chunks)} chunks)", LogType.INFO)
+        darwin.info(f"Using streaming tokenization for {len(chunks)} chunks")
 
     # FIX: Always append tokens and length, even if tokens is empty
     def _accumulate(tokens: List[str]) -> None:
@@ -81,10 +81,9 @@ def index_chunks_for_bm25(
         f" [IDF s={idf_smoothing}]" if idf_smoothing != DEFAULT_IDF_SMOOTHING else ""
     )
     suffix += " [streaming]" if should_stream else ""
-    darwin.log(
+    darwin.success(
         f"Index built: {data.chunk_count} chunks, {data.vocab_size} terms, "
-        f"{len(domain_stops)} domain stops{suffix}",
-        LogType.SUCCESS,
+        f"{len(domain_stops)} domain stops{suffix}"
     )
     return data
 
@@ -97,7 +96,7 @@ def run_bm25_indexing_pipeline(
     idf_smoothing: float = DEFAULT_IDF_SMOOTHING,
 ) -> Optional[BM25Data]:
     if not chunks:
-        darwin.log(f"No chunks to index for {filename}", LogType.WARNING)
+        darwin.warning(f"No chunks to index for {filename}")
         return None
 
     data = index_chunks_for_bm25(

@@ -19,7 +19,7 @@ from src.core.Retrival.lib import (
 
 
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 def _validate_files(
@@ -42,19 +42,19 @@ def _search_wrapper(
     tobe_searched = []
 
     if args.files:
-        darwin.log(f"Searching across {', '.join(args.files)}")
+        darwin.info(f"Searching across {', '.join(args.files)}")
         tobe_searched = _validate_files(args.files, store)
         if not tobe_searched:
-            darwin.log("No valid files provided. Search aborted.", LogType.ERROR)
+            darwin.error("No valid files provided. Search aborted.")
             return []
-        darwin.log(f"Searching {len(tobe_searched)} valid files for '{args.query}'")
+        darwin.info(f"Searching {len(tobe_searched)} valid files for '{args.query}'")
     else:
         tobe_searched = [
             fname
             for fname, info in status.get("files", {}).items()
             if info.get("is_kw_searchable", False)
         ]
-        darwin.log(f"Searching {len(tobe_searched)} files for '{args.query}'")
+        darwin.info(f"Searching {len(tobe_searched)} files for '{args.query}'")
 
     if not tobe_searched:
         darwin.warning("No searchable files found. Run indexing first.")
@@ -73,7 +73,7 @@ def _search_wrapper(
     elapsed = time.perf_counter() - start_time
 
     if results:
-        darwin.log(f"Found {len(results)} results in {elapsed:.2f}s", LogType.SUCCESS)
+        darwin.success(f"Found {len(results)} results in {elapsed:.2f}s")
     else:
         darwin.warning(f"No results found for '{args.query}'")
 
@@ -84,26 +84,26 @@ def _display_search_results(
     results: List[KeywordSearchResult], args: KeywordSearchArgs
 ) -> None:
     if not results:
-        darwin.log("")
-        darwin.log(f"No results found for '{args.query}'", LogType.WARNING)
-        darwin.log("")
-        darwin.log("Try:")
-        darwin.log("  - Using fewer or different keywords")
-        darwin.log("  - Checking spelling")
-        darwin.log("  - Searching a specific file with --file")
+        darwin.info("")
+        darwin.warning(f"No results found for '{args.query}'")
+        darwin.info("")
+        darwin.info("Try:")
+        darwin.info("  - Using fewer or different keywords")
+        darwin.info("  - Checking spelling")
+        darwin.info("  - Searching a specific file with --file")
         return
 
 
 def handle_keyword_search(
     args: KeywordSearchArgs, store: DarwinStore
 ) -> List[KeywordSearchResult] | None:
-    darwin.log("")
-    darwin.log("Keyword Search")
-    darwin.log(f"Query: {args.query}")
-    darwin.log(f"BM25: k1={args.k1}, b={args.b}")
-    darwin.log(f"Top-K: {args.top_k}")
-    darwin.log(f"Scope: {', '.join(args.files) if args.files else 'all documents'}")
-    darwin.log("")
+    darwin.info("")
+    darwin.info("Keyword Search")
+    darwin.info(f"Query: {args.query}")
+    darwin.info(f"BM25: k1={args.k1}, b={args.b}")
+    darwin.info(f"Top-K: {args.top_k}")
+    darwin.info(f"Scope: {', '.join(args.files) if args.files else 'all documents'}")
+    darwin.info("")
 
     results = _search_wrapper(store, args)
     _display_search_results(results, args)
@@ -165,14 +165,14 @@ def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!")
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
 
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Storage.StoreRegistry import DarwinStoreRegistry
+from src.core.Logger.DarwinLogger import darwin
 
 
 class StoreOrchestrator:
@@ -67,6 +69,57 @@ class StoreOrchestrator:
 
     def reembed_check(self, filenames: list[str] | None = None) -> list[dict]:
         return self._store.get_files_needing_reembed(filenames)
+
+    # ------------------------------------------------------------------
+    # Store creation
+    # ------------------------------------------------------------------
+    @staticmethod
+    def create_store(
+        path: str,
+        name: Optional[str] = None,
+        bootstrap: bool = True,
+    ) -> dict:
+        """Create a new DarwinStore at the given path and return its metadata.
+
+        Args:
+            path: Writable filesystem path for the new store.
+            name: Optional human-readable name (defaults to directory name).
+            bootstrap: Whether to initialise models after creation (default: True).
+
+        Returns:
+            dict with store_id, store_name, darwin_dir, and status.
+
+        Raises:
+            ValueError if path is not writable.
+        """
+        p = Path(path).resolve()
+        if not p.parent.exists():
+            darwin.error(f"Parent directory does not exist: {p.parent}")
+            return {"success": False, "error": f"Parent directory does not exist: {p.parent}"}
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            test_file = p / ".darwin_write_test"
+            test_file.write_text("")
+            test_file.unlink()
+        except (OSError, PermissionError) as e:
+            darwin.error(f"Path is not writable: {p} — {e}")
+            return {"success": False, "error": f"Path is not writable: {p} — {e}"}
+
+        ds = DarwinStore(p, name=name)
+        if bootstrap:
+            ds.bootstrap()
+
+        from src.core.Storage.StoreRegistry import StoreRegistry
+        reg = StoreRegistry()
+        info = reg.get_store(ds.store_id)
+
+        return {
+            "store_id": ds.store_id,
+            "store_name": ds.store_name,
+            "darwin_dir": str(ds.darwin_dir),
+            "created_at": info.get("created_at") if info else None,
+            "status": "ready" if bootstrap else "created",
+        }
 
     # ------------------------------------------------------------------
     # Registry helpers (thin delegates — persistent lookup via DarwinStore)

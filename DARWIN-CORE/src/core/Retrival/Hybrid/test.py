@@ -128,20 +128,20 @@ def run_retrieval_test() -> int:
     darwin.configure()
     store = DarwinStore(name="test")
 
-    darwin.log("═" * 60, LogType.INFO)
-    darwin.log("Retrieval Module Test (handle_retrieval)", LogType.INFO)
-    darwin.log("═" * 60, LogType.INFO)
+    darwin.info("═" * 60)
+    darwin.info("Retrieval Module Test (handle_retrieval)")
+    darwin.info("═" * 60)
 
     methods = ["hybrid", "semantic", "keyword"]
     all_results = []
 
     for method in methods:
-        darwin.log(f"\n--- Testing method: {method.upper()} ---", LogType.INFO)
+        darwin.info(f"\n--- Testing method: {method.upper()} ---")
 
         # For each method, run a few queries
         queries_to_run = TEST_QUERIES[:5] if method == "hybrid" else TEST_QUERIES[:3]
         for query in queries_to_run:
-            darwin.log(f"  Query: '{query}'", LogType.INFO)
+            darwin.info(f"  Query: '{query}'")
 
             # Build RetrievalArgs (unified)
             args = RetrievalArgs(
@@ -179,9 +179,9 @@ def run_retrieval_test() -> int:
 
             # Brief logging
             if results:
-                darwin.log(f"    → {len(results)} results", LogType.SUCCESS)
+                darwin.success(f"    → {len(results)} results")
             else:
-                darwin.log(f"    → No results returned", LogType.WARNING)
+                darwin.warning("    → No results returned")
 
     # ── Save results ───────────────────────────────────────────────────────────
     results_dir = Path(__file__).parent / "retrieval_module_test_results"
@@ -189,7 +189,7 @@ def run_retrieval_test() -> int:
 
     results_path = results_dir / "results.json"
     save_results(all_results, results_path)
-    darwin.log(f"\nResults saved to {results_path}", LogType.INFO)
+    darwin.info(f"Results saved to {results_path}")
 
     # ── Save logs ─────────────────────────────────────────────────────────────
     logs = darwin.get_logs(
@@ -200,10 +200,10 @@ def run_retrieval_test() -> int:
     with open(log_path, "w", encoding="utf-8") as f:
         for log in logs:
             f.write(f"[{log.timestamp}] [{log.log_type.value.upper()}] {log.message}\n")
-    darwin.log(f"Logs saved to {log_path}", LogType.INFO)
+    darwin.info(f"Logs saved to {log_path}")
 
-    darwin.log("═" * 60, LogType.INFO)
-    darwin.log("Test completed.", LogType.SUCCESS)
+    darwin.info("═" * 60)
+    darwin.success("Test completed.")
     darwin.shutdown()
     return 0
 

@@ -9,7 +9,7 @@ from typing import List, Optional
 
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Pipeline.Indexing.Embedding.Embedder import EmbeddingSession
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Retrival.lib import OverlapDirection, SemanticSearchResult, ChunkLink
 
 _RESULT_COLUMNS = [
@@ -142,8 +142,8 @@ def _search_across_documents_with_vector(
         )
         if not rows:
             return []
-        darwin.log(
-            f"Multi-doc search (fast): {len(rows)} results across {len(filenames)} files"
+        darwin.info(
+            f"Multi-doc search: {len(rows)} results across {len(filenames)} files"
         )
         return _rows_to_results(rows)
 
@@ -164,13 +164,13 @@ def _search_across_documents_with_vector(
             )
             all_results.extend(single_results)
         except Exception as e:
-            darwin.log(f"Search failed for {fname}: {e}", LogType.ERROR, exc_info=True)
+            darwin.error(f"Search failed for {fname}: {e}", exc_info=True)
 
     # Global sort and slice
     all_results.sort(key=lambda r: r.score, reverse=True)
     final_results = all_results[:top_k]
-    darwin.log(
-        f"Per-doc limited search: {len(final_results)} results (pooled from {len(filenames)} files)"
+    darwin.info(
+        f"Per-doc limited search: {len(final_results)} results pooled from {len(filenames)} files"
     )
     return final_results
 
@@ -189,21 +189,21 @@ def search_across_documents(
     Search across multiple documents with a single model load.
     """
     if not filenames:
-        darwin.log("No files specified for search", LogType.WARNING)
+        darwin.warning("No files specified for search")
         return []
 
     if not model_name:
-        darwin.log("No embedding model configured", LogType.ERROR)
+        darwin.error("No embedding model configured")
         return []
 
     # Create one session and embed the query once
     with EmbeddingSession(model_key=model_name) as session:
         if session.embedder is None:
-            darwin.log("Failed to load embedding model", LogType.ERROR)
+            darwin.error("Failed to load embedding model")
             return []
         query_vec = session.embed_query(query)
         if query_vec is None:
-            darwin.log("Failed to embed query", LogType.ERROR)
+            darwin.error("Failed to embed query")
             return []
 
         return _search_across_documents_with_vector(

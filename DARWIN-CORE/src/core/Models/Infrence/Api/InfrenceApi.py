@@ -37,7 +37,7 @@ def _get_provider(spec) -> Optional[str]:
 
     if spec and spec.requires_provider:
         return spec.requires_provider
-    darwin.log(f"Cannot determine provider for model_id: {spec.model_id}", LogType.ERROR)
+    darwin.error(f"Cannot determine provider for {spec.model_id}")
     return None
 
 
@@ -57,7 +57,8 @@ def _image_to_base64_url(
     elif isinstance(image, Image.Image):
         img = image
     else:
-        raise TypeError(f"Unsupported image type: {type(image)}")
+        darwin.error(f"Unsupported image type: {type(image)}")
+        return ""
 
     # Convert to RGB
     if img.mode in ("RGBA", "LA", "P"):
@@ -95,24 +96,21 @@ async def embed(
         return []
 
     model = model or DEFAULT_EMBEDDING_MODEL
-    darwin.log(f"Embedding {len(texts)} texts with {model}", LogType.INFO)
+    darwin.info(f"Embedding {len(texts)} texts using {model}")
     preset, spec  = get_preset_with_spec(model)
 
     provider = _get_provider(spec)
     if not provider:
         return []
     if not is_key_set(provider):
-        darwin.log(f"Embedding skipped: API key for '{provider}' not set", LogType.ERROR)
+        darwin.error(f"Embedding skipped: API key for '{provider}' not set")
         return []
 
     batch_limit = max_batch_size or preset.api_batch_limit or 100
 
     batches = [texts[i:i + batch_limit] for i in range(0, len(texts), batch_limit)]
     if len(batches) > 1:
-        darwin.log(
-            f"Embedding {len(texts)} texts in {len(batches)} batches (limit={batch_limit})",
-            LogType.DEBUG
-        )
+        darwin.debug(f"Embedding {len(texts)} texts in {len(batches)} batches (limit={batch_limit})")
 
     all_embeddings = []
     for batch in batches:
@@ -120,8 +118,8 @@ async def embed(
             response = await aembedding(model=model, input=batch)
             all_embeddings.extend(item["embedding"] for item in response.data)
         except Exception as e:
-            darwin.log(f"Embedding batch failed for {model}: {e}", LogType.ERROR)
-            raise  # propagate so caller knows it failed
+            darwin.error(f"Embedding batch failed for {model}: {e}")
+            return []
 
     return all_embeddings
 
@@ -144,7 +142,7 @@ async def vision(
     if not provider:
         return ""
     if not is_key_set(provider):
-        darwin.log(f"Vision skipped: API key for '{provider}' not set", LogType.ERROR)
+        darwin.error(f"Vision skipped: API key for '{provider}' not set")
         return ""
 
     image_url = _image_to_base64_url(image, max_dimension=max_image_size, jpeg_quality=jpeg_quality)
@@ -161,11 +159,11 @@ async def vision(
         response = await acompletion(model=model, messages=messages)
         return response.choices[0].message.content
     except FileNotFoundError as e:
-        darwin.log(f"Vision failed: image not found — {e}", LogType.ERROR)
-        raise
+        darwin.error(f"Vision failed: image not found — {e}")
+        return ""
     except Exception as e:
-        darwin.log(f"Vision inference failed for {model}: {e}", LogType.ERROR)
-        raise
+        darwin.error(f"Vision inference failed for {model}: {e}")
+        return ""
 
 
 
@@ -179,10 +177,11 @@ def _run_sync(coro):
     except RuntimeError:
         loop = None
     if loop and loop.is_running():
-        raise RuntimeError(
+        darwin.error(
             "Cannot run sync wrapper from async context. "
             "Use the async function directly (embed(), vision(), rerank())."
         )
+        return None
     return asyncio.run(coro)
 
 

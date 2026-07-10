@@ -12,6 +12,7 @@ from src.core.Models.Lib.ModelSpec import (
     ModelSpec, ModelCategory, ModelTier,
     PROVIDER_REGISTRY,
 )
+from src.core.Logger.DarwinLogger import darwin
 
 
 
@@ -344,10 +345,11 @@ def get_models_per_provider(
         if not results and not include_local:
             # Check if provider exists in PROVIDER_REGISTRY
             if provider not in PROVIDER_REGISTRY:
-                raise ValueError(
+                darwin.error(
                     f"Unknown provider: {provider!r}. "
                     f"Known providers: {sorted(PROVIDER_REGISTRY.keys())}"
                 )
+                return None
             # Provider exists but has no models — return empty, not error
 
     # ── Apply filters ─────────────────────────────────────────────────────

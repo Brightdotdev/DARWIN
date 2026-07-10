@@ -36,7 +36,7 @@ def resolve_target(path: str, files: Optional[List[str]]) -> str:
     if len(parents) == 1:
         return parents.pop()
 
-    darwin.log("Files span multiple directories. Using provided path.", LogType.WARNING)
+    darwin.warning("Files span multiple directories. Using provided path.")
     return path
 
 
@@ -61,16 +61,16 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
         has_md, needs_md = split_markdown_state(files, store)
 
         if has_md:
-            darwin.log(f"[ 1 / 2 ] Parsing skipped for {len(has_md)} file(s)", LogType.INFO)
+            darwin.info(f" 1/2 Parsing skipped for {len(has_md)} file(s)")
             for f in has_md:
-                darwin.log(f"  ✓ {f}", LogType.INFO)
-            darwin.log("")
+                darwin.info(f"  ✓ {f}")
+            darwin.info("")
 
         if not needs_md:
             return has_md
 
-        darwin.log(f"[ 1 / 2 ] Parsing {len(needs_md)} file(s)", LogType.INFO)
-        darwin.log("")
+        darwin.info(f" 1/2 Parsing {len(needs_md)} file(s)")
+        darwin.info("")
 
         args = ParsingArgs(**{**vars(parsing_args), "files": needs_md})
         docs = handle_parsing(args, store=store)
@@ -79,8 +79,8 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
         return has_md + parsed
 
     # normal path
-    darwin.log("[ 1 / 2 ] Parsing", LogType.INFO)
-    darwin.log("")
+    darwin.info(" 1/2 Parsing")
+    darwin.info("")
 
     docs =  handle_parsing(parsing_args, store=store)
     if not docs:
@@ -90,45 +90,45 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
     failed = [d.filename for d in docs if d.error]
 
     if failed:
-        darwin.log(f"Skipping {len(failed)} failed parse(s)", LogType.WARNING)
+        darwin.warning(f"Skipping {len(failed)} failed parse(s)")
         for f in failed:
-            darwin.log(f"  ✗ {f}", LogType.WARNING)
-        darwin.log("")
+            darwin.warning(f"  ✗ {f}")
+        darwin.info("")
 
     return parsed
 
 
 def run_chunking(filenames: List[str], base_args: ChunkingArgs, store: DarwinStore) -> None:
-    darwin.log("")
-    darwin.log("━" * 50, LogType.INFO)
-    darwin.log("")
-    darwin.log("[ 2 / 2 ] Chunking", LogType.INFO)
-    darwin.log("")
+    darwin.info("")
+    darwin.info("━" * 50)
+    darwin.info("")
+    darwin.info(" 2/2 Chunking")
+    darwin.info("")
 
     args = ChunkingArgs(**{**vars(base_args), "files": filenames})
     handle_chunking(args, store=store)
 
 
 def  handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs, store: DarwinStore) -> None:
-    darwin.log("")
-    darwin.log("━" * 50, LogType.INFO)
-    darwin.log("  INGESTION PIPELINE", LogType.INFO)
-    darwin.log("━" * 50, LogType.INFO)
-    darwin.log("")
+    darwin.info("")
+    darwin.info("━" * 50)
+    darwin.info("  INGESTION PIPELINE")
+    darwin.info("━" * 50)
+    darwin.info("")
 
     parsed_files = run_parsing(parsing_args, store)
 
     if not parsed_files:
-        darwin.log("No documents available to chunk. Aborting.", LogType.ERROR)
+        darwin.error("No documents available to chunk. Aborting.")
         return
 
     run_chunking(parsed_files, chunking_args, store)
 
-    darwin.log("")
-    darwin.log("━" * 50, LogType.INFO)
-    darwin.log("  INGESTION COMPLETE", LogType.SUCCESS)
-    darwin.log("━" * 50, LogType.INFO)
-    darwin.log("")
+    darwin.info("")
+    darwin.info("━" * 50)
+    darwin.success("  INGESTION COMPLETE")
+    darwin.info("━" * 50)
+    darwin.info("")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────
@@ -202,14 +202,14 @@ def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!", LogType.INFO)
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
 
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
 
     finally:

@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.core.Logger.DarwinLogger import darwin
+
 
 def sanitize(name: str) -> str:
     name = Path(name).name
@@ -66,7 +68,8 @@ def to_dict(obj: Any) -> dict:
         return {k: getattr(obj, k) for k in obj.__dataclass_fields__}
     if isinstance(obj, dict):
         return obj
-    raise TypeError(f"Cannot convert {type(obj).__name__} to dict")
+    darwin.error(f"Cannot convert {type(obj).__name__} to dict")
+    return {}
 
 
 def get_current_embedding_model() -> str:

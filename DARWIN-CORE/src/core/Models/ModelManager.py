@@ -188,7 +188,7 @@ class ModelManager:
         force_download: bool = False,
         preferences: Optional[Dict[ModelCategory, str]] = None,
     ) -> ManagerStatus:
-        darwin.log("[ModelManager] Initializing...", LogType.INFO)
+        darwin.info("Initializing...")
 
         timestamp = datetime.now().isoformat(timespec='seconds')
         categories: Dict[str, CategoryStatus] = {}
@@ -240,7 +240,7 @@ class ModelManager:
 
         # Auto-setup missing required
         if auto_setup and missing_required:
-            darwin.log(f"Auto-setup triggered for: {', '.join(missing_required)}", LogType.INFO)
+            darwin.info(f"Auto-setup triggered for: {', '.join(missing_required)}")
             if preferences is None:
                 preferences = {}
 
@@ -285,14 +285,13 @@ class ModelManager:
             warnings=warnings,
         )
 
-        darwin.log(status_obj.summary, LogType.INFO)
+        darwin.info(status_obj.summary)
         if status_obj.all_ready:
-            darwin.log(" All required models are available.", LogType.SUCCESS)
+            darwin.success("All required models are available")
         else:
-            darwin.log(
-                f" Missing required: {', '.join(status_obj.missing_required)}. "
-                "Some features will be disabled.",
-                LogType.WARNING,
+            darwin.warning(
+                f"Missing required: {', '.join(status_obj.missing_required)}. "
+                "Some features will be disabled."
             )
         
         return status_obj
@@ -320,17 +319,17 @@ class ModelManager:
                 error = f"No default model for {cat_name}"
                 result = SetupResult(cat_name, "none", False, error=error)
                 if required:
-                    darwin.log(error, LogType.ERROR)
+                    darwin.error(error)
                     return result
                 return result
-            darwin.log(f"Auto‑selected default for {cat_name}: {resolved_id}", LogType.INFO)
+            darwin.info(f"Auto-selected default for {cat_name}: {resolved_id}")
 
         # Check cache
         cache_key = f"{cat_name}:{resolved_id}"
         if cache_key in self._loaded_models:
             model = self._loaded_models[cache_key]
             if hasattr(model, 'is_loaded') and model.is_loaded():
-                darwin.log(f"{cat_name} model already loaded: {resolved_id}", LogType.INFO)
+                darwin.info(f"{cat_name} model already loaded: {resolved_id}")
                 return SetupResult(
                     cat_name, resolved_id, True,
                     loaded=True, model_info=self._get_model_info(model)
@@ -341,7 +340,7 @@ class ModelManager:
             error = f"Model {resolved_id} not available"
             result = SetupResult(cat_name, resolved_id, False, error=error)
             if required:
-                darwin.log(error, LogType.ERROR)
+                darwin.error(error)
                 return result
             return result
 
@@ -351,7 +350,7 @@ class ModelManager:
             error = f"No factory for {cat_name}"
             result = SetupResult(cat_name, resolved_id, False, error=error)
             if required:
-                darwin.log(error, LogType.ERROR)
+                darwin.error(error)
                 return result
             return result
 
@@ -361,7 +360,7 @@ class ModelManager:
                 error = f"Factory returned None for {resolved_id}"
                 result = SetupResult(cat_name, resolved_id, False, error=error)
                 if required:
-                    darwin.log(error, LogType.ERROR)
+                    darwin.error(error)
                     return result
                 return result
 
@@ -374,9 +373,9 @@ class ModelManager:
 
             info = self._get_model_info(model)
             if info:
-                darwin.log(f"{cat_name} model loaded:", LogType.SUCCESS)
+                darwin.success(f"{cat_name} model loaded:")
                 for key, value in info.items():
-                    darwin.log(f"  {key}: {value}", LogType.INFO)
+                    darwin.info(f"  {key}: {value}")
 
             self._loaded_models[cache_key] = model
             set_active_model(cat_name, resolved_id)
@@ -388,10 +387,10 @@ class ModelManager:
 
         except Exception as e:
             error = f"Failed to load {resolved_id}: {e}"
-            darwin.log(error, LogType.ERROR)
+            darwin.error(error)
             result = SetupResult(cat_name, resolved_id, False, error=error)
             if required:
-                darwin.log(error, LogType.ERROR)
+                darwin.error(error)
                 return result 
             return result
 
@@ -417,9 +416,9 @@ class ModelManager:
 
         # Enforce embedding
         if ModelCategory.EMBEDDING not in preferences:
-            darwin.log("Embedding model is required but not specified.", LogType.ERROR)
+            darwin.error("Embedding model is required but not specified")
             if ModelCategory.EMBEDDING in required_set or not required_set:
-                darwin.error("Embedding model is required but not specified", "embedding")
+                darwin.error("Embedding model is required but not specified")
                 return
 
         for cat, mid in preferences.items():
@@ -436,9 +435,9 @@ class ModelManager:
                 result = SetupResult(cat.name.lower(), mid or "unknown", False, error=str(e))
             results[cat] = result
             if result.success:
-                darwin.log(f" {cat.name}: {mid} ready", LogType.SUCCESS)
+                darwin.success(f"{cat.name}: {mid} ready")
             else:
-                darwin.log(f"  {cat.name}: {result.error}", LogType.ERROR)
+                darwin.error(f"{cat.name}: {result.error}")
         return results
 
     # ────────────────────────────────────────────────────────────────
@@ -455,7 +454,7 @@ class ModelManager:
         try:
             return self.get(category, model_id, auto_download, **kwargs)
         except Exception as e:
-            darwin.log(f"Failed to get {category.name} model: {e}", LogType.WARNING)
+            darwin.warning(f"Failed to get {category.name} model: {e}")
             return None
 
     def get(
@@ -468,7 +467,9 @@ class ModelManager:
         cat_name = category.name.lower()
         resolved_id = model_id or get_active_model(cat_name)
         if not resolved_id:
-            raise ModelManagerError(f"No model specified for {cat_name} and no active model set", cat_name)
+            error = f"No model specified for {cat_name} and no active model set"
+            darwin.error(error, cat_name)
+            return SetupResult(cat_name, 'none', False, error=error)
 
         cache_key = f"{cat_name}:{resolved_id}"
         if cache_key in self._loaded_models:
@@ -477,16 +478,22 @@ class ModelManager:
                 return model
 
         if not self._ensure_model_available(category, resolved_id, auto_download):
-            raise ModelManagerError(f"Model {resolved_id} not available", cat_name)
+            error = f"Model {resolved_id} not available"
+            darwin.error(error, cat_name)
+            return SetupResult(cat_name, 'none', False, error=error)
 
         factory = self._get_factory(category, "get")
         if factory is None:
-            raise ModelManagerError(f"No factory for {cat_name}", cat_name)
+            error = f"No factory for {cat_name}"
+            darwin.error(error, cat_name)
+            return SetupResult(cat_name, 'none', False, error=error)
 
         try:
             model = factory(model_id=resolved_id, **kwargs)
             if model is None:
-                raise ModelManagerError(f"Factory returned None", cat_name)
+                error = f"Factory returned None for {resolved_id}"
+                darwin.error(error, cat_name)
+                return SetupResult(cat_name, 'none', False, error=error)
 
             if hasattr(model, 'load'):
                 if hasattr(model, 'is_loaded') and not model.is_loaded():
@@ -497,7 +504,9 @@ class ModelManager:
             self._loaded_models[cache_key] = model
             return model
         except Exception as e:
-            raise ModelManagerError(f"Failed to load {resolved_id}: {e}", cat_name) from e
+            error = f"Failed to load {resolved_id}: {e}"
+            darwin.error(error, cat_name)
+            return SetupResult(cat_name, 'none', False, error=error)
 
     # ────────────────────────────────────────────────────────────────
     # CONTEXT MANAGER
@@ -517,7 +526,7 @@ class ModelManager:
             model = self.get(category, model_id, auto_download, **kwargs)
             yield model
         except Exception as e:
-            darwin.log(f"Error in context: {e}", LogType.ERROR)
+            darwin.error(f"Error in context: {e}")
             yield None
         finally:
             if unload_on_exit and model is not None:
@@ -544,7 +553,7 @@ class ModelManager:
             factory(model_id=model_id, auto_download=auto_download, force=force_download)
             return True
         except Exception as e:
-            darwin.log(f"Failed to set preference: {e}", LogType.ERROR)
+            darwin.error(f"Failed to set preference: {e}")
             return False
 
     def clear_preference(self, category: ModelCategory) -> None:
@@ -585,7 +594,7 @@ class ModelManager:
         resolved_id = model_id or get_active_model(cat_name)
 
         if not resolved_id:
-            darwin.log(f"No model specified or active for {cat_name}; nothing to discard.", LogType.WARNING)
+            darwin.warning(f"No model specified or active for {cat_name}, nothing to discard")
             return False
 
         # 1. Unload if requested
@@ -595,19 +604,15 @@ class ModelManager:
         # 2. Call factory discard
         discard_factory = self._get_factory(category, "discard")
         if discard_factory is None:
-            darwin.log(f"No discard factory for {cat_name}", LogType.ERROR)
+            darwin.error(f"No discard factory for {cat_name}")
             return False
 
         try:
             discard_factory(model_id=resolved_id, delete=delete)
-            darwin.log(
-                f"Discarded {cat_name}/{resolved_id}"
-                + (" (files deleted)" if delete else ""),
-                LogType.INFO,
-            )
+            darwin.info(f"Discarded {cat_name}/{resolved_id}" + (" (files deleted)" if delete else ""))
             return True
         except Exception as e:
-            darwin.log(f"Failed to discard {cat_name}/{resolved_id}: {e}", LogType.ERROR)
+            darwin.error(f"Failed to discard {cat_name}/{resolved_id}: {e}")
             return False
 
     def discard_all(
@@ -658,8 +663,8 @@ class ModelManager:
             try:
                 model.unload()
             except Exception as e:
-                darwin.log(f"Error unloading {resolved_id}: {e}", LogType.WARNING)
-        darwin.log(f"Unloaded {cat_name}/{resolved_id}", LogType.INFO)
+                darwin.warning(f"Error unloading {resolved_id}: {e}")
+        darwin.info(f"Unloaded {cat_name}/{resolved_id}")
         return True
 
     def unload_all(self) -> int:
@@ -680,7 +685,7 @@ class ModelManager:
                     except Exception:
                         pass
                 count += 1
-        darwin.log(f"Unloaded {count} model(s)", LogType.INFO)
+        darwin.info(f"Unloaded {count} model(s)")
         return count
 
     def is_available(self, category: ModelCategory, model_id: str) -> bool:
@@ -828,7 +833,7 @@ class ModelManager:
             set_factory(model_id=model_id, auto_download=True, force=force_download)
             return self.is_downloaded(category, model_id)
         except Exception as e:
-            darwin.log(f"Download failed: {e}", LogType.ERROR)
+            darwin.error(f"Download failed: {e}")
             return False
 
     def _is_model_available(self, category: ModelCategory, model_id: str) -> bool:

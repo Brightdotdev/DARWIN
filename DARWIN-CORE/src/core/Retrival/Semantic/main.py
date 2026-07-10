@@ -18,7 +18,7 @@ from src.core.Retrival.lib import (
     SemanticSearchResult,
 )
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 def _validate_files(files: List[str], store: DarwinStore, mode: str = "semantic") -> List[str]:
@@ -28,7 +28,7 @@ def _validate_files(files: List[str], store: DarwinStore, mode: str = "semantic"
         if store.is_search_ready(filename, mode=mode):
             valid.append(filename)
         else:
-            darwin.log(f"{file_path} is not searchable in {mode} mode", LogType.WARNING)
+            darwin.warning(f"{file_path} is not searchable in {mode} mode")
     return valid
 
 
@@ -37,14 +37,14 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
     model_name = get_active_model("embedding")
 
     if model_name is None:
-        darwin.log("No active embedding model found. Run model setup first.", LogType.ERROR)
+        darwin.error("No active embedding model found. Run model setup first.")
         return None
 
-    darwin.log("")
-    darwin.log("Semantic Search")
-    darwin.log(f"Query: '{args.query}'")
-    darwin.log(f"Model: {model_name}")
-    darwin.log(f"Per‑doc limit: {args.per_doc_top_k if args.per_doc_top_k is not None else 'unlimited'}")
+    darwin.info("")
+    darwin.info("Semantic Search")
+    darwin.info(f"Query: '{args.query}'")
+    darwin.info(f"Model: {model_name}")
+    darwin.info(f"Per-doc limit: {args.per_doc_top_k if args.per_doc_top_k is not None else 'unlimited'}")
 
     status = store.status()
     tobe_searched = []
@@ -52,20 +52,20 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
     if args.files:
         tobe_searched = _validate_files(args.files, store)
         if not tobe_searched:
-            darwin.log("No valid files to search. Aborted.", LogType.ERROR)
+            darwin.error("No valid files to search. Search aborted.")
             return None
-        darwin.log(f"Searching {len(tobe_searched)} valid files for '{args.query}'")
+        darwin.info(f"Searching {len(tobe_searched)} valid files for '{args.query}'")
     else:
         tobe_searched = [
             fname for fname, info in status.get("files", {}).items()
             if info.get("is_embedding_searchable", False)
         ]
-        darwin.log(f"Searching {len(tobe_searched)} embedding-searchable files for '{args.query}'")
+        darwin.info(f"Searching {len(tobe_searched)} embedding-searchable files for '{args.query}'")
 
-    darwin.log("")
+    darwin.info("")
 
     if not tobe_searched:
-        darwin.log("No searchable files found. Run the embedding pipeline first on your files.", LogType.WARNING)
+        darwin.warning("No searchable files found. Run the embedding pipeline first.")
         return None
 
     results = search_across_documents(
@@ -80,28 +80,28 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
     )
 
     if not results:
-        darwin.log(f"No results found for '{args.query}'", LogType.WARNING)
-        darwin.log("")
-        darwin.log("Try:")
-        darwin.log("  - Using different or more specific keywords")
-        darwin.log("  - Lowering the minimum score threshold (--min-score)")
-        darwin.log("  - Searching a specific file with --file")
+        darwin.warning(f"No results found for '{args.query}'")
+        darwin.info("")
+        darwin.info("Try:")
+        darwin.info("  - Using different or more specific keywords")
+        darwin.info("  - Lowering the minimum score threshold (--min-score)")
+        darwin.info("  - Searching a specific file with --file")
         return None
 
-    darwin.log(f"Found {len(results)} results", LogType.SUCCESS)
-    darwin.log("")
-    darwin.log("  #    Score       Source                Page  Preview")
-    darwin.log("  ---  ----------  --------------------  ----  -------")
+    darwin.success(f"Found {len(results)} results")
+    darwin.info("")
+    darwin.info("  #    Score       Source                Page  Preview")
+    darwin.info("  ---  ----------  --------------------  ----  -------")
 
     for i, r in enumerate(results[:10], 1):
         preview = r.text[:60].replace("\n", " ")
-        darwin.log(f"  {i:<4} {r.score:.3f}      {r.source[:20]:<20}  {r.page:<4}  {preview}...")
+        darwin.info(f"  {i:<4} {r.score:.3f}      {r.source[:20]:<20}  {r.page:<4}  {preview}...")
 
-    darwin.log("")
-    darwin.log(f"  Min score threshold: {args.min_score}")
-    darwin.log(f"  Top score: {results[0].score:.3f}")
-    darwin.log(f"  Sources: {len(set(r.source for r in results))} files")
-    darwin.log("")
+    darwin.info("")
+    darwin.info(f"  Min score threshold: {args.min_score}")
+    darwin.info(f"  Top score: {results[0].score:.3f}")
+    darwin.info(f"  Sources: {len(set(r.source for r in results))} files")
+    darwin.info("")
 
     return results
 
@@ -150,13 +150,13 @@ def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!")
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

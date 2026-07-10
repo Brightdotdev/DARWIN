@@ -33,14 +33,15 @@ class APIVisionInference(VisionInferenceInterface):
         from src.core.Models.Lib.ModelRegistry import find_spec
         spec = find_spec(self.model_id)
         if not spec:
-            raise ValueError(f"Model {self.model_id} not found in registry")
+            darwin.error(f"Model {self.model_id} not found in registry")
+            return self
         self._ready = True
-        darwin.log(f"APIVisionInference ready: {self.model_id}", LogType.INFO)
+        darwin.info(f"{self.model_id} ready")
         return self
 
     def unload(self) -> None:
         self._ready = False
-        darwin.log(f"APIVisionInference unloaded: {self.model_id}", LogType.INFO)
+        darwin.info(f"{self.model_id} unloaded")
 
     def is_loaded(self) -> bool:
         return self._ready
@@ -78,7 +79,7 @@ class APIVisionInference(VisionInferenceInterface):
                 jpeg_quality=self.jpeg_quality,
             )
         except Exception as e:
-            darwin.log(f"Vision inference failed for {self.model_id}: {e}", LogType.ERROR)
+            darwin.error(f"Vision inference failed for {self.model_id}: {e}")
             raise
 
         inference_time_ms = (time.perf_counter() - start) * 1000
@@ -131,7 +132,7 @@ class APIVisionInference(VisionInferenceInterface):
                 jpeg_quality=self.jpeg_quality,
             )
         except Exception as e:
-            darwin.log(f"Vision inference failed for {self.model_id}: {e}", LogType.ERROR)
+            darwin.error(f"Vision inference failed for {self.model_id}: {e}")
             raise
 
         inference_time_ms = (time.perf_counter() - start) * 1000

@@ -91,12 +91,13 @@ class TestSearch:
         """Search with no ingested docs should return empty gracefully."""
         from src.core.Storage.DarwinStore import DarwinStore
         from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-        from src.core.Retrival.OrchestratorTypes import OrchestratorConfig
+        from src.core.Orchestrators.lib import RetrievalParameters
 
         store = DarwinStore()
         store.bootstrap()
         orch = RetrievalOrchestrator(store=store)
-        ctx = orch.retrieve_and_resolve(OrchestratorConfig(query="test", top_k=3))
+        params = RetrievalParameters(query="test", top_k=3)
+        ctx = orch.retrieve_and_resolve(params)
         assert ctx is not None
         assert ctx.total_passages >= 0  # 0 is valid with no data
 
@@ -113,7 +114,30 @@ class TestMCP:
         from src.mcp.Server import mcp
 
         # FastMCP stores tools internally
-        assert len(mcp._tool_manager._tools) == 10
+        assert len(mcp._tool_manager._tools) == 11
+
+    def test_mcp_create_store_tool(self):
+        """create_store tool exists and produces store metadata."""
+        from src.mcp.Server import mcp
+        tool = mcp._tool_manager._tools.get("create_store")
+        assert tool is not None
+        assert "path" in tool.parameters["properties"]
+        assert tool.parameters["properties"]["path"]["type"] == "string"
+        from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
+        from pathlib import Path
+        test_dir = Path("C:\\Users\\ADMIN\\AppData\\Local\\Temp\\opencode\\test_create_store")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            meta = StoreOrchestrator.create_store(str(test_dir), name="test_create", bootstrap=False)
+            assert "store_id" in meta
+            assert "store_name" in meta
+            assert meta["store_name"] == "test_create"
+            assert "darwin_dir" in meta
+            assert "created_at" in meta
+            assert meta["status"] == "created"
+        finally:
+            import shutil
+            shutil.rmtree(test_dir, ignore_errors=True)
 
     def test_mcp_search_tool_schema(self):
         """Search tool accepts expected params."""

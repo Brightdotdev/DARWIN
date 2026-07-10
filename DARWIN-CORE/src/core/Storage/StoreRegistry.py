@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Storage.StoreUtils import now
 
 
@@ -30,11 +31,13 @@ class DarwinStoreRegistry:
     def get(cls, key: Optional[str] = None) -> Any:
         target = key or cls._default_key
         if target is None:
-            raise RuntimeError("No DarwinStore registered")
+            darwin.error("No DarwinStore registered")
+            return None
         if target not in cls._stores:
-            raise KeyError(
+            darwin.error(
                 f"Store '{target}' not found. Registered: {list(cls._stores)}"
             )
+            return None
         return cls._stores[target]
 
     @classmethod
@@ -63,7 +66,8 @@ class DarwinStoreRegistry:
     def delete_store(cls, key: str, *, nuke_disk: bool = False) -> None:
         store = cls._stores.pop(key, None)
         if store is None:
-            raise KeyError(f"Store '{key}' not registered")
+            darwin.error(f"Store '{key}' not registered")
+            return None
         if nuke_disk and store.darwin_dir.exists():
             shutil.rmtree(store.darwin_dir)
 

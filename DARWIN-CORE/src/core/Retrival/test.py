@@ -100,21 +100,21 @@ def run_retrieval_test() -> int:
  
  
 
-    darwin.log("═" * 60, LogType.INFO)
-    darwin.log("Darwin Retrieval Orchestrator Test", LogType.INFO)
-    darwin.log("═" * 60, LogType.INFO)
+    darwin.info("═" * 60)
+    darwin.info("Darwin Retrieval Orchestrator Test")
+    darwin.info("═" * 60)
 
     # We'll run with hybrid method by default, but test others too.
     methods = ["hybrid", "semantic", "keyword"]
     all_results = []
 
     for method in methods:
-        darwin.log(f"\n--- Testing method: {method.upper()} ---", LogType.INFO)
+        darwin.info(f"\n--- Testing method: {method.upper()} ---")
 
         # For each method, run a few queries
         queries_to_run = TEST_QUERIES[:5] if method == "hybrid" else TEST_QUERIES[:3]
         for query in queries_to_run:
-            darwin.log(f"  Query: '{query}'", LogType.INFO)
+            darwin.info(f"  Query: '{query}'")
        
 
             # Build config
@@ -160,9 +160,9 @@ def run_retrieval_test() -> int:
 
             # Brief logging
             if context and context.passages:
-                darwin.log(f"    → {len(context.passages)} passages, {context.total_chars} chars", LogType.SUCCESS)
+                darwin.success(f"    → {len(context.passages)} passages, {context.total_chars} chars")
             else:
-                darwin.log(f"    → No passages returned", LogType.WARNING)
+                darwin.warning("    → No passages returned")
 
     # ── Save results ───────────────────────────────────────────────────────────
     results_dir = Path("retrieval_test_results")
@@ -170,19 +170,19 @@ def run_retrieval_test() -> int:
 
     results_path = results_dir / "results.json"
     save_results(all_results, results_path)
-    darwin.log(f"\nResults saved to {results_path}", LogType.INFO)
+    darwin.info(f"Results saved to {results_path}")
 
     # ── Save logs (fixed reverse) ─────────────────────────────────────────────
-    logs = darwin.get_logs(levels={LogType.INFO, LogType.WARNING, LogType.ERROR, LogType.SUCCESS})
+    logs = darwin.get_logs(levels={LogType.WARNING, LogType.ERROR, LogType.SUCCESS})
     logs.reverse()   # reverse in-place
     log_path = results_dir / "logs.txt"
     with open(log_path, "w", encoding="utf-8") as f:
         for log in logs:
             f.write(f"[{log.timestamp}] [{log.log_type.value.upper()}] {log.message}\n")
-    darwin.log(f"Logs saved to {log_path}", LogType.INFO)
+    darwin.info(f"Logs saved to {log_path}")
 
-    darwin.log("═" * 60, LogType.INFO)
-    darwin.log("Test completed.", LogType.SUCCESS)
+    darwin.info("═" * 60)
+    darwin.success("Test completed.")
     darwin.shutdown()
     return 0
 

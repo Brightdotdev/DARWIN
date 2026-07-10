@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 from PIL import Image
 
+from src.core.Logger.DarwinLogger import darwin
+
 
 import numpy as np
 
@@ -184,11 +186,13 @@ class VisionInferenceInterface(ABC):
             elif image.ndim == 3 and image.shape[2] == 4:
                 img = Image.fromarray(image[:, :, :3]).convert("RGB")
             else:
-                raise ValueError(f"Unsupported numpy array shape: {image.shape}")
+                darwin.error(f"Unsupported numpy array shape: {image.shape}")
+                return None
         elif isinstance(image, Image.Image):
             img = image.convert("RGB")
         else:
-            raise TypeError(f"Unsupported image type: {type(image)}")
+            darwin.error(f"Unsupported image type: {type(image)}")
+            return None
         return img
 
     @staticmethod

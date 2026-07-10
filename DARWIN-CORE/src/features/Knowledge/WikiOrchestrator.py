@@ -600,7 +600,8 @@ class WikiOrchestrator:
 
     def _get_doc(self, text: str):
         if self._nlp_engine is None:
-            raise RuntimeError("NLP not loaded")
+            darwin.error("NLP not loaded")
+            return None
         return next(self._nlp_engine.pipe([text], batch_size=1))
 
     def _process_doc(self, filename: str, doc, stages: Set[str], config: ExtractionConfig) -> dict:

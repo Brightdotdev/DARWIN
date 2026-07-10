@@ -36,7 +36,9 @@ class SpacyNLPModelDownloader:
     # ═══════════════════════════════════════════════════════════════════════
 
     def _log(self, msg: str, level: LogType = LogType.INFO):
-        darwin.log(f"[SpaCy Downloader] {msg}", level)
+        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
+         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
+         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Public API
@@ -114,7 +116,7 @@ class SpacyNLPModelDownloader:
                 ("spaCy package", self._download_via_package)
             )
         except ImportError:
-            self._log("spaCy not available; skipping pip package strategy.", LogType.WARNING)
+            self._log("spaCy not available, skipping pip package strategy", LogType.WARNING)
 
         errors = []
         for name, strategy in strategies:
@@ -133,8 +135,7 @@ class SpacyNLPModelDownloader:
         darwin.spinner_stop(progress_id, success=False)
         self._log(
             f"Failed to download spaCy model '{self.model_name}'.\n"
-            + "Errors:\n  " + "\n  ".join(errors),
-            LogType.ERROR,
+            +             "Errors:\n  " + "\n  ".join(errors),
         )
         return False
 
@@ -190,7 +191,8 @@ class SpacyNLPModelDownloader:
                         # Critical file sanity check before declaring success
                         for f in ["config.cfg", "meta.json", "tokenizer"]:
                             if not (self.target_dir / f).exists():
-                                raise IntegrityError(f"Missing critical file: {f}")
+                                darwin.error(f"Missing critical file: {f}")
+                                return False
                         return True
                     last_error = f"Model directory not found in wheel from {url}"
                 except Exception as e:
@@ -289,17 +291,20 @@ class SpacyNLPModelDownloader:
 
                 # ── Post-download validation ──────────────────────────────
                 if not dest.exists() or dest.stat().st_size == 0:
-                    raise Exception("Empty file after download")
+                    darwin.error("Empty file after download")
+                    return
 
                 suffix = "".join(dest.suffixes).lower()
                 if ".whl" in suffix or ".zip" in suffix:
                     with zipfile.ZipFile(dest, "r") as zf:
                         if not zf.namelist():
-                            raise Exception("Empty ZIP archive")
+                            darwin.error("Empty ZIP archive")
+                            return
                 elif ".tar" in suffix or ".tgz" in suffix:
                     with tarfile.open(dest) as tar:
                         if not tar.getmembers():
-                            raise Exception("Empty TAR archive")
+                            darwin.error("Empty TAR archive")
+                            return
 
                 self._log(
                     f"Downloaded {downloaded / 1024 / 1024:.1f} MB",
@@ -311,9 +316,10 @@ class SpacyNLPModelDownloader:
                 raise
             except Exception as e:
                 if attempt == max_retries - 1:
-                    raise DownloadError(
+                    darwin.error(
                         f"Download failed after {max_retries} attempts: {e}"
                     )
+                    return
                 self._log(
                     f"Attempt {attempt + 1} failed, retrying...",
                     LogType.WARNING,

@@ -2,7 +2,7 @@
 from typing import List, Optional
 from src.core.Retrival.Keyword.KeywordUtilities import calculate_bm25
 from src.core.Retrival.lib import KeywordSearchResult, OverlapDirection
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Storage.DarwinStore import DarwinStore
 
 
@@ -110,8 +110,8 @@ def search_across_documents_keyword(
 
     for filename in filenames:
         if not store.has_bm25(filename) or not store.has_records(filename):
-            darwin.log(
-                f"Skipping {filename} -- missing index or records", LogType.WARNING
+            darwin.warning(
+                f"Skipping {filename}: missing index or records"
             )
             continue
         try:
@@ -126,8 +126,8 @@ def search_across_documents_keyword(
             )
             all_results.extend(results)
         except Exception as e:
-            darwin.log(
-                f"Search failed for {filename}: {e}", LogType.ERROR, exc_info=True
+            darwin.error(
+                f"Search failed for {filename}: {e}", exc_info=True
             )
 
     # Normalize BM25 scores across documents (BM25 is document-dependent)

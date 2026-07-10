@@ -93,7 +93,7 @@ def parse_documents(
 
     total = len(tasks)
     mode_label = "precise" if precise else "fast"
-    darwin.log(f"Queuing {total} items ({mode_label})", LogType.INFO)
+    darwin.info(f"Queuing {total} items ({mode_label})")
 
     def _sort_key(item):
         source, _, name = item
@@ -105,7 +105,7 @@ def parse_documents(
 
     # FIX #1: Cap workers to reduce Windows spawn overhead
     n_workers = min(total, MAX_PARSING_WORKERS)
-    darwin.log(f"Using {n_workers} worker(s) (capped at {MAX_PARSING_WORKERS})", LogType.INFO)
+    darwin.info(f"Using {n_workers} worker(s) (capped at {MAX_PARSING_WORKERS})")
 
     results: List[Optional[ParsedDocument]] = [None] * total
     images_by_doc: Dict[str, List[ExtractedImage]] = {}
@@ -155,9 +155,9 @@ def parse_documents(
     succeeded = sum(1 for d in results if d is not None and not d.error)
     failed = total - succeeded
     if succeeded:
-        darwin.log(f"Parsed: {succeeded} items", LogType.SUCCESS)
+        darwin.success(f"Parsed: {succeeded} items")
     if failed:
-        darwin.log(f"Failed: {failed} items", LogType.ERROR)
+        darwin.error(f"Failed: {failed} items")
 
     return [r for r in results if r is not None], images_by_doc
 
@@ -176,36 +176,35 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
             else:
                 p = Path(raw).resolve()
                 if not p.exists():
-                    darwin.log(f"file not found: {raw}", LogType.ERROR)
+                    darwin.error(f"File not found: {raw}")
                     continue
                 if not p.is_file():
-                    darwin.log(f"file provided is not a file: {raw}", LogType.ERROR)
+                    darwin.error(f"Path is not a file: {raw}")
                     continue
                 if detect_type(p) is None:
-                    darwin.log(f"Unsupported file type: {p.suffix} ({p.name})", LogType.ERROR)
+                    darwin.error(f"Unsupported file type: {p.suffix} ({p.name})")
                     continue
                 target_paths.append(p)
         if not target_paths and not target_urls:
-            darwin.log("No valid supported files or URLs found.", LogType.ERROR)
+            darwin.error("No valid supported files or URLs found.")
             return []
     else:
         target_dir = Path(args.target).resolve()
         if not target_dir.exists():
-            darwin.log(f"Directory not found: {args.target}", LogType.ERROR)
+            darwin.error(f"Directory not found: {args.target}")
             return []
         target_paths = scan_directory(target_dir, recursive=args.recursive)
 
     if not target_paths and not target_urls:
-        darwin.log(f"No supported items found", LogType.ERROR)
-        darwin.log("Supported: .pdf, .docx, .pptx, .txt, .md, URLs (http/https)", LogType.INFO)
+        darwin.error("No supported items found")
+        darwin.info("Supported: .pdf, .docx, .pptx, .txt, .md, URLs (http/https)")
         return []
 
-    darwin.log(
+    darwin.info(
         f"Settings: Images={args.images} | Caption={args.caption} | OCR={args.ocr} | "
-        f"Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}",
-        LogType.INFO,
+        f"Recursive={args.recursive} | Mode={'Precise' if args.precise else 'Fast'}"
     )
-    darwin.log("")
+    darwin.info("")
 
     # ── Register all local sources BEFORE cache check ─────────────────────
     for path in target_paths:
@@ -219,14 +218,14 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
         try:
             data, content_type, fetch_err = fetch_url(url, timeout=30.0)
             if fetch_err:
-                darwin.log(f"Failed to fetch {url}: {fetch_err}", LogType.ERROR)
+                darwin.error(f"Failed to fetch {url}: {fetch_err}")
                 continue
             content_hash = hashlib.sha256(data).hexdigest()
 
             store.register_url(slug, url, content_hash=content_hash, page_count=0)
             url_registered_ok.append((slug, url, content_hash, data, content_type))
         except Exception as e:
-            darwin.log(f"Failed to register URL {url}: {e}", LogType.ERROR)
+            darwin.error(f"Failed to register URL {url}: {e}")
 
     # ── Build task list and check cache ─────────────────────────────────────
     tasks_to_process = []
@@ -250,14 +249,14 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
         tasks_to_process.append(((url, data, content_type), image_dir, slug))
 
     if skipped_count > 0:
-        darwin.log(f"Skipped {skipped_count} cached item(s) (use --rerun to reprocess)", LogType.INFO)
+        darwin.info(f"Skipped {skipped_count} cached item(s), use --rerun to reprocess")
     if not tasks_to_process:
-        darwin.log("All items already parsed!", LogType.SUCCESS)
-        darwin.log("Use --rerun to reprocess with different settings", LogType.INFO)
+        darwin.success("All items already parsed!")
+        darwin.info("Use --rerun to reprocess with different settings")
         return []
 
     total_items = len(tasks_to_process)
-    darwin.log(f"Processing {total_items} item(s)...", LogType.INFO)
+    darwin.info(f"Processing {total_items} item(s)...")
 
     t0 = time.perf_counter()
     # ── Pass 1: parallel extraction (no image enrichment) ───────────────────
@@ -277,7 +276,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
             else:
                 stages = "ocr"
 
-            darwin.log(f"Enriching {len(all_images)} image(s) [{stages}]...", LogType.INFO)
+            darwin.info(f"Enriching {len(all_images)} image(s) [{stages}]...")
 
             handler = ImageHandler()
             image_paths = [img.path for img in all_images]
@@ -293,7 +292,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
 
             for img, result in zip(all_images, results):
                 if result.error:
-                    darwin.log(f"Image enrichment failed for {img.path.name}: {result.error}", LogType.WARNING)
+                    darwin.warning(f"Image enrichment failed for {img.path.name}: {result.error}")
                     img.caption = ""
                     continue
 
@@ -305,7 +304,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
 
                 img.caption = " | ".join(parts) if parts else ""
 
-            darwin.log("Image enrichment complete", LogType.SUCCESS)
+            darwin.success("Image enrichment complete")
 
     # ── Pass 3: apply enriched image text to document text ─────────────────
     for display_name, imgs in images_by_display.items():
@@ -326,14 +325,14 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
                 break
 
     elapsed = (time.perf_counter() - t0) / 60
-    darwin.log(f"Total time: {elapsed:.1f}min", LogType.INFO)
+    darwin.info(f"Total time: {elapsed:.1f}min")
 
     succeeded = sum(1 for d in parsed_docs if not d.error)
     failed = sum(1 for d in parsed_docs if d.error)
     if succeeded:
-        darwin.log(f"Successfully parsed {succeeded} item(s)", LogType.SUCCESS)
+        darwin.success(f"Successfully parsed {succeeded} item(s)")
     if failed:
-        darwin.log(f"Failed: {failed} item(s)", LogType.WARNING)
+        darwin.warning(f"Failed: {failed} item(s)")
 
     # ── Save markdown and update registry ──────────────────────────────────
     if args.save:
@@ -344,7 +343,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
             display = doc.filename
             source = store.get_source(display)
             if not source:
-                darwin.log(f"Warning: no source found for {display}", LogType.WARNING)
+                darwin.warning(f"No source found for {display}")
                 continue
 
             content_hash = source.content_hash
@@ -418,12 +417,12 @@ def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("Interrupted", LogType.WARNING)
+        darwin.warning("Interrupted")
         return 130
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log(''.join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error(''.join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

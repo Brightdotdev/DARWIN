@@ -33,7 +33,7 @@ from src.core.Retrival.Hybrid.HybridSearchUtils import (
     build_ranked_lists,
 )
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 def hybrid_search(
@@ -170,13 +170,13 @@ def search_single_document_hybrid(
         keyword_results = kw_future.result()
 
     if not semantic_results and not keyword_results:
-        darwin.log("No results from either retriever", LogType.WARNING)
+        darwin.warning("No results from either semantic or keyword search")
         return []
 
-    darwin.log(f"Semantic: {len(semantic_results)} candidates", LogType.INFO)
-    darwin.log(f"Keyword:  {len(keyword_results)} candidates", LogType.INFO)
+    darwin.info(f"Semantic: {len(semantic_results)} candidates")
+    darwin.info(f"Keyword: {len(keyword_results)} candidates")
 
-    darwin.log("Fusing results via RRF...", LogType.INFO)
+    darwin.info("Fusing results via RRF")
     results = hybrid_search(
         semantic_results=semantic_results[:pool_size],
         keyword_results=keyword_results[:pool_size],
@@ -185,7 +185,7 @@ def search_single_document_hybrid(
         semantic_weight=semantic_weight,
         keyword_weight=keyword_weight,
     )
-    darwin.log(f"Done – {len(results)} final results", LogType.SUCCESS)
+    darwin.success(f"Hybrid search complete: {len(results)} results")
     return results
 
 
@@ -203,11 +203,11 @@ def search_across_documents_hybrid(
 ) -> List[HybridSearchResult]:
     """Hybrid search across multiple documents (parallelized)."""
     if not filenames:
-        darwin.log(
-            "No documents with both embeddings and BM25 index found", LogType.WARNING
+        darwin.warning(
+            "No documents with both embeddings and BM25 index found"
         )
-        darwin.log(
-            "Run 'darwin embeddings' and 'darwin index-bm25' first", LogType.INFO
+        darwin.info(
+            "Run 'darwin embeddings' and 'darwin index-bm25' first"
         )
         return []
 
@@ -230,8 +230,8 @@ def search_across_documents_hybrid(
             per_doc_top_k=per_doc_top_k,
         )
 
-    darwin.log(
-        f"Searching semantics across {len(filenames)} document(s)...", LogType.INFO
+    darwin.info(
+        f"Searching semantics across {len(filenames)} document(s)"
     )
     with ThreadPoolExecutor(max_workers=2) as executor:
         sem_future = executor.submit(_semantic)
@@ -239,14 +239,14 @@ def search_across_documents_hybrid(
         semantic_results = sem_future.result()
         keyword_results = kw_future.result()
 
-    darwin.log(f"Semantic: {len(semantic_results)} candidates", LogType.INFO)
-    darwin.log(f"Keyword:  {len(keyword_results)} candidates", LogType.INFO)
+    darwin.info(f"Semantic: {len(semantic_results)} candidates")
+    darwin.info(f"Keyword: {len(keyword_results)} candidates")
 
     if not semantic_results and not keyword_results:
-        darwin.log("No results from either retriever", LogType.WARNING)
+        darwin.warning("No results from either semantic or keyword search")
         return []
 
-    darwin.log("Fusing results via RRF...", LogType.INFO)
+    darwin.info("Fusing results via RRF")
     results = hybrid_search(
         semantic_results=semantic_results[:pool_size],
         keyword_results=keyword_results[:pool_size],
@@ -255,5 +255,5 @@ def search_across_documents_hybrid(
         semantic_weight=semantic_weight,
         keyword_weight=keyword_weight,
     )
-    darwin.log(f"Done – {len(results)} final results", LogType.SUCCESS)
+    darwin.success(f"Hybrid search complete: {len(results)} results")
     return results

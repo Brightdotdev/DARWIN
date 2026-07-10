@@ -1,115 +1,89 @@
-# Admin — Full Orchestrator Control
+# Darwin Admin CLI
 
-**What it is:** A comprehensive CLI for power users to control every aspect of Darwin — models, store, pipeline, logs, system, and setup. Built with Rich for beautiful terminal output.
+Full orchestrator control for power users. 17 subcommands across 5 groups.
 
-**Why it exists:** While the root `darwin` CLI covers common operations, power users and Docker deployments need fine-grained control over every subsystem. The admin CLI exposes the full orchestrator API.
-
-## Entry Points
+## Usage
 
 ```bash
-darwin admin <command> [ARGS]...
+python -m src.admin <group> <command> [options]
+# or via unified CLI:
+darwin admin <group> <command> [options]
 ```
 
-Or directly:
+## Groups
+
+### `setup` — First-time configuration
+
+| Command | Description |
+|---------|-------------|
+| `interactive` | Guided numbered menus — detect hardware, choose models, set API keys |
+| `profile --profile recommended` | Non-interactive, install recommended model profile |
+| `onboard --preferences embedding=... nlp=...` | Non-interactive with explicit model IDs |
+
+### `models` — Model lifecycle
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show installed status per category |
+| `list [--category] [--provider]` | List all registered models (with optional filters) |
+| `install <model_id>... [--no-download] [--force]` | Install one or more models |
+| `uninstall <model_id>... [--keep-files]` | Remove models |
+| `switch <category> <model_id> [--no-download]` | Change active model for a category |
+| `keys set/status/remove --provider <name> [--key]` | Manage API keys |
+
+### `store` — Store introspection
+
+| Command | Description |
+|---------|-------------|
+| `status` | Store overview (sources, pipeline stages, searchable files) |
+| `files` | List all files with pipeline stage and search readiness |
+| `file <filename>` | Detailed status for one file |
+| `audit` | Full store audit |
+| `health [--model <id>]` | Health check (embedding or registry) |
+| `repair [--dry-run]` | Repair integrity issues |
+
+### `pipeline` — Pipeline execution
+
+| Command | Description |
+|---------|-------------|
+| `run <target> [--ocr] [--recursive] [options]` | Full ingest + index |
+| `ingest <target> [options]` | Parse + chunk only |
+| `index [--files] [--threshold] [options]` | BM25 + embedding indexing only |
+| `purge <filenames>... [--stages]` | Remove artifacts for files |
+
+### `system` — Diagnostics
+
+| Command | Description |
+|---------|-------------|
+| `info` | Hardware detection + model recommendations |
+
+## Interactive mode
 
 ```bash
-python -m src.admin <command> [ARGS]...
+python -m src.admin setup interactive
 ```
 
-## Files
+Shows numbered menus for:
+1. System detection (RAM, CPU, GPU, tier)
+2. Model recommendations per category
+3. Model selection (or `all`)
+4. API key prompts for provider-based models
+5. Installation progress
 
-| File | Lines | Purpose |
-|---|---|---|
-| `cli.py` | 919 | Main admin CLI — 6 command groups |
-| `__main__.py` | — | `python -m src.admin` entry |
-| `__init__.py` | — | Package init |
-
-## Command Groups
-
-### `setup`
-
-Onboarding and configuration.
+## Non-interactive (Docker/automation)
 
 ```bash
-darwin admin setup interactive          # Guided onboarding
-darwin admin setup profile --profile recommended
-darwin admin setup onboard --preferences embedding=intfloat/...
+# Profile-based
+python -m src.admin setup profile --profile recommended --no-download
+
+# Explicit preferences
+python -m src.admin setup onboard \
+  --preferences embedding=intfloat/multilingual-e5-small-onnx \
+  --no-download
+
+# Pipeline automation
+python -m src.admin pipeline run /data/docs --ocr --recursive
+
+# Health monitoring
+python -m src.admin store health
 ```
-
-### `models`
-
-Model lifecycle management.
-
-```bash
-darwin admin models status              # Show all model statuses
-darwin admin models list                # List registered models
-darwin admin models install <model_id>  # Install a model
-darwin admin models uninstall <model_id># Uninstall a model
-darwin admin models switch <cat> <id>   # Switch active model
-darwin admin models keys set <provider> <key>  # Set API key
-```
-
-### `store`
-
-Store inspection and maintenance.
-
-```bash
-darwin admin store status               # Overall store health
-darwin admin store files                # List all files with status
-darwin admin store file <filename>      # Detailed file status
-darwin admin store audit                # Full store audit
-darwin admin store health               # Embedding health check
-darwin admin store repair [--dry-run]   # Repair issues
-```
-
-### `pipeline`
-
-Document processing pipeline.
-
-```bash
-darwin admin pipeline run <target> [--ocr] [--recursive]  # Full ingest+index
-darwin admin pipeline ingest <target>   # Parse + chunk only
-darwin admin pipeline index <target>    # BM25 + embedding only
-darwin admin pipeline purge <file> --stages ingestion  # Delete artifacts
-```
-
-### `logs`
-
-Structured log management.
-
-```bash
-darwin admin logs query                 # Query logs with filters
-darwin admin logs sessions              # List sessions
-darwin admin logs session-info <id>     # Session details
-darwin admin logs stats                 # Log statistics
-darwin admin logs purge                 # Purge old logs
-darwin admin logs purge-session <id>    # Purge a session
-darwin admin logs export <file>         # Export logs to JSON
-darwin admin logs compact               # Compact SQLite DB
-darwin admin logs set-retention <days>  # Set retention policy
-```
-
-### `system`
-
-System information.
-
-```bash
-darwin admin system info                # Hardware, models, store, config
-```
-
-## Architecture
-
-Each command group lazily loads its orchestrator:
-
-```python
-@cli.group()
-def models():
-    pass
-
-@models.command()
-def status():
-    orch = _get_models()  # Lazy-loaded ModelOrchestrator
-    ...
-```
-
-The CLI uses Rich for all output: Table, Panel, Tree, console markup.

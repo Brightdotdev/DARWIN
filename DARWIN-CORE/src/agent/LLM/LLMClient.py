@@ -33,7 +33,7 @@ from litellm.caching import Cache
 
 from src.agent.LLM.LLMConfig import ProviderConfig, TierConfig, PROVIDER_ENV_MAP
 from src.agent.LLM.LLMTypes import LLMResponse
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 
@@ -90,10 +90,9 @@ class LLMClient:
             env_var = PROVIDER_ENV_MAP.get(prov)
             if env_var and not os.environ.get(env_var):
                 if not self.providers[prov].api_key:
-                    darwin.log(
+                    darwin.warning(
                         f"Environment variable {env_var} not set and no explicit api_key "
-                        f"for provider '{prov}'. Calls may fail unless key is provided.",
-                        LogType.WARNING,
+                        f"for provider '{prov}'. Calls may fail unless key is provided."
                     )
 
     # ------------------------------------------------------------------
@@ -104,7 +103,8 @@ class LLMClient:
     ) -> tuple[str, ProviderConfig]:
         prov = provider or self.default_provider
         if prov not in self.providers:
-            raise ValueError(f"Provider '{prov}' not configured")
+            darwin.error(f"Provider '{prov}' not configured")
+            return f"Error: Provider '{prov}' not configured", None
         return prov, self.providers[prov]
 
     def _build_litellm_model(self, provider: str, model: str) -> str:
@@ -185,21 +185,22 @@ class LLMClient:
                 last_exception = e
                 if attempt < self.max_retries:
                     wait = (2 ** attempt) + random.uniform(0, 0.5 * (2 ** attempt))
-                    darwin.log(
+                    darwin.warning(
                         f"Transient error on {prov} (attempt {attempt+1}/{self.max_retries+1}): {e}. "
-                        f"Retrying in {wait:.1f}s…",
-                        LogType.WARNING,
+                        f"Retrying in {wait:.1f}s…"
                     )
                     time.sleep(wait)
                 else:
-                    darwin.log(f"All retries exhausted for {prov}: {e}", LogType.ERROR)
+                    darwin.error(f"All retries exhausted for {prov}: {e}")
             except Exception:
                 # Non-retryable errors (auth, bad request, coding bugs) propagate immediately
                 raise
 
         # All retries failed on transient errors
-        assert last_exception is not None
-        raise last_exception
+        if last_exception is not None:
+            darwin.error(str(last_exception))
+            return f"Error: {last_exception}"
+        return "Error: Unknown error after retries"
 
     # ------------------------------------------------------------------
     # Sync call
@@ -221,11 +222,11 @@ class LLMClient:
             prov, provider_config = self._resolve_provider_config(provider)
             kwargs = self._prepare_kwargs(messages, tier, prov, json_schema, override_kwargs)
         except ValueError as e:
-            darwin.log(str(e), LogType.ERROR)
+            darwin.error(str(e))
             return LLMResponse(error=str(e))
         except Exception as e:
             import traceback
-            darwin.log(f"Unexpected setup error in _call: {traceback.format_exc()}", LogType.ERROR)
+            darwin.error(f"Unexpected setup error in _call: {traceback.format_exc()}")
             return LLMResponse(error=f"Setup error: {e}")
 
         def sync_call():
@@ -246,10 +247,10 @@ class LLMClient:
             return LLMResponse(text=raw_text, json=parsed)
 
         except litellm.exceptions.AuthenticationError as e:
-            darwin.log(f"Authentication error for {prov}: {e}", LogType.ERROR)
+            darwin.error(f"Authentication failed for provider '{prov}': {e}")
             return LLMResponse(error=f"Authentication failed for {prov}: {e}")
         except litellm.exceptions.BadRequestError as e:
-            darwin.log(f"Bad request to {prov}: {e}", LogType.ERROR)
+            darwin.error(f"Bad request to provider '{prov}': {e}")
             return LLMResponse(error=f"Bad request to {prov}: {e}")
         except RETRYABLE_EXCEPTIONS as e:
             # Transient error that survived all retries
@@ -258,9 +259,8 @@ class LLMClient:
             raise
         except Exception as e:
             import traceback
-            darwin.log(
+            darwin.error(
                 f"Unexpected error in LLM call to {prov}:\n{traceback.format_exc()}",
-                LogType.ERROR,
             )
             return LLMResponse(error=f"Unexpected error: {e}")
 
@@ -284,11 +284,11 @@ class LLMClient:
             prov, provider_config = self._resolve_provider_config(provider)
             kwargs = self._prepare_kwargs(messages, tier, prov, json_schema, override_kwargs)
         except ValueError as e:
-            darwin.log(str(e), LogType.ERROR)
+            darwin.error(str(e))
             return LLMResponse(error=str(e))
         except Exception as e:
             import traceback
-            darwin.log(f"Unexpected setup error in _acall: {traceback.format_exc()}", LogType.ERROR)
+            darwin.error(f"Unexpected setup error in _acall: {traceback.format_exc()}")
             return LLMResponse(error=f"Setup error: {e}")
 
         last_exception: Optional[Exception] = None
@@ -313,27 +313,25 @@ class LLMClient:
                 last_exception = e
                 if attempt < self.max_retries:
                     wait = (2 ** attempt) + random.uniform(0, 0.5 * (2 ** attempt))
-                    darwin.log(
+                    darwin.warning(
                         f"Transient error on {prov} (async attempt {attempt+1}/{self.max_retries+1}): {e}. "
                         f"Retrying in {wait:.1f}s…",
-                        LogType.WARNING,
                     )
                     await asyncio.sleep(wait)
                 else:
-                    darwin.log(f"All async retries exhausted for {prov}: {e}", LogType.ERROR)
+                    darwin.error(f"All async retries exhausted for {prov}: {e}")
             except litellm.exceptions.AuthenticationError as e:
-                darwin.log(f"Authentication error for {prov}: {e}", LogType.ERROR)
+                darwin.error(f"Authentication failed for provider '{prov}': {e}")
                 return LLMResponse(error=f"Authentication failed for {prov}: {e}")
             except litellm.exceptions.BadRequestError as e:
-                darwin.log(f"Bad request to {prov}: {e}", LogType.ERROR)
+                darwin.error(f"Bad request to provider '{prov}': {e}")
                 return LLMResponse(error=f"Bad request to {prov}: {e}")
             except (KeyboardInterrupt, SystemExit):
                 raise
             except Exception as e:
                 import traceback
-                darwin.log(
+                darwin.error(
                     f"Unexpected async error in LLM call to {prov}:\n{traceback.format_exc()}",
-                    LogType.ERROR,
                 )
                 return LLMResponse(error=f"Unexpected error: {e}")
 

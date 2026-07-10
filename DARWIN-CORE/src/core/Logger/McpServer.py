@@ -37,7 +37,8 @@ def create_mcp_server(store_id: Optional[str] = None) -> Server:
         else:
             ds = DarwinStore.get_default_store()
             if ds is None:
-                raise ValueError("No default store found. Provide store_id.")
+                darwin.error("No default store found. Provide store_id.")
+                return None
             return ds
 
     # Instantiate orchestrators lazily
@@ -406,7 +407,7 @@ def create_mcp_server(store_id: Optional[str] = None) -> Server:
                 ]
 
             else:
-                raise ValueError(f"Unknown tool: {name}")
+                return [types.TextContent(type="text", text=json.dumps({"error": f"Unknown tool: {name}"}))]
 
         except Exception as e:
             darwin.error(f"MCP tool {name} failed: {e}")

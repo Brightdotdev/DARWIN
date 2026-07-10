@@ -5,6 +5,7 @@ from typing import Optional, Callable
 
 from src.core.Storage.DiskUsage import build_tree, disk_node_to_dict, find_node, print_tree
 from src.core.Models.ModelStore import ModelStore
+from src.core.Logger.DarwinLogger import darwin
 
 
 class DashboardService:
@@ -38,7 +39,8 @@ class DashboardService:
             parts = subpath.strip("/").split("/")
             node = find_node(tree, parts)
             if node is None:
-                raise ValueError(f"Subpath not found: {subpath}")
+                darwin.error(f"Subpath not found: {subpath}")
+                return {}
             return disk_node_to_dict(node)
         return disk_node_to_dict(tree)
 

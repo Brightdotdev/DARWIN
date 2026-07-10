@@ -336,13 +336,13 @@ def get_hardware_summary() -> Dict[str, Any]:
 def log_hardware_summary() -> None:
     """Log hardware detection results via Darwin."""
     info = _get_device_info()
-    darwin.log(f"Platform: {info['platform']}")
-    darwin.log(f"CPUs: {info['cpu_count']}, RAM: {info['ram_total_gb']:.1f}GB total, {info['ram_available_gb']:.1f}GB free")
+    darwin.info(f"Platform: {info['platform']}")
+    darwin.info(f"CPUs: {info['cpu_count']}, RAM: {info['ram_total_gb']:.1f}GB total, {info['ram_available_gb']:.1f}GB free")
     if info['gpu_available']:
-        darwin.log(f"GPU: {', '.join(info['gpu_vendors'])}, VRAM: {info['gpu_vram_gb']:.1f}GB free", LogType.SUCCESS)
+        darwin.success(f"GPU: {', '.join(info['gpu_vendors'])}, VRAM: {info['gpu_vram_gb']:.1f}GB free")
     else:
-        darwin.log("GPU: not detected", LogType.WARNING)
-    darwin.log(f"ONNX providers: {info['ort_providers']}")
+        darwin.warning("GPU: not detected")
+    darwin.info(f"ONNX providers: {info['ort_providers']}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -43,25 +43,25 @@ def get_nlp_inference(
     if not model_id:
         model_id = get_active_model(NLP_CATEGORY)
         if model_id is None:
-            darwin.log("No NLP model specified and no active model set.", LogType.ERROR)
+            darwin.error("No NLP model specified and no active model set")
             return None
 
     # Look up spec
     spec = find_spec(model_id, category=ModelCategory.NLP)
     if spec is None:
-        darwin.log(f"Unknown NLP model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown NLP model: {model_id}")
         return None
 
     # Get local path
     model_path = get_model_path(model_id, None, NLP_CATEGORY)
     if model_path is None:
-        darwin.log(f"Could not determine path for NLP model: {model_id}", LogType.ERROR)
+        darwin.error(f"Could not determine path for NLP model: {model_id}")
         return None
 
     # Ensure model files exist
     if not model_path.exists():
-        darwin.log(f"NLP model not found at: {model_path}", LogType.ERROR)
-        darwin.log("Please download it first using set_nlp_preference()", LogType.ERROR)
+        darwin.error(f"NLP model not found at: {model_path}")
+        darwin.error("Download it first using set_nlp_preference()")
         return None
 
     # Instantiate and load
@@ -74,7 +74,7 @@ def get_nlp_inference(
         inference.load()
         return inference
     except Exception as e:
-        darwin.log(f"Failed to load NLP model {model_id}: {e}", LogType.ERROR)
+        darwin.error(f"Failed to load NLP model {model_id}: {e}")
         return None
 
 
@@ -93,22 +93,23 @@ def set_nlp_preference(
     """
     spec = find_spec(model_id, category=ModelCategory.NLP)
     if spec is None:
-        raise ValueError(f"Unknown NLP model: {model_id}")
+        darwin.error(f"Unknown NLP model: {model_id}")
+        return
 
     # Local model only – no API path
     model_path = ensure_model_path(model_id, category=NLP_CATEGORY)
     if model_path is None:
-        darwin.log(f"Failed to get path for NLP model: {model_id}", LogType.ERROR)
-        darwin.log("Model will not be set as active", LogType.ERROR)
+        darwin.error(f"Failed to get path for NLP model: {model_id}")
+        darwin.error("Model will not be set as active")
         return
 
     # Check if already downloaded
     if not model_path.exists():
         if not auto_download:
-            darwin.log(f"NLP model not found at: {model_path}", LogType.ERROR)
-            darwin.log("Model will not be set as active", LogType.ERROR)
+            darwin.error(f"NLP model not found at: {model_path}")
+            darwin.error("Model will not be set as active")
             return
-        darwin.log(f"NLP model missing. Downloading...", LogType.INFO)
+        darwin.info("NLP model missing, downloading...")
 
     # Download/ensure
     downloader = SpacyNLPModelDownloader(
@@ -117,13 +118,13 @@ def set_nlp_preference(
     )
     success = downloader.ensure(force=force)
     if not success:
-        darwin.log(f"Failed to download NLP model: {model_id}", LogType.ERROR)
-        darwin.log("Model will not be set as active", LogType.ERROR)
+        darwin.error(f"Failed to download NLP model: {model_id}")
+        darwin.error("Model will not be set as active")
         return
 
     # Set active
     set_active_model(NLP_CATEGORY,spec.model_id)
-    darwin.log(f"NLP model set as active: {model_path}", LogType.SUCCESS)
+    darwin.success(f"NLP model set as active: {model_path}")
 
 
 def discard_nlp_model(
@@ -146,7 +147,7 @@ def discard_nlp_model(
 
     spec = find_spec(model_id, category=ModelCategory.NLP)
     if spec is None:
-        darwin.log(f"Unknown NLP model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown NLP model: {model_id}")
         return
 
     current = get_active_model(NLP_CATEGORY)
@@ -160,20 +161,20 @@ def discard_nlp_model(
         if model_path and model_path.exists():
             try:
                 shutil.rmtree(model_path)
-                darwin.log(f"NLP model deleted from disk: {model_path}", LogType.INFO)
+                darwin.info(f"NLP model deleted from disk: {model_path}")
             except Exception as e:
-                darwin.log(f"Failed to delete NLP model: {e}", LogType.ERROR)
+                darwin.error(f"Failed to delete NLP model: {e}")
                 # Still proceed to clear active preference if needed
         else:
-            darwin.log(f"NLP model path not found: {model_path}", LogType.WARNING)
+            darwin.warning(f"NLP model path not found: {model_path}")
     else:
         # If not deleting, just mention we're keeping files
-        darwin.log(f"NLP model removed from preferences only (files kept)", LogType.INFO)
+        darwin.info("NLP model removed from preferences only (files kept)")
 
     # ── Clear active preference if it was the active model ────────────────
     if is_active:
         set_active_model(NLP_CATEGORY,spec.model_id)
-        darwin.log(f"Removed {model_id} from active NLP preferences", LogType.INFO)
+        darwin.info(f"Removed {model_id} from active NLP preferences")
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +189,7 @@ def get_nlp_model_path(model_id: str) -> Optional[Path]:
     """
     spec = find_spec(model_id, category=ModelCategory.NLP)
     if spec is None:
-        darwin.log(f"Unknown NLP model: {model_id}", LogType.ERROR)
+        darwin.error(f"Unknown NLP model: {model_id}")
         return None
     return get_model_path(model_id, None, NLP_CATEGORY)
 

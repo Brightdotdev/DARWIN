@@ -18,6 +18,8 @@ from src.core.Pipeline.Indexing.lib import IndexingArgs
 from src.core.Pipeline.Ingestion.main import handle_ingestion
 from src.core.Pipeline.Indexing.main import handle_indexing
 
+from src.core.Orchestrators.lib import PipelineParameters as PipelineInput  # public API
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Enums & Dataclasses
@@ -32,10 +34,11 @@ class PipelineStage(str, Enum):
 
 
 @dataclass
-class PipelineParameters:
+class StageParameters:
     """
-    Strongly-typed bag of stage arguments.
+    Strongly-typed bag of stage arguments (internal).
     Only populate the fields for the stages you intend to run.
+    Constructed by lib.py PipelineParameters.build().
     """
     parsing: Optional[ParsingArgs] = None
     chunking: Optional[ChunkingArgs] = None
@@ -73,7 +76,8 @@ class PipelineOrchestrator:
         self.store = store
         
         if not self.store:
-            raise ValueError("A valid DarwinStore instance is required.")
+            darwin.error("A valid DarwinStore instance is required.")
+            self.store = None
         store.repair_registry()
         self._handlers = {
             PipelineStage.INGESTION: self._run_ingestion,
@@ -96,26 +100,28 @@ class PipelineOrchestrator:
                     result.append(PipelineStage(s))
                 except ValueError:
                     valid = [m.value for m in PipelineStage]
-                    raise ValueError(f"Unknown stage '{s}'. Valid: {valid}")
+                    darwin.error(f"Unknown stage '{s}'. Valid: {valid}")
+                    return []
             else:
-                raise TypeError(f"Stage must be PipelineStage or str, got {type(s).__name__}")
+                darwin.error(f"Stage must be PipelineStage or str, got {type(s).__name__}")
+                return []
         return result
 
     def _validate(
         self,
-        params: PipelineParameters,
+        params: StageParameters,
         stages: List[PipelineStage],
     ) -> Optional[str]:
         """Pre-flight check before any compute begins."""
         for stage in stages:
             if stage == PipelineStage.INGESTION:
                 if params.parsing is None:
-                    return "Ingestion stage requires PipelineParameters.parsing"
+                    return "Ingestion stage requires StageParameters.parsing"
                 if params.chunking is None:
-                    return "Ingestion stage requires PipelineParameters.chunking"
+                    return "Ingestion stage requires StageParameters.chunking"
             elif stage == PipelineStage.INDEXING:
                 if params.indexing is None:
-                    return "Indexing stage requires PipelineParameters.indexing"
+                    return "Indexing stage requires StageParameters.indexing"
             
         return None
 
@@ -129,42 +135,38 @@ class PipelineOrchestrator:
 
     def build_pipeline(
         self,
-        params: PipelineParameters,
-        stages: Union[List[PipelineStage], List[str]],
-        *,
-        strict: bool = True,
-        log_mode: str = "quiet",
+        params: PipelineInput,
     ) -> PipelineResult:
         """
         Execute pipeline stages with typed parameters, per-stage session logging,
         and structured log capture.
 
         Args:
-            params: Strongly-typed stage arguments.
-            stages: List of PipelineStage enums (or strings, coerced automatically).
-            strict: If True, halt on first stage failure.
-            log_mode: "quiet" (default) returns WARNING/ERROR/SUCCESS only.
-                      "normal" returns everything including INFO.
+            params: PipelineParameters from Orchestrators.lib — the single
+                    source of truth for defaults. Use .build() internally.
 
         Returns:
             PipelineResult with per-stage logs under result.logs[stage.value].
             Orchestrator-level logs live under result.logs["orchestrator"].
         """
+        internal, raw_stages = params.build()
+        stages = self._coerce_stages(raw_stages)
+        strict = params.strict
+        log_mode = params.log_mode
 
         if log_mode not in ("quiet", "normal"):
-            darwin.log(f"Got {log_mode} instead of 'quiet' or 'normal' for log_mode. Defaulting to 'quiet'", LogType.WARNING)
+            darwin.warning(f"Invalid log_mode '{log_mode}', defaulting to 'quiet'")
             log_mode = "quiet"
 
         result = PipelineResult(success=True, parameters_validated=False)
-        stages = self._coerce_stages(stages)
         levels = self._log_levels(log_mode)
 
         # ── Orchestrator session wraps everything ──
         with darwin.session("PIPLEINE"):
             # 1. Pre-validate
-            validation_error = self._validate(params, stages)
+            validation_error = self._validate(internal, stages)
             if validation_error:
-                darwin.error(f"Validation failed: {validation_error}")
+                darwin.error(f"Pipeline parameter validation failed: {validation_error}")
                 result.success = False
                 result.summary = f"Validation failed: {validation_error}"
                 result.logs["orchestrator"] = darwin.get_logs(
@@ -174,7 +176,7 @@ class PipelineOrchestrator:
 
             result.parameters_validated = True
             darwin.success(
-                f"Parameters validated. Stages: {[s.value for s in stages]}"
+                f"Parameters validated for stages: {[s.value for s in stages]}"
             )
 
             # 2. Canonical order
@@ -185,22 +187,22 @@ class PipelineOrchestrator:
             for stage in ordered:
                 session_name = f"pipeline_{stage.value}"
                 with darwin.session(session_name):
-                    darwin.info(f"Stage starting: {stage.value}")
+                    darwin.info(f"Starting stage '{stage.value}'")
                     try:
-                        self._handlers[stage](params)
-                        darwin.success(f"✓ Stage complete: {stage.value}")
+                        self._handlers[stage](internal)
+                        darwin.success(f"Stage '{stage.value}' completed successfully")
                         result.stages_completed.append(stage)
                     except Exception as e:
                         err_msg = f"{e}"
                         darwin.error(
-                            f"✗ Stage failed: {stage.value}",
+                            f"Stage '{stage.value}' failed: {err_msg}",
                             payload={"error": err_msg},
                         )
                         darwin.error(traceback.format_exc())
                         result.stages_failed[stage.value] = err_msg
                         result.success = False
                         if strict:
-                            darwin.warning("Strict mode: halting pipeline")
+                            darwin.warning("Strict mode enabled, halting pipeline after failure")
                             break
 
                 # Capture this stage's logs (failed or not)
@@ -211,9 +213,9 @@ class PipelineOrchestrator:
             # 4. Finalize
             result.summary = self._build_summary(result)
             if result.success:
-                darwin.success(f"Pipeline complete: {result.summary}")
+                darwin.success(f"Pipeline completed: {result.summary}")
             else:
-                darwin.error(f"Pipeline finished with failures: {result.summary}")
+                darwin.error(f"Pipeline completed with failures: {result.summary}")
 
             # Capture orchestrator-level logs
             result.logs["orchestrator"] = darwin.get_logs(
@@ -234,7 +236,7 @@ class PipelineOrchestrator:
         Logs every deletion attempt and outcome. Returns nothing.
         """
         if not filenames:
-            darwin.warning("Purge called with no filenames — nothing to do")
+            darwin.warning("Purge called with no filenames, nothing to do")
             return
 
         stages = self._coerce_stages(stages)
@@ -252,11 +254,11 @@ class PipelineOrchestrator:
                         self.store.delete_bm25(filename)
                         self.store.delete_stopwords(filename)
                         
-                    darwin.success(f"[purge] {stage.value}/{filename} removed")
+                    darwin.success(f"Removed '{filename}' from stage '{stage.value}'")
                 except Exception as e:
-                    darwin.error(f"[purge] {stage.value}/{filename} failed: {e}")
+                    darwin.error(f"Failed to remove '{filename}' from stage '{stage.value}': {e}")
 
-        darwin.success("Purge complete")
+        darwin.success("Purge completed successfully")
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
@@ -272,13 +274,15 @@ class PipelineOrchestrator:
 
     # ── Stage runners ───────────────────────────────────────────────────────────
 
-    def _run_ingestion(self, params: PipelineParameters) -> None:
+    def _run_ingestion(self, params: StageParameters) -> None:
         if not params.parsing or not params.chunking:
-            raise ValueError("ParsingArgs and ChunkingArgs required")
+            darwin.error("ParsingArgs and ChunkingArgs required")
+            return
         handle_ingestion(params.parsing, params.chunking, self.store)
 
-    def _run_indexing(self, params: PipelineParameters) -> None:
+    def _run_indexing(self, params: StageParameters) -> None:
         if not params.indexing:
-            raise ValueError("IndexingArgs required")
+            darwin.error("IndexingArgs required")
+            return
         handle_indexing(params.indexing, self.store)
 

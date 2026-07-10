@@ -27,19 +27,19 @@ async def test_ocr():
     """Test OCR on images from /mock_images."""
 
     # Initialize OCR
-    darwin.log("Initializing OCR...", LogType.INFO)
+    darwin.info("Initializing OCR...")
 
     ocr = modelManager.get(ModelCategory.OCR)
     if ocr is None:
-        darwin.log("Failed to initialize OCR", LogType.ERROR)
+        darwin.error("Failed to initialize OCR")
         return
 
-    darwin.log("OCR initialized successfully", LogType.INFO)
+    darwin.info("OCR initialized successfully")
 
     # Discover images from /mock_images
     mock_dir = Path("mock_images")
     if not mock_dir.exists():
-        darwin.log(f"Mock images directory not found: {mock_dir}", LogType.ERROR)
+        darwin.error(f"Mock images directory not found: {mock_dir}")
         return
 
     # Supported image extensions
@@ -50,11 +50,11 @@ async def test_ocr():
     ])
 
     if not image_files:
-        darwin.log(f"No images found in {mock_dir}", LogType.WARNING)
+        darwin.warning(f"No images found in {mock_dir}")
         return
 
-    darwin.log(f"Found {len(image_files)} image(s) in {mock_dir}", LogType.INFO)
-    darwin.log("=" * 70, LogType.INFO)
+    darwin.info(f"Found {len(image_files)} image(s) in {mock_dir}")
+    darwin.info("=" * 70)
 
     # Test each image
     results = []
@@ -69,7 +69,7 @@ async def test_ocr():
             # Log result
             log_msg = f"📄 {filepath.name}:"
             log_msg += f"\n  Extracted:\n{extracted_text}"
-            darwin.log(log_msg, LogType.INFO)
+            darwin.info(log_msg)
 
             results.append({
                 "file": filepath.name,
@@ -77,7 +77,7 @@ async def test_ocr():
                 "success": True
             })
         except Exception as e:
-            darwin.log(f"  Error on {filepath.name}: {e}", LogType.ERROR)
+            darwin.error(f"Error on {filepath.name}: {e}")
             results.append({
                 "file": filepath.name,
                 "extracted": f"ERROR: {e}",
@@ -85,10 +85,10 @@ async def test_ocr():
             })
 
     # Summary
-    darwin.log("=" * 70, LogType.INFO)
+    darwin.info("=" * 70)
     total = len(results)
     successful = sum(1 for r in results if r["success"])
-    darwin.log(f"SUMMARY: {successful}/{total} images processed successfully", LogType.INFO)
+    darwin.info(f"SUMMARY: {successful}/{total} images processed successfully")
 
     # Save results to file
     result_file = Path("ocr_test_results.txt")
@@ -99,25 +99,25 @@ async def test_ocr():
             status = "PASS" if r["success"] else "FAIL"
             f.write(f"\n{status}: {r['file']}\n")
             f.write(f"  Extracted:\n{r['extracted']}\n")
-    darwin.log(f"\nDetailed results saved to: {result_file}", LogType.INFO)
+    darwin.info(f"Detailed results saved to: {result_file}")
 
 
 def main():
     """Main entry point."""
     darwin.configure()
-    darwin.log("Starting OCR Test Script", LogType.INFO)
-    darwin.log("=" * 70, LogType.INFO)
+    darwin.info("Starting OCR Test Script")
+    darwin.info("=" * 70)
 
     try:
         asyncio.run(test_ocr())
     except KeyboardInterrupt:
-        darwin.log("Test interrupted by user", LogType.WARNING)
+        darwin.warning("Test interrupted by user")
     except Exception as e:
-        darwin.log(f"Test failed with error: {e}", LogType.ERROR)
+        darwin.error(f"Test failed with error: {e}")
         import traceback
         traceback.print_exc()
 
-    darwin.log("\nOCR Test Complete", LogType.INFO)
+    darwin.info("OCR Test Complete")
 
 
 if __name__ == "__main__":

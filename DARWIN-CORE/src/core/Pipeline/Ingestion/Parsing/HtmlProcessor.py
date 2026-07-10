@@ -51,7 +51,7 @@ def extract_content(
     try:
         from trafilatura import extract, bare_extraction
     except ImportError:
-        darwin.log("Trafilatura not installed – falling back to BeautifulSoup", LogType.WARNING)
+        darwin.warning("Trafilatura not installed, falling back to BeautifulSoup")
     else:
         extracted = extract(
             html_bytes,
@@ -71,19 +71,19 @@ def extract_content(
                     meta_dict = {k: v for k, v in meta.items() if k != "text"}
             except Exception:
                 pass
-            darwin.log(f"Trafilatura extracted {len(extracted)} chars from {url}", LogType.INFO)
+            darwin.info(f"Trafilatura extracted {len(extracted)} chars from {url}")
             return extracted, meta_dict
 
     # Step 2: JS detection
     js_required = _needs_js_rendering(html_bytes)
     if js_required:
-        darwin.log(f"Page at {url} appears to require JavaScript rendering.", LogType.WARNING)
+        darwin.warning(f"Page at {url} appears to require JavaScript rendering")
 
     # Step 3: BeautifulSoup fallback
     try:
         from bs4 import BeautifulSoup
     except ImportError:
-        darwin.log("BeautifulSoup not installed – cannot perform fallback extraction", LogType.ERROR)
+        darwin.error("BeautifulSoup not installed, cannot perform fallback extraction")
         return "", {"error": "extraction dependencies missing (install trafilatura or beautifulsoup4)"}
 
     soup = BeautifulSoup(html_bytes, "html.parser")
@@ -94,7 +94,7 @@ def extract_content(
     text = "\n".join(lines)
 
     if len(text) >= MIN_EXTRACTED_TEXT_LENGTH:
-        darwin.log(f"BeautifulSoup extracted {len(text)} chars from {url}", LogType.INFO)
+        darwin.info(f"BeautifulSoup extracted {len(text)} chars from {url}")
         return text, {}
     else:
         if js_required:

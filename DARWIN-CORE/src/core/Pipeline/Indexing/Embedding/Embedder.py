@@ -13,7 +13,7 @@ from src.core.Models.EmbeddingConfig import (
 
 from src.core.Models.ModelManager import modelManager
 from src.core.Models.Lib.ModelSpec import ModelCategory
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -63,16 +63,15 @@ def embed_chunks(
         np.ndarray of shape (N, D) or None on failure.
     """
     if not chunks:
-        darwin.log("No chunks found to embed", LogType.WARNING)
+        darwin.warning("No chunks to embed")
         return np.array([], dtype=np.float32)
 
     texts = [prepare_passage_text(c.get("clean", ""), preset) for c in chunks]
     optimal_batch = batch_size or get_model_batch_size(preset)
 
-    darwin.log(
-        f"Embedding with {preset.model_name} ({preset.category}, {preset.max_tokens} token limit) "
-        f"[batch_size={optimal_batch}, length_batching={use_length_batching}]",
-        LogType.INFO,
+    darwin.info(
+        f"Embedding {len(texts)} texts with {preset.model_name} "
+        f"(batch_size={optimal_batch}, length_batching={use_length_batching})"
     )
 
     engine = EmbeddingEngine()
@@ -87,14 +86,13 @@ def embed_chunks(
     )
 
     if vectors is None or len(vectors) == 0:
-        darwin.log("Embedding returned empty result; possible OOM or encoding failure.", LogType.ERROR)
+        darwin.error("Embedding returned empty result — possible OOM or encoding failure")
         return None
 
     model_short = preset.model_name.split("/")[-1]
-    darwin.log(
-        f"Embedded {len(chunks)} chunks → {vectors.shape} "
-        f"(model: {model_short}, batch_size={optimal_batch})",
-        LogType.SUCCESS,
+    darwin.success(
+        f"Embedded {len(chunks)} chunks → shape {vectors.shape} "
+        f"(model: {model_short}, batch_size={optimal_batch})"
     )
 
     return vectors
@@ -171,18 +169,17 @@ def run_embedding_pipeline(
         np.ndarray of shape (N, D) or None.
     """
     if not chunks:
-        darwin.log(f"No chunks to embed for {filename}", LogType.WARNING)
+        darwin.warning(f"No chunks to embed for {filename}")
         return None
 
     if not rerun and store.has_embeddings(filename):
-        darwin.log(f"Skipping embedding: fresh index exists for {filename}", LogType.WARNING)
+        darwin.warning(f"Skipping {filename} — embeddings already exist")
         return None
 
 
     model_name = preset.model_name
-    darwin.log(
-        f"Embedding {filename} ({len(chunks)} content chunks) with {model_name}",
-        LogType.INFO,
+    darwin.info(
+        f"Embedding {filename} ({len(chunks)} chunks) with {model_name}"
     )
 
     vectors = embed_chunks(
@@ -230,16 +227,16 @@ class EmbeddingSession:
         self._embedder = modelManager.get(ModelCategory.EMBEDDING)
         self._acquired = self._embedder is not None
         if self._acquired:
-            darwin.log(f"EmbeddingSession acquired: {self._preset.model_name}", LogType.INFO)
+            darwin.info(f"Embedding session acquired: {self._preset.model_name}")
         else:
-            darwin.log("Failed to load embedding model", LogType.ERROR)
-            darwin.log("[HELP] Run: python -m src.core.Models.cli setup --profile required")
+            darwin.error("Failed to load embedding model")
+            darwin.info("Run: python -m src.core.Models.cli setup --profile required")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self._acquired:
             modelManager.unload(ModelCategory.EMBEDDING)
-            darwin.log("Embedding model unloaded", LogType.INFO)
+            darwin.info("Embedding model unloaded")
         return False
 
     @property
@@ -261,7 +258,7 @@ class EmbeddingSession:
     ) -> Optional[np.ndarray]:
         """Embed a single file's chunks using the held model."""
         if not self._acquired:
-            darwin.log("EmbeddingSession not acquired", LogType.ERROR)
+            darwin.error("Embedding session not acquired")
             return None
         return run_embedding_pipeline(
             filename=filename,
@@ -276,14 +273,14 @@ class EmbeddingSession:
 
     def embed_query(self, query: str) -> Optional[np.ndarray]:
         if not self._acquired:
-            darwin.log("EmbeddingSession not acquired", LogType.ERROR)
+            darwin.error("Embedding session not acquired")
             return None
         prepared = prepare_query_text(query, self._preset)
         return self._embedder.encode(prepared).embeddings.astype(np.float32)
 
     def embed_text(self, text: str) -> Optional[np.ndarray]:
         if not self._acquired:
-            darwin.log("EmbeddingSession not acquired", LogType.ERROR)
+            darwin.error("Embedding session not acquired")
             return None
         prepared = prepare_passage_text(text, self._preset)
         return self._embedder.encode(prepared).embeddings.astype(np.float32)

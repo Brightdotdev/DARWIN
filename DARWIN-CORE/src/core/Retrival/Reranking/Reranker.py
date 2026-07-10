@@ -9,7 +9,7 @@ from typing import List, Optional, Any
 import numpy as np
 
 from src.core.Retrival.lib import OverlapDirection, ChunkLink
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 DEFAULT_TOP_K = 100
 
@@ -89,19 +89,19 @@ def rerank_results(
     from src.core.Models.Lib.ModelRegistry import ModelCategory
 
     if not candidates:
-        darwin.log("No candidates to rerank", LogType.WARNING)
+        darwin.warning("No candidates to rerank")
         return []
 
-    darwin.log(f"Reranking {len(candidates)} candidates...", LogType.INFO)
+    darwin.info(f"Reranking {len(candidates)} candidates")
 
     # Attempt to load the reranker model
     try:
         model = modelManager.get(ModelCategory.RERANKER)
         if model is None:
-            darwin.log("Reranking model not set – skipping", LogType.WARNING)
+            darwin.warning("Reranking model not set, skipping")
             return _fallback_rerank(candidates, top_k)
     except Exception as e:
-        darwin.log(f"Failed to load reranker model: {e}", LogType.ERROR)
+        darwin.error(f"Failed to load reranker model: {e}")
         return _fallback_rerank(candidates, top_k)
 
     # Prepare documents (truncate to avoid token limits)
@@ -111,14 +111,13 @@ def rerank_results(
     try:
         scores = model.predict(query, documents)
     except Exception as e:
-        darwin.log(f"Reranking failed: {e}", LogType.ERROR)
+        darwin.error(f"Reranking failed: {e}")
         return _fallback_rerank(candidates, top_k)
 
     # Ensure we have a score for each candidate
     if len(scores) != len(candidates):
-        darwin.log(
-            f"Reranker returned {len(scores)} scores, expected {len(candidates)} – falling back",
-            LogType.WARNING
+        darwin.warning(
+            f"Reranker returned {len(scores)} scores, expected {len(candidates)}, falling back"
         )
         return _fallback_rerank(candidates, top_k)
 
@@ -167,7 +166,7 @@ def rerank_results(
 
     reranked.sort(key=lambda x: x.final_score, reverse=True)
     result_count = min(top_k, len(reranked))
-    darwin.log(f"Reranked – returning top {result_count} results", LogType.SUCCESS)
+    darwin.success(f"Reranked: returning top {result_count} results")
     return reranked[:top_k]
 
 

@@ -113,18 +113,18 @@ class RapidOCRInference(OCRInferenceInterface):
         # 1. Verify current state
         ok, err = self.verify_integrity(self.model_dir)
         if not ok:
-            darwin.log(f"OCR models missing or corrupt: {err}", LogType.WARNING)
+            darwin.warning(f"OCR models missing or corrupt: {err}")
             self._ensure_models()
 
         # 2. Verify after download
         ok, err = self.verify_integrity(self.model_dir)
         if not ok:
-            darwin.log(f"OCR model verification failed after download: {err}", LogType.ERROR)
-            raise RuntimeError(f"OCR model integrity check failed: {err}")
+            darwin.error(f"OCR model verification failed after download: {err}")
+            return
 
         # 3. Initialize engine
         self._engine = self._init_engine()
-        darwin.log("RapidOCR engine loaded and verified.", LogType.INFO)
+        darwin.info("RapidOCR engine loaded and verified")
 
     def _ensure_models(self) -> None:
         """Download missing models from HuggingFace SWHL/RapidOCR mirror."""
@@ -138,7 +138,7 @@ class RapidOCRInference(OCRInferenceInterface):
             if file_path.exists():
                 continue
 
-            darwin.log(f"Downloading OCR {key} model → {file_path}", LogType.INFO)
+            darwin.info(f"Downloading OCR {key} model → {file_path}")
             try:
                 downloaded_path = hf_hub_download(
                     repo_id=info["hf_repo"],
@@ -146,12 +146,12 @@ class RapidOCRInference(OCRInferenceInterface):
                     local_dir=str(self.model_dir),
                 )
 
-                darwin.log(f"Downloaded to: {downloaded_path}")
+                darwin.info(f"Downloaded to: {downloaded_path}")
 
                 downloaded_path_obj = Path(downloaded_path)
                 if downloaded_path_obj.parent != self.model_dir:
                     target_path = self.model_dir / info["file"]
-                    darwin.log(f"Moving {downloaded_path} to {target_path}")
+                    darwin.info(f"Moving {downloaded_path} to {target_path}")
                     shutil.move(str(downloaded_path), str(target_path))
 
                     try:
@@ -164,14 +164,15 @@ class RapidOCRInference(OCRInferenceInterface):
                     file_path = downloaded_path_obj
 
                 if not file_path.exists():
-                    raise RuntimeError(f"File not found after download: {file_path}")
+                    darwin.error(f"File not found after download: {file_path}")
+                    return
 
                 size_mb = file_path.stat().st_size / 1_048_576
-                darwin.log(f"Downloaded {key} model ({size_mb:.1f} MB)", LogType.INFO)
+                darwin.info(f"Downloaded {key} model ({size_mb:.1f} MB)")
 
             except Exception as e:
-                darwin.log(f"Failed to download {key} model: {e}", LogType.ERROR)
-                raise RuntimeError(f"OCR model download failed for {key}: {e}")
+                darwin.error(f"Failed to download {key} model: {e}")
+                return
 
     def _init_engine(self):
         """Initialize RapidOCR v3.x with dot-notation params dict."""
@@ -217,14 +218,14 @@ class RapidOCRInference(OCRInferenceInterface):
             return self._post_process(text, preserve_layout)
 
         # Pass 2 — synthetic-image preprocessing
-        darwin.log(f"OCR pass 1 weak (conf={confidence:.2f}), attempting preprocessing...")
+        darwin.info(f"OCR pass 1 weak (conf={confidence:.2f}), attempting preprocessing...")
         preprocessed = self._preprocess_for_synthetic(pil_image)
         text, confidence = await self._run_ocr(preprocessed)
 
         if confidence >= self.confidence_threshold and text:
             return self._post_process(text, preserve_layout)
 
-        darwin.log(f"OCR failed both passes (best conf={confidence:.2f})", LogType.WARNING)
+        darwin.warning(f"OCR failed both passes (best conf={confidence:.2f})")
         return ""
 
     # -----------------------------------------------------------------------
@@ -302,7 +303,8 @@ class RapidOCRInference(OCRInferenceInterface):
             return Image.open(image).convert("RGB")
         if isinstance(image, Image.Image):
             return image.convert("RGB")
-        raise TypeError(f"Unsupported image type: {type(image)}")
+        darwin.error(f"Unsupported image type: {type(image)}")
+        return None
 
     def _preprocess_for_synthetic(self, image: Image.Image) -> Image.Image:
         """

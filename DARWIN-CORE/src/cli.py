@@ -6,6 +6,7 @@ Usage:
     darwin setup [options]   One-shot setup (directories, models, workspace)
     darwin mcp [--sse]       Start MCP server (stdio or SSE)
     darwin admin <command>   Full admin CLI (models, store, pipeline, logs)
+    darwin status            Overview: store files, installed models, preferences
     darwin ingest <target>   Quick one-off ingest
     darwin search <query>    Quick one-off search
 """
@@ -51,6 +52,8 @@ def _ingest(args):
     from src.admin.cli import main as admin_main
 
     admin_args = ["pipeline", "ingest", args.target]
+    if args.store:
+        admin_args.extend(["--store", args.store])
     if args.ocr:
         admin_args.append("--ocr")
     if args.recursive:
@@ -60,18 +63,16 @@ def _ingest(args):
 
 
 def _search(args):
-    store = __import__(
-        "src.core.Storage.DarwinStore", fromlist=["DarwinStore"]
-    ).DarwinStore()
+    from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+    from src.core.Orchestrators.lib import RetrievalParameters, resolve_store
+
+    store = resolve_store(args.store)
     store.bootstrap()
-    orch = __import__(
-        "src.core.Orchestrators.RetrievalOrchestrator",
-        fromlist=["RetrievalOrchestrator"],
-    ).RetrievalOrchestrator(store=store)
-    cfg = __import__(
-        "src.core.Retrival.OrchestratorTypes", fromlist=["OrchestratorConfig"]
-    ).OrchestratorConfig(query=args.query, method=args.method, top_k=args.top_k)
-    ctx = orch.retrieve_and_resolve(cfg)
+    orch = RetrievalOrchestrator(store=store)
+    params = RetrievalParameters(
+        query=args.query, method=args.method, top_k=args.top_k, store=args.store
+    )
+    ctx = orch.retrieve_and_resolve(params)
     if ctx and not ctx.is_empty():
         from rich.console import Console
 
@@ -86,6 +87,12 @@ def _search(args):
         )
     else:
         print("No results.")
+
+
+def _status(args):
+    from src.admin.cli import cmd_status
+
+    cmd_status(args)
 
 
 def main():
@@ -130,7 +137,8 @@ def main():
 
     # ── ingest ──
     ing = sub.add_parser("ingest", help="Quick one-off ingest")
-    ing.add_argument("target", help="Path or URL to ingest")
+    ing.add_argument("target", help="Path or static URL to ingest")
+    ing.add_argument("--store", help="Store ID, name, or path (default: auto)")
     ing.add_argument("--ocr", action="store_true", help="Enable OCR")
     ing.add_argument("--recursive", action="store_true")
     ing.set_defaults(func=_ingest)
@@ -142,7 +150,12 @@ def main():
         "--method", default="hybrid", choices=["hybrid", "semantic", "keyword"]
     )
     se.add_argument("--top-k", type=int, default=5)
+    se.add_argument("--store", help="Store ID, name, or path (default: auto)")
     se.set_defaults(func=_search)
+
+    # ── status ──
+    st = sub.add_parser("status", help="Overview: store files, installed models, preferences")
+    st.set_defaults(func=_status)
 
     args, unknown = parser.parse_known_args()
     if args.command in ("setup", "admin") and unknown:

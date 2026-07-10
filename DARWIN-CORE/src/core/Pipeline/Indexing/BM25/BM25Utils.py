@@ -2,7 +2,7 @@
 import re
 from collections import Counter
 from typing import Iterator, List, Optional, Set, Tuple, Dict, Any
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Indexing.BM25.lib import (
     MIN_TOKEN_LENGTH, STANDARD_STOPS, DOMAIN_STOP_THRESHOLD
 )
@@ -14,7 +14,7 @@ def _blingfire_words(text: str) -> List[str]:
         from blingfire import text_to_words
         return text_to_words(text).split()
     except ImportError:
-        darwin.log("BlingFire not available — using regex fallback", LogType.WARNING)
+        darwin.warning("BlingFire not available — using regex fallback")
         return re.findall(r"[a-zA-Z]{2,}", text)
 
 def _keep_token(word: str, standard_stops: Set[str], domain_stops: Set[str]) -> bool:
@@ -89,9 +89,9 @@ def detect_domain_stopwords(
     stops = {term for term, count in doc_freq.items() if count / n > threshold}
     if stops:
         preview = ", ".join(sorted(stops, key=lambda t: doc_freq[t], reverse=True)[:10])
-        darwin.log(f"Domain stops ({len(stops)}): {preview}…", LogType.INFO)
+        darwin.info(f"Domain stops ({len(stops)}): {preview}…")
     else:
-        darwin.log("No domain stopwords detected", LogType.INFO)
+        darwin.info("No domain stopwords detected")
     return stops
 
 # ── Phrase matching ────────────────────────────────────────────────────────────

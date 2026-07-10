@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Literal
 from enum import Enum, auto
 
+from src.core.Logger.DarwinLogger import darwin
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Enums
@@ -77,25 +79,28 @@ class ModelSpec:
 
     def __post_init__(self):
         if self.loader not in ALLOWED_LOADERS:
-            raise ValueError(
+            darwin.error(
                 f"ModelSpec '{self.model_id}': loader '{self.loader}' not in ALLOWED_LOADERS. "
                 f"Valid: {sorted(ALLOWED_LOADERS)}"
             )
+            return None
 
         # Validate provider if specified
         if self.requires_provider and self.requires_provider not in PROVIDER_REGISTRY:
-            raise ValueError(
+            darwin.error(
                 f"ModelSpec '{self.model_id}': provider '{self.requires_provider}' "
                 f"not in PROVIDER_REGISTRY"
             )
+            return None
 
         # ONNX flag consistency
         is_onnx = self.loader.startswith("onnx_") or self.loader == "rapidocr"
         if is_onnx and not self.onnx_available:
-            raise ValueError(
+            darwin.error(
                 f"ModelSpec '{self.model_id}': ONNX loader '{self.loader}' "
                 f"requires onnx_available=True"
             )
+            return None
 
     @property
     def is_api(self) -> bool:

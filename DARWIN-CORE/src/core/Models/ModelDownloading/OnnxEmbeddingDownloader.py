@@ -60,7 +60,9 @@ class OnnxEmbeddingDownloader:
     # ── Darwin logging ───────────────────────────────────────────────────────
 
     def _log(self, msg: str, level: LogType = LogType.INFO):
-        darwin.log(f"[E5 Downloader] {msg}", level)
+        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
+         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
+         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     # ── Public API ───────────────────────────────────────────────────────────
 
@@ -209,14 +211,16 @@ class OnnxEmbeddingDownloader:
 
                 cached_size = cached_path.stat().st_size
                 if cached_size < min_size:
-                    raise RuntimeError(f"File too small ({cached_size} bytes)")
+                    darwin.error(f"File too small ({cached_size} bytes)")
+                    return False
 
                 self._log(f"  → Downloaded {cached_size:,} bytes to cache")
 
                 self._atomic_copy(cached_path, dest_path)
 
                 if not dest_path.exists() or dest_path.stat().st_size < min_size:
-                    raise RuntimeError("Copy failed or destination too small")
+                    darwin.error("Copy failed or destination too small")
+                    return False
 
                 self._log(f"  → Copied to {dest_path}")
                 return True

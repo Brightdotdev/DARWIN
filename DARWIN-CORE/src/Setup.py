@@ -69,7 +69,8 @@ def _get_click():
 
             _click = click
         except ImportError as exc:
-            raise RuntimeError("Click is required. Install: pip install click") from exc
+            darwin.error("Click is required. Install: pip install click")
+            return None
     return _click
 
 
@@ -125,104 +126,24 @@ class SetupResult:
         }
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# UI Helpers
-# ═══════════════════════════════════════════════════════════════════════
+def _show_model_table(category: ModelCategory, models: List[Any], required: bool = False):
+    """Print a model selection table using the darwin logger (stateless)."""
+    tag = "Required" if required else "Optional"
+    darwin.info(f"{category.value.title()} Models  —  {tag}")
 
+    for i, spec in enumerate(models, 1):
+        kind = "Local" if spec.is_local else "API"
+        provider = f" · {spec.requires_provider}" if spec.requires_provider else ""
+        size = ""
+        if spec.is_local:
+            size = f" · {spec.ram_gb}GB RAM" if spec.ram_gb else ""
+            size += f" · {spec.disk_mb}MB" if spec.disk_mb else ""
+        notes = f"  — {spec.notes}" if spec.notes else ""
+        darwin.info(f"  [{i}] {spec.model_id}")
+        darwin.info(f"      {kind}{provider}{size}{notes}")
 
-class _SetupUI:
-    """Terminal styling helpers."""
-
-    @staticmethod
-    def banner():
-        from src.core.Logger.lib import ASCII_BANNER
-        import sys
-
-        buf = sys.stdout.buffer
-        for line in ASCII_BANNER:
-            buf.write(f"  {line}\n".encode("utf-8"))
-        buf.write(b"\n")
-        buf.flush()
-
-    @staticmethod
-    def section(title: str):
-        c = _get_click()
-        c.echo()
-        c.echo(c.style(f"  ## {title}", fg="bright_white", bold=True))
-        c.echo(c.style(f"  {'--' * 26}", dim=True))
-
-    @staticmethod
-    def success(msg: str):
-        c = _get_click()
-        c.echo(c.style(f"  [OK] {msg}", fg="green"))
-
-    @staticmethod
-    def error(msg: str):
-        c = _get_click()
-        c.echo(c.style(f"  [ERR] {msg}", fg="red"), err=True)
-
-    @staticmethod
-    def warning(msg: str):
-        c = _get_click()
-        c.echo(c.style(f"  [!] {msg}", fg="yellow"))
-
-    @staticmethod
-    def info(msg: str):
-        c = _get_click()
-        c.echo(c.style(f"  -> {msg}", fg="blue"))
-
-    @staticmethod
-    def dim(msg: str):
-        c = _get_click()
-        c.echo(c.style(f"  {msg}", dim=True))
-
-    @staticmethod
-    def model_table(category: ModelCategory, models: List[Any], required: bool = False):
-        c = _get_click()
-        tag = "Required #" if required else "Optional o"
-        c.echo(
-            c.style(
-                f"\n  {category.value.title()} Models  —  {tag}",
-                fg="bright_white",
-                bold=True,
-            )
-        )
-        c.echo(c.style(f"  {'─' * 52}", dim=True))
-
-        for i, spec in enumerate(models, 1):
-            kind = "Local" if spec.is_local else "API"
-            provider = f" · {spec.requires_provider}" if spec.requires_provider else ""
-            size = ""
-            if spec.is_local:
-                size = f" · {spec.ram_gb}GB RAM" if spec.ram_gb else ""
-                size += f" · {spec.disk_mb}MB" if spec.disk_mb else ""
-            notes = f"  — {spec.notes}" if spec.notes else ""
-            c.echo(f"  [{i}] {c.style(spec.model_id, fg='bright_white')}")
-            c.echo(f"      {kind}{provider}{size}{c.style(notes, dim=True)}")
-
-        if not required:
-            c.echo(c.style(f"  [0] Skip this category", dim=True))
-
-    @staticmethod
-    def summary_table(config: Dict[str, Any], to_install: Dict[str, str]):
-        c = _get_click()
-        c.echo()
-        c.echo(c.style("  == Setup Summary ==", fg="bright_white"))
-        c.echo(f"     Storage:     {config.get('base_dir', 'Default')}")
-        c.echo(f"     Environment: {config.get('environment', 'Standard')}")
-        c.echo("")
-        c.echo("     Models:")
-        for cat, model_id in to_install.items():
-            status = "[OK]" if model_id else " o "
-            label = model_id or "(skipped)"
-            c.echo(f"       {status} {cat.title()}: {label}")
-        c.echo("")
-        log = config.get("logging", {})
-        level = log.get("level", "normal")
-        retention = log.get("retention_days", 14)
-        retention_str = "forever" if retention is None else f"{retention} days"
-        c.echo(f"     Logging:     {level} / {retention_str}")
-        c.echo()
+    if not required:
+        darwin.info("  [0] Skip this category")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -351,7 +272,8 @@ class DarwinSetup:
 
     def resolve_preset(self, preset: str) -> Dict[ModelCategory, str]:
         if preset not in self.PRESETS:
-            raise ValueError(f"Unknown preset: {preset}. Choose from: {self.PRESETS}")
+            darwin.error(f"Unknown preset: {preset}. Choose from: {self.PRESETS}")
+            return None
 
         system = self.orch.detect_system()
         recs = self.orch.get_recommendations(system)
@@ -472,8 +394,6 @@ class DarwinSetup:
         self, level: str = "normal", retention: Optional[int] = 14, persist: bool = True
     ) -> None:
         filter_map = {
-            "debug": LogFilter.ALL,
-            "info": LogFilter.ALL,
             "normal": LogFilter.ALL,
             "quiet": LogFilter.QUIET,
             "silent": LogFilter.SILENT,
@@ -765,15 +685,14 @@ def _build_cli():
         json_output,
     ):
         """Launch the full guided onboarding experience."""
-        ui = _SetupUI()
         c = click
 
         if not non_interactive and not json_output:
-            ui.banner()
+            darwin.configure(show_banner=True, persist=False, persist_config=False)
 
         env = detect_environment()
         if env["ephemeral"] and not base_dir and not ignore_env:
-            ui.error("Ephemeral environment. Use --base-dir or --yolo.")
+            darwin.error("Ephemeral environment. Use --base-dir or --yolo.")
             ctx.exit(1)
 
         setup = DarwinSetup()
@@ -787,13 +706,13 @@ def _build_cli():
             and not embedding
             and not models
         ):
-            ui.section("Existing Installation Detected")
-            ui.info(f"Previous setup: {existing.get('setup_completed', 'unknown')}")
+            darwin.info("Existing Installation Detected")
+            darwin.info(f"Previous setup: {existing.get('setup_completed', 'unknown')}")
             if not c.confirm(
                 c.style("  Update existing configuration?", fg="bright_white"),
                 default=True,
             ):
-                ui.success("Keeping existing configuration.")
+                darwin.success("Keeping existing configuration.")
                 ctx.exit(0)
 
         # Interactive model selection
@@ -801,14 +720,14 @@ def _build_cli():
         resolved_api_keys: Dict[str, str] = {}
 
         if not non_interactive and not preset:
-            ui.section("Model Selection")
-            ui.dim("Choose one model per category. Embedding is required.")
+            darwin.info("Model Selection")
+            darwin.debug("Choose one model per category. Embedding is required.")
 
             for cat in ModelCategory:
                 specs = get_specs_by_category(cat)
                 if not specs:
                     continue
-                ui.model_table(cat, specs, required=(cat == ModelCategory.EMBEDDING))
+                _show_model_table(cat, specs, required=(cat == ModelCategory.EMBEDDING))
 
                 default_idx = 1
                 if existing:
@@ -845,7 +764,7 @@ def _build_cli():
                         provider = spec.requires_provider
                         env_var = f"{provider.upper().replace('-', '_')}_API_KEY"
                         if os.environ.get(env_var):
-                            ui.success(f"{env_var} already set.")
+                            darwin.success(f"{env_var} already set.")
                         else:
                             key = c.prompt(
                                 f"  Enter {provider} API key",
@@ -855,18 +774,18 @@ def _build_cli():
                             if key:
                                 resolved_api_keys[provider] = key
                 elif cat == ModelCategory.EMBEDDING:
-                    ui.error("Embedding model is required.")
+                    darwin.error("Embedding model is required.")
                     ctx.exit(1)
 
             # Logging interactive
-            ui.section("Logging Configuration")
+            darwin.info("Logging Configuration")
             log_level = c.prompt(
                 "  Log level",
-                type=click.Choice(["debug", "info", "normal", "quiet", "silent"]),
+                type=click.Choice(["normal", "quiet", "silent"]),
                 default=log_level,
             )
             retention_choice = c.prompt(
-                "  Log retention",
+                "  Log retention (days) ",
                 type=click.Choice(["forever", "7", "14", "30", "90", "none"]),
                 default="14",
             )
@@ -949,22 +868,24 @@ def _build_cli():
             for cat_str, mids in selected_models.items():
                 if mids:
                     prefs[cat_str] = mids[0]
-            ui.summary_table(
-                {
-                    "base_dir": str(base_dir or "default"),
-                    "environment": "Docker" if env.get("docker") else "Standard",
-                    "logging": {"level": log_level, "retention_days": retention_days},
-                },
-                prefs,
-            )
+            darwin.info(f"  == Setup Summary ==")
+            darwin.info(f"     Storage:     {base_dir or 'Default'}")
+            darwin.info(f"     Environment: {'Docker' if env.get('docker') else 'Standard'}")
+            darwin.info("")
+            darwin.info("     Models:")
+            for cat, model_id in prefs.items():
+                label = model_id or "(skipped)"
+                darwin.info(f"       {cat.title()}: {label}")
+            darwin.info("")
+            darwin.info(f"     Logging:     {log_level} / {retention_days or 'forever'} days")
             if not c.confirm(
                 c.style("  Proceed with installation?", fg="bright_white"), default=True
             ):
-                ui.info("Setup cancelled.")
+                darwin.info("Setup cancelled.")
                 ctx.exit(0)
 
         if not json_output and not dry_run:
-            ui.section("Installing")
+            darwin.info("Installing")
 
         result = setup.run(cfg)
 
@@ -972,17 +893,17 @@ def _build_cli():
             c.echo(json.dumps(result.to_dict(), indent=2, default=str))
         else:
             for msg in result.messages:
-                ui.success(msg)
+                darwin.success(msg)
             for warn in result.warnings:
-                ui.warning(warn)
+                darwin.warning(warn)
             for err in result.errors:
-                ui.error(err)
+                darwin.error(err)
             if result.success:
-                ui.section("Setup Complete")
-                ui.success(f"Configuration saved to {result.config_path}")
-                ui.dim("Run 'darwin status' to verify.")
+                darwin.info("Setup Complete")
+                darwin.success(f"Configuration saved to {result.config_path}")
+                darwin.debug("Run 'darwin status' to verify.")
             else:
-                ui.section("Setup Failed")
+                darwin.info("Setup Failed")
                 ctx.exit(1)
         ctx.exit(0 if result.success else 1)
 
@@ -997,12 +918,11 @@ def _build_cli():
     @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
     def setup_preset(name, base_dir, yolo, force, dry_run, json_output, yes):
         """Apply a one-shot preset: minimal, recommended, complete, local-only, api-only, server."""
-        ui = _SetupUI()
         c = click
         setup = DarwinSetup()
 
         if not setup.validate_storage(base_dir, yolo):
-            ui.error("Storage validation failed.")
+            darwin.error("Storage validation failed.")
             sys.exit(1)
 
         existing = setup.load_config()
@@ -1010,8 +930,8 @@ def _build_cli():
 
         # Log preview
         if not json_output:
-            ui.section(f"Preset: {name}")
-            ui.info(DarwinSetup.PRESET_DESCRIPTIONS.get(name, ""))
+            darwin.info(f"Preset: {name}")
+            darwin.info(DarwinSetup.PRESET_DESCRIPTIONS.get(name, ""))
             darwin.info("Models to be configured:")
             total_size_mb = 0
             for cat, model_id in prefs.items():
@@ -1033,7 +953,7 @@ def _build_cli():
             if not c.confirm(
                 c.style("  Proceed with installation?", fg="bright_white"), default=True
             ):
-                ui.info("Cancelled.")
+                darwin.info("Cancelled.")
                 sys.exit(0)
 
         cfg = SetupConfig(
@@ -1051,11 +971,11 @@ def _build_cli():
             c.echo(json.dumps(result.to_dict(), indent=2, default=str))
         else:
             for msg in result.messages:
-                ui.success(msg)
+                darwin.success(msg)
             for err in result.errors:
-                ui.error(err)
+                darwin.error(err)
             if result.success:
-                ui.success(f"Saved to {result.config_path}")
+                darwin.success(f"Saved to {result.config_path}")
         sys.exit(0 if result.success else 1)
 
     # ── darwin setup models ──────────────────────────────────────────

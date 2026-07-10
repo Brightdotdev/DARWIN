@@ -79,7 +79,9 @@ class OnnxRerankerInference:
     # ── Darwin logging ───────────────────────────────────────────────────────
 
     def _log(self, msg: str, level: LogType = LogType.INFO):
-        darwin.log(f"[Reranker Inference] {msg}", level)
+        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
+         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
+         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     # ── Context Manager ──────────────────────────────────────────────────────
 
@@ -100,15 +102,15 @@ class OnnxRerankerInference:
 
         if not self.model_dir.exists():
             self._log(f"Model directory not found: {self.model_dir}", LogType.ERROR)
-            raise FileNotFoundError(f"Model directory not found: {self.model_dir}")
+            return self
 
         if not self._check_model_exists():
             self._log("Model files missing. Run downloader first.", LogType.ERROR)
-            raise FileNotFoundError("Model files missing. Run downloader first.")
+            return self
 
         if not self._check_integrity():
             self._log("Model integrity check failed. Model may be corrupted.", LogType.ERROR)
-            raise RuntimeError("Model integrity check failed. Model may be corrupted.")
+            return self
 
         self._log(f"Loading model from {self.model_dir}")
         self._load_tokenizer()
@@ -171,7 +173,12 @@ class OnnxRerankerInference:
         """
         if not self.is_loaded():
             self._log("Model not loaded. Call .load() first.", LogType.ERROR)
-            raise RuntimeError("Model not loaded. Call .load() first.")
+            return RerankResult(
+                scores=[],
+                metadata=self._build_metadata("", [], 0.0),
+                ranked_indices=[],
+                ranked_scores=[],
+            )
 
         if not documents:
             self._log("No documents provided.", LogType.WARNING)
@@ -249,12 +256,12 @@ class OnnxRerankerInference:
             from tokenizers import Tokenizer
         except ImportError:
             self._log("tokenizers library required. pip install tokenizers", LogType.ERROR)
-            raise ImportError("tokenizers library required. pip install tokenizers")
+            return
 
         tokenizer_path = self.model_dir / "tokenizer.json"
         if not tokenizer_path.exists():
             self._log(f"Tokenizer not found in {self.model_dir}", LogType.ERROR)
-            raise FileNotFoundError(f"Tokenizer not found in {self.model_dir}")
+            return
 
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
         self._log(f"Tokenizer loaded from {tokenizer_path}")
@@ -266,12 +273,12 @@ class OnnxRerankerInference:
             import onnxruntime as ort
         except ImportError:
             self._log("onnxruntime required. pip install onnxruntime", LogType.ERROR)
-            raise ImportError("onnxruntime required. pip install onnxruntime")
+            return
 
         model_path = self.model_dir / "model.onnx"
         if not model_path.exists():
             self._log(f"ONNX model not found: {model_path}", LogType.ERROR)
-            raise FileNotFoundError(f"ONNX model not found: {model_path}")
+            return
 
         # Provider priority: CUDA → DirectML → CPU
         available = ort.get_available_providers()

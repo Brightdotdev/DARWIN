@@ -6,7 +6,7 @@ import traceback
 
 from src.agent.LLM.LLMManager import LLMManager
 from src.lib.KeyManager import load_keys_from_keychain
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 def test_manager():
@@ -51,7 +51,7 @@ def test_manager():
                 print(f"ERROR: {e}")
                 print(f"Success: False\n")
                 # Send traceback to log backend, not to terminal
-                darwin.log(f"call_small crashed:\n{traceback.format_exc()}", LogType.ERROR)
+                darwin.error(f"call_small crashed:\n{traceback.format_exc()}")
                 continue
 
             elapsed = time.perf_counter() - t0
@@ -74,7 +74,7 @@ def test_manager():
         else:
             print("   Run with --debug to see the full traceback.")
             # Full crash info still goes to the log stream (websocket / file / history)
-            darwin.log(f"Unhandled exception in testllm.py:\n{traceback.format_exc()}", LogType.ERROR)
+            darwin.error(f"Unhandled exception in testllm.py:\n{traceback.format_exc()}")
         print()
         sys.exit(1)
 

@@ -70,9 +70,9 @@ def fetch_url(
     # ── Offline guard ────────────────────────────────────────────────────────
     if not check_internet_robust(verbose=False):
         if wait_for_reconnect:
-            darwin.log("No internet detected. Waiting briefly for reconnection...")
+            darwin.info("No internet detected. Waiting briefly for reconnection...")
             if wait_for_internet(pause=1, max_wait=OFFLINE_MAX_WAIT, verbose=False):
-                darwin.log("Internet restored. Resuming fetch.")
+                darwin.info("Internet restored, resuming fetch.")
             else:
                 return None, None, "no internet connection"
         else:
@@ -119,7 +119,7 @@ def parse_url(
     Fetch a URL, extract its main content, and return a ParsedDocument.
     Gracefully handles offline state via internet_checker.
     """
-    darwin.log(f"Fetching {url}...", LogType.INFO)
+    darwin.info(f"Fetching {url}...")
 
     err = validate_url(url)
     if err:
@@ -244,7 +244,7 @@ def _dispatch_parser(
             error=f"no parser registered for type '{file_type}'",
         )
     try:
-        darwin.log(f"Parsing {display_name} as {file_type}...", LogType.INFO)
+        darwin.info(f"Parsing {display_name} as {file_type}...")
         display_text, embedding_text, page_count, metadata, all_images = parser(
             path, images_dir=images_dir, caption=caption, precise=precise
         )

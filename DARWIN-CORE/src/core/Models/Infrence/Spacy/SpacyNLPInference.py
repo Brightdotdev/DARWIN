@@ -78,7 +78,9 @@ class SpacyNLPInference:
         return "parser" in self._enabled_pipes
 
     def _log(self, msg: str, level: LogType = LogType.INFO):
-        darwin.log(f"[SpaCy Inference] {msg}", level)
+        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
+         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
+         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     def __enter__(self) -> "SpacyNLPInference":
         self.load()
@@ -91,9 +93,11 @@ class SpacyNLPInference:
         if self.is_loaded():
             return self
         if not self.model_dir.exists():
-            raise FileNotFoundError(f"Model directory not found: {self.model_dir}")
+            darwin.error(f"Model directory not found: {self.model_dir}")
+            return self
         if not (self.model_dir / "config.cfg").exists():
-            raise FileNotFoundError("Model files missing. Run downloader first.")
+            darwin.error("Model files missing. Run downloader first.")
+            return self
 
         self._log(f"Loading spaCy model from {self.model_dir}")
         import spacy
@@ -129,12 +133,14 @@ class SpacyNLPInference:
 
     def process(self, texts: str | List[str], batch_size: int = 64) -> List[NLPResult]:
         if not self.is_loaded():
-            raise RuntimeError("Model not loaded. Call .load() first.")
+            darwin.error("Model not loaded. Call .load() first.")
+            return []
         if isinstance(texts, str):
             texts = [texts]
         texts = [t.strip() for t in texts if t and t.strip()]
         if not texts:
-            raise ValueError("No valid texts to process")
+            darwin.error("No valid texts to process")
+            return []
 
         batch_size = max(1, batch_size)
         self._log(f"Processing {len(texts)} text(s)")
@@ -175,7 +181,8 @@ class SpacyNLPInference:
         source="ner" | "noun_chunk" | "both" (if both detect same span).
         """
         if not self.is_loaded():
-            raise RuntimeError("Model not loaded. Call .load() first.")
+            darwin.error("Model not loaded. Call .load() first.")
+            return iter([])
 
         for doc in self._nlp.pipe(texts, batch_size=batch_size):
             # Collect all candidate spans with their sources
@@ -230,7 +237,8 @@ class SpacyNLPInference:
 
     def pipe(self, texts: Iterable[str], batch_size: int = 64) -> Iterator:
         if not self.is_loaded():
-            raise RuntimeError("Model not loaded. Call .load() first.")
+            darwin.error("Model not loaded. Call .load() first.")
+            return iter([])
         return self._nlp.pipe(texts, batch_size=batch_size)
 
     # ── Info ─────────────────────────────────────────────────────────────────

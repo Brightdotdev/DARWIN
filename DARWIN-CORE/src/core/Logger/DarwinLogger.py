@@ -528,6 +528,9 @@ class DarwinLogger:
     def warning(self, message: str) -> None:
         self.log(message, LogType.WARNING)
 
+    def debug(self, message: str) -> None:
+        self.log(message, LogType.DEBUG)
+
     def error(self, message: str) -> None:
         self.log(message, LogType.ERROR)
 

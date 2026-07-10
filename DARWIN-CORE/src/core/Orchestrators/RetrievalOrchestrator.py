@@ -11,7 +11,7 @@ import traceback
 from collections import defaultdict
 from typing import List, Optional, Dict, Any, Set, Tuple
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Storage.DarwinStore import DarwinStore
 
 from src.core.Retrival.main import handle_retrieval
@@ -30,15 +30,17 @@ from src.core.Retrival.OrchestratorTypes import (
     RetrievalContext,
 )
 
+from src.core.Orchestrators.lib import RetrievalParameters as RetrievalInput  # public API
+
 
 class RetrievalOrchestrator:
     """
     Orchestrates retrieval: retrieve, filter, penalize, merge, and resolve passages.
     """
 
-    def __init__(self, store: DarwinStore, config: Optional[OrchestratorConfig] = None):
+    def __init__(self, store: DarwinStore, config: Optional[RetrievalInput] = None):
         self.store = store
-        self.config = config or OrchestratorConfig()
+        self._default_config = config or RetrievalInput()
         self._chunk_meta_cache: Dict[str, Dict[int, Dict[str, Any]]] = {}
 
     # ================================================================
@@ -47,17 +49,28 @@ class RetrievalOrchestrator:
 
     def retrieve_and_resolve(
         self,
-        config: Optional[OrchestratorConfig] = None,
-        _is_fallback: bool = False,  # internal: prevent recursion
-        **kwargs,
+        config: Optional[RetrievalInput] = None,
     ) -> Optional[RetrievalContext]:
-        start_time = time.perf_counter()
-        cfg = config or OrchestratorConfig(**kwargs)
+        """Public API — accepts RetrievalParameters from Orchestrators.lib."""
+        params = config or self._default_config
+        cfg = params.build()
         if isinstance(cfg.files, str):
             cfg.files = [cfg.files]
+        return self._retrieve_and_resolve_internal(cfg, _is_fallback=False)
 
-        darwin.log(
-            f"[Orchestrator] Query: '{cfg.query}' | Method: {cfg.method}", LogType.INFO
+    # ════════════════════════════════════════════════════════════════
+    # Internal — operates on raw OrchestratorConfig
+    # ════════════════════════════════════════════════════════════════
+
+    def _retrieve_and_resolve_internal(
+        self,
+        cfg: OrchestratorConfig,
+        _is_fallback: bool = False,
+    ) -> Optional[RetrievalContext]:
+        start_time = time.perf_counter()
+
+        darwin.info(
+            f"Query '{cfg.query}' using method '{cfg.method}'"
         )
 
         try:
@@ -81,11 +94,10 @@ class RetrievalOrchestrator:
 
             # 5. Check fallback
             if self._needs_fallback(raw_results, cfg):
-                darwin.log("[Orchestrator] Fallback triggered", LogType.WARNING)
+                darwin.warning("Retrieval fallback triggered due to insufficient qualifying results")
                 if _is_fallback:
-                    darwin.log(
-                        "[Orchestrator] Already in fallback, returning empty",
-                        LogType.WARNING,
+                    darwin.warning(
+                        "Already in fallback mode, returning empty context"
                     )
                     return self._empty_context(
                         cfg, elapsed_ms=int((time.perf_counter() - start_time) * 1000)
@@ -113,8 +125,8 @@ class RetrievalOrchestrator:
             )
 
         except Exception as e:
-            darwin.log(f"[Orchestrator] Fatal error: {e}", LogType.ERROR)
-            darwin.log(traceback.format_exc(), LogType.ERROR)
+            darwin.error(f"Retrieval failed: {e}")
+            darwin.error(traceback.format_exc())
             return self._empty_context(
                 cfg, elapsed_ms=int((time.perf_counter() - start_time) * 1000)
             )
@@ -238,7 +250,7 @@ class RetrievalOrchestrator:
     def _execute_fallback(
         self, cfg: OrchestratorConfig, start_time: float
     ) -> RetrievalContext:
-        darwin.log("[Orchestrator] Executing fallback", LogType.WARNING)
+        darwin.warning("Executing fallback retrieval with relaxed thresholds")
         # Fallback config: relaxed thresholds, no structural penalties, no rerank
         # Inherit exclude/prefer sources from original config.
         fallback_cfg = OrchestratorConfig(
@@ -258,7 +270,7 @@ class RetrievalOrchestrator:
             prefer_sources=cfg.prefer_sources,
         )
         # Call with _is_fallback=True to prevent recursion
-        context = self.retrieve_and_resolve(fallback_cfg, _is_fallback=True)
+        context = self._retrieve_and_resolve_internal(fallback_cfg, _is_fallback=True)
         if context is None:
             context = self._empty_context(
                 cfg, elapsed_ms=int((time.perf_counter() - start_time) * 1000)
@@ -401,9 +413,8 @@ class RetrievalOrchestrator:
                         all_indices.append(gap)
                         gap_filled = True
                     else:
-                        darwin.log(
-                            f"[Orchestrator] Gap chunk {gap} missing for source {source}, skipping",
-                            LogType.WARNING,
+                        darwin.warning(
+                            f"Gap chunk {gap} missing for source '{source}', skipping"
                         )
             all_indices.append(indices[-1])
         else:
@@ -423,9 +434,8 @@ class RetrievalOrchestrator:
                     pages.append(chunk.get("page", 0))
                 else:
                     # If still missing, skip this chunk (should not happen after gap check)
-                    darwin.log(
-                        f"[Orchestrator] No text for chunk {idx} in source {source}, skipping",
-                        LogType.WARNING,
+                    darwin.warning(
+                        f"No text for chunk {idx} in source '{source}', skipping"
                     )
                     continue
 

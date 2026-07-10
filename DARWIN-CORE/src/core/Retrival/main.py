@@ -42,7 +42,7 @@ from src.core.Retrival.RetrievalResult import (
     from_keyword,
 )
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 from src.core.Retrival.Hybrid.main import handle_hybrid_search
 from src.core.Retrival.Semantic.main import handle_semantic_search
@@ -105,9 +105,8 @@ def _rerank(
     try:
         from src.core.Retrival.Reranking.Reranker import rerank_results
 
-        darwin.log(
-            f"Reranking {len(candidates)} results (weight={args.rerank_weight})",
-            LogType.INFO,
+        darwin.info(
+            f"Reranking {len(candidates)} results (weight={args.rerank_weight})"
         )
         reranked_raw = rerank_results(
             query=query,
@@ -139,62 +138,61 @@ def _rerank(
                     rerank_original_score=getattr(r, "original_score", None),
                 )
             )
-        darwin.log(f"Reranking complete -- {len(out)} results", LogType.SUCCESS)
+        darwin.success(f"Reranking complete: {len(out)} results")
         return out
 
     except ImportError:
-        darwin.log("Reranker not available -- skipping", LogType.WARNING)
+        darwin.warning("Reranker not available, skipping")
         return candidates
     except Exception as e:
-        darwin.log(f"Reranking failed: {e} -- returning original order", LogType.ERROR)
+        darwin.error(f"Reranking failed: {e}, returning original order")
         return candidates
 
 
 def _display_results(results: List[RetrievalResult], query: str, method: str) -> None:
     """Display search results in a formatted table."""
-    darwin.log(f"\n{'=' * 70}", LogType.INFO)
-    darwin.log(f"Results: '{query}'  [{method.upper()}]", LogType.INFO)
-    darwin.log(f"\n{'=' * 70}", LogType.INFO)
-    darwin.log(
-        f"Total: {len(results)}  |  sources: {len(set(r.source for r in results))}",
-        LogType.SUCCESS,
+    darwin.info(f"\n{'=' * 70}")
+    darwin.info(f"Results: '{query}'  [{method.upper()}]")
+    darwin.info(f"\n{'=' * 70}")
+    darwin.success(
+        f"Total: {len(results)} results from {len(set(r.source for r in results))} sources"
     )
     if results:
-        darwin.log(f"Top score: {results[0].score:.4f}", LogType.INFO)
-    darwin.log(f"{'=' * 70}\n", LogType.INFO)
+        darwin.info(f"Top score: {results[0].score:.4f}")
+    darwin.info(f"{'=' * 70}\n")
 
 
 def handle_retrieval(args: RetrievalArgs, store) -> List[RetrievalResult]:
     """
     Main retrieval entry point. Always returns List[RetrievalResult].
     """
-    darwin.log("")
-    darwin.log("=" * 70, LogType.INFO)
-    darwin.log("Retrieval", LogType.INFO)
-    darwin.log("=" * 70, LogType.INFO)
-    darwin.log(f"Query  : '{args.query}'", LogType.INFO)
-    darwin.log(f"Method : {args.method.value}", LogType.INFO)
-    darwin.log(f"Top-K  : {args.top_k}", LogType.INFO)
+    darwin.info("")
+    darwin.info("=" * 70)
+    darwin.info("Retrieval")
+    darwin.info("=" * 70)
+    darwin.info(f"Query  : '{args.query}'")
+    darwin.info(f"Method : {args.method.value}")
+    darwin.info(f"Top-K  : {args.top_k}")
     if args.per_doc_top_k is not None:
-        darwin.log(f"Per‑doc limit: {args.per_doc_top_k}", LogType.INFO)
+        darwin.info(f"Per-doc limit: {args.per_doc_top_k}")
     if args.rerank:
-        darwin.log(f"Rerank : enabled (weight={args.rerank_weight})", LogType.INFO)
+        darwin.info(f"Rerank : enabled (weight={args.rerank_weight})")
 
     start = time.perf_counter()
 
     raw: List[Any] = []
     if args.method == RetrievalMethod.HYBRID:
-        darwin.log(f"Pool size: {args.pool_size}  |  rrf_k={args.rrf_k}", LogType.INFO)
+        darwin.info(f"Pool size: {args.pool_size}  |  rrf_k={args.rrf_k}")
         raw = _run_hybrid(args, store=store)
     elif args.method == RetrievalMethod.SEMANTIC:
-        darwin.log(f"Min score: {args.min_score}", LogType.INFO)
+        darwin.info(f"Min score: {args.min_score}")
         raw = _run_semantic(args, store=store)
     elif args.method == RetrievalMethod.KEYWORD:
-        darwin.log(f"BM25: k1={args.k1}  b={args.b}", LogType.INFO)
+        darwin.info(f"BM25: k1={args.k1}  b={args.b}")
         raw = _run_keyword(args, store=store)
 
     elapsed = time.perf_counter() - start
-    darwin.log(f"Search: {len(raw)} results in {elapsed:.2f}s", LogType.INFO)
+    darwin.info(f"Search: {len(raw)} results in {elapsed:.2f}s")
 
     results: List[RetrievalResult] = []
     for r in raw:
@@ -208,21 +206,20 @@ def handle_retrieval(args: RetrievalArgs, store) -> List[RetrievalResult]:
     if args.rerank and results:
         rerank_start = time.perf_counter()
         results = _rerank(args.query, results, args)
-        darwin.log(
-            f"Reranking: {time.perf_counter() - rerank_start:.2f}s", LogType.INFO
+        darwin.info(
+            f"Reranking: {time.perf_counter() - rerank_start:.2f}s"
         )
 
     if not results:
-        darwin.log(f"\nNo results for '{args.query}'", LogType.WARNING)
-        darwin.log(
-            "Try: different keywords | --method | --min-score | --pool-size",
-            LogType.INFO,
+        darwin.warning(f"No results for '{args.query}'")
+        darwin.info(
+            "Try: different keywords | --method | --min-score | --pool-size"
         )
         return []
 
     total_elapsed = time.perf_counter() - start
-    darwin.log(
-        f"Total: {len(results)} results in {total_elapsed:.2f}s", LogType.SUCCESS
+    darwin.success(
+        f"Total: {len(results)} results in {total_elapsed:.2f}s"
     )
 
     _display_results(results, args.query, args.method.value)
@@ -342,13 +339,13 @@ def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("Goodbye!", LogType.INFO)
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
 
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

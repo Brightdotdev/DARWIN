@@ -18,7 +18,7 @@ if __name__ == "__main__":
 
 from src.agent.LLM.LLMManager import LLMManager
 from src.agent.LLM.LLMTypes import LLMResponse
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.lib.KeyManager import (
     set_api_key,
     load_keys_from_keychain,
@@ -47,7 +47,7 @@ def _resolve_model_input(user_input: str, models: List[str], default: str) -> st
         idx = int(user_input) - 1
         if 0 <= idx < len(models):
             return models[idx]
-        darwin.log(f"Invalid selection '{user_input}'; using default.", LogType.WARNING)
+        darwin.warning(f"Invalid selection '{user_input}' — using default")
         return default
     return user_input
 
@@ -59,7 +59,7 @@ def _input_float(prompt: str, default: float) -> float:
     try:
         return float(raw)
     except ValueError:
-        darwin.log("Invalid number, using default.", LogType.WARNING)
+        darwin.warning("Invalid number — using default")
         return default
 
 
@@ -70,7 +70,7 @@ def _input_int(prompt: str, default: int) -> int:
     try:
         return int(raw)
     except ValueError:
-        darwin.log("Invalid integer, using default.", LogType.WARNING)
+        darwin.warning("Invalid integer — using default")
         return default
 
 
@@ -100,12 +100,12 @@ def setup_ollama_interactive() -> None:
 
     models = fetch_ollama_models(base_url)
     if not models:
-        darwin.log("Could not fetch models from Ollama. Is it running?", LogType.ERROR)
+        darwin.error("Could not fetch models from Ollama — is the server running?")
         return
 
-    darwin.log("Available models:", LogType.INFO)
+    darwin.info("Available models:")
     for i, m in enumerate(models, 1):
-        darwin.log(f"  {i}. {m}", LogType.INFO)
+        darwin.info(f"  {i}. {m}")
 
     fast_default = models[0] if models else ""
     smart_default = models[-1] if models else ""
@@ -116,7 +116,7 @@ def setup_ollama_interactive() -> None:
     normal_model = _resolve_model_input(input(f"NORMAL model [{smart_model}]: "), models, smart_model)
 
     if not fast_model or not smart_model or not normal_model:
-        darwin.log("All three model IDs are required.", LogType.WARNING)
+        darwin.warning("All three model IDs are required")
         return
 
     fast_temp = _input_float("FAST temperature [0.1]: ", 0.1)
@@ -140,11 +140,11 @@ def setup_ollama_interactive() -> None:
             normal_max_tokens=normal_max_tok,
             base_url=base_url,
         )
-        darwin.log("Ollama provider added.", LogType.SUCCESS)
+        darwin.success("Ollama provider added")
     except ValueError as e:
-        darwin.log(f"Invalid model selection: {e}", LogType.ERROR)
+        darwin.error(f"Invalid model selection: {e}")
     except Exception as e:
-        darwin.log(f"Failed to add Ollama: {e}", LogType.ERROR)
+        darwin.error(f"Failed to add Ollama provider: {e}")
 
 
 # -------------------------------------------------------------------
@@ -161,17 +161,17 @@ def get_provider_key_status(provider: str) -> bool:
 # Setup wizard
 # -------------------------------------------------------------------
 def run_setup_wizard() -> None:
-    darwin.log("Darwin LLM Setup Wizard", LogType.INFO)
+    darwin.info("Darwin LLM Setup Wizard")
 
     if not LLMManager._config:
         LLMManager.initialize()
 
     while True:
-        darwin.log("Available providers:", LogType.INFO)
+        darwin.info("Available providers:")
         supported = list(PROVIDER_REGISTRY.keys()) + ["ollama"]
         for i, p in enumerate(supported, 1):
             key_icon = "✓" if get_provider_key_status(p) else "✗"
-            darwin.log(f"  {i}. {p}  [{key_icon} API key]", LogType.INFO)
+            darwin.info(f"  {i}. {p}  [{key_icon} API key]")
 
         choice = input("Enter number (or 'done' to finish, 'del' to remove a provider): ").strip()
         if choice.lower() == "done":
@@ -184,7 +184,7 @@ def run_setup_wizard() -> None:
             idx = int(choice) - 1
             provider = supported[idx]
         except (ValueError, IndexError):
-            darwin.log("Invalid choice.", LogType.WARNING)
+            darwin.warning("Invalid choice")
             continue
 
         if provider == "ollama":
@@ -193,7 +193,7 @@ def run_setup_wizard() -> None:
 
         existing = LLMManager._config and provider in LLMManager._config.providers
         if existing:
-            darwin.log(f"Provider '{provider}' already configured.", LogType.WARNING)
+            darwin.warning(f"Provider '{provider}' already configured")
             update = input("Update its settings? (y/n): ").lower()
             if update != "y":
                 continue
@@ -203,10 +203,10 @@ def run_setup_wizard() -> None:
         smart_default = defaults["smart"]
         normal_default = defaults.get("normal", smart_default)
 
-        darwin.log(f"Default models for {provider}:", LogType.INFO)
-        darwin.log(f"  FAST   : {fast_default}")
-        darwin.log(f"  NORMAL : {normal_default}")
-        darwin.log(f"  SMART  : {smart_default}")
+        darwin.info(f"Default models for {provider}:")
+        darwin.info(f"  FAST   : {fast_default}")
+        darwin.info(f"  NORMAL : {normal_default}")
+        darwin.info(f"  SMART  : {smart_default}")
 
         fast_model = input(f"FAST model ID [{fast_default}]: ").strip()
         if not fast_model:
@@ -219,7 +219,7 @@ def run_setup_wizard() -> None:
             normal_model = normal_default
 
         if not fast_model or not smart_model or not normal_model:
-            darwin.log("All three model IDs are required.", LogType.WARNING)
+            darwin.warning("All three model IDs are required")
             continue
 
         fast_temp = _input_float("FAST temperature [0.1]: ", 0.1)
@@ -233,7 +233,7 @@ def run_setup_wizard() -> None:
         try:
             set_api_key(provider, api_key, validate=True)
         except Exception as e:
-            darwin.log(str(e), LogType.ERROR)
+            darwin.error(str(e))
             continue
 
         try:
@@ -250,10 +250,10 @@ def run_setup_wizard() -> None:
                 normal_max_tokens=normal_max_tok,
             )
         except ValueError as e:
-            darwin.log(f"Configuration error: {e}", LogType.ERROR)
+            darwin.error(f"Configuration error: {e}")
             continue
         except Exception as e:
-            darwin.log(f"Failed to add provider: {e}", LogType.ERROR)
+            darwin.error(f"Failed to add provider: {e}")
             continue
 
         if len(LLMManager.list_providers()) == 1:
@@ -264,24 +264,24 @@ def run_setup_wizard() -> None:
             break
 
     LLMManager._save_config()
-    darwin.log(f"Configuration saved to {LLMManager._config_path}", LogType.SUCCESS)
+    darwin.success(f"Configuration saved to {LLMManager._config_path}")
 
 
 def _remove_provider_interactive():
     if not LLMManager._config or not LLMManager._config.providers:
-        darwin.log("No providers to remove.", LogType.WARNING)
+        darwin.warning("No providers to remove")
         return
-    darwin.log("Configured providers:")
+    darwin.info("Configured providers:")
     providers = list(LLMManager.list_providers())
     for i, p in enumerate(providers, 1):
-        darwin.log(f"  {i}. {p}")
+        darwin.info(f"  {i}. {p}")
     try:
         idx = int(input("Number to remove: ")) - 1
         provider = providers[idx]
         LLMManager.remove_provider(provider)
-        darwin.log(f"Removed provider '{provider}'.", LogType.SUCCESS)
+        darwin.success(f"Removed provider '{provider}'")
     except Exception as e:
-        darwin.log(str(e), LogType.ERROR)
+        darwin.error(str(e))
 
 
 # -------------------------------------------------------------------
@@ -321,33 +321,33 @@ async def main() -> int:
         # ── Status
         if args.status:
             if LLMManager.initialize():
-                darwin.log("Providers:")
+                darwin.info("Providers:")
                 for p in LLMManager.list_providers():
                     key_status = "✓" if get_provider_key_status(p) else "✗"
-                    darwin.log(f"  {p}  [{key_status} key]")
+                    darwin.info(f"  {p}  [{key_status} key]")
             else:
-                darwin.log("No configuration found.", LogType.WARNING)
+                darwin.warning("No configuration found")
             return 0
 
         # ── Remove provider
         if args.remove_provider:
             if not LLMManager.initialize():
-                darwin.log("No configuration found.", LogType.ERROR)
+                darwin.error("No configuration found")
                 return 1
             try:
                 LLMManager.remove_provider(args.remove_provider)
-                darwin.log(f"Provider '{args.remove_provider}' removed.", LogType.SUCCESS)
+                darwin.success(f"Provider '{args.remove_provider}' removed")
             except Exception as e:
-                darwin.log(str(e), LogType.ERROR)
+                darwin.error(str(e))
                 return 1
             return 0
 
         # ── Show config
         if args.show_config:
             if LLMManager.initialize():
-                darwin.log(json.dumps(LLMManager._serialize_config(), indent=2), LogType.INFO)
+                darwin.info(json.dumps(LLMManager._serialize_config(), indent=2))
             else:
-                darwin.log("No configuration found. Run with --wizard to set up.", LogType.WARNING)
+                darwin.warning("No configuration found — run with --wizard to set up")
             return 0
 
         # ── Wizard / normal start
@@ -355,10 +355,10 @@ async def main() -> int:
         if not run_wizard:
             exists = LLMManager.initialize()
             if not exists:
-                darwin.log("No configuration found. Launching setup wizard...", LogType.WARNING)
+                darwin.warning("No configuration found — launching setup wizard")
                 run_wizard = True
             else:
-                darwin.log("Configuration loaded.", LogType.SUCCESS)
+                darwin.success("Configuration loaded")
 
         if run_wizard:
             run_setup_wizard()
@@ -367,17 +367,17 @@ async def main() -> int:
         if args.profile and LLMManager._config:
             try:
                 LLMManager.switch_default_provider(args.profile)
-                darwin.log(f"Active profile: {args.profile}", LogType.INFO)
+                darwin.info(f"Active profile: {args.profile}")
             except Exception as e:
-                darwin.log(str(e), LogType.ERROR)
+                darwin.error(str(e))
                 return 1
 
         # ── Plain test (now includes normal tier)
         if args.test:
-            darwin.log("Running quick test...", LogType.INFO)
+            darwin.info("Running quick test...")
             client = LLMManager.get_client()
             for prov in LLMManager.list_providers():
-                darwin.log(f"Testing provider: {prov}", LogType.INFO)
+                darwin.info(f"Testing provider: {prov}")
                 tiers = [
                     ("fast",   client.call_small),
                     ("normal", client.call_normal),
@@ -390,16 +390,16 @@ async def main() -> int:
                             provider=prov,
                         )
                         if resp.error:
-                            darwin.log(f"  [{tier_name}] ✗ {resp.error}", LogType.ERROR)
+                            darwin.error(f"  [{tier_name}] ✗ {resp.error}")
                         else:
-                            darwin.log(f"  [{tier_name}] ✓ {resp.text[:80]}...", LogType.SUCCESS)
+                            darwin.success(f"  [{tier_name}] ✓ {resp.text[:80]}...")
                     except Exception as e:
-                        darwin.log(f"  [{tier_name}] ✗ {e}", LogType.ERROR)
+                        darwin.error(f"  [{tier_name}] ✗ {e}")
             return 0
 
         # ── JSON schema test
         if args.test_json:
-            darwin.log("Running JSON schema test...", LogType.INFO)
+            darwin.info("Running JSON schema test...")
             client = LLMManager.get_client()
             test_schema = {
                 "type": "object",
@@ -410,7 +410,7 @@ async def main() -> int:
                 "required": ["message", "confidence"]
             }
             for prov in LLMManager.list_providers():
-                darwin.log(f"Testing provider: {prov}", LogType.INFO)
+                darwin.info(f"Testing provider: {prov}")
                 tiers = [
                     ("fast",   client.call_small),
                     ("normal", client.call_normal),
@@ -425,11 +425,11 @@ async def main() -> int:
                             json_schema=test_schema,
                         )
                         if resp.error:
-                            darwin.log(f"  [{tier_name}] ✗ {resp.error}", LogType.ERROR)
+                            darwin.error(f"  [{tier_name}] ✗ {resp.error}")
                         else:
-                            darwin.log(f"  [{tier_name}] ✓ {resp.json}", LogType.SUCCESS)
+                            darwin.success(f"  [{tier_name}] ✓ {resp.json}")
                     except Exception as e:
-                        darwin.log(f"  [{tier_name}] ✗ {e}", LogType.ERROR)
+                        darwin.error(f"  [{tier_name}] ✗ {e}")
             return 0
 
         # No action → print help
@@ -437,13 +437,13 @@ async def main() -> int:
         return 0
 
     except KeyboardInterrupt:
-        darwin.log("")
-        darwin.log("Goodbye!", LogType.INFO)
+        darwin.info("")
+        darwin.info("Goodbye!")
         return 130
     except Exception as e:
         import traceback
-        darwin.log(f"Fatal error: {e}", LogType.ERROR)
-        darwin.log("".join(traceback.format_exception(e)), LogType.ERROR)
+        darwin.error(f"Fatal error: {e}")
+        darwin.error("".join(traceback.format_exception(e)))
         return 1
     finally:
         darwin.shutdown()

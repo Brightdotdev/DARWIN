@@ -7,7 +7,7 @@ from typing import Optional
 from src.agent.LLM.LLMConfig import LLMConfig, ProviderConfig, TierConfig, PROVIDER_ENV_MAP
 from src.agent.LLM.LLMClient import LLMClient
 from src.lib.AppPaths import default_models_config_dir
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 class LLMManager:
@@ -35,11 +35,10 @@ class LLMManager:
                     raw = json.load(f)
                 cls._config = cls._deserialize_config(raw)
                 cls._client = None
-                darwin.log(f"Configuration loaded from {cls._config_path}", LogType.SUCCESS)
+                darwin.success(f"Configuration loaded from {cls._config_path}")
             except (json.JSONDecodeError, Exception) as e:
-                darwin.log(
-                    f"Failed to load config from {cls._config_path}: {e}. Starting with clean config.",
-                    LogType.WARNING
+                darwin.warning(
+                    f"Failed to load config from {cls._config_path}: {e}. Starting with clean config."
                 )
                 cls._config = None
                 exists = False
@@ -61,7 +60,7 @@ class LLMManager:
             from src.lib.KeyManager import load_keys_from_keychain
             load_keys_from_keychain(log=True)
         except Exception as e:
-            darwin.log(f"Keychain loading failed (non-fatal): {e}", LogType.WARNING)
+            darwin.warning(f"Keychain loading failed (non-fatal): {e}")
 
         if cls._config is None:
             return
@@ -73,8 +72,9 @@ class LLMManager:
                     env_key = os.environ.get(env_var, "").strip()
                     if env_key:
                         pc.api_key = env_key
-                        darwin.log(
-                            f"Hydrated api_key for provider '{name}' from {env_var}."                        )
+                        darwin.info(
+                            f"Hydrated api_key for provider '{name}' from {env_var}."
+                        )
                     elif pc.api_key:
                         os.environ[env_var] = pc.api_key
 
@@ -82,7 +82,8 @@ class LLMManager:
     def get_client(cls) -> LLMClient:
         with cls._lock:
             if cls._config is None:
-                raise RuntimeError("LLMManager not initialized. Call initialize() first.")
+                darwin.error("LLMManager not initialized. Call initialize() first.")
+                return None
             if cls._client is None:
                 cls._client = LLMClient(
                     providers=cls._config.providers,
@@ -94,9 +95,11 @@ class LLMManager:
     def switch_default_provider(cls, provider: str):
         with cls._lock:
             if cls._config is None:
-                raise RuntimeError("No config loaded.")
+                darwin.error("No config loaded.")
+                return None
             if provider not in cls._config.providers:
-                raise ValueError(f"Provider '{provider}' not configured.")
+                darwin.error(f"Provider '{provider}' not configured.")
+                return None
             cls._config.default_provider = provider
             cls._client = None
             cls._save_config()
@@ -130,16 +133,19 @@ class LLMManager:
             ("normal_model", normal_model),
         ]:
             if not val:
-                raise ValueError(f"{field_name} cannot be empty.")
+                darwin.error(f"{field_name} cannot be empty.")
+                return None
             if val.isdigit():
-                raise ValueError(
+                darwin.error(
                     f"{field_name} looks like a menu selection number ('{val}') instead of a model ID. "
                     "Please enter the actual model name (e.g. 'llama3.2', 'qwen2.5')."
                 )
+                return None
         # ─────────────────────────────────────────────────────
 
         if not base_url and (" " in fast_model or " " in smart_model):
-            raise ValueError("Cloud provider model IDs should not contain spaces. Use the correct model slug.")
+            darwin.error("Cloud provider model IDs should not contain spaces. Use the correct model slug.")
+            return None
 
         with cls._lock:
             if cls._config is None:
@@ -159,9 +165,11 @@ class LLMManager:
     def remove_provider(cls, name: str):
         with cls._lock:
             if cls._config is None:
-                raise RuntimeError("No config loaded.")
+                darwin.error("No config loaded.")
+                return None
             if name not in cls._config.providers:
-                raise ValueError(f"Provider '{name}' not found.")
+                darwin.error(f"Provider '{name}' not found.")
+                return None
             del cls._config.providers[name]
             if cls._config.default_provider == name:
                 if cls._config.providers:

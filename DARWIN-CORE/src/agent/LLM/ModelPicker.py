@@ -15,7 +15,7 @@ import os
 import subprocess
 from typing import Optional, Literal
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.agent.LLM.LLMConfig import PROVIDER_ENV_MAP
 
 ModelGrade = Literal["fast", "think", "normal"]
@@ -157,14 +157,14 @@ def _discover_ollama_models() -> list[tuple[str, str, int]]:
 
             models.sort(key=lambda x: x[2])
             _OLLAMA_CACHE = models
-            darwin.log(f"Ollama LLM models discovered (JSON): {[m[0] for m in models]}")
+            darwin.info(f"Discovered Ollama models via JSON: {[m[0] for m in models]}")
             return _OLLAMA_CACHE
     except FileNotFoundError:
-        darwin.log("Ollama not installed or not in PATH", LogType.WARNING)
+        darwin.warning("Ollama not found — not installed or missing from PATH")
         _OLLAMA_CACHE = []
         return _OLLAMA_CACHE
     except Exception as e:
-        darwin.log(f"Ollama JSON discovery failed, falling back to text parsing: {e}" )
+        darwin.info(f"JSON discovery failed, falling back to text parsing: {e}")
 
     # ------------------------------------------------------------------
     # Attempt 2: Fallback – text parsing of `ollama list`
@@ -177,7 +177,7 @@ def _discover_ollama_models() -> list[tuple[str, str, int]]:
             timeout=10,
         )
         if result.returncode != 0:
-            darwin.log(f"Ollama list failed: {result.stderr}", LogType.WARNING)
+            darwin.warning(f"ollama list command failed: {result.stderr}")
             _OLLAMA_CACHE = []
             return _OLLAMA_CACHE
 
@@ -201,13 +201,13 @@ def _discover_ollama_models() -> list[tuple[str, str, int]]:
 
         models.sort(key=lambda x: x[2])
         _OLLAMA_CACHE = models
-        darwin.log(f"Ollama LLM models discovered (text): {[m[0] for m in models]}")
+        darwin.info(f"Discovered Ollama models via text parsing: {[m[0] for m in models]}")
         return _OLLAMA_CACHE
 
     except FileNotFoundError:
-        darwin.log("Ollama not installed or not in PATH", LogType.WARNING)
+        darwin.warning("Ollama not found — not installed or missing from PATH")
     except Exception as e:
-        darwin.log(f"Ollama discovery error: {e}", LogType.WARNING)
+        darwin.warning(f"Ollama discovery error: {e}")
 
     _OLLAMA_CACHE = []
     return _OLLAMA_CACHE
@@ -217,7 +217,7 @@ def _pick_ollama(grade: ModelGrade) -> str:
     """Pick best Ollama model by size and grade. Returns bare model name."""
     models = _discover_ollama_models()
     if not models:
-        darwin.log("No Ollama models discovered; falling back to llama3.2", LogType.WARNING)
+        darwin.warning("No Ollama models found — falling back to llama3.2")
         return "llama3.2"
 
     names = [m[0] for m in models]
@@ -246,10 +246,10 @@ def pick_model(provider: Optional[str] = None, grade: ModelGrade = "normal") -> 
 
     if provider in _PROVIDER_MAP:
         model = _PROVIDER_MAP[provider].get(grade, _PROVIDER_MAP[provider]["normal"])
-        darwin.log(f"Model picked: {provider}/{model} (grade={grade})" )
+        darwin.info(f"Picked model: {provider}/{model} (grade={grade})")
         return model
 
-    darwin.log(f"Unknown provider '{provider}', using as-is", LogType.WARNING)
+    darwin.warning(f"Unknown provider '{provider}' — using raw value as model ID")
     return provider
 
 
