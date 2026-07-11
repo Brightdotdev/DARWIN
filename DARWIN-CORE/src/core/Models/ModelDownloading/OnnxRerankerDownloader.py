@@ -16,7 +16,7 @@ from typing import Optional
 
 from huggingface_hub import hf_hub_download
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.lib.InternetChecker import wait_for_internet, check_internet_robust
 
 
@@ -55,13 +55,6 @@ class OnnxRerankerDownloader:
         self.onnx_filename = onnx_filename
         self.tokenizer_files = tokenizer_files or DEFAULT_TOKENIZER_FILES.copy()
 
-    # ── Darwin logging ───────────────────────────────────────────────────────
-
-    def _log(self, msg: str, level: LogType = LogType.INFO):
-        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
-         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
-         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
-
     # ── Public API ───────────────────────────────────────────────────────────
 
     def ensure(
@@ -83,31 +76,31 @@ class OnnxRerankerDownloader:
         should_force = force or recache
 
         if not should_force and self.verify_integrity():
-            self._log("Model already cached and valid.")
+            darwin.info("Model already cached and valid.")
             return True
 
         if should_force:
-            self._log("Force/recache mode: clearing existing files...")
+            darwin.info("Force/recache mode: clearing existing files...")
             self._clear_cache()
 
         if wait_internet:
             if not wait_for_internet(pause=3, max_wait=max_wait, verbose=True):
-                self._log("No internet connection available.", LogType.ERROR)
+                darwin.error("No internet connection available.")
                 return False
         else:
             if not check_internet_robust():
-                self._log("No internet connection available.", LogType.ERROR)
+                darwin.error("No internet connection available.")
                 return False
 
         if not self.download(force=should_force):
-            self._log("Download failed.", LogType.ERROR)
+            darwin.error("Download failed.")
             return False
 
         if not self.verify_integrity():
-            self._log("Integrity check failed after download.", LogType.ERROR)
+            darwin.error("Integrity check failed after download.")
             return False
 
-        self._log("Reranker ONNX model ready.", LogType.SUCCESS)
+        darwin.success("Reranker ONNX model ready.")
         return True
 
     def download(self, force: bool = False) -> bool:
@@ -115,7 +108,7 @@ class OnnxRerankerDownloader:
         try:
             from huggingface_hub import hf_hub_download
         except ImportError:
-            self._log("huggingface_hub not installed. pip install huggingface_hub", LogType.ERROR)
+            darwin.error("huggingface_hub not installed. pip install huggingface_hub")
             return False
 
         spinner_id = f"dl_reranker_{self.repo_id.split('/')[-1]}"
@@ -124,7 +117,7 @@ class OnnxRerankerDownloader:
         # ── ONNX model ──────────────────────────────────────────────────────
         dest_onnx = self.target_dir / "model.onnx"
         if not dest_onnx.exists() or force:
-            self._log(f"Downloading ONNX: {self.onnx_filename}")
+            darwin.info(f"Downloading ONNX: {self.onnx_filename}")
             if not self._download_file(
                 repo_filename=self.onnx_filename,
                 dest_path=dest_onnx,
@@ -132,17 +125,17 @@ class OnnxRerankerDownloader:
             ):
                 darwin.spinner_stop(spinner_id, success=False)
                 return False
-            self._log(f"ONNX model cached: {dest_onnx.name}")
+            darwin.info(f"ONNX model cached: {dest_onnx.name}")
         else:
-            self._log(f"Cached ONNX: {dest_onnx.name}")
+            darwin.info(f"Cached ONNX: {dest_onnx.name}")
 
         # ── Tokenizer files ─────────────────────────────────────────────────
         for filename in self.tokenizer_files:
             dest = self.target_dir / filename
             if dest.exists() and not force:
-                self._log(f"Cached tokenizer: {filename}")
+                darwin.info(f"Cached tokenizer: {filename}")
                 continue
-            self._log(f"Downloading tokenizer: {filename}")
+            darwin.info(f"Downloading tokenizer: {filename}")
             if not self._download_file(
                 repo_filename=filename,
                 dest_path=dest,
@@ -150,7 +143,7 @@ class OnnxRerankerDownloader:
             ):
                 darwin.spinner_stop(spinner_id, success=False)
                 return False
-            self._log(f"Tokenizer cached: {filename}")
+            darwin.info(f"Tokenizer cached: {filename}")
 
         darwin.spinner_stop(spinner_id, success=True)
         return True
@@ -162,14 +155,14 @@ class OnnxRerankerDownloader:
 
         for p in required:
             if not p.exists():
-                self._log(f"Missing file: {p}", LogType.ERROR)
+                darwin.error(f"Missing file: {p}")
                 return False
             size = p.stat().st_size
             if p.name.endswith(".onnx") and size < MIN_ONNX_SIZE:
-                self._log(f"ONNX file too small ({size} bytes): {p}", LogType.ERROR)
+                darwin.error(f"ONNX file too small ({size} bytes): {p}")
                 return False
             if size < MIN_TOKENIZER_SIZE:
-                self._log(f"File too small ({size} bytes): {p}", LogType.ERROR)
+                darwin.error(f"File too small ({size} bytes): {p}")
                 return False
         return True
 
@@ -182,9 +175,9 @@ class OnnxRerankerDownloader:
             if p.exists():
                 try:
                     p.unlink()
-                    self._log(f"Cleared: {p.name}")
+                    darwin.info(f"Cleared: {p.name}")
                 except Exception as e:
-                    self._log(f"Failed to clear {p}: {e}", LogType.WARNING)
+                    darwin.warning(f"Failed to clear {p}: {e}")
 
     # ── Internal helpers ─────────────────────────────────────────────────────
 
@@ -198,7 +191,7 @@ class OnnxRerankerDownloader:
         """Download a single file from HF Hub cache to dest_path with retry and size validation."""
         for attempt in range(max_retries):
             try:
-                self._log(f"  → Attempt {attempt + 1}/{max_retries}: {repo_filename}")
+                darwin.info(f"  → Attempt {attempt + 1}/{max_retries}: {repo_filename}")
 
                 # Download to HF cache (returns cached path)
                 cached_path = Path(
@@ -214,7 +207,7 @@ class OnnxRerankerDownloader:
                     darwin.error(f"File too small ({cached_size} bytes)")
                     return False
 
-                self._log(f"  → Downloaded {cached_size:,} bytes to cache")
+                darwin.info(f"  → Downloaded {cached_size:,} bytes to cache")
 
                 # Atomic copy to target directory
                 self._atomic_copy(cached_path, dest_path)
@@ -224,17 +217,17 @@ class OnnxRerankerDownloader:
                     darwin.error("Copy failed or destination too small")
                     return False
 
-                self._log(f"  → Copied to {dest_path}")
+                darwin.info(f"  → Copied to {dest_path}")
                 return True
 
             except Exception as e:
-                self._log(f"Attempt {attempt + 1}/{max_retries} failed: {e}", LogType.WARNING)
+                darwin.warning(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
                 if attempt < max_retries - 1:
                     backoff = 2 ** attempt
-                    self._log(f"  → Retrying in {backoff}s...")
+                    darwin.info(f"  → Retrying in {backoff}s...")
                     time.sleep(backoff)
                 else:
-                    self._log(f"Download failed after {max_retries} attempts: {e}", LogType.ERROR)
+                    darwin.error(f"Download failed after {max_retries} attempts: {e}")
                     return False
         return False
 
@@ -247,5 +240,5 @@ class OnnxRerankerDownloader:
             shutil.copy2(str(src), str(tmp))
             tmp.rename(dst)
         except Exception as e:
-            self._log(f"Atomic copy failed ({e}), falling back to direct copy", LogType.WARNING)
+            darwin.warning(f"Atomic copy failed ({e}), falling back to direct copy")
             shutil.copy2(str(src), str(dst))

@@ -188,8 +188,6 @@ class ModelManager:
         force_download: bool = False,
         preferences: Optional[Dict[ModelCategory, str]] = None,
     ) -> ManagerStatus:
-        darwin.info("Initializing...")
-
         timestamp = datetime.now().isoformat(timespec='seconds')
         categories: Dict[str, CategoryStatus] = {}
         warnings: List[str] = []
@@ -285,15 +283,48 @@ class ModelManager:
             warnings=warnings,
         )
 
-        darwin.info(status_obj.summary)
-        if status_obj.all_ready:
-            darwin.success("All required models are available")
-        else:
+        W = 56
+        darwin.info(f"{'-- Models ' + '-' * (W - 10)}", style="bold cyan")
+
+        cat_order = ["embedding", "nlp", "ocr", "reranker", "vision"]
+        for cat_name in cat_order:
+            if cat_name not in status_obj.categories:
+                continue
+            cs = status_obj.categories[cat_name]
+            required_tag = " (required)" if cs.is_required else ""
+
+            if cs.available:
+                status_icon = "+"
+                status_style = "green bold"
+                status_label = "ready"
+            elif cs.error and "not available" in (cs.error or ""):
+                status_icon = "!"
+                status_style = "orange1 bold"
+                status_label = "warn"
+            else:
+                status_icon = "x"
+                status_style = "red bold"
+                status_label = "missing"
+
+            darwin.info(f"  {cat_name.upper()}{required_tag}", style="bold white")
+            if cs.active_model_id:
+                model_short = cs.active_model_id.split("/")[-1]
+                darwin.info(f"    Model: {model_short}", style="cyan")
+            darwin.info(
+                f"    Status: [{status_icon}] {status_label}  |  "
+                f"{len(cs.available_models)} available",
+                style=status_style,
+            )
+            if cs.error:
+                darwin.info(f"    Error: {cs.error}", style="red")
+
+        if status_obj.missing_required:
+            darwin.info("")
             darwin.warning(
-                f"Missing required: {', '.join(status_obj.missing_required)}. "
+                f"  Missing required: {', '.join(status_obj.missing_required)}. "
                 "Some features will be disabled."
             )
-        
+
         return status_obj
 
     # ────────────────────────────────────────────────────────────────

@@ -26,7 +26,8 @@ dependencies = [
     "spacy>=3.8.14",
     # ── Document Parsing ──
     "markitdown>=0.1.5",
-    "pymupdf>=1.27.2.2",
+    "pymupdf==1.27.2.2",
+    "pymupdf4llm==1.27.2.2",
     "trafilatura>=2.0.0",
     "openpyxl>=3.1.5",
     "pyexcel-ods>=0.6.0",
@@ -44,7 +45,6 @@ dependencies = [
     # ── GPU Detection (no torch) ──
     "gputil>=1.4.0",
     "keyring>=25.7.0",
-    "pymupdf4llm>=1.27.2.3",
     "httpx>=0.28.1",
     "pytextrank>=3.3.0",
     "rapidocr-onnxruntime>=1.4.4",

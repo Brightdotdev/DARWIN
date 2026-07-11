@@ -5,6 +5,7 @@ Handles logs, progress bars, spinners, and structured data trees.
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Dict, Optional
 
 from rich.console import Console
@@ -30,21 +31,30 @@ from src.core.Logger.DarwinLogger import (
     SpinnerEndEvent,
     SessionStartEvent,
     SessionEndEvent,
+    resolve_event_style,
 )
 from src.core.Logger.lib import ASCII_BANNER
 
 
 _ICONS = {
-    LogType.INFO: ("[cyan]ℹ[/cyan]", "cyan"),
-    LogType.WARNING: ("[yellow]⚠[/yellow]", "yellow"),
-    LogType.ERROR: ("[red]✗[/red]", "red"),
-    LogType.SUCCESS: ("[green]✓[/green]", "green"),
+    LogType.INFO: "[cyan]i[/cyan]",
+    LogType.WARNING: "[yellow]![/yellow]",
+    LogType.ERROR: "[red]x[/red]",
+    LogType.SUCCESS: "[green]+[/green]",
+    LogType.DEBUG: "[dim]•[/dim]",
 }
 
 
 class TerminalUI(EventSubscriber):
     def __init__(self, console: Optional[Console] = None) -> None:
-        self.console = console or Console(force_terminal=True)
+        if console is None:
+            if sys.platform == "win32":
+                try:
+                    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
+            console = Console(force_terminal=True)
+        self.console = console
         self._current_session: str = ""
         self._progress = Progress(
             TextColumn("[cyan]{task.description}"),
@@ -80,15 +90,17 @@ class TerminalUI(EventSubscriber):
         self.console.print(f"  [dim]Session ended: {event.name}[/dim]")
 
     def on_log(self, event: LogEvent) -> None:
-        icon, _ = _ICONS.get(event.log_type, ("", "white"))
+        icon = _ICONS.get(event.log_type, "")
         prefix = f"[dim][{event.session}][/dim] " if event.session else ""
+        style = resolve_event_style(event)
 
         if event.payload is not None:
             self.console.print(f"  {prefix}{icon} [bold]{event.message}[/bold]")
             tree = self._build_tree(event.payload)
             self.console.print(tree)
         else:
-            self.console.print(f"  {prefix}{icon} {event.message}")
+            msg = f"  {prefix}{icon} {event.message}"
+            self.console.print(msg, style=style or None)
 
     def _build_tree(self, data: Any, label: Optional[str] = None) -> Tree:
         if label is None:

@@ -1,17 +1,3 @@
-# src/core/Models/EmbeddingConfig.py
-"""
-Model presets for chunking, prompting, and batch sizing.
-PURE DATA MODULE — no runtime imports, no hardware detection.
-All batch sizing logic lives in ModelBatchSizing.py.
-
-FIXED from original:
-  - Fixed reranker model_name (removed dash)
-  - Added validate_presets() for self-checking
-  - Added get_presets_by_loader() / get_presets_by_category()
-  - Added is_local_preset() / is_api_preset() helpers
-  - Added get_preset_with_spec() bridge to ModelRegistry
-"""
-
 from dataclasses import dataclass, field, asdict
 from typing import Literal, Optional, Dict, List, Tuple, Any
 

@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Union
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 import numpy as np
 from PIL import Image
 

@@ -5,7 +5,9 @@ services:
       - DARWIN_BASE_DIR=/data
     volumes:
       - darwin_data:/data
-    command: ["darwin", "setup", "--auto-install"]
+    ports:
+      - "8080:8080"
+    command: ["darwin", "mcp", "--sse", "--port", "8080"]
 
 volumes:
   darwin_data:

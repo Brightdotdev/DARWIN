@@ -96,6 +96,8 @@ def _status(args):
 
 
 def main():
+    from src.core.Logger.DarwinLogger import darwin
+    darwin.configure(show_banner=True, override=True)
     parser = argparse.ArgumentParser(
         prog="darwin",
         description="Local-first RAG engine — ingest, index, search, and serve via MCP",
@@ -155,6 +157,7 @@ def main():
 
     # ── status ──
     st = sub.add_parser("status", help="Overview: store files, installed models, preferences")
+    st.add_argument("--store", help="Store ID, name, or path")
     st.set_defaults(func=_status)
 
     args, unknown = parser.parse_known_args()

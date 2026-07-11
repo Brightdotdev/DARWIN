@@ -1,6 +1,7 @@
 # Darwin MCP Server
 
-Model Context Protocol server exposing Darwin as AI-agent tools.
+Model Context Protocol server exposing Darwin as AI-agent tools,
+with built-in log streaming for real-time dashboards.
 
 ## Quick start
 
@@ -8,14 +9,37 @@ Model Context Protocol server exposing Darwin as AI-agent tools.
 # stdio (default — for subprocess by AI assistants)
 python -m src.mcp
 
-# SSE (network — for Docker / remote clients)
-python -m src.mcp --sse --port 8080
+# SSE (network — for Docker / remote clients + log streaming)
+python -m src.mcp --sse --port 8765
 ```
+
+## Transports
+
+| Transport | Use case | Command |
+|-----------|----------|---------|
+| stdio | AI agent subprocess (Claude, Cursor) | `python -m src.mcp` |
+| SSE | Network / Docker / remote clients | `python -m src.mcp --sse --port 8765` |
+
+## Endpoints (SSE mode)
+
+When running with `--sse`, the unified server provides these endpoints:
+
+| Endpoint | Type | Description |
+|----------|------|-------------|
+| `/sse` | MCP SSE | AI agent tool calls |
+| `/messages/` | MCP POST | AI agent message handling |
+| `/stream` | SSE | Real-time darwin log events (UI dashboard) |
+| `/history` | GET | Query historical logs (`?session=&levels=&limit=`) |
+| `/health` | GET | Health check (returns `ok`) |
+
+**Logs never flow to the AI agent.**  The `/stream` endpoint is for UI
+consumers (web dashboards, IDE plugins).  The agent uses `/sse` for
+tool calls only.
 
 ## Available tools (10)
 
 ### Search
-- **`search_darwin`** — Query the knowledge base with hybrid/semantic/keyword search. Returns merged passages with source metadata. All option fields use `Literal` types — your IDE shows valid choices.
+- **`search_darwin`** — Query the knowledge base with hybrid/semantic/keyword search.
 
 ### Pipeline
 - **`run_pipeline`** — Ingest + index documents from a path or URL.
@@ -32,26 +56,31 @@ python -m src.mcp --sse --port 8080
 - **`list_files`** — All files with pipeline status.
 - **`file_status`** — Detailed status for one file.
 
-## Transports
-
-| Transport | Use case | Command |
-|-----------|----------|---------|
-| stdio | AI agent subprocess (Claude, Cursor) | `python -m src.mcp` |
-| SSE | Network / Docker / remote clients | `python -m src.mcp --sse --port 8080` |
-
 ## Adding a new tool
 
 1. Create or edit a file in `src/mcp/tools/`
 2. Add a `register(mcp, ...)` function with `@mcp.tool()` decorators
-3. Wire it in `src/mcp/Server.py`:
+3. Wire it in `src/mcp/Server.py` (stdio) and `src/mcp/UnifiedServer.py` (SSE):
    ```python
    import src.mcp.tools.MyTool as MyTool
    MyTool.register(mcp, dependency)
    ```
 
-## Parameter types
+## Architecture
 
-Tools that accept option-based string values (method, merge strategy, fallback strategy, log mode) use `Literal` type hints. This means:
-- Your IDE shows valid choices via autocomplete
-- MCP client sees `enum` in the JSON Schema
-- Invalid values are caught at the type-checker level
+```
+Logger/                   mcp/
+  DarwinLogger.py           UnifiedServer.py  ← subscribes to darwin events
+  TerminalUi.py             Server.py         ← CLI entry point
+  SQLiteHistoryStore.py     tools/*.py        ← tool implementations
+  DarwinMP.py
+```
+
+- **Logger** is pure — it emits events and stores them.  Zero imports
+  from Orchestrators / Storage / Pipeline.
+- **mcp/UnifiedServer** uses FastMCP with `custom_route()` to mount
+  log SSE, history, and health endpoints alongside the MCP SSE transport.
+- **mcp/Server** is a thin CLI that delegates to `UnifiedServer` (SSE) or
+  creates a stdio FastMCP (stdio).
+- **DarwinLogger.configure(mode=SSE/BOTH)** starts `UnifiedServer` in a
+  background thread, same as before.

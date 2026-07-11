@@ -1,0 +1,251 @@
+"""
+Single server providing log SSE streaming + MCP tools + history + health.
+
+Endpoints (SSE mode):
+  /sse                MCP SSE (FastMCP built-in)
+  /messages/          MCP messages (FastMCP built-in)
+  /stream             Log SSE — real-time darwin events
+  /history            Query historical logs
+  /health             Health check
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import queue
+import threading
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
+
+from starlette.requests import Request
+from starlette.responses import Response, JSONResponse
+from sse_starlette.sse import EventSourceResponse
+
+from src.core.Logger.DarwinLogger import darwin, LogType, LogEvent, DarwinEvent
+
+
+# ---------------------------------------------------------------------------
+# SSE subscriber — thread-safe queue fed by darwin events
+# ---------------------------------------------------------------------------
+
+
+class SSEQueueSubscriber:
+    """Thread-safe subscriber that buffers DarwinEvents for SSE consumers."""
+
+    def __init__(self, maxsize: int = 1000):
+        self._queue: queue.Queue = queue.Queue(maxsize=maxsize)
+        self._closed = False
+
+    # ---- darwin callback interface ----
+
+    def on_log(self, event: LogEvent) -> None:
+        self._put(event)
+
+    def on_progress_start(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    def on_progress_update(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    def on_progress_end(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    def on_spinner_start(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    def on_spinner_update(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    def on_spinner_end(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    def on_session_start(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    def on_session_end(self, event: DarwinEvent) -> None:
+        self._put(event)
+
+    # ---- internal ----
+
+    def _put(self, event: DarwinEvent) -> None:
+        if self._closed:
+            return
+        try:
+            self._queue.put_nowait(event)
+        except queue.Full:
+            pass
+
+    async def iter_events(self, loop: asyncio.AbstractEventLoop):
+        """Async generator yielding JSON-encoded event strings."""
+        while not self._closed:
+            try:
+                event = await loop.run_in_executor(None, self._queue.get, True, 1.0)
+                yield json.dumps(_event_to_dict(event), default=str)
+            except queue.Empty:
+                yield ""
+            except Exception:
+                continue
+
+    def close(self) -> None:
+        self._closed = True
+
+
+def _event_to_dict(event: DarwinEvent) -> dict:
+    """Serialize any DarwinEvent to a dict with a type discriminator."""
+    base = {"type": event.__class__.__name__}
+    base.update({k: v for k, v in event.__dict__.items() if not k.startswith("_")})
+    if hasattr(base.get("log_type"), "value"):
+        base["log_type"] = base["log_type"].value
+    return base
+
+
+# ---------------------------------------------------------------------------
+# Unified server
+# ---------------------------------------------------------------------------
+
+
+class UnifiedServer:
+    """
+    Provides log SSE + MCP tools + history + health in one process.
+
+    Two usage modes:
+      * **Background thread** — created by ``DarwinLogger._start_sse()``
+        when ``OutputMode.SSE`` or ``OutputMode.BOTH`` is selected.
+      * **Foreground (CLI)** — used by ``python -m src.mcp --sse``.
+    """
+
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+    ):
+        self.host = host
+        self.port = port
+        self._mcp: Optional[FastMCP] = None
+        self._uvicorn_server = None
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._shutdown = threading.Event()
+
+    # ---- app construction ----
+
+    def _build_app(self) -> FastMCP:
+        """Register all MCP tools + custom HTTP routes and return the FastMCP instance."""
+
+        from mcp.server.fastmcp import FastMCP
+
+        # Lazy imports inside orchestrators / tools
+        from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
+        from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+        from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+        import src.mcp.tools.Search as Search
+        import src.mcp.tools.Pipeline as Pipeline
+        import src.mcp.tools.Models as Models
+        import src.mcp.tools.Store as Store
+
+        mcp = FastMCP("darwin-mcp", host=self.host, port=self.port)
+
+        orch = StoreOrchestrator()
+        orch.bootstrap()
+        retrieval = RetrievalOrchestrator(store=orch.store)
+        pipeline = PipelineOrchestrator(store=orch.store)
+
+        Search.register(mcp, retrieval)
+        Pipeline.register(mcp, pipeline)
+        Models.register(mcp)
+        Store.register(mcp, orch.store)
+
+        # ---- custom HTTP routes ----
+
+        @mcp.custom_route("/stream", methods=["GET"])
+        async def log_stream(request: Request) -> EventSourceResponse:
+            """SSE endpoint: real-time darwin log events."""
+            subscriber = SSEQueueSubscriber()
+            darwin.subscribe(subscriber)
+
+            async def event_stream():
+                try:
+                    loop = asyncio.get_event_loop()
+                    async for data in subscriber.iter_events(loop):
+                        if self._shutdown.is_set():
+                            break
+                        if data:
+                            yield {"event": "log", "data": data}
+                finally:
+                    subscriber.close()
+                    darwin.unsubscribe(subscriber)
+
+            return EventSourceResponse(event_stream())
+
+        @mcp.custom_route("/history", methods=["GET"])
+        async def log_history(request: Request) -> JSONResponse:
+            """Query historical logs."""
+            session = request.query_params.get("session")
+            levels_raw = request.query_params.get("levels", "")
+            limit = int(request.query_params.get("limit", 100))
+            levels = None
+            if levels_raw:
+                levels = {LogType(l.strip()) for l in levels_raw.split(",") if l.strip()}
+            logs = darwin.get_logs(session=session, levels=levels, limit=limit)
+            return JSONResponse([l.to_dict() for l in logs])
+
+        @mcp.custom_route("/health", methods=["GET"])
+        async def health_check(request: Request) -> Response:
+            return Response("ok", status_code=200)
+
+        self._mcp = mcp
+        return mcp
+
+    # ---- lifecycle: background thread (for DarwinLogger) ----
+
+    def start(self) -> None:
+        """Start the uvicorn server in a background daemon thread."""
+        self._build_app()
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        asyncio.set_event_loop(self._loop)
+        try:
+            import uvicorn
+
+            app = self._mcp.sse_app()
+            config = uvicorn.Config(
+                app,
+                host=self.host,
+                port=self.port,
+                log_level="info",
+            )
+            config.install_signal_handlers = False
+            server = uvicorn.Server(config)
+            self._uvicorn_server = server
+            self._loop.run_until_complete(server.serve())
+        except Exception as e:
+            darwin.error(f"Unified server failed: {e}")
+        finally:
+            self._loop.close()
+
+    # ---- lifecycle: foreground (for CLI) ----
+
+    def run_foreground(self) -> None:
+        """Block and serve.  Used by ``python -m src.mcp --sse``."""
+        self._build_app()
+        import uvicorn
+        app = self._mcp.sse_app()
+        uvicorn.run(app, host=self.host, port=self.port, log_level="info")
+
+    # ---- shutdown ----
+
+    def shutdown(self, timeout: float = 3.0) -> None:
+        """Gracefully stop the server (used in background-thread mode)."""
+        self._shutdown.set()
+        if self._uvicorn_server:
+            self._uvicorn_server.should_exit = True
+        if self._loop and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._thread:
+            self._thread.join(timeout=timeout)

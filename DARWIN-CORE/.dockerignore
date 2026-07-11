@@ -1,0 +1,65 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Darwin data
+data/
+checkpoints/
+*.onnx
+*.safetensors
+*.gguf
+*.bin
+*.pdf
+
+# Test artifacts
+teststore/
+teststore
+/teststore
+/test_output/
+*.json
+*.png
+*.jpeg
+*.jpg
+
+# Environment
+.env
+.env.*
+*.local
+
+# Misc
+Optional[str]
+uv.lock

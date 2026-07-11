@@ -1,14 +1,5 @@
 """
 Darwin Logger — Session-aware, queryable structured logging.
-
-Restored features:
-  • Progress + Spinner events (terminal + frontend)
-  • logjson/loglist with format discrimination
-  • __darwin_type__ markers for structured data
-  • Default history persistence (~/.darwin/logs)
-  • Full event protocol (not just logs)
-  • Configurable log filtering (ALL, QUIET, SILENT)
-  • Output modes: TERMINAL, SSE, BOTH, NONE
 """
 
 from __future__ import annotations
@@ -23,6 +14,109 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple, Callable
+
+
+# ---------------------------------------------------------------------------
+# Style system — CSS-like cascading style tokens for log messages
+# ---------------------------------------------------------------------------
+
+# Categories for conflict resolution (colors are mutually exclusive, modifiers are mutually exclusive)
+_STYLE_COLORS = frozenset({
+    "red", "green", "yellow", "orange1", "blue", "magenta", "cyan", "white", "grey",
+    "bright_red", "bright_green", "bright_yellow", "bright_blue",
+    "bright_magenta", "bright_cyan", "bright_white",
+})
+
+_STYLE_MODIFIERS = frozenset({"dim", "bold"})
+
+_STYLE_ADDITIVE = frozenset({
+    "italic", "underline", "strike", "blink", "reverse",
+})
+
+# Semantic aliases — shorthand for common style combos
+_STYLE_ALIASES = {
+    "bright": "bright_white",
+    "orange": "orange1",
+    "gray": "grey",
+    "success": "green",
+    "danger": "red bold",
+    "warning": "orange1 bold",
+    "muted": "dim white",
+    "link": "underline cyan",
+    "none": "",
+}
+
+# Default styles per LogType
+_DEFAULT_LOG_STYLES = {
+    "debug": "grey italic",
+    "info": "dim",
+    "success": "green",
+    "warning": "orange1 bold",
+    "error": "red bold",
+}
+
+
+def _expand_style_aliases(style_str: str) -> str:
+    """Expand semantic aliases (e.g. 'success' -> 'green', 'danger' -> 'red bold')."""
+    if not style_str:
+        return ""
+    tokens = style_str.lower().split()
+    expanded = []
+    for t in tokens:
+        alias = _STYLE_ALIASES.get(t)
+        if alias is not None:
+            expanded.append(alias)
+        else:
+            expanded.append(t)
+    return " ".join(expanded)
+
+
+def _merge_style(default: str, explicit: str) -> str:
+    """
+    Merge default and explicit style strings.
+    CSS-like cascade: explicit overrides default on conflict (last-wins).
+    Colors are mutually exclusive; dim/bold are mutually exclusive.
+    Everything else is additive.
+    """
+    if not explicit:
+        return default
+    if explicit.strip() == "none":
+        return ""
+    if not default:
+        return _expand_style_aliases(explicit)
+
+    def tokens(s: str) -> list[str]:
+        return _expand_style_aliases(s).split()
+
+    d = tokens(default)
+    e = tokens(explicit)
+
+    last_color = next((t for t in reversed(e) if t in _STYLE_COLORS), None)
+    last_modifier = next((t for t in reversed(e) if t in _STYLE_MODIFIERS), None)
+
+    result = []
+    for t in d:
+        if t in _STYLE_COLORS and last_color:
+            continue
+        if t in _STYLE_MODIFIERS and last_modifier:
+            continue
+        result.append(t)
+
+    for t in e:
+        if t not in result:
+            result.append(t)
+
+    return " ".join(result)
+
+
+def resolve_event_style(event: "LogEvent") -> str:
+    """
+    Resolve the display style for a LogEvent by merging
+    the default style for its LogType with any explicit style.
+    """
+    key = event.log_type.value if hasattr(event.log_type, "value") else str(event.log_type)
+    default = _DEFAULT_LOG_STYLES.get(key, "")
+    return _merge_style(default, event.style or "")
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +162,7 @@ class LogEvent:
     timestamp: float
     payload: Optional[Any] = None
     format: str = ""  # "json", "list", "" for plain
+    style: str = ""  # space-separated style tokens; overrides LogType default
 
     def to_dict(self) -> dict:
         d = {
@@ -77,6 +172,8 @@ class LogEvent:
             "timestamp": self.timestamp,
             "datetime": datetime.fromtimestamp(self.timestamp).isoformat(),
         }
+        if self.style:
+            d["style"] = self.style
         if self.payload is not None:
             d["payload"] = self.payload
             d["format"] = self.format
@@ -441,10 +538,10 @@ class DarwinLogger:
 
     def _start_sse(self, host: str, port: int, show_banner: bool) -> None:
         try:
-            from src.core.Logger.UnifiedSSEServer import UnifiedSSEServer
+            from src.mcp.UnifiedServer import UnifiedServer
             from src.core.Logger.lib import ASCII_BANNER
 
-            server = UnifiedSSEServer(host=host, port=port)
+            server = UnifiedServer(host=host, port=port)
             server.start()
             self._sse_server = server
 
@@ -512,32 +609,43 @@ class DarwinLogger:
     # ------------------------------------------------------------------
     # Logging
     # ------------------------------------------------------------------
-    def log(self, message: str, log_type: LogType = LogType.INFO) -> None:
+    def log(
+        self,
+        message: str,
+        log_type: LogType = LogType.INFO,
+        style: str = "",
+    ) -> None:
         self._emit(
             LogEvent(
                 message=message,
                 log_type=log_type,
                 session=self._session_var.get(),
                 timestamp=time.time(),
+                style=style,
             )
         )
 
-    def info(self, message: str) -> None:
-        self.log(message, LogType.INFO)
+    def info(self, message: str, style: str = "") -> None:
+        self.log(message, LogType.INFO, style=style)
 
-    def warning(self, message: str) -> None:
-        self.log(message, LogType.WARNING)
+    def warning(self, message: str, style: str = "") -> None:
+        self.log(message, LogType.WARNING, style=style)
 
-    def debug(self, message: str) -> None:
-        self.log(message, LogType.DEBUG)
+    def debug(self, message: str, style: str = "") -> None:
+        self.log(message, LogType.DEBUG, style=style)
 
-    def error(self, message: str) -> None:
-        self.log(message, LogType.ERROR)
+    def error(self, message: str, style: str = "") -> None:
+        self.log(message, LogType.ERROR, style=style)
 
-    def success(self, message: str) -> None:
-        self.log(message, LogType.SUCCESS)
+    def success(self, message: str, style: str = "") -> None:
+        self.log(message, LogType.SUCCESS, style=style)
 
-    def logjson(self, payload: Any, log_type: LogType = LogType.INFO) -> None:
+    def logjson(
+        self,
+        payload: Any,
+        log_type: LogType = LogType.INFO,
+        style: str = "",
+    ) -> None:
         """Log structured data (dict, dataclass, etc). Preserves type info."""
         structured = serialize_structured(payload)
         summary = str(type(payload).__name__) if not isinstance(payload, dict) else ""
@@ -549,10 +657,16 @@ class DarwinLogger:
                 timestamp=time.time(),
                 payload=structured,
                 format="json",
+                style=style,
             )
         )
 
-    def loglist(self, payload: Any, log_type: LogType = LogType.INFO) -> None:
+    def loglist(
+        self,
+        payload: Any,
+        log_type: LogType = LogType.INFO,
+        style: str = "",
+    ) -> None:
         """Log a list with type preservation."""
         if not isinstance(payload, list):
             self.warning(f"loglist expected list, got {type(payload).__name__}")
@@ -566,6 +680,7 @@ class DarwinLogger:
                 timestamp=time.time(),
                 payload=structured,
                 format="list",
+                style=style,
             )
         )
 

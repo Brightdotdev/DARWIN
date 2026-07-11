@@ -18,7 +18,88 @@ class StoreOrchestrator:
     def __init__(self, darwin_dir: Path | None = None, name: str | None = None):
         self._store = DarwinStore(darwin_dir, name)
 
+    # ------------------------------------------------------------------
+    # Bootstrap — model init + dashboard + structured overview
+    # ------------------------------------------------------------------
+    def bootstrap(self) -> dict:
+        """Initialize models and store, log overview, return structured data.
 
+        For admin (CLI): logs ManagerStatus and dashboard via darwin.info().
+        For MCP: returns {store: {...}, models: {...}} for programmatic use.
+
+        - Default store: logs brief metadata about other registered stores too.
+        - Non-default store: only this store's info (no cross-store access).
+        """
+        from src.core.Models.ModelManager import modelManager
+        from src.core.Storage.StoreRegistry import StoreRegistry
+
+        W = 56
+
+        darwin.info(f"{'-- DARWIN Dashboard ' + '-' * (W - 20)}", style="bold cyan")
+        darwin.info("")
+
+        reg = StoreRegistry()
+        current_dir = str(self._store.darwin_dir)
+        all_stores = reg.list_stores()
+        default_store = reg.get_default_store()
+        is_default = bool(default_store and default_store.get("darwin_dir") == current_dir)
+
+        self._store.print_dashboard()
+
+        other_stores = [s for s in all_stores if s.get("darwin_dir") != current_dir]
+        if is_default and other_stores:
+            darwin.info("")
+            darwin.info(f"{'-- Other Stores ' + '-' * (W - 16)}", style="bold cyan")
+            for s in other_stores:
+                name = s.get("name", "?")
+                sid = s.get("id", "")[:8]
+                created = s.get("created_at", "?")[:10]
+                darwin.info(f"  {name}", style="bold white")
+                darwin.info(f"    ID: {sid}...  |  Created: {created}")
+
+        darwin.info("")
+        manager_status = modelManager.initialize()
+
+        darwin.info("")
+        if manager_status.all_ready:
+            darwin.success(f"{'-- All Systems Operational ' + '-' * (W - 28)}", style="green bold")
+        else:
+            darwin.warning(
+                f"{'-- Issues Detected ' + '-' * (W - 19)}"
+            )
+
+        return {
+            "store": {
+                "current": {
+                    "id": self._store.store_id,
+                    "name": self._store.store_name,
+                    "path": current_dir,
+                    "is_default": is_default,
+                },
+                "other_stores": [
+                    {k: s[k] for k in ("id", "name", "slug", "darwin_dir", "created_at", "is_default") if k in s}
+                    for s in other_stores
+                ] if is_default else [],
+            },
+            "models": {
+                "all_ready": manager_status.all_ready,
+                "missing_required": manager_status.missing_required,
+                "categories": {
+                    name: {
+                        "available": cs.available,
+                        "active": cs.active_model_id,
+                        "error": cs.error,
+                        "required": cs.is_required,
+                        "available_models": cs.available_models,
+                    }
+                    for name, cs in manager_status.categories.items()
+                },
+            },
+        }
+
+    @property
+    def store(self) -> DarwinStore:
+        return self._store
 
     # ------------------------------------------------------------------
     # Store lifecycle
@@ -77,14 +158,12 @@ class StoreOrchestrator:
     def create_store(
         path: str,
         name: Optional[str] = None,
-        bootstrap: bool = True,
     ) -> dict:
         """Create a new DarwinStore at the given path and return its metadata.
 
         Args:
             path: Writable filesystem path for the new store.
             name: Optional human-readable name (defaults to directory name).
-            bootstrap: Whether to initialise models after creation (default: True).
 
         Returns:
             dict with store_id, store_name, darwin_dir, and status.
@@ -106,8 +185,7 @@ class StoreOrchestrator:
             return {"success": False, "error": f"Path is not writable: {p} — {e}"}
 
         ds = DarwinStore(p, name=name)
-        if bootstrap:
-            ds.bootstrap()
+
 
         from src.core.Storage.StoreRegistry import StoreRegistry
         reg = StoreRegistry()
@@ -118,7 +196,7 @@ class StoreOrchestrator:
             "store_name": ds.store_name,
             "darwin_dir": str(ds.darwin_dir),
             "created_at": info.get("created_at") if info else None,
-            "status": "ready" if bootstrap else "created",
+            "status": "created"
         }
 
     # ------------------------------------------------------------------

@@ -15,7 +15,7 @@ from pathlib import Path
 from time import sleep
 from typing import Optional
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Models.ModelUtils import DownloadError, IntegrityError
 from src.lib.InternetChecker import wait_for_internet, check_internet_robust
 from src.core.Models.lib import SPACY_URLS, tarball_urls
@@ -30,15 +30,6 @@ class SpacyNLPModelDownloader:
         self.target_dir = Path(target_dir)
         self.spacy_urls = SPACY_URLS.get(model_name, [])
         self.tarball_urls = tarball_urls.get(model_name, [])
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # Darwin logging helpers
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _log(self, msg: str, level: LogType = LogType.INFO):
-        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
-         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
-         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Public API
@@ -63,36 +54,36 @@ class SpacyNLPModelDownloader:
         should_force = force or recache
 
         if not should_force and self.verify_integrity():
-            self._log(f"{self.model_name} already present and valid.")
+            darwin.info(f"{self.model_name} already present and valid.")
             return True
 
         if should_force:
-            self._log("Force/recache mode: clearing existing files...")
+            darwin.info("Force/recache mode: clearing existing files...")
             self._clear_cache()
 
         # ── Internet ──────────────────────────────────────────────────────
         if wait_internet:
             if not wait_for_internet(pause=3, max_wait=max_wait, verbose=True):
-                self._log("No internet connection available.", LogType.ERROR)
+                darwin.error("No internet connection available.")
                 return False
         else:
             if not check_internet_robust():
-                self._log("No internet connection available.", LogType.ERROR)
+                darwin.error("No internet connection available.")
                 return False
 
         # ── Download ──────────────────────────────────────────────────────
         if not self.download(force=should_force):
-            self._log("Download failed.", LogType.ERROR)
+            darwin.error("Download failed.")
             return False
 
         # ── Verify ──────────────────────────────────────────────────────
         if not self.verify_integrity():
-            self._log("Integrity check failed after download.", LogType.ERROR)
+            darwin.error("Integrity check failed after download.")
             return False
 
         # ── Optimize ──────────────────────────────────────────────────────
         self._optimize_model(self.target_dir)
-        self._log(f"{self.model_name} ready at {self.target_dir}", LogType.SUCCESS)
+        darwin.success(f"{self.model_name} ready at {self.target_dir}")
         return True
 
     def download(self, force: bool = False) -> bool:
@@ -116,12 +107,12 @@ class SpacyNLPModelDownloader:
                 ("spaCy package", self._download_via_package)
             )
         except ImportError:
-            self._log("spaCy not available, skipping pip package strategy", LogType.WARNING)
+            darwin.warning("spaCy not available, skipping pip package strategy")
 
         errors = []
         for name, strategy in strategies:
             try:
-                self._log(f"Attempting {name} download for {self.model_name}")
+                darwin.info(f"Attempting {name} download for {self.model_name}")
                 if strategy():
                     if self.verify_integrity():
                         darwin.spinner_stop(progress_id, success=True)
@@ -133,7 +124,7 @@ class SpacyNLPModelDownloader:
                 errors.append(f"{name}: {e}")
 
         darwin.spinner_stop(progress_id, success=False)
-        self._log(
+        darwin.info(
             f"Failed to download spaCy model '{self.model_name}'.\n"
             +             "Errors:\n  " + "\n  ".join(errors),
         )
@@ -154,9 +145,9 @@ class SpacyNLPModelDownloader:
         if self.target_dir.exists():
             try:
                 shutil.rmtree(self.target_dir, ignore_errors=True)
-                self._log(f"Cleared: {self.target_dir}")
+                darwin.info(f"Cleared: {self.target_dir}")
             except Exception as e:
-                self._log(f"Failed to clear {self.target_dir}: {e}", LogType.WARNING)
+                darwin.warning(f"Failed to clear {self.target_dir}: {e}")
         self.target_dir.mkdir(parents=True, exist_ok=True)
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -165,7 +156,7 @@ class SpacyNLPModelDownloader:
 
     def _download_wheel(self) -> bool:
         if not self.spacy_urls:
-            self._log("No wheel URLs configured.", LogType.WARNING)
+            darwin.warning("No wheel URLs configured.")
             return False
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -179,7 +170,7 @@ class SpacyNLPModelDownloader:
                     if not wheel_path.exists() or wheel_path.stat().st_size == 0:
                         continue
 
-                    self._log("Extracting wheel...")
+                    darwin.info("Extracting wheel...")
                     extract_dir = tmp / "extracted"
                     extract_dir.mkdir(exist_ok=True)
                     with zipfile.ZipFile(wheel_path, "r") as zf:
@@ -197,14 +188,14 @@ class SpacyNLPModelDownloader:
                     last_error = f"Model directory not found in wheel from {url}"
                 except Exception as e:
                     last_error = str(e)
-                    self._log(f"Wheel attempt failed: {e}", LogType.WARNING)
+                    darwin.warning(f"Wheel attempt failed: {e}")
 
-            self._log(f"Wheel download failed: {last_error}", LogType.ERROR)
+            darwin.error(f"Wheel download failed: {last_error}")
             return False
 
     def _download_tarball(self) -> bool:
         if not self.tarball_urls:
-            self._log("No tarball URLs configured.", LogType.WARNING)
+            darwin.warning("No tarball URLs configured.")
             return False
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -214,7 +205,7 @@ class SpacyNLPModelDownloader:
                     tarball_path = tmp / f"{self.model_name}.tar.gz"
                     self._download_file(url, tarball_path)
 
-                    self._log("Extracting tarball...")
+                    darwin.info("Extracting tarball...")
                     with tarfile.open(tarball_path, "r:gz") as tar:
                         tar.extractall(tmp)
 
@@ -223,9 +214,9 @@ class SpacyNLPModelDownloader:
                         self._atomic_copy(model_dir, self.target_dir)
                         return True
                 except Exception as e:
-                    self._log(f"Tarball attempt failed: {e}", LogType.WARNING)
+                    darwin.warning(f"Tarball attempt failed: {e}")
 
-            self._log("Tarball download failed for all URLs.", LogType.ERROR)
+            darwin.error("Tarball download failed for all URLs.")
             return False
 
     def _download_via_package(self) -> bool:
@@ -233,7 +224,7 @@ class SpacyNLPModelDownloader:
         import spacy
         from spacy.cli.download import download as spacy_download
 
-        self._log("Using spaCy CLI downloader...")
+        darwin.info("Using spaCy CLI downloader...")
         spacy_download(self.model_name, direct=False)
         installed_path = Path(spacy.util.get_package_path(self.model_name))
         self._atomic_copy(installed_path, self.target_dir)
@@ -253,7 +244,7 @@ class SpacyNLPModelDownloader:
 
         for attempt in range(max_retries):
             try:
-                self._log(f"Downloading {url[:80]}...")
+                darwin.info(f"Downloading {url[:80]}...")
                 req = urllib.request.Request(
                     url,
                     headers={
@@ -306,9 +297,8 @@ class SpacyNLPModelDownloader:
                             darwin.error("Empty TAR archive")
                             return
 
-                self._log(
+                darwin.success(
                     f"Downloaded {downloaded / 1024 / 1024:.1f} MB",
-                    LogType.SUCCESS,
                 )
                 return
 
@@ -320,9 +310,8 @@ class SpacyNLPModelDownloader:
                         f"Download failed after {max_retries} attempts: {e}"
                     )
                     return
-                self._log(
+                darwin.warning(
                     f"Attempt {attempt + 1} failed, retrying...",
-                    LogType.WARNING,
                 )
                 sleep(2 ** attempt)
 
@@ -386,12 +375,12 @@ class SpacyNLPModelDownloader:
         """Replace target atomically with source contents."""
         if target.exists():
             shutil.rmtree(target, ignore_errors=True)
-        self._log("Copying model files...")
+        darwin.info("Copying model files...")
         shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
 
     def _optimize_model(self, model_path: Path) -> None:
         """Strip unused spaCy components to reduce disk footprint."""
-        self._log("Optimizing model (stripping unused components)...")
+        darwin.info("Optimizing model (stripping unused components)...")
         removable_dirs = [
             "textcat",
             "textcat_multilabel",
@@ -414,4 +403,4 @@ class SpacyNLPModelDownloader:
         for f in list(model_path.glob("optimizer.pt")) + list(model_path.glob("scheduler.pt")):
             f.unlink(missing_ok=True)
 
-        self._log("Optimization complete.", LogType.SUCCESS)
+        darwin.success("Optimization complete.")

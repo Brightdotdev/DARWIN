@@ -17,7 +17,7 @@ litellm.suppress_debug_info = True
 litellm.telemetry = False
 
 from src.lib.KeyManager import is_key_set, load_keys_from_keychain
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Models.EmbeddingConfig import get_preset_with_spec
 
 

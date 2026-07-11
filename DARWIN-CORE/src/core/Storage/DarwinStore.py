@@ -59,13 +59,13 @@ class DarwinStore(StoreSearch):
         Previously called automatically from __init__. Now explicit to avoid
         side effects during store construction.
         """
+        self.print_dashboard()
         try:
             from src.core.Models.ModelManager import modelManager
 
             modelManager.initialize()
         except Exception as e:
             darwin.warning(f"Model manager initialization skipped: {e}")
-        self.print_dashboard()
 
     def _register_self(self) -> str:
         """Register this store in the central registry and write .darwin_store_id."""
@@ -1291,26 +1291,27 @@ class DarwinStore(StoreSearch):
     # Dashboard convenience (prints using DashboardService)
     # --------------------------------------------------------------------
     def print_dashboard(self) -> None:
-        from src.core.Storage.DashboardService import DashboardService
 
-        dashboard = DashboardService(self)
-        # Replicate the old dashboard behavior via logger
         status = self.status()
         stats = status["stats"]
         health = self.full_registry_health_check()
+        W = 54
 
-        darwin.info(f"Darwin directory: {self._darwin_dir}")
+        darwin.info(f"{'-- Store ' + '-' * (W - 8)}", style="bold cyan")
+        darwin.info(f"  Directory: {self._darwin_dir}", style="bold white")
         darwin.info(
-            f"Files Registered: {stats['total_files']} | "
-            f"Searchable: {stats['keyword_searchable_files']} | "
-            f"Needs work: {stats['files_needing_work']} | "
-            f"Total chunks: {stats['total_chunks']} | "
-            f"Total pages: {stats['total_pages']}"
+            f"  Files: {stats['total_files']}  |  "
+            f"Searchable: {stats['keyword_searchable_files']}  |  "
+            f"Chunks: {stats['total_chunks']}",
+        )
+        darwin.info(
+            f"  Pages: {stats['total_pages']}  |  "
+            f"Needs work: {stats['files_needing_work']}",
         )
 
         if health["summary"]["broken"] > 0:
             darwin.warning(
-                f"Registry integrity issue: {health['summary']['broken']} hash(es) "
+                f"  Registry integrity issue: {health['summary']['broken']} hash(es) "
                 f"have missing artifacts but are marked done"
             )
 

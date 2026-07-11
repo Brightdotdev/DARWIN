@@ -8,7 +8,6 @@ def register(mcp, store):
     def create_store(
         path: str,
         name: str | None = None,
-        bootstrap: bool = True,
     ) -> dict:
         """Create a new DarwinStore at the given path for isolating data.
 
@@ -19,10 +18,9 @@ def register(mcp, store):
         Args:
             path: Writable filesystem path where the store will live.
             name: Optional human-readable label (defaults to directory name).
-            bootstrap: Whether to initialise models now (default True).
         """
         try:
-            meta = StoreOrchestrator.create_store(path, name, bootstrap)
+            meta = StoreOrchestrator.create_store(path, name)
             return {"success": True, "data": meta}
         except Exception as e:
             return {"success": False, "error": str(e), "detail": traceback.format_exc()}

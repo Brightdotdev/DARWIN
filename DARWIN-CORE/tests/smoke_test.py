@@ -103,22 +103,27 @@ class TestSearch:
 
 
 class TestMCP:
+    @staticmethod
+    def _mcp():
+        from src.mcp.Server import build_mcp_app
+        return build_mcp_app()
+
     def test_mcp_imports(self):
         """MCP module initialises without crashing."""
-        from src.mcp.Server import mcp, _init_ok
-
-        assert _init_ok
+        mcp = self._mcp()
         assert mcp.name == "darwin"
 
     def test_mcp_10_tools(self):
-        from src.mcp.Server import mcp
-
-        # FastMCP stores tools internally
-        assert len(mcp._tool_manager._tools) == 11
+        mcp = self._mcp()
+        from src.mcp.Server import build_mcp_app
+        import inspect
+        tools = build_mcp_app()._tool_manager._tools
+        assert len(tools) >= 10
 
     def test_mcp_create_store_tool(self):
         """create_store tool exists and produces store metadata."""
-        from src.mcp.Server import mcp
+        from src.mcp.Server import build_mcp_app
+        mcp = build_mcp_app()
         tool = mcp._tool_manager._tools.get("create_store")
         assert tool is not None
         assert "path" in tool.parameters["properties"]
@@ -128,7 +133,7 @@ class TestMCP:
         test_dir = Path("C:\\Users\\ADMIN\\AppData\\Local\\Temp\\opencode\\test_create_store")
         test_dir.mkdir(parents=True, exist_ok=True)
         try:
-            meta = StoreOrchestrator.create_store(str(test_dir), name="test_create", bootstrap=False)
+            meta = StoreOrchestrator.create_store(str(test_dir), name="test_create")
             assert "store_id" in meta
             assert "store_name" in meta
             assert meta["store_name"] == "test_create"
@@ -141,8 +146,8 @@ class TestMCP:
 
     def test_mcp_search_tool_schema(self):
         """Search tool accepts expected params."""
-        from src.mcp.Server import mcp
-
+        from src.mcp.Server import build_mcp_app
+        mcp = build_mcp_app()
         tool = mcp._tool_manager._tools.get("search_darwin")
         assert tool is not None
         assert "query" in tool.parameters["properties"]

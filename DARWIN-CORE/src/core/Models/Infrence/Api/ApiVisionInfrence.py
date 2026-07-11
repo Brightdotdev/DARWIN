@@ -4,7 +4,7 @@ from typing import Optional, Union, List
 import numpy as np
 from PIL import Image
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Models.ModeInterfaces import (
     VisionInferenceInterface,
     UnifiedVisionMetadata,

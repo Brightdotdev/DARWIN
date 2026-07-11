@@ -24,7 +24,7 @@ from src.core.Models.ModelConfig import (
     ensure_model_path,
 )
 from src.lib.KeyManager import is_key_set, load_keys_from_keychain
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Models.ModeInterfaces import VisionInferenceInterface
 
 

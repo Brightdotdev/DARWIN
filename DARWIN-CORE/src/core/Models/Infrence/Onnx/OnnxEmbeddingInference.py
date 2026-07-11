@@ -1,7 +1,7 @@
 import gc
 import time
 from pathlib import Path
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Union
 
 import numpy as np
 
@@ -36,10 +36,6 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
         self._device = "CPU"
         self._onnx_runtime_version = "unknown"
 
-    def _log(self, msg: str, level: LogType = LogType.INFO):
-        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
-         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
-         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     def __enter__(self):
         self.load()
@@ -52,27 +48,27 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
 
     def load(self) -> "OnnxEmbeddingInference":
         if self.is_loaded():
-            self._log("Already loaded, skipping.")
+            darwin.info("Already loaded, skipping.")
             return self
 
         if not self.model_path.exists():
-            self._log(f"Model path not found: {self.model_path}", LogType.ERROR)
+            darwin.error(f"Model path not found: {self.model_path}")
             return self
 
-        self._log(f"Loading model from {self.model_path}")
+        darwin.info(f"Loading model from {self.model_path}")
         self._load_tokenizer()
         self._load_onnx_session()
-        self._log("Model loaded successfully.", LogType.SUCCESS)
+        darwin.success("Model loaded successfully.")
         return self
 
     def unload(self) -> None:
         if not self.is_loaded():
             return
-        self._log("Unloading model...")
+        darwin.info("Unloading model...")
         self._session = None
         self._tokenizer = None
         gc.collect()
-        self._log("Model unloaded.", LogType.SUCCESS)
+        darwin.success("Model unloaded.")
 
     def is_loaded(self) -> bool:
         return self._session is not None and self._tokenizer is not None
@@ -83,27 +79,27 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
         try:
             from tokenizers import Tokenizer
         except ImportError:
-            self._log("tokenizers library required. pip install tokenizers", LogType.ERROR)
+            darwin.error("tokenizers library required. pip install tokenizers")
             return
 
         tokenizer_path = self.model_path / "tokenizer.json"
         if not tokenizer_path.exists():
-            self._log(f"Tokenizer not found in {self.model_path}", LogType.ERROR)
+            darwin.error(f"Tokenizer not found in {self.model_path}")
             return
 
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
-        self._log(f"Tokenizer loaded from {tokenizer_path}")
+        darwin.info(f"Tokenizer loaded from {tokenizer_path}")
 
     def _load_onnx_session(self) -> None:
         try:
             import onnxruntime as ort
         except ImportError:
-            self._log("onnxruntime required", LogType.ERROR)
+            darwin.error("onnxruntime required")
             return
 
         model_file = self.model_path / "model.onnx"
         if not model_file.exists():
-            self._log(f"ONNX model not found: {model_file}", LogType.ERROR)
+            darwin.error(f"ONNX model not found: {model_file}")
             return
 
         available = ort.get_available_providers()
@@ -127,10 +123,10 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
         if len(shape) == 2:
             self._vector_size = shape[1]
         else:
-            self._log("Could not infer vector size from model, using default 384", LogType.WARNING)
+            darwin.warning("Could not infer vector size from model, using default 384")
             self._vector_size = 384
 
-        self._log(
+        darwin.info(
             f"ONNX session loaded: {model_file} | "
             f"providers={providers} | vector_size={self._vector_size}"
         )
@@ -146,10 +142,10 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
             texts = [texts]
 
         if not self.is_loaded():
-            self._log("Model not loaded. Call .load() first.", LogType.ERROR)
+            darwin.error("Model not loaded. Call .load() first.")
             return None
 
-        self._log(f"Encoding {len(texts)} text(s)")
+        darwin.info(f"Encoding {len(texts)} text(s)")
 
         start_time = time.perf_counter()
         all_embeddings = []
@@ -220,17 +216,16 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
             sum_mask = np.clip(np.sum(mask_expanded, axis=1), a_min=1e-9, a_max=None)
             embeddings = sum_embeddings / sum_mask
             
-            self._log(f"Applied mean pooling: {embeddings.shape}")
+            darwin.info(f"Applied mean pooling: {embeddings.shape}")
 
         elif embeddings.ndim == 2:
             # Already pooled: (batch, hidden_dim) — use as-is
             pass
 
         else:
-            self._log(
+            darwin.error(
                 f"Unexpected embedding dimensions: {embeddings.ndim}D shape {embeddings.shape}. "
-                f"Expected 2D (pooled) or 3D (raw hidden states).", LogType.ERROR
-            )
+                f"Expected 2D (pooled) or 3D (raw hidden states).")
             return np.zeros((0, 0), dtype=np.float32)
 
         return embeddings

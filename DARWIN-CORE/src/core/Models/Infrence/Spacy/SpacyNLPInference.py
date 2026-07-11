@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Iterator, Iterable,Tuple
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 from src.core.Models.Infrence.Spacy.Utils import canonicalize, is_valid_entity, is_valid_noun_chunk
@@ -77,10 +77,6 @@ class SpacyNLPInference:
     def has_parser(self) -> bool:
         return "parser" in self._enabled_pipes
 
-    def _log(self, msg: str, level: LogType = LogType.INFO):
-        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
-         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
-         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
 
     def __enter__(self) -> "SpacyNLPInference":
         self.load()
@@ -99,14 +95,14 @@ class SpacyNLPInference:
             darwin.error("Model files missing. Run downloader first.")
             return self
 
-        self._log(f"Loading spaCy model from {self.model_dir}")
+        darwin.info(f"Loading spaCy model from {self.model_dir}")
         import spacy
         self._spacy_version = spacy.__version__
 
         try:
             self._nlp = spacy.load(self.model_dir, disable=self.disable_components)
         except Exception as first_err:
-            self._log(f"Load with disable={self.disable_components} failed: {first_err}. Retrying...", LogType.WARNING)
+            darwin.warning(f"Load with disable={self.disable_components} failed: {first_err}. Retrying...")
             self._nlp = spacy.load(self.model_dir)
 
         self._enabled_pipes = list(self._nlp.pipe_names)
@@ -114,17 +110,17 @@ class SpacyNLPInference:
             self._nlp.add_pipe("sentencizer")
             self._enabled_pipes.append("sentencizer")
 
-        self._log(f"Loaded spaCy {self._spacy_version} | Pipeline: {self._nlp.pipe_names} | Vectors: {self._nlp.vocab.vectors_length}d")
+        darwin.info(f"Loaded spaCy {self._spacy_version} | Pipeline: {self._nlp.pipe_names} | Vectors: {self._nlp.vocab.vectors_length}d")
         return self
 
     def unload(self) -> None:
         if not self.is_loaded():
             return
-        self._log("Unloading model...")
+        darwin.info("Unloading model...")
         self._nlp = None
         self._enabled_pipes.clear()
         gc.collect()
-        self._log("Unloaded.", LogType.SUCCESS)
+        darwin.success("Unloaded.")
 
     def is_loaded(self) -> bool:
         return self._nlp is not None
@@ -143,7 +139,7 @@ class SpacyNLPInference:
             return []
 
         batch_size = max(1, batch_size)
-        self._log(f"Processing {len(texts)} text(s)")
+        darwin.info(f"Processing {len(texts)} text(s)")
         spinner_id = f"spacy_{id(texts)}"
         darwin.spinner_start(spinner_id, f"Processing {len(texts)} text(s)")
 
@@ -166,7 +162,7 @@ class SpacyNLPInference:
         for r in results:
             r.metadata = meta
 
-        self._log(f"Done: {len(texts)} text(s), {total_tokens} tokens in {inference_time_ms:.1f}ms", LogType.SUCCESS)
+        darwin.success(f"Done: {len(texts)} text(s), {total_tokens} tokens in {inference_time_ms:.1f}ms")
         return results
 
     # ── FAST PATH: Co-extraction of NER + noun chunks ────────────────────────

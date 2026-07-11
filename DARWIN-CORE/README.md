@@ -8,36 +8,32 @@ Built by [BrightDotDev](https://github.com/brightdotdev).
 
 ---
 
-## Dev Quick Start
+## Quick Start
 
-> **Not a published package yet.** Clone and run directly for development/testing.
+> **Not on PyPI yet.** Install directly from the repo.
 
 ```bash
 # 1. Clone
 git clone <repo-url>
 cd DARWIN-CORE
 
-# 2. Create virtual environment (Python 3.11+)
-python -m venv .venv
+# 2. Install (works with pip and uv)
+pip install -e .
+# or: uv pip install -e .
+# or: uv sync                        # if using uv.lock
 
-# 3. Activate
-.venv\Scripts\activate        # Windows
-source .venv/bin/activate     # macOS/Linux
+# 3. Bootstrap (creates store, downloads required models)
+darwin init
+# or: python -m src.cli init
 
-# 4. Install deps
-pip install -r requirements.txt   # or just install as you go
+# 4. Ingest documents
+darwin ingest ./my-docs/
 
-# 5. Bootstrap
-python -m src.cli init
+# 5. Search
+darwin search "what is graph rag"
 
-# 6. Ingest documents
-python -m src.cli ingest ./my-docs/
-
-# 7. Search
-python -m src.cli search "what is graph rag"
-
-# 8. Start MCP server for AI agents
-python -m src.cli mcp
+# 6. Start MCP server for AI agents
+darwin mcp
 ```
 
 ---
@@ -183,16 +179,46 @@ ctx = orchestrator.retrieve_and_resolve(cfg)
 
 ## Docker
 
+The entrypoint auto-runs `darwin setup preset server --yes` on first start. No manual init needed.
+
 ```bash
-# Build
+# Build & start (auto-setup on first run, MCP SSE on port 8080)
+docker compose up -d
+
+# Or manually:
 docker build -t darwin .
+docker run -d --name darwin -p 8080:8080 -v darwin_data:/data darwin
 
-# Run MCP server on port 8080
-docker run -p 8080:8080 -v darwin-data:/data/darwin darwin
+# Check logs
+docker compose logs -f
 
-# Or run init first, then MCP
-docker run -v darwin-data:/data/darwin darwin init
-docker run -p 8080:8080 -v darwin-data:/data/darwin darwin mcp --sse
+# Stop
+docker compose down
+
+# Wipe data (volume)
+docker compose down -v
+```
+
+| Variable | Default | Description |
+|---|---|---|
+| `DARWIN_BASE_DIR` | `/data` | Container path for persistent data (mount a volume here) |
+
+### docker-compose.yml
+
+```yaml
+services:
+  darwin:
+    build: .
+    environment:
+      - DARWIN_BASE_DIR=/data
+    volumes:
+      - darwin_data:/data
+    ports:
+      - "8080:8080"
+    command: ["darwin", "mcp", "--sse", "--port", "8080"]
+
+volumes:
+  darwin_data:
 ```
 
 ---
@@ -230,6 +256,10 @@ docker run -p 8080:8080 -v darwin-data:/data/darwin darwin mcp --sse
 ## Running Tests
 
 ```bash
+# Full suite
+python -m pytest tests/ -v
+
+# Quick smoke test
 python -m pytest tests/smoke_test.py -v
 ```
 

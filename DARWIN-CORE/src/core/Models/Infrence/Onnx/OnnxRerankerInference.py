@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -75,14 +75,7 @@ class OnnxRerankerInference:
         self._tokenizer = None
         self._vector_size = 384  # MiniLM-L6-v2
         self._device = "CPU"
-
-    # ── Darwin logging ───────────────────────────────────────────────────────
-
-    def _log(self, msg: str, level: LogType = LogType.INFO):
-        {LogType.DEBUG: darwin.debug, LogType.INFO: darwin.info,
-         LogType.SUCCESS: darwin.success, LogType.WARNING: darwin.warning,
-         LogType.ERROR: darwin.error}.get(level, darwin.info)(msg)
-
+        
     # ── Context Manager ──────────────────────────────────────────────────────
 
     def __enter__(self) -> "OnnxRerankerInference":
@@ -97,38 +90,38 @@ class OnnxRerankerInference:
     def load(self) -> "OnnxRerankerInference":
         """Load tokenizer and ONNX session. Chainable."""
         if self.is_loaded():
-            self._log("Already loaded, skipping.")
+            darwin.info("Already loaded, skipping.")
             return self
 
         if not self.model_dir.exists():
-            self._log(f"Model directory not found: {self.model_dir}", LogType.ERROR)
+            darwin.error(f"Model directory not found: {self.model_dir}")
             return self
 
         if not self._check_model_exists():
-            self._log("Model files missing. Run downloader first.", LogType.ERROR)
+            darwin.error("Model files missing. Run downloader first.")
             return self
 
         if not self._check_integrity():
-            self._log("Model integrity check failed. Model may be corrupted.", LogType.ERROR)
+            darwin.error("Model integrity check failed. Model may be corrupted.")
             return self
 
-        self._log(f"Loading model from {self.model_dir}")
+        darwin.info(f"Loading model from {self.model_dir}")
         self._load_tokenizer()
         self._load_onnx_session()
-        self._log("Model loaded successfully.", LogType.SUCCESS)
+        darwin.success("Model loaded successfully.")
         return self
 
     def unload(self) -> None:
         """Unload model and free memory."""
         if not self.is_loaded():
-            self._log("Not loaded, nothing to unload.")
+            darwin.info("Not loaded, nothing to unload.")
             return
 
-        self._log("Unloading model...")
+        darwin.info("Unloading model...")
         self._session = None
         self._tokenizer = None
         gc.collect()
-        self._log("Unloaded.", LogType.SUCCESS)
+        darwin.success("Unloaded.")
 
     def is_loaded(self) -> bool:
         return self._session is not None and self._tokenizer is not None
@@ -150,11 +143,11 @@ class OnnxRerankerInference:
 
         for p in required:
             if not p.exists():
-                self._log(f"Integrity fail: missing {p.name}", LogType.WARNING)
+                darwin.warning(f"Integrity fail: missing {p.name}")
                 return False
             min_size = min_sizes.get(p.name, 100)
             if p.stat().st_size < min_size:
-                self._log(f"Integrity fail: {p.name} too small ({p.stat().st_size} bytes)", LogType.WARNING)
+                darwin.warning(f"Integrity fail: {p.name} too small ({p.stat().st_size} bytes)")
                 return False
 
         return True
@@ -172,7 +165,7 @@ class OnnxRerankerInference:
         Returns scores in original document order + ranked indices.
         """
         if not self.is_loaded():
-            self._log("Model not loaded. Call .load() first.", LogType.ERROR)
+            darwin.error("Model not loaded. Call .load() first.")
             return RerankResult(
                 scores=[],
                 metadata=self._build_metadata("", [], 0.0),
@@ -181,7 +174,7 @@ class OnnxRerankerInference:
             )
 
         if not documents:
-            self._log("No documents provided.", LogType.WARNING)
+            darwin.warning("No documents provided.")
             return RerankResult(
                 scores=[],
                 metadata=self._build_metadata(query, [], 0.0),
@@ -189,7 +182,7 @@ class OnnxRerankerInference:
                 ranked_scores=[],
             )
 
-        self._log(f"Reranking {len(documents)} documents for query: '{query[:50]}...'")
+        darwin.info(f"Reranking {len(documents)} documents for query: '{query[:50]}...'")
 
         # Pair query with each document
         pairs = [(query, doc) for doc in documents]
@@ -206,7 +199,7 @@ class OnnxRerankerInference:
 
         for batch_idx in range(0, len(pairs), bs):
             batch_num = batch_idx // bs + 1
-            self._log(f"  → Batch {batch_num}/{num_batches}")
+            darwin.log(f"  → Batch {batch_num}/{num_batches}")
 
             batch_pairs = pairs[batch_idx : batch_idx + bs]
             scores = self._run_batch(batch_pairs)
@@ -221,11 +214,9 @@ class OnnxRerankerInference:
         ranked_indices = [idx for idx, _ in ranked]
         ranked_scores = [score for _, score in ranked]
 
-        self._log(
+        darwin.success(
             f"Rerank complete: {len(documents)} docs in {inference_time_ms:.1f}ms "
-            f"(top score: {max(all_scores):.4f})",
-            LogType.SUCCESS,
-        )
+            f"(top score: {max(all_scores):.4f})"        )
 
         metadata = self._build_metadata(query, documents, inference_time_ms)
 
@@ -255,16 +246,16 @@ class OnnxRerankerInference:
         try:
             from tokenizers import Tokenizer
         except ImportError:
-            self._log("tokenizers library required. pip install tokenizers", LogType.ERROR)
+            darwin.error("tokenizers library required. pip install tokenizers")
             return
 
         tokenizer_path = self.model_dir / "tokenizer.json"
         if not tokenizer_path.exists():
-            self._log(f"Tokenizer not found in {self.model_dir}", LogType.ERROR)
+            darwin.error(f"Tokenizer not found in {self.model_dir}")
             return
 
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
-        self._log(f"Tokenizer loaded from {tokenizer_path}")
+        darwin.log(f"Tokenizer loaded from {tokenizer_path}")
     # ── Internal: ONNX Session ───────────────────────────────────────────────
 
     def _load_onnx_session(self) -> None:
@@ -272,17 +263,17 @@ class OnnxRerankerInference:
         try:
             import onnxruntime as ort
         except ImportError:
-            self._log("onnxruntime required. pip install onnxruntime", LogType.ERROR)
+            darwin.error("onnxruntime required. pip install onnxruntime")
             return
 
         model_path = self.model_dir / "model.onnx"
         if not model_path.exists():
-            self._log(f"ONNX model not found: {model_path}", LogType.ERROR)
+            darwin.error(f"ONNX model not found: {model_path}")
             return
 
         # Provider priority: CUDA → DirectML → CPU
         available = ort.get_available_providers()
-        self._log(f"Available ONNX providers: {available}")
+        darwin.log(f"Available ONNX providers: {available}")
 
         preferred = ["CUDAExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]
         providers = [p for p in preferred if p in available]
@@ -293,7 +284,7 @@ class OnnxRerankerInference:
         self._device = providers[0].replace("ExecutionProvider", "")
         self._onnx_runtime_version = ort.__version__
 
-        self._log(f"Using provider: {providers[0]}")
+        darwin.log(f"Using provider: {providers[0]}")
 
         sess_options = ort.SessionOptions()
         sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -304,7 +295,7 @@ class OnnxRerankerInference:
             providers=providers,
         )
 
-        self._log(
+        darwin.log(
             f"ONNX session loaded: {model_path} | "
             f"providers={providers} | vector_size={self._vector_size}"
         )
@@ -378,7 +369,7 @@ class OnnxRerankerInference:
     def get_model_info(self) -> dict:
         """Return static info about the loaded model without running inference."""
         if not self.is_loaded():
-            self._log("Model not loaded", LogType.WARNING)
+            darwin.warning("Model not loaded")
             return {"status": "not_loaded", "model_dir": str(self.model_dir)}
 
         return {

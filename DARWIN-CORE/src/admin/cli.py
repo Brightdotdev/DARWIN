@@ -7,16 +7,18 @@ Usage:
     python -m src.admin models status
     python -m src.admin store files
     python -m src.admin pipeline run --target ./docs
+
+Design: Competent, minimal, no fluff. No Rich. No emoji. No rounded boxes.
 """
 
 import argparse
+import json
+import os
 import sys
 import traceback
-
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich import box
+import re
+from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
 
 # ── Lazy imports (orchestrators init on first use) ──
 
@@ -25,13 +27,169 @@ _retrieval = None
 _pipeline = None
 _models = None
 
-console = Console()
+# ══════════════════════════════════════════════════════════════
+# Terminal Renderer — Minimal, competent, no dependencies
+# ══════════════════════════════════════════════════════════════
+
+
+class AdminRenderer:
+    """
+    Clean terminal output. No Rich, no emoji, no heavy deps.
+    Uses ANSI colors only when supported. Respects NO_COLOR.
+    """
+
+    def __init__(self, plain: bool = False):
+        self.plain = plain or os.environ.get("NO_COLOR") or not sys.stdout.isatty()
+
+    def _style(self, text: str, fg: Optional[str] = None, bold: bool = False) -> str:
+        if self.plain:
+            return text
+        codes = []
+        if bold:
+            codes.append("1")
+        if fg == "green":
+            codes.append("32")
+        elif fg == "red":
+            codes.append("31")
+        elif fg == "yellow":
+            codes.append("33")
+        elif fg == "blue":
+            codes.append("34")
+        elif fg == "cyan":
+            codes.append("36")
+        elif fg == "bright":
+            codes.append("97")
+        elif fg == "dim":
+            codes.append("90")
+        if not codes:
+            return text
+        return f"\033[{';'.join(codes)}m{text}\033[0m"
+
+    def _dim(self, text: str) -> str:
+        return self._style(text, fg="dim")
+
+    def _green(self, text: str) -> str:
+        return self._style(text, fg="green")
+
+    def _red(self, text: str) -> str:
+        return self._style(text, fg="red")
+
+    def _yellow(self, text: str) -> str:
+        return self._style(text, fg="yellow")
+
+    def _cyan(self, text: str) -> str:
+        return self._style(text, fg="cyan")
+
+    def _blue(self, text: str) -> str:
+        return self._style(text, fg="blue")
+
+    def _bright(self, text: str) -> str:
+        return self._style(text, fg="bright", bold=True)
+
+    def _out(self, text: str = "", err: bool = False) -> None:
+        stream = sys.stderr if err else sys.stdout
+        print(text, file=stream)
+
+    def _divider(self, width: int = 60) -> str:
+        return "─" * width
+
+    def header(self, title: str) -> None:
+        self._out(self._divider())
+        self._out(f"  {self._bright(title)}")
+        self._out(self._divider())
+
+    def section(self, title: str) -> None:
+        self._out(f"\n  {self._bright(title)}")
+
+    def ok(self, msg: str) -> None:
+        self._out(f"  {self._green('OK')}  {msg}")
+
+    def warn(self, msg: str) -> None:
+        self._out(f"  {self._yellow('WARN')}  {msg}", err=True)
+
+    def err(self, msg: str) -> None:
+        self._out(f"  {self._red('ERR')}  {msg}", err=True)
+
+    def info(self, msg: str) -> None:
+        self._out(f"  {self._dim('>')}  {msg}")
+
+    def table(self, title: str, columns: List[str], rows: List[Tuple]) -> None:
+        """Print a clean ASCII table."""
+        if not rows:
+            self._out(f"  {self._dim('(no data)')}")
+            return
+
+        # Calculate column widths
+        widths = [len(c) for c in columns]
+        for row in rows:
+            for i, cell in enumerate(row):
+                widths[i] = max(widths[i], len(self._strip_ansi(str(cell))))
+
+        # Title
+        self._out(f"\n  {self._bright(title)}")
+
+        # Header row
+        header = "  | ".join(
+            f"{col:<{widths[i]}}" for i, col in enumerate(columns)
+        )
+        self._out(f"  {header}")
+        self._out(f"  {'─' * (len(self._strip_ansi(header)) + 2)}")
+
+        # Data rows
+        for row in rows:
+            line = "  | ".join(
+                f"{str(cell):<{widths[i]}}" for i, cell in enumerate(row)
+            )
+            self._out(f"  {line}")
+
+        self._out()
+
+    def _strip_ansi(self, text: str) -> str:
+        return re.sub(r"\033\[\d+(?:;\d+)*m", "", text)
+
+    def panel(self, title: str, content: str) -> None:
+        """Simple bordered panel, no rounded corners."""
+        lines = content.split("\n")
+        max_width = max(len(self._strip_ansi(l)) for l in lines) if lines else 0
+        max_width = max(max_width, len(self._strip_ansi(title)))
+
+        self._out()
+        border_width = max_width - len(self._strip_ansi(title)) - 2
+        self._out(f"  ┌─ {self._bright(title)} {'─' * border_width}┐")
+        for line in lines:
+            pad = max_width - len(self._strip_ansi(line))
+            self._out(f"  │ {line}{' ' * pad} │")
+        self._out(f"  └{'─' * (max_width + 2)}┘")
+
+    def tree(self, label: str, items: List[Tuple[str, Any]]) -> None:
+        """Simple tree output."""
+        self._out(f"\n  {self._bright(label)}")
+        for key, value in items:
+            if isinstance(value, list):
+                self._out(f"  ├── {key}")
+                for v in value:
+                    self._out(f"  │   └── {v}")
+            else:
+                self._out(f"  ├── {key}: {value}")
+
+    def next_steps(self, steps: List[str]) -> None:
+        self._out(f"\n  {self._bright('Next steps')}")
+        for step in steps:
+            self._out(f"    {step}")
+
+
+# Global renderer instance
+_r = AdminRenderer()
+
+
+# ══════════════════════════════════════════════════════════════
+# Lazy orchestrator getters
+# ══════════════════════════════════════════════════════════════
 
 
 def _get_store(store_ref: str | None = None):
     global _store
     if _store is None or store_ref is not None:
-        from src.core.Storage.DarwinStore import DarwinStore
         from src.core.Orchestrators.lib import resolve_store
 
         resolved = resolve_store(store_ref)
@@ -62,49 +220,19 @@ def _get_models():
 
 
 # ══════════════════════════════════════════════════════════════
-# Helpers
-# ══════════════════════════════════════════════════════════════
-
-
-def _print_table(title, columns, rows):
-    t = Table(title=title, box=box.ROUNDED)
-    for c in columns:
-        t.add_column(c)
-    for r in rows:
-        t.add_row(*[str(v) for v in r])
-    console.print(t)
-
-
-def _ok(msg):
-    console.print(f"[green]✓[/green] {msg}")
-
-
-def _warn(msg):
-    console.print(f"[yellow]⚠[/yellow] {msg}")
-
-
-def _err(msg):
-    console.print(f"[red]✗[/red] {msg}")
-
-
-def _panel(title, content):
-    console.print(Panel(content, title=title, border_style="blue"))
-
-
-# ══════════════════════════════════════════════════════════════
 # SETUP / ONBOARDING
 # ══════════════════════════════════════════════════════════════
 
 
 def _interactive_select(prompt, options, default=None):
-    """Numbered interactive selector (no extra deps)."""
-    console.print(f"\n[bold]{prompt}[/bold]")
+    """Numbered interactive selector."""
+    _r.section(prompt)
     for i, (key, desc) in enumerate(options, 1):
-        console.print(f"  {i}. {key}  [dim]{desc}[/dim]")
+        _r._out(f"  [{i}] {key}  {_r._dim(desc)}")
     while True:
         raw = input(
-            f"Enter number [1-{len(options)}]"
-            + (f" (default: 1)" if default else "")
+            f"  Enter [1-{len(options)}]"
+            + (f" (default: {default})" if default else "")
             + ": "
         ).strip()
         if not raw and default is not None:
@@ -115,18 +243,18 @@ def _interactive_select(prompt, options, default=None):
                 return options[idx - 1][0]
         except ValueError:
             pass
-        console.print("[red]Invalid selection.[/red]")
+        _r.err("Invalid selection.")
 
 
 def cmd_setup_interactive(args):
     """Full interactive onboarding with numbered menus."""
     models = _get_models()
-    console.print(Panel.fit("[bold blue]Darwin Interactive Setup[/bold blue]"))
+    _r.header("Darwin Interactive Setup")
 
     # 1. Detect system
-    console.print("\n[bold]Step 1:[/bold] Detecting system capabilities...")
+    _r.section("Step 1: Detecting system capabilities")
     system = models.detect_system()
-    _print_table(
+    _r.table(
         "System",
         ["Property", "Value"],
         [
@@ -140,7 +268,7 @@ def cmd_setup_interactive(args):
 
     # 2. Show recommendations
     recs = models.get_recommendations(system)
-    console.print(f"\n[bold]Recommended models for your system:[/bold]")
+    _r.section("Recommended models for your system")
     choices = {}
     cat_labels = [
         ("embedding", "Vector embeddings for semantic search (required)"),
@@ -152,18 +280,16 @@ def cmd_setup_interactive(args):
     for cat, desc in cat_labels:
         recommended = getattr(recs, cat, None)
         if recommended:
-            console.print(f"  [green]{cat}[/green]: {recommended}  [dim]— {desc}[/dim]")
+            _r._out(f"  {_r._green(cat)}: {recommended}  {_r._dim('— ' + desc)}")
             choices[cat] = recommended
         else:
-            console.print(f"  [dim]{cat}: none available[/dim]")
+            _r._out(f"  {_r._dim(cat + ': none available')}")
 
     # 3. Confirm which to install
-    console.print(
-        "\n[bold]Step 2:[/bold] Select models to install (comma-separated, or 'all'):"
-    )
+    _r.section("Step 2: Select models to install (comma-separated, or 'all')")
     for cat, mid in choices.items():
-        console.print(f"  [cyan]{cat}[/cyan]: {mid}")
-    raw = input("\nModels to install [all]: ").strip().lower()
+        _r._out(f"  {_r._cyan(cat)}: {mid}")
+    raw = input("\n  Models to install [all]: ").strip().lower()
     if raw == "" or raw == "all":
         selected = choices
     else:
@@ -171,12 +297,11 @@ def cmd_setup_interactive(args):
         selected = {c: choices[c] for c in selected_cats if c in choices}
 
     if not selected:
-        _warn("No models selected. Skipping installation.")
+        _r.warn("No models selected. Skipping installation.")
         return
 
     # 4. API keys for provider-based models
     all_specs = models.list_registered()
-    api_models = [s for s in all_specs if s.get("requires_provider")]
     needed_providers = set()
     for cat, mid in selected.items():
         for s in all_specs:
@@ -184,34 +309,36 @@ def cmd_setup_interactive(args):
                 needed_providers.add(s["requires_provider"])
 
     if needed_providers:
-        console.print(
-            f"\n[bold]Step 3:[/bold] API key(s) needed for: {', '.join(needed_providers)}"
-        )
+        _r.section(f"Step 3: API key(s) needed for: {', '.join(needed_providers)}")
         for prov in needed_providers:
             key = input(f"  Enter {prov} API key (or leave blank to skip): ").strip()
             if key:
                 models.set_key(prov, key)
-                _ok(f"{prov} key set")
+                _r.ok(f"{prov} key set")
             else:
-                _warn(f"Skipped {prov} key")
+                _r.warn(f"Skipped {prov} key")
 
     # 5. Install
-    console.print(f"\n[bold]Step 4:[/bold] Installing {len(selected)} model(s)...")
+    _r.section(f"Step 4: Installing {len(selected)} model(s)")
     from src.core.Orchestrators.ModelOrchestrator import ModelCategory
 
     cat_map = {c.value.lower(): c for c in ModelCategory}
     for cat_str, mid in selected.items():
         cat_enum = cat_map.get(cat_str)
         if cat_enum:
-            console.print(f"  Installing {mid} for {cat_str}...")
+            _r.info(f"Installing {mid} for {cat_str}...")
             result = models.install(mid)
             if result.success:
-                _ok(f"{mid} installed")
+                _r.ok(f"{mid} installed")
             else:
-                _err(f"{mid}: {result.error}")
+                _r.err(f"{mid}: {result.error}")
 
-    console.print("\n[bold green]Setup complete![/bold green]")
-    console.print("Start the MCP server:  [cyan]python -m src.mcp[/cyan]")
+    _r._out()
+    _r.ok("Setup complete")
+    _r.next_steps([
+        "python -m src.mcp    # Start the MCP server",
+        "python -m src.admin status    # Check system status",
+    ])
 
 
 def cmd_setup_profile(args):
@@ -220,11 +347,12 @@ def cmd_setup_profile(args):
     results = models.setup_profile(
         profile=args.profile, auto_download=not args.no_download
     )
+    _r.header(f"Setup Profile: {args.profile}")
     for cat, res in results.items():
         if res.success:
-            _ok(f"{cat.value}: {res.model_id}")
+            _r.ok(f"{cat.value}: {res.model_id}")
         else:
-            _err(f"{cat.value}: {res.error or 'failed'}")
+            _r.err(f"{cat.value}: {res.error or 'failed'}")
 
 
 def cmd_setup_onboard(args):
@@ -236,10 +364,11 @@ def cmd_setup_onboard(args):
         prefs = None
     report = models.onboard(preferences=prefs, auto_download=not args.no_download)
     summary = report.get("summary", {})
+    _r.header("Onboard Report")
     for cat in summary.get("ready", []):
-        _ok(f"{cat} ready")
+        _r.ok(f"{cat} ready")
     for cat, err in summary.get("failed", {}).items():
-        _err(f"{cat}: {err}")
+        _r.err(f"{cat}: {err}")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -250,18 +379,18 @@ def cmd_setup_onboard(args):
 def cmd_models_status(args):
     models = _get_models()
     status = models.status()
-    console.print(Panel.fit(f"[bold]Model Status[/bold]  —  {status.summary}"))
+    _r.header(f"Model Status — {status.summary}")
     rows = []
     for name, cs in status.categories.items():
         rows.append(
             (
                 name,
-                cs.active_model_id or "[dim]none[/dim]",
-                "[green]ready[/green]" if cs.available else "[red]missing[/red]",
+                cs.active_model_id or _r._dim("none"),
+                _r._green("ready") if cs.available else _r._red("missing"),
                 cs.error or "",
             )
         )
-    _print_table("Categories", ["Category", "Active Model", "Status", "Error"], rows)
+    _r.table("Categories", ["Category", "Active Model", "Status", "Error"], rows)
 
 
 def cmd_models_list(args):
@@ -279,12 +408,12 @@ def cmd_models_list(args):
                 s["model_id"],
                 s["category"],
                 s["tier"].lower(),
-                "[green]local[/green]" if s["is_local"] else "[blue]api[/blue]",
-                s.get("requires_provider") or "[dim]—[/dim]",
-                f"{s['disk_mb']}MB" if s["disk_mb"] else "[dim]—[/dim]",
+                _r._green("local") if s["is_local"] else _r._blue("api"),
+                s.get("requires_provider") or _r._dim("—"),
+                f"{s['disk_mb']}MB" if s["disk_mb"] else _r._dim("—"),
             )
         )
-    _print_table(
+    _r.table(
         "Registered Models",
         ["Model ID", "Category", "Tier", "Type", "Provider", "Size"],
         rows,
@@ -293,26 +422,27 @@ def cmd_models_list(args):
 
 def cmd_models_install(args):
     models = _get_models()
+    _r.header(f"Installing {len(args.model_ids)} model(s)")
     for mid in args.model_ids:
-        console.print(f"Installing {mid}...")
+        _r.info(f"Installing {mid}...")
         result = models.install(
             mid, auto_download=not args.no_download, force=args.force
         )
         if result.success:
-            _ok(f"{mid} installed")
+            _r.ok(f"{mid} installed")
         else:
-            _err(f"{mid}: {result.error}")
+            _r.err(f"{mid}: {result.error}")
 
 
 def cmd_models_uninstall(args):
     models = _get_models()
+    _r.header(f"Uninstalling {len(args.model_ids)} model(s)")
     for mid in args.model_ids:
         result = models.uninstall(mid, delete_files=not args.keep_files)
-        _ok(
-            f"{mid}: {result.message}"
-            if result.success
-            else _err(f"{mid}: {result.error}")
-        )
+        if result.success:
+            _r.ok(f"{mid}: {result.message}")
+        else:
+            _r.err(f"{mid}: {result.error}")
 
 
 def cmd_models_switch(args):
@@ -320,28 +450,35 @@ def cmd_models_switch(args):
     from src.core.Orchestrators.ModelOrchestrator import ModelCategory
 
     cat = ModelCategory(args.category)
+    _r.info(f"Switching {args.category} to {args.model_id}...")
     result = models.switch(cat, args.model_id, auto_download=not args.no_download)
     if result.success:
-        _ok(f"Switched {args.category} → {args.model_id}")
+        _r.ok(f"Switched {args.category} → {args.model_id}")
     else:
-        _err(f"Switch failed: {result.error}")
+        _r.err(f"Switch failed: {result.error}")
 
 
 def cmd_models_keys(args):
     models = _get_models()
     if args.action == "set":
         ok = models.set_key(args.provider, args.key)
-        _ok(f"{args.provider} key set" if ok else _err("Failed to set key"))
+        if ok:
+            _r.ok(f"{args.provider} key set")
+        else:
+            _r.err("Failed to set key")
     elif args.action == "status":
         statuses = models.list_key_status()
         rows = [
-            (p, "[green]set[/green]" if s else "[red]missing[/red]")
+            (p, _r._green("set") if s else _r._red("missing"))
             for p, s in statuses.items()
         ]
-        _print_table("API Keys", ["Provider", "Status"], rows)
+        _r.table("API Keys", ["Provider", "Status"], rows)
     elif args.action == "remove":
         ok = models.remove_key(args.provider)
-        _ok(f"{args.provider} key removed" if ok else _err("Failed to remove key"))
+        if ok:
+            _r.ok(f"{args.provider} key removed")
+        else:
+            _r.err("Failed to remove key")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -352,15 +489,14 @@ def cmd_models_keys(args):
 def cmd_store_status(args):
     store = _get_store()
     s = store.status()
-    from rich.tree import Tree
-
-    t = Tree("[bold]Store Status[/bold]")
-    t.add(f"Name: {s.get('name', '?')}")
-    t.add(f"Path: {s.get('path', '?')}")
-    t.add(f"Sources: {s.get('source_count', 0)}")
-    t.add(f"Pipeline stages: {', '.join(s.get('pipeline_stages', []))}")
-    t.add(f"Searchable files: {s.get('searchable_count', 0)}")
-    console.print(t)
+    _r.header("Store Status")
+    _r.tree("Store", [
+        ("Name", s.get("name", "?")),
+        ("Path", s.get("path", "?")),
+        ("Sources", s.get("source_count", 0)),
+        ("Pipeline stages", ", ".join(s.get("pipeline_stages", []))),
+        ("Searchable files", s.get("searchable_count", 0)),
+    ])
 
 
 def cmd_store_files(args):
@@ -369,7 +505,7 @@ def cmd_store_files(args):
     if isinstance(report, dict):
         report = [report]
     if not report:
-        _warn("No files in store.")
+        _r.warn("No files in store.")
         return
     rows = []
     for r in report:
@@ -377,41 +513,39 @@ def cmd_store_files(args):
             (
                 r.get("filename", r.get("display_name", "?")),
                 r.get("stage", r.get("pipeline_stage", "?")),
-                "[green]ready[/green]"
-                if r.get("search_ready")
-                else "[dim]pending[/dim]",
+                _r._green("ready") if r.get("search_ready") else _r._dim("pending"),
                 r.get("file_size", ""),
             )
         )
-    _print_table("Files", ["File", "Stage", "Search Ready", "Size"], rows)
+    _r.table("Files", ["File", "Stage", "Search Ready", "Size"], rows)
 
 
 def cmd_store_file(args):
     store = _get_store()
     s = store.file_status(args.filename)
-    _panel(f"File: {args.filename}", str(s))
+    _r.panel(f"File: {args.filename}", str(s))
 
 
 def cmd_store_audit(args):
     store = _get_store()
     a = store.full_audit()
-    _panel("Full Audit", str(a))
+    _r.panel("Full Audit", str(a))
 
 
 def cmd_store_health(args):
     store = _get_store()
     if args.model:
         h = store.get_embedding_health(args.model)
-        _panel(f"Embedding Health: {args.model}", str(h))
+        _r.panel(f"Embedding Health: {args.model}", str(h))
     else:
         h = store.full_registry_health_check()
-        _panel("Registry Health", str(h))
+        _r.panel("Registry Health", str(h))
 
 
 def cmd_store_repair(args):
     store = _get_store()
     r = store.repair(dry_run=args.dry_run)
-    _panel("Repair Report", str(r))
+    _r.panel("Repair Report", str(r))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -435,8 +569,7 @@ def _run_pipeline_stages(
 ):
     pipe = _get_pipeline(store_ref)
     from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
-    from src.core.Logger.DarwinLogger import darwin
-    darwin.configure()
+    
 
     params = PipelineInput(
         target=target or "",
@@ -452,14 +585,15 @@ def _run_pipeline_stages(
         only_kw=only_kw,
         only_semantic=only_semantic,
     )
-    console.print(f"Running pipeline stages: {stages}")
+    _r.info(f"Running pipeline stages: {', '.join(stages)}")
     result = pipe.build_pipeline(params)
     if result.success:
-        _ok(f"{', '.join(s.value for s in result.stages_completed)} complete")
+        _r.ok(f"{', '.join(s.value for s in result.stages_completed)} complete")
     if result.stages_failed:
         for stage, err in result.stages_failed.items():
-            _err(f"{stage}: {err}")
-    console.print(result.summary)
+            _r.err(f"{stage}: {err}")
+    _r._out()
+    _r._out(f"  {result.summary}")
 
 
 def cmd_pipeline_run(args):
@@ -515,7 +649,7 @@ def cmd_pipeline_index(args):
 def cmd_pipeline_purge(args):
     pipe = _get_pipeline()
     pipe.purge(args.stages, args.filenames)
-    _ok(f"Purged {', '.join(args.stages)} for {len(args.filenames)} file(s)")
+    _r.ok(f"Purged {', '.join(args.stages)} for {len(args.filenames)} file(s)")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -533,16 +667,18 @@ def cmd_logs_query(args):
         limit=args.limit,
     )
     if not logs:
-        _warn("No logs found matching filters.")
+        _r.warn("No logs found matching filters.")
         return
+    _r.header(f"Logs ({len(logs)} entries)")
     for l in logs:
-        icon = {"info": "ℹ", "warning": "⚠", "error": "✗", "success": "✓"}.get(
+        icon = {"info": ">", "warning": "!", "error": "x", "success": "OK"}.get(
             l["log_type"], "?"
         )
         ts = l.get("datetime", "").split(".")[0] if l.get("datetime") else ""
-        session_tag = f"[dim][{l['session']}][/dim] " if l.get("session") else ""
-        console.print(f"  {icon} {session_tag}[bold]{l['message'][:120]}[/bold]")
-    console.print(f"\n[dim]{len(logs)} log(s)[/dim]")
+        session_tag = f"[{l['session']}] " if l.get("session") else ""
+        msg = l["message"][:120]
+        _r._out(f"  {icon} {session_tag}{msg}")
+    _r._out(f"\n  {_r._dim(f'{len(logs)} log(s)')}")
 
 
 def cmd_logs_sessions(args):
@@ -551,7 +687,7 @@ def cmd_logs_sessions(args):
 
     sessions = LoggerOrchestrator.get_sessions()
     if not sessions:
-        _warn("No sessions found.")
+        _r.warn("No sessions found.")
         return
     rows = []
     for s in sessions:
@@ -567,7 +703,7 @@ def cmd_logs_sessions(args):
                 else "running",
             )
         )
-    _print_table(
+    _r.table(
         "Sessions", ["Session", "Logs", "Errors", "Warnings", "Duration"], rows
     )
 
@@ -577,7 +713,7 @@ def cmd_logs_session_info(args):
     from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     info = LoggerOrchestrator.get_session_info(args.session_name)
-    _panel(f"Session: {args.session_name}", str(info))
+    _r.panel(f"Session: {args.session_name}", str(info))
 
 
 def cmd_logs_stats(args):
@@ -585,7 +721,7 @@ def cmd_logs_stats(args):
     from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     stats = LoggerOrchestrator.history_stats()
-    _panel("Log History Stats", str(stats))
+    _r.panel("Log History Stats", str(stats))
 
 
 def cmd_logs_purge(args):
@@ -593,7 +729,7 @@ def cmd_logs_purge(args):
     from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     count = LoggerOrchestrator.purge_logs(days=args.days)
-    _ok(f"Purged {count} log(s) older than {args.days} day(s)")
+    _r.ok(f"Purged {count} log(s) older than {args.days} day(s)")
 
 
 def cmd_logs_purge_session(args):
@@ -601,7 +737,7 @@ def cmd_logs_purge_session(args):
     from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     count = LoggerOrchestrator.purge_session(args.session_name)
-    _ok(f"Purged {count} log(s) for session '{args.session_name}'")
+    _r.ok(f"Purged {count} log(s) for session '{args.session_name}'")
 
 
 def cmd_logs_export(args):
@@ -609,7 +745,7 @@ def cmd_logs_export(args):
     from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     count = LoggerOrchestrator.export_logs(args.output, session=args.session)
-    _ok(f"Exported {count} log(s) to {args.output}")
+    _r.ok(f"Exported {count} log(s) to {args.output}")
 
 
 def cmd_logs_compact(args):
@@ -617,7 +753,7 @@ def cmd_logs_compact(args):
     from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     result = LoggerOrchestrator.compact()
-    _panel("Compact Result", str(result))
+    _r.panel("Compact Result", str(result))
 
 
 def cmd_logs_set_retention(args):
@@ -625,7 +761,7 @@ def cmd_logs_set_retention(args):
     from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     LoggerOrchestrator.set_retention(days=args.days)
-    _ok(f"Retention set to {args.days} day(s)")
+    _r.ok(f"Retention set to {args.days} day(s)")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -636,104 +772,45 @@ def cmd_logs_set_retention(args):
 def cmd_system_info(args):
     models = _get_models()
     system = models.detect_system()
-    rows = [
-        ("RAM", f"{system.ram_gb} GB"),
-        ("Disk Free", f"{system.disk_free_gb} GB"),
-        ("CPU Cores", str(system.cpu_cores)),
-        ("GPU", system.gpu_name if system.has_gpu else "None"),
-        ("Tier", system.tier),
-    ]
-    _print_table("System Info", ["Property", "Value"], rows)
+    _r.header("System Info")
+    _r.table(
+        "System",
+        ["Property", "Value"],
+        [
+            ("RAM", f"{system.ram_gb} GB"),
+            ("Disk Free", f"{system.disk_free_gb} GB"),
+            ("CPU Cores", str(system.cpu_cores)),
+            ("GPU", system.gpu_name if system.has_gpu else "None"),
+            ("Tier", system.tier),
+        ],
+    )
 
     recs = models.get_recommendations(system)
-    _print_table(
+    _r.table(
         "Recommended Models",
         ["Category", "Model ID"],
         [
-            ("embedding", recs.embedding or "[dim]none[/dim]"),
-            ("nlp", recs.nlp or "[dim]none[/dim]"),
-            ("ocr", recs.ocr or "[dim]none[/dim]"),
-            ("reranker", recs.reranker or "[dim]none[/dim]"),
-            ("vision", recs.vision or "[dim]none[/dim]"),
+            ("embedding", recs.embedding or _r._dim("none")),
+            ("nlp", recs.nlp or _r._dim("none")),
+            ("ocr", recs.ocr or _r._dim("none")),
+            ("reranker", recs.reranker or _r._dim("none")),
+            ("vision", recs.vision or _r._dim("none")),
         ],
     )
 
 
 def cmd_status(args):
     """Comprehensive overview: store files, installed models, preferences."""
+    from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
+    from src.core.Orchestrators.lib import resolve_store
 
-    # ── Store files ──
-    try:
-        store = _get_store()
-        report = store.get_pipeline_report()
-        if isinstance(report, dict):
-            report = [report]
-        file_count = len(report) if report else 0
-        ready_count = sum(
-            1 for r in (report or []) if r.get("search_ready")
-        )
-        source_count = store.status().get("source_count", 0)
-    except Exception:
-        file_count = 0
-        ready_count = 0
-        source_count = 0
+    if args.store:
+        ds = resolve_store(args.store)
+        orch = StoreOrchestrator(ds.darwin_dir, ds.store_name)
+    else:
+        orch = StoreOrchestrator.get_default() or StoreOrchestrator()
 
-    # ── Models ──
-    try:
-        models = _get_models()
-        model_status = models.status()
-        installed = {}
-        for name, cs in model_status.categories.items():
-            if cs.active_model_id:
-                installed[name] = cs.active_model_id
-        installed_count = len(installed)
-    except Exception:
-        installed_count = 0
-        installed = {}
-
-    # ── Preferences (from config) ──
-    try:
-        from src.Setup import DarwinSetup
-
-        setup = DarwinSetup()
-        config = setup.load_config() or {}
-        prefs = config.get("models", {})
-    except Exception:
-        prefs = {}
-
-    # ── Display ──
-    console.print()
-    _panel(
-        "Darwin Status Overview",
-        f"[bold]Store:[/bold] {source_count} sources, {file_count} files ({ready_count} search-ready)\n"
-        f"[bold]Models:[/bold] {installed_count} installed\n"
-        f"[bold]Preferences:[/bold] {len(prefs)} configured",
-    )
-
-    if installed:
-        _print_table(
-            "Installed Models",
-            ["Category", "Model ID"],
-            [(cat, mid) for cat, mid in installed.items()],
-        )
-
-    if prefs:
-        _print_table(
-            "Model Preferences (config)",
-            ["Category", "Model ID"],
-            [(cat, mid) for cat, mid in prefs.items()],
-        )
-
-    if file_count:
-        _print_table(
-            "Store File Summary",
-            ["Status", "Count"],
-            [
-                ("Total", str(file_count)),
-                ("Search Ready", str(ready_count)),
-                ("Pending", str(file_count - ready_count)),
-            ],
-        )
+    orch.bootstrap()  # logs everything via darwin.info() — no return needed
 
 
 # ══════════════════════════════════════════════════════════════
@@ -955,7 +1032,7 @@ def main():
         prog="darwin-admin",
         description="Darwin Admin — Full orchestrator control for power users",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-    epilog="""
+        epilog="""
 Examples:
   python -m src.admin setup interactive
   python -m src.admin status
@@ -967,7 +1044,7 @@ Examples:
   python -m src.admin pipeline run ./docs --ocr
   python -m src.admin pipeline purge myfile.pdf --stages ingestion
   python -m src.admin system info
-    """,
+        """,
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
@@ -980,6 +1057,7 @@ Examples:
 
     # Top-level status
     sp = sub.add_parser("status", help="Overview: store files, installed models, preferences")
+    sp.add_argument("--store", help="Store ID, name, or path")
     sp.set_defaults(func=cmd_status)
 
     args = parser.parse_args()
@@ -987,7 +1065,7 @@ Examples:
     try:
         args.func(args)
     except Exception as e:
-        _err(f"{type(e).__name__}: {e}")
+        _r.err(f"{type(e).__name__}: {e}")
         if getattr(args, "verbose", False):
             traceback.print_exc()
         sys.exit(1)

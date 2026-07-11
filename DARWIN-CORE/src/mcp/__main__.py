@@ -1,12 +1,8 @@
-from src.mcp.Server import _serve_stdio, _serve_sse, _init_ok, parser
+from src.mcp.Server import parser, run_stdio, run_sse
 
 if __name__ == "__main__":
-    args = parser.parse_args()
-    if not _init_ok:
-        import sys
-
-        sys.exit(1)
+    args = parser().parse_args()
     if args.sse:
-        _serve_sse(args.port)
+        run_sse(host=args.host, port=args.port)
     else:
-        _serve_stdio()
+        run_stdio()

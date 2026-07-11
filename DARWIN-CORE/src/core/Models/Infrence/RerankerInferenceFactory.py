@@ -17,7 +17,7 @@ from src.core.Models.ModelConfig import (
 )
 from src.core.Models.Infrence.Onnx.OnnxRerankerInference import OnnxRerankerInference
 from src.core.Models.ModelDownloading.OnnxRerankerDownloader import OnnxRerankerDownloader  # assume exists
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 # ---------------------------------------------------------------------------
