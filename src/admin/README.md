@@ -1,6 +1,6 @@
 # Darwin Admin CLI
 
-Full orchestrator control for power users. 30 subcommands across 7 groups.
+Full orchestrator control for power users. 31 subcommands across 8 groups.
 
 ## Usage
 
@@ -13,6 +13,23 @@ python -m src.admin <group> <command> [options]
 | Global Option | Description |
 |---|---|
 | `--verbose`, `-v` | Enable verbose error output (shows full tracebacks) |
+
+## Module Structure
+
+The admin module is split by concern across multiple files:
+
+```
+src/admin/
+  cli.py                 — Entry point, argparse builder, lazy orchestrator singletons
+  renderer.py            — AdminRenderer: ANSI output, tables, panels, trees
+  setup.py               — Interactive onboarding + config helpers
+  commands_models.py     — Model lifecycle: status, list, install, uninstall, switch, keys
+  commands_store.py      — Store introspection: status, files, file, audit, health, repair
+  commands_pipeline.py   — Pipeline execution: run, ingest, index, purge
+  commands_logs.py       — Log management: query, sessions, stats, purge, export, compact
+  commands_system.py     — System info + top-level status dashboard
+  uninstall.py           — Full darwin uninstall (discover stores, clean artifacts, remove data)
+```
 
 ## Commands
 
@@ -149,6 +166,29 @@ darwin-admin pipeline run ./docs --ocr
 
 By default, `status` shows store info and file counts without initializing models (fast). Use `--initialize` to also run model initialization and show model readiness status (slower).
 
+### `uninstall` — Remove darwin
+
+Safely removes all darwin data from the system. Discovers all registered stores (main + extra), removes only darwin artifacts from extra stores (keeping user files), cleans the main data directory, and optionally uninstalls the pip package.
+
+```bash
+darwin-admin uninstall              # full cleanup + pip uninstall
+darwin-admin uninstall --dry-run   # preview what would be removed
+darwin-admin uninstall --keep-package  # clean data only, keep the package
+```
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Preview what would be removed without making changes |
+| `--keep-package` | Only clean data, skip `pip uninstall darwin-core` |
+
+**What it does:**
+
+1. **Discovers stores** — queries `~/.darwin/stores_registry.db` for all registered stores (main + extra)
+2. **Cleans extra stores** — for each store outside the main base dir, removes only `indexes/`, `registry.db`, `.darwin_store_id`, `checkpoints/`, `conversations/` (leaves your original files untouched)
+3. **Removes global registry** — deletes `~/.darwin/`
+4. **Removes main data directory** — deletes `%LOCALAPPDATA%/Darwin` (Windows), `~/Library/Application Support/Darwin` (macOS), or `~/.local/share/darwin` (Linux)
+5. **Uninstalls package** — runs `pip uninstall darwin-core --yes` (skipped with `--keep-package`)
+
 ## Logging modes
 
 The logging configuration supports four modes:
@@ -201,6 +241,11 @@ darwin-admin pipeline purge file1.pdf file2.pdf --stages ingestion
 darwin-admin system info
 darwin-admin status                     # fast — no model init
 darwin-admin status --initialize        # full — with model init
+
+# Uninstall (clean all darwin data)
+darwin-admin uninstall --dry-run        # preview first
+darwin-admin uninstall --keep-package   # remove data only
+darwin-admin uninstall                  # full cleanup + pip uninstall
 
 # Verbose error output (shows tracebacks)
 darwin-admin --verbose pipeline run /data/docs --ocr

@@ -55,6 +55,7 @@ darwin (user CLI)        darwin-admin (power-user CLI)
   └── config [target]       │   pipeline run|ingest|index|purge
                             │   logs query|sessions|stats|export
                             │   system info
+                            │   uninstall [--dry-run] [--keep-package]
                             └── status [--initialize]
         │
 MCP Server (FastMCP) ──> 11 tools + 5 resources: search, pipeline, models, store
@@ -77,7 +78,7 @@ Core Engine:
 | Layer | What | Entry point |
 |---|---|---|
 | **User CLI** | `darwin` — mcp, config | `src/cli.py` |
-| **Admin CLI** | `darwin-admin` — setup, models, store, pipeline, logs, system, status | `src/admin/cli.py` |
+| **Admin CLI** | `darwin-admin` — setup, models, store, pipeline, logs, system, uninstall, status | `src/admin/` |
 | **MCP** | 11 tools + 5 resources for AI agents | `src/mcp/` |
 | **Orchestrators** | Retrieval, Pipeline, Models, Store | `src/core/Orchestrators/` |
 | **lib.py** | Typed params with Literal enums | `src/core/Orchestrators/lib.py` |
@@ -90,7 +91,11 @@ Core Engine:
 | Module | Path | Purpose |
 |---|---|---|
 | **CLI** | `src/cli.py` | User entry point (`darwin`) — mcp, config |
-| **Admin** | `src/admin/cli.py` | Admin entry point (`darwin-admin`) — 30 subcommands |
+| **Admin** | `src/admin/` | Admin entry point (`darwin-admin`) — 31 subcommands |
+| **Admin modules** | `src/admin/renderer.py` | Terminal output (ANSI, tables, panels) |
+| | `src/admin/setup.py` | Interactive onboarding + config helpers |
+| | `src/admin/commands_*.py` | Command handlers per group (models, store, pipeline, logs, system) |
+| | `src/admin/uninstall.py` | Full darwin uninstall (discover stores, clean artifacts, remove data) |
 | **MCP** | `src/mcp/` | FastMCP server + 11 tools + 5 resources |
 | **Orchestrators** | `src/core/Orchestrators/` | Retrieval, Pipeline, Models, Store |
 | **Orchestrators/lib.py** | `src/core/Orchestrators/lib.py` | Parameter library with Literal types |
@@ -156,7 +161,7 @@ darwin config all --copy      # generate all + copy to clipboard
 
 ## CLI Reference — `darwin-admin` (Power User)
 
-Full orchestrator control. 30 subcommands across 7 groups.
+Full orchestrator control. 31 subcommands across 8 groups.
 
 ```bash
 darwin-admin <group> <command> [options]
@@ -174,6 +179,7 @@ See [src/admin/README.md](src/admin/README.md) for complete reference.
 | `pipeline` | `run`, `ingest`, `index`, `purge` | Pipeline execution |
 | `logs` | `query`, `sessions`, `session-info`, `stats`, `purge`, `export`, `compact`, `set-retention` | Log management |
 | `system` | `info` | Hardware detection + recommendations |
+| `uninstall` | — | Remove all darwin data and optionally the package |
 | `status` | — | Overview dashboard |
 
 ---
