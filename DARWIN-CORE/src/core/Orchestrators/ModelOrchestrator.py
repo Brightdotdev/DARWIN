@@ -801,7 +801,6 @@ class ModelsOrchestrator:
             "required": [ModelCategory.EMBEDDING],
             "recommended": [
                 ModelCategory.EMBEDDING,
-                ModelCategory.NLP,
                 ModelCategory.OCR,
                 ModelCategory.RERANKER,
             ],

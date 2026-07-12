@@ -1,29 +1,18 @@
 """
 darwin admin — Full orchestrator control for power users.
 All knobs, all dials. Wraps the four orchestrators.
-
-Usage:
-    python -m src.admin setup --interactive
-    python -m src.admin models status
-    python -m src.admin store files
-    python -m src.admin pipeline run --target ./docs
-
-Design: Competent, minimal, no fluff. No Rich. No emoji. No rounded boxes.
 """
 
 import argparse
-import json
 import os
 import sys
 import traceback
 import re
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 # ── Lazy imports (orchestrators init on first use) ──
 
 _store = None
-_retrieval = None
 _pipeline = None
 _models = None
 
@@ -113,6 +102,12 @@ class AdminRenderer:
     def info(self, msg: str) -> None:
         self._out(f"  {self._dim('>')}  {msg}")
 
+    def _pad(self, text: str, width: int) -> str:
+        """Pad text to visual width, accounting for ANSI escape codes."""
+        visual_len = len(self._strip_ansi(str(text)))
+        padding = max(0, width - visual_len)
+        return str(text) + " " * padding
+
     def table(self, title: str, columns: List[str], rows: List[Tuple]) -> None:
         """Print a clean ASCII table."""
         if not rows:
@@ -130,15 +125,15 @@ class AdminRenderer:
 
         # Header row
         header = "  | ".join(
-            f"{col:<{widths[i]}}" for i, col in enumerate(columns)
+            self._pad(col, widths[i]) for i, col in enumerate(columns)
         )
         self._out(f"  {header}")
-        self._out(f"  {'─' * (len(self._strip_ansi(header)) + 2)}")
+        self._out(f"  {'─' * (len(header) + 2)}")
 
         # Data rows
         for row in rows:
             line = "  | ".join(
-                f"{str(cell):<{widths[i]}}" for i, cell in enumerate(row)
+                self._pad(str(cell), widths[i]) for i, cell in enumerate(row)
             )
             self._out(f"  {line}")
 
@@ -193,7 +188,6 @@ def _get_store(store_ref: str | None = None):
         from src.core.Orchestrators.lib import resolve_store
 
         resolved = resolve_store(store_ref)
-        resolved.bootstrap()
         if store_ref is None:
             _store = resolved
         return resolved
@@ -209,13 +203,14 @@ def _get_pipeline(store_ref: str | None = None):
     return _pipeline
 
 
-def _get_models():
+def _get_models(init_models: bool = False):
     global _models
     if _models is None:
         from src.core.Orchestrators.ModelOrchestrator import modelsOrchestrator
 
         _models = modelsOrchestrator
-        _models.status()
+        if init_models:
+            _models.status()
     return _models
 
 
@@ -230,11 +225,15 @@ def _interactive_select(prompt, options, default=None):
     for i, (key, desc) in enumerate(options, 1):
         _r._out(f"  [{i}] {key}  {_r._dim(desc)}")
     while True:
-        raw = input(
-            f"  Enter [1-{len(options)}]"
-            + (f" (default: {default})" if default else "")
-            + ": "
-        ).strip()
+        try:
+            raw = input(
+                f"  Enter [1-{len(options)}]"
+                + (f" (default: {default})" if default else "")
+                + ": "
+            ).strip()
+        except (EOFError, KeyboardInterrupt):
+            _r._out()
+            raise KeyboardInterrupt
         if not raw and default is not None:
             return options[default - 1][0]
         try:
@@ -246,13 +245,81 @@ def _interactive_select(prompt, options, default=None):
         _r.err("Invalid selection.")
 
 
-def cmd_setup_interactive(args):
-    """Full interactive onboarding with numbered menus."""
-    models = _get_models()
-    _r.header("Darwin Interactive Setup")
+def _setup_status():
+    """Check all three config files via AppPaths.
 
-    # 1. Detect system
+    Returns (status, content) where:
+      status  = {"darwin_json": bool, "logging_json": bool, "models_json": bool}
+      content = loaded JSON content for each file that exists, None otherwise
+    """
+    import json as _json
+    from src.lib.AppPaths import default_config_dir, default_models_config_dir
+
+    darwin_path = default_config_dir() / "darwin.json"
+    logging_path = default_config_dir() / "logging.json"
+    models_path = default_models_config_dir() / "models.json"
+
+    status = {
+        "darwin_json": darwin_path.exists(),
+        "logging_json": logging_path.exists(),
+        "models_json": models_path.exists(),
+    }
+
+    content = {}
+
+    if status["darwin_json"]:
+        try:
+            content["darwin"] = _json.loads(darwin_path.read_text(encoding="utf-8"))
+        except Exception:
+            content["darwin"] = None
+
+    if status["logging_json"]:
+        try:
+            content["logging"] = _json.loads(logging_path.read_text(encoding="utf-8"))
+        except Exception:
+            content["logging"] = None
+
+    if status["models_json"]:
+        try:
+            from src.core.Models.ModelConfig import load_active_models
+            content["models"] = load_active_models()
+        except Exception:
+            content["models"] = None
+
+    return status, content
+
+
+def _show_setup_status(status, content):
+    """Display a summary table of what is configured."""
+    _r.section("Current configuration")
+
+    def _tag(ok):
+        return _r._green("yes") if ok else _r._dim("no")
+
+    _r._out(f"  darwin.json   (setup config)     : {_tag(status['darwin_json'])}")
+    _r._out(f"  logging.json  (logging settings) : {_tag(status['logging_json'])}")
+    _r._out(f"  models.json   (active models)    : {_tag(status['models_json'])}")
+
+    # Show active models if available
+    models_cfg = content.get("models")
+    if models_cfg:
+        active = [f"{cat}={mid}" for cat, mid in models_cfg.items() if mid]
+        if active:
+            _r._out(f"  {_r._dim('Active: ' + ', '.join(active))}")
+
+    # Show setup version if available
+    darwin_cfg = content.get("darwin")
+    if darwin_cfg:
+        ts = darwin_cfg.get("setup_completed", "unknown")
+        _r._out(f"  {_r._dim('Last setup: ' + str(ts))}")
+
+    _r._out()
+
+
+def _setup_detect_and_recommend():
+    """Detect system and show model recommendations. Returns (models, system, recs)."""
     _r.section("Step 1: Detecting system capabilities")
+    models = _get_models(init_models=False)
     system = models.detect_system()
     _r.table(
         "System",
@@ -266,84 +333,441 @@ def cmd_setup_interactive(args):
         ],
     )
 
-    # 2. Show recommendations
     recs = models.get_recommendations(system)
-    _r.section("Recommended models for your system")
-    choices = {}
-    cat_labels = [
-        ("embedding", "Vector embeddings for semantic search (required)"),
-        ("nlp", "Natural language processing / NER / summaries"),
-        ("ocr", "Optical character recognition for scanned PDFs"),
-        ("reranker", "Re-rank search results for precision"),
-        ("vision", "Image analysis and captioning"),
-    ]
-    for cat, desc in cat_labels:
-        recommended = getattr(recs, cat, None)
-        if recommended:
-            _r._out(f"  {_r._green(cat)}: {recommended}  {_r._dim('— ' + desc)}")
-            choices[cat] = recommended
+    return models, system, recs
+
+
+def _setup_category(models, cat, desc, recommended, *, required=False):
+    """Walk user through one category: list models, let them pick.
+
+    Returns (model_id, api_key_needed) or (None, None) if skipped.
+    """
+    from src.core.Models.Lib.ModelSpec import ModelCategory
+
+    cat_enum = ModelCategory(cat)
+    all_models = models.list_registered(category=cat_enum)
+
+    if not all_models:
+        _r._out(f"  {_r._dim(cat + ': no models registered')}")
+        return None, None
+
+    _r.section(f"Category: {cat} {_r._dim('(required)') if required else ''}")
+    _r._out(f"  {_r._dim(desc)}")
+
+    if required:
+        # Required category: show all models, user MUST pick one
+        _r._out()
+        for i, m in enumerate(all_models, 1):
+            tag = _r._green(" (recommended)") if m["model_id"] == recommended else ""
+            type_tag = "API" if m["is_api"] else "local"
+            provider = f" — needs {m['requires_provider']} key" if m.get("requires_provider") else ""
+            _r._out(f"  [{i}] {m['model_id']}  {_r._dim(f'[{type_tag}]{provider}')}{tag}")
+
+        try:
+            raw = input(f"  Pick [1-{len(all_models)}] (default: recommended): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            _r._out()
+            raise KeyboardInterrupt
+
+        if not raw:
+            idx = next((i for i, m in enumerate(all_models, 1) if m["model_id"] == recommended), 1)
         else:
-            _r._out(f"  {_r._dim(cat + ': none available')}")
+            try:
+                idx = int(raw)
+                if not (1 <= idx <= len(all_models)):
+                    idx = 1
+            except ValueError:
+                idx = 1
 
-    # 3. Confirm which to install
-    _r.section("Step 2: Select models to install (comma-separated, or 'all')")
-    for cat, mid in choices.items():
-        _r._out(f"  {_r._cyan(cat)}: {mid}")
-    raw = input("\n  Models to install [all]: ").strip().lower()
-    if raw == "" or raw == "all":
-        selected = choices
+        picked = all_models[idx - 1]
+        api_key = picked.get("requires_provider")
+        return picked["model_id"], api_key
+
+    # Optional category: show recommendation, let user skip/browse/accept
+    rec_spec = next((m for m in all_models if m["model_id"] == recommended), None)
+
+    if rec_spec:
+        type_tag = "API (requires key)" if rec_spec["is_api"] else "local (auto-download)"
+        _r._out(f"  Recommended: {_r._green(recommended)}  {_r._dim(type_tag)}")
+        if rec_spec.get("notes"):
+            _r._out(f"  {_r._dim(rec_spec['notes'])}")
     else:
-        selected_cats = [c.strip() for c in raw.split(",")]
-        selected = {c: choices[c] for c in selected_cats if c in choices}
+        _r._out(f"  {_r._dim('No recommended model for this category.')}")
 
-    if not selected:
-        _r.warn("No models selected. Skipping installation.")
+    _r._out()
+    options = [("skip", "Skip this category")]
+    if rec_spec:
+        options.insert(0, ("recommended", f"Use recommended: {recommended}"))
+    options.append(("browse", "Browse all options in this category"))
+
+    choice = _interactive_select(
+        f"  {cat}?",
+        options,
+        default=1 if rec_spec else 2,
+    )
+
+    if choice == "skip":
+        _r._out(f"  {_r._dim(cat + ': skipped')}")
+        return None, None
+
+    if choice == "recommended" and rec_spec:
+        api_key = rec_spec.get("requires_provider")
+        return rec_spec["model_id"], api_key
+
+    # Browse all options
+    _r._out()
+    for i, m in enumerate(all_models, 1):
+        type_tag = "API" if m["is_api"] else "local"
+        provider = f" — needs {m['requires_provider']} key" if m.get("requires_provider") else ""
+        _r._out(f"  [{i}] {m['model_id']}  {_r._dim(f'[{type_tag}]{provider}')}")
+
+    try:
+        raw = input(f"  Pick [1-{len(all_models)}] or 's' to skip: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        _r._out()
+        raise KeyboardInterrupt
+
+    if raw.lower() == "s" or not raw:
+        _r._out(f"  {_r._dim(cat + ': skipped')}")
+        return None, None
+
+    try:
+        idx = int(raw)
+        if not (1 <= idx <= len(all_models)):
+            _r._out(f"  {_r._dim(cat + ': skipped')}")
+            return None, None
+    except ValueError:
+        _r._out(f"  {_r._dim(cat + ': skipped')}")
+        return None, None
+
+    picked = all_models[idx - 1]
+    api_key = picked.get("requires_provider")
+    return picked["model_id"], api_key
+
+
+def _setup_per_category(models, recs):
+    """Walk user through each category one by one.
+
+    Returns {category: model_id} (only categories the user picked).
+    """
+    cat_labels = [
+        ("embedding", "Vector embeddings for semantic search", True),
+        ("reranker", "Re-rank search results for higher precision", False),
+        ("nlp", "Named entity recognition, summarization, NLP", False),
+        ("ocr", "Optical character recognition for scanned documents", False),
+        ("vision", "Image analysis and captioning (API-only for now)", False),
+    ]
+
+    _r.header("Step 2: Configure models per category")
+    selected = {}
+
+    for cat, desc, required in cat_labels:
+        recommended = getattr(recs, cat, None)
+        if not recommended and not required:
+            continue
+
+        model_id, api_key_needed = _setup_category(
+            models, cat, desc, recommended, required=required,
+        )
+
+        if model_id:
+            selected[cat] = (model_id, api_key_needed)
+
+    return selected
+
+
+def _setup_api_keys_for_selected(models, selected):
+    """Prompt for API keys needed by selected API-based models."""
+    providers_needed = set()
+    for cat, (mid, api_key) in selected.items():
+        if api_key:
+            providers_needed.add(api_key)
+
+    if not providers_needed:
         return
 
-    # 4. API keys for provider-based models
-    all_specs = models.list_registered()
-    needed_providers = set()
-    for cat, mid in selected.items():
-        for s in all_specs:
-            if s["model_id"] == mid and s.get("requires_provider"):
-                needed_providers.add(s["requires_provider"])
-
-    if needed_providers:
-        _r.section(f"Step 3: API key(s) needed for: {', '.join(needed_providers)}")
-        for prov in needed_providers:
+    _r.section(f"Step 3: API key(s) needed for: {', '.join(sorted(providers_needed))}")
+    for prov in sorted(providers_needed):
+        try:
             key = input(f"  Enter {prov} API key (or leave blank to skip): ").strip()
-            if key:
-                models.set_key(prov, key)
-                _r.ok(f"{prov} key set")
-            else:
-                _r.warn(f"Skipped {prov} key")
+        except (EOFError, KeyboardInterrupt):
+            _r._out()
+            raise KeyboardInterrupt
+        if key:
+            models.set_key(prov, key)
+            _r.ok(f"{prov} key set")
+        else:
+            _r.warn(f"Skipped {prov} key")
 
-    # 5. Install
-    _r.section(f"Step 4: Installing {len(selected)} model(s)")
-    from src.core.Orchestrators.ModelOrchestrator import ModelCategory
 
-    cat_map = {c.value.lower(): c for c in ModelCategory}
-    for cat_str, mid in selected.items():
-        cat_enum = cat_map.get(cat_str)
-        if cat_enum:
-            _r.info(f"Installing {mid} for {cat_str}...")
-            result = models.install(mid)
+def _setup_install_selected(models, selected):
+    """Install only local models. API models just need a key (already handled)."""
+    all_specs = models.list_registered()
+    spec_map = {s["model_id"]: s for s in all_specs}
+
+    to_install = []
+    api_noted = []
+    for cat, (mid, _) in selected.items():
+        spec = spec_map.get(mid)
+        if spec and spec.get("is_api"):
+            api_noted.append((cat, mid))
+        else:
+            to_install.append((cat, mid))
+
+    if api_noted:
+        _r.section("API models (key required, no download needed)")
+        for cat, mid in api_noted:
+            _r._out(f"  {cat}: {_r._green(mid)}  {_r._dim('— will use API key')}")
+
+    if to_install:
+        _r.section(f"Step 4: Installing {len(to_install)} local model(s)")
+        for cat, mid in to_install:
+            _r.info(f"Installing {mid} for {cat}...")
+            result = models.install(mid, auto_download=True)
             if result.success:
                 _r.ok(f"{mid} installed")
             else:
                 _r.err(f"{mid}: {result.error}")
+    elif not api_noted:
+        _r.info("No models to install.")
+
+
+def _setup_logging_interactive():
+    """Interactively configure logging.json.
+
+    Modes:
+      terminal — Console logs only (default)
+      sse      — Stream logs via SSE (for MCP / remote viewing)
+      both     — Console + SSE simultaneously
+      none     — Silent (no log output)
+
+    The persist flag (save to SQLite history) is asked separately.
+    If SSE/BOTH is selected, a working port is found and saved to logging.json.
+    MCP reads this port at startup.
+    """
+    import json as _json
+    from src.lib.AppPaths import default_config_dir
+
+    _r.section("Step 5: Logging")
+    _r._out("  [1] terminal   — Logs to console only")
+    _r._out("  [2] sse        — Stream logs via SSE (for MCP / remote)")
+    _r._out("  [3] both       — Console + SSE simultaneously")
+    _r._out("  [4] none       — Silent (no log output)")
+    try:
+        raw = input("  Select mode [1-4] (default: 1): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        _r._out()
+        raise KeyboardInterrupt
+    mode_map = {"1": "terminal", "2": "sse", "3": "both", "4": "none"}
+    mode = mode_map.get(raw, "terminal")
+
+    # Persist: save logs to SQLite history?
+    _r._out()
+    try:
+        persist_raw = input("  Save logs to history? [y/n] (default: y): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        _r._out()
+        raise KeyboardInterrupt
+    persist = persist_raw != "n"
+
+    # Retention
+    _r._out()
+    ret_choice = _interactive_select(
+        "Log retention",
+        [
+            ("3", "3 days"),
+            ("7", "7 days"),
+            ("14", "14 days"),
+            ("30", "30 days"),
+            ("0", "Never — delete logs immediately"),
+        ],
+        default=3,
+    )
+    retention = int(ret_choice)
+
+    # SSE port resolution: if sse or both, find a working port
+    sse_port = 8765
+    sse_host = "127.0.0.1"
+    if mode in ("sse", "both"):
+        from src.lib.NetUtils import is_port_available, find_available_port
+
+        if is_port_available(sse_host, sse_port):
+            _r.ok(f"Port {sse_port} available")
+        else:
+            _r.warn(f"Port {sse_port} in use — scanning...")
+            found = find_available_port(sse_host, sse_port + 1, 10)
+            if found:
+                sse_port = found
+                _r.ok(f"Using port {sse_port}")
+            else:
+                _r.err("No available port found — SSE disabled")
+                mode = "terminal"
+
+    logging_cfg = {
+        "mode": mode,
+        "persist": persist,
+        "retention_days": retention,
+        "max_memory": 10000,
+        "sse_port": sse_port,
+        "sse_host": sse_host,
+        "show_banner": True,
+        "log_filter": "all",
+    }
+
+    path = default_config_dir() / "logging.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json.dumps(logging_cfg, indent=2), encoding="utf-8")
+
+    port_note = f", port {sse_port}" if mode in ("sse", "both") else ""
+    _r.ok(f"logging.json written ({mode}, persist={persist}, {retention}d retention{port_note})")
+
+
+def _cmd_change_settings():
+    """Sub-menu for changing specific config areas."""
+    _r.header("Change Settings")
+    choice = _interactive_select(
+        "What would you like to change?",
+        [
+            ("models", "Re-select and reinstall models"),
+            ("logging", "Change logging mode and retention"),
+            ("api-keys", "Add or change API keys"),
+            ("all", "Full re-run of entire setup"),
+        ],
+        default=4,
+    )
+
+    if choice == "models":
+        models, system, recs = _setup_detect_and_recommend()
+        selected = _setup_per_category(models, recs)
+        if selected:
+            _setup_api_keys_for_selected(models, selected)
+            _setup_install_selected(models, selected)
+
+    elif choice == "logging":
+        _setup_logging_interactive()
+
+    elif choice == "api-keys":
+        models = _get_models(init_models=False)
+        all_specs = models.list_registered()
+        providers = set()
+        for s in all_specs:
+            if s.get("requires_provider"):
+                providers.add(s["requires_provider"])
+        if not providers:
+            _r.info("No provider-based models registered.")
+            return
+        _r.section("API Keys")
+        for prov in sorted(providers):
+            try:
+                key = input(f"  {prov} API key (blank to skip): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                _r._out()
+                raise KeyboardInterrupt
+            if key:
+                models.set_key(prov, key)
+                _r.ok(f"{prov} key set")
+
+    elif choice == "all":
+        _setup_full_interactive()
+
+
+def _setup_full_interactive():
+    """The full interactive setup flow."""
+    _r.header("Darwin Interactive Setup")
+
+    # Step 1: Detect hardware
+    models, system, recs = _setup_detect_and_recommend()
+
+    # Step 2: Per-category model selection
+    selected = _setup_per_category(models, recs)
+    if not selected:
+        _r.info("No models selected.")
+        _r.next_steps([
+            "darwin-admin setup interactive   # Run setup again later",
+            "darwin-admin models install <id>  # Install a specific model",
+        ])
+        return
+
+    # Step 3: API keys
+    _setup_api_keys_for_selected(models, selected)
+
+    # Step 4: Install local models
+    _setup_install_selected(models, selected)
+
+    # Step 5: Logging
+    _setup_logging_interactive()
 
     _r._out()
     _r.ok("Setup complete")
     _r.next_steps([
-        "python -m src.mcp    # Start the MCP server",
-        "python -m src.admin status    # Check system status",
+        "darwin mcp               # Start the MCP server",
+        "darwin status             # Check system status",
+        "darwin-admin models status  # Check model status",
     ])
+
+
+def cmd_setup_interactive(args):
+    """Config-aware interactive onboarding.
+
+    Checks darwin.json, logging.json, and models.json via AppPaths.
+    If most things are configured, offers targeted reconfiguration.
+    If nothing is configured, runs the full flow.
+    """
+    status, content = _setup_status()
+    count = sum(status.values())
+
+    if count == 3:
+        # Everything configured — offer targeted changes
+        _r.header("Darwin Setup")
+        _show_setup_status(status, content)
+        choice = _interactive_select(
+            "Everything looks configured. What would you like to do?",
+            [
+                ("change", "Change a specific setting (models, logging, API keys)"),
+                ("re-run", "Full re-run (reconfigure everything)"),
+                ("exit", "Exit — current config is fine"),
+            ],
+            default=3,
+        )
+        if choice == "exit":
+            _r.ok("Keeping current configuration.")
+            return
+        elif choice == "change":
+            _cmd_change_settings()
+        else:
+            _setup_full_interactive()
+
+    elif count > 0:
+        # Partially configured
+        _r.header("Darwin Setup")
+        missing = [k.replace("_json", ".json") for k, v in status.items() if not v]
+        _show_setup_status(status, content)
+        _r.info(f"Missing: {', '.join(missing)}")
+        choice = _interactive_select(
+            "How would you like to proceed?",
+            [
+                ("complete", "Complete the missing pieces"),
+                ("re-run", "Full re-run (reconfigure everything)"),
+                ("exit", "Exit — do nothing"),
+            ],
+            default=1,
+        )
+        if choice == "exit":
+            _r.ok("Keeping current configuration.")
+            return
+        elif choice == "complete":
+            _cmd_change_settings()
+        else:
+            _setup_full_interactive()
+
+    else:
+        # Nothing configured — fresh setup
+        _setup_full_interactive()
 
 
 def cmd_setup_profile(args):
     """Non-interactive profile-based setup."""
-    models = _get_models()
+    models = _get_models(init_models=False)
     results = models.setup_profile(
         profile=args.profile, auto_download=not args.no_download
     )
@@ -357,9 +781,9 @@ def cmd_setup_profile(args):
 
 def cmd_setup_onboard(args):
     """Non-interactive onboarding with preference dict."""
-    models = _get_models()
+    models = _get_models(init_models=False)
     if args.preferences:
-        prefs = dict(kv.split("=") for kv in args.preferences)
+        prefs = dict(kv.split("=", 1) for kv in args.preferences)
     else:
         prefs = None
     report = models.onboard(preferences=prefs, auto_download=not args.no_download)
@@ -377,7 +801,7 @@ def cmd_setup_onboard(args):
 
 
 def cmd_models_status(args):
-    models = _get_models()
+    models = _get_models(init_models=True)
     status = models.status()
     _r.header(f"Model Status — {status.summary}")
     rows = []
@@ -394,7 +818,7 @@ def cmd_models_status(args):
 
 
 def cmd_models_list(args):
-    models = _get_models()
+    models = _get_models(init_models=False)
     specs = models.list_registered()
     if args.category:
         specs = [s for s in specs if s["category"] == args.category]
@@ -421,7 +845,7 @@ def cmd_models_list(args):
 
 
 def cmd_models_install(args):
-    models = _get_models()
+    models = _get_models(init_models=False)
     _r.header(f"Installing {len(args.model_ids)} model(s)")
     for mid in args.model_ids:
         _r.info(f"Installing {mid}...")
@@ -435,7 +859,7 @@ def cmd_models_install(args):
 
 
 def cmd_models_uninstall(args):
-    models = _get_models()
+    models = _get_models(init_models=False)
     _r.header(f"Uninstalling {len(args.model_ids)} model(s)")
     for mid in args.model_ids:
         result = models.uninstall(mid, delete_files=not args.keep_files)
@@ -446,8 +870,8 @@ def cmd_models_uninstall(args):
 
 
 def cmd_models_switch(args):
-    models = _get_models()
-    from src.core.Orchestrators.ModelOrchestrator import ModelCategory
+    models = _get_models(init_models=False)
+    from src.core.Models.Lib.ModelSpec import ModelCategory
 
     cat = ModelCategory(args.category)
     _r.info(f"Switching {args.category} to {args.model_id}...")
@@ -459,7 +883,7 @@ def cmd_models_switch(args):
 
 
 def cmd_models_keys(args):
-    models = _get_models()
+    models = _get_models(init_models=False)
     if args.action == "set":
         ok = models.set_key(args.provider, args.key)
         if ok:
@@ -507,17 +931,37 @@ def cmd_store_files(args):
     if not report:
         _r.warn("No files in store.")
         return
+
+    def _truncate(text: str, max_len: int = 40) -> str:
+        if not text or len(text) <= max_len:
+            return text
+        return text[:max_len - 1] + "…"
+
     rows = []
     for r in report:
-        rows.append(
-            (
-                r.get("filename", r.get("display_name", "?")),
-                r.get("stage", r.get("pipeline_stage", "?")),
-                _r._green("ready") if r.get("search_ready") else _r._dim("pending"),
-                r.get("file_size", ""),
-            )
-        )
-    _r.table("Files", ["File", "Stage", "Search Ready", "Size"], rows)
+        # Determine search readiness: core complete and no missing stages
+        search_ready = r.get("core_complete", False) and not r.get("missing")
+        status = _r._green("ready") if search_ready else _r._dim("pending")
+
+        # Summarise stages as e.g. "3/5 complete"
+        completed = r.get("completed", [])
+        missing = r.get("missing", [])
+        stage_summary = f"{len(completed)}/{len(completed)+len(missing)} done"
+
+        rows.append((
+            _truncate(r.get("filename", "?"), 40),
+            stage_summary,
+            status,
+            f"{r.get('progress_percent', 0)}%",
+            str(r.get("chunk_count", 0)),
+            _truncate(r.get("embedding_model", "N/A"), 20),
+        ))
+
+    _r.table(
+        "Files in pipeline",
+        ["File", "Stages", "Search Ready", "Progress", "Chunks", "Model"],
+        rows
+    )
 
 
 def cmd_store_file(args):
@@ -580,8 +1024,8 @@ def _run_pipeline_stages(
         recursive=recursive,
         precise=precise,
         rerun=rerun,
-        threshold=threshold or 0.5,
-        idf_smoothing=idf_smoothing or 1.5,
+        threshold=threshold if threshold is not None else 0.5,
+        idf_smoothing=idf_smoothing if idf_smoothing is not None else 1.5,
         only_kw=only_kw,
         only_semantic=only_semantic,
     )
@@ -594,10 +1038,11 @@ def _run_pipeline_stages(
             _r.err(f"{stage}: {err}")
     _r._out()
     _r._out(f"  {result.summary}")
+    return result.success
 
 
 def cmd_pipeline_run(args):
-    _run_pipeline_stages(
+    success = _run_pipeline_stages(
         args.target,
         args.files,
         ["ingestion", "indexing"],
@@ -611,10 +1056,12 @@ def cmd_pipeline_run(args):
         args.rerun,
         store_ref=getattr(args, "store", None),
     )
+    if not success:
+        sys.exit(1)
 
 
 def cmd_pipeline_ingest(args):
-    _run_pipeline_stages(
+    success = _run_pipeline_stages(
         args.target,
         args.files,
         ["ingestion"],
@@ -628,10 +1075,12 @@ def cmd_pipeline_ingest(args):
         args.rerun,
         store_ref=getattr(args, "store", None),
     )
+    if not success:
+        sys.exit(1)
 
 
 def cmd_pipeline_index(args):
-    _run_pipeline_stages(
+    success = _run_pipeline_stages(
         None,
         args.files,
         ["indexing"],
@@ -643,13 +1092,20 @@ def cmd_pipeline_index(args):
         args.only_kw,
         args.only_semantic,
         args.rerun,
+        store_ref=getattr(args, "store", None),
     )
+    if not success:
+        sys.exit(1)
 
 
 def cmd_pipeline_purge(args):
-    pipe = _get_pipeline()
-    pipe.purge(args.stages, args.filenames)
-    _r.ok(f"Purged {', '.join(args.stages)} for {len(args.filenames)} file(s)")
+    try:
+        pipe = _get_pipeline(getattr(args, "store", None))
+        pipe.purge(args.stages, args.filenames)
+        _r.ok(f"Purged {', '.join(args.stages)} for {len(args.filenames)} file(s)")
+    except Exception as e:
+        _r.err(f"{type(e).__name__}: {e}")
+        sys.exit(1)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -770,7 +1226,7 @@ def cmd_logs_set_retention(args):
 
 
 def cmd_system_info(args):
-    models = _get_models()
+    models = _get_models(init_models=False)
     system = models.detect_system()
     _r.header("System Info")
     _r.table(
@@ -810,7 +1266,8 @@ def cmd_status(args):
     else:
         orch = StoreOrchestrator.get_default() or StoreOrchestrator()
 
-    orch.bootstrap()  # logs everything via darwin.info() — no return needed
+    init_models = getattr(args, "initialize", False)
+    orch.bootstrap(initialize_models=init_models)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -923,6 +1380,7 @@ def _add_pipeline_args(sub):
 
     ix = sp.add_parser("index", help="Indexing only (BM25 + embeddings)")
     ix.add_argument("--files", "-f", help="Specific files to index")
+    ix.add_argument("--store", help="Store ID, name, or path (default: auto)")
     ix.add_argument("--threshold", type=float, default=0.5)
     ix.add_argument("--idf-smoothing", type=float, default=1.5)
     ix.add_argument("--only-kw", action="store_true")
@@ -932,6 +1390,7 @@ def _add_pipeline_args(sub):
 
     pu = sp.add_parser("purge", help="Purge pipeline artifacts for files")
     pu.add_argument("filenames", nargs="+", help="Files to purge")
+    pu.add_argument("--store", help="Store ID, name, or path (default: auto)")
     pu.add_argument(
         "--stages",
         nargs="+",
@@ -1034,20 +1493,21 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python -m src.admin setup interactive
-  python -m src.admin status
-  python -m src.admin models status
-  python -m src.admin models install intfloat/multilingual-e5-small-onnx
-  python -m src.admin models keys set openai sk-...
-  python -m src.admin store files
-  python -m src.admin store audit
-  python -m src.admin pipeline run ./docs --ocr
-  python -m src.admin pipeline purge myfile.pdf --stages ingestion
-  python -m src.admin system info
+  darwin-admin setup interactive
+  darwin-admin status
+  darwin-admin models status
+  darwin-admin models install intfloat/multilingual-e5-small-onnx
+  darwin-admin models keys set openai sk-...
+  darwin-admin store files
+  darwin-admin store audit
+  darwin-admin pipeline run ./docs --ocr
+  darwin-admin pipeline purge myfile.pdf --stages ingestion
+  darwin-admin system info
         """,
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose error output")
     _add_setup_args(sub)
     _add_model_args(sub)
     _add_store_args(sub)
@@ -1058,12 +1518,20 @@ Examples:
     # Top-level status
     sp = sub.add_parser("status", help="Overview: store files, installed models, preferences")
     sp.add_argument("--store", help="Store ID, name, or path")
+    sp.add_argument("--initialize", action="store_true", help="Also initialize models (slow)")
     sp.set_defaults(func=cmd_status)
 
     args = parser.parse_args()
 
+    from src.core.Logger.DarwinLogger import darwin
+    darwin.configure(show_banner=False)
+
     try:
         args.func(args)
+    except KeyboardInterrupt:
+        _r._out()
+        _r.warn("Interrupted.")
+        sys.exit(130)
     except Exception as e:
         _r.err(f"{type(e).__name__}: {e}")
         if getattr(args, "verbose", False):

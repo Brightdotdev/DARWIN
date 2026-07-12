@@ -284,8 +284,10 @@ class ModelManager:
         )
 
         W = 56
-        darwin.info(f"{'-- Models ' + '-' * (W - 10)}", style="bold cyan")
+        darwin.info("")
 
+        darwin.info(f"{'-- Models ' + '-' * (W - 10)}", style="bold cyan")
+        darwin.info("")
         cat_order = ["embedding", "nlp", "ocr", "reranker", "vision"]
         for cat_name in cat_order:
             if cat_name not in status_obj.categories:

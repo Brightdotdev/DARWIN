@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "darwin-core"
 version = "0.2.0"
-description = "DARWIN Core — Local-first RAG engine with API + ONNX embedding support"
+description = "DARWIN  — Local-first RAG engine with API + ONNX embedding support"
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
 requires-python = ">=3.11"
@@ -63,6 +63,7 @@ dependencies = [
 
 [project.scripts]
 darwin = "src.cli:main"
+darwin-admin = "src.admin.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -6,6 +6,7 @@ Handles logs, progress bars, spinners, and structured data trees.
 from __future__ import annotations
 
 import sys
+import threading
 from typing import Any, Dict, Optional
 
 from rich.console import Console
@@ -45,16 +46,22 @@ _ICONS = {
 }
 
 
+_stdout_reconfigured = False
+
+
 class TerminalUI(EventSubscriber):
     def __init__(self, console: Optional[Console] = None) -> None:
+        global _stdout_reconfigured
         if console is None:
-            if sys.platform == "win32":
+            if sys.platform == "win32" and not _stdout_reconfigured:
                 try:
                     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+                    _stdout_reconfigured = True
                 except Exception:
-                    pass
+                    _stdout_reconfigured = True
             console = Console(force_terminal=True)
         self.console = console
+        self._lock = threading.Lock()
         self._current_session: str = ""
         self._progress = Progress(
             TextColumn("[cyan]{task.description}"),
@@ -94,13 +101,14 @@ class TerminalUI(EventSubscriber):
         prefix = f"[dim][{event.session}][/dim] " if event.session else ""
         style = resolve_event_style(event)
 
-        if event.payload is not None:
-            self.console.print(f"  {prefix}{icon} [bold]{event.message}[/bold]")
-            tree = self._build_tree(event.payload)
-            self.console.print(tree)
-        else:
-            msg = f"  {prefix}{icon} {event.message}"
-            self.console.print(msg, style=style or None)
+        with self._lock:
+            if event.payload is not None:
+                self.console.print(f"  {prefix}{icon} [bold]{event.message}[/bold]")
+                tree = self._build_tree(event.payload)
+                self.console.print(tree)
+            else:
+                msg = f"  {prefix}{icon} {event.message}"
+                self.console.print(msg, style=style or None)
 
     def _build_tree(self, data: Any, label: Optional[str] = None) -> Tree:
         if label is None:

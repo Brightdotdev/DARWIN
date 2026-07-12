@@ -53,19 +53,21 @@ class DarwinStore(StoreSearch):
         self._store_name = name or self._darwin_dir.name
         self._store_id = self._register_self()
 
-    def bootstrap(self) -> None:
+    def bootstrap(self, *, quiet: bool = False) -> None:
         """Optional initialization: load models and print dashboard.
 
-        Previously called automatically from __init__. Now explicit to avoid
-        side effects during store construction.
+        Args:
+            quiet: If True, suppress dashboard and model-init log output.
         """
-        self.print_dashboard()
+        if not quiet:
+            self.print_dashboard()
         try:
             from src.core.Models.ModelManager import modelManager
 
             modelManager.initialize()
         except Exception as e:
-            darwin.warning(f"Model manager initialization skipped: {e}")
+            if not quiet:
+                darwin.warning(f"Model manager initialization skipped: {e}")
 
     def _register_self(self) -> str:
         """Register this store in the central registry and write .darwin_store_id."""
@@ -1298,6 +1300,7 @@ class DarwinStore(StoreSearch):
         W = 54
 
         darwin.info(f"{'-- Store ' + '-' * (W - 8)}", style="bold cyan")
+        darwin.info("")
         darwin.info(f"  Directory: {self._darwin_dir}", style="bold white")
         darwin.info(
             f"  Files: {stats['total_files']}  |  "
@@ -1314,6 +1317,8 @@ class DarwinStore(StoreSearch):
                 f"  Registry integrity issue: {health['summary']['broken']} hash(es) "
                 f"have missing artifacts but are marked done"
             )
+        darwin.info("")
+        
 
     # --------------------------------------------------------------------
     # Registry management (static methods)

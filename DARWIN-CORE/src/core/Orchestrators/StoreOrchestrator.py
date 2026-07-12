@@ -21,22 +21,19 @@ class StoreOrchestrator:
     # ------------------------------------------------------------------
     # Bootstrap — model init + dashboard + structured overview
     # ------------------------------------------------------------------
-    def bootstrap(self) -> dict:
+    def bootstrap(self, *, initialize_models: bool = True, quiet: bool = False) -> dict:
         """Initialize models and store, log overview, return structured data.
 
-        For admin (CLI): logs ManagerStatus and dashboard via darwin.info().
-        For MCP: returns {store: {...}, models: {...}} for programmatic use.
-
-        - Default store: logs brief metadata about other registered stores too.
-        - Non-default store: only this store's info (no cross-store access).
+        Args:
+            initialize_models: If True, run modelManager.initialize(). Set False
+                               for quick status checks (avoids slow model init).
+            quiet: If True, suppress dashboard and model-init log output.
+                   Still returns the full structured data dict.
         """
         from src.core.Models.ModelManager import modelManager
         from src.core.Storage.StoreRegistry import StoreRegistry
 
         W = 56
-
-        darwin.info(f"{'-- DARWIN Dashboard ' + '-' * (W - 20)}", style="bold cyan")
-        darwin.info("")
 
         reg = StoreRegistry()
         current_dir = str(self._store.darwin_dir)
@@ -44,12 +41,14 @@ class StoreOrchestrator:
         default_store = reg.get_default_store()
         is_default = bool(default_store and default_store.get("darwin_dir") == current_dir)
 
-        self._store.print_dashboard()
+        if not quiet:
+            self._store.print_dashboard()
 
         other_stores = [s for s in all_stores if s.get("darwin_dir") != current_dir]
-        if is_default and other_stores:
+        if is_default and other_stores and not quiet:
             darwin.info("")
             darwin.info(f"{'-- Other Stores ' + '-' * (W - 16)}", style="bold cyan")
+            darwin.info("")
             for s in other_stores:
                 name = s.get("name", "?")
                 sid = s.get("id", "")[:8]
@@ -57,16 +56,17 @@ class StoreOrchestrator:
                 darwin.info(f"  {name}", style="bold white")
                 darwin.info(f"    ID: {sid}...  |  Created: {created}")
 
-        darwin.info("")
-        manager_status = modelManager.initialize()
-
-        darwin.info("")
-        if manager_status.all_ready:
-            darwin.success(f"{'-- All Systems Operational ' + '-' * (W - 28)}", style="green bold")
-        else:
-            darwin.warning(
-                f"{'-- Issues Detected ' + '-' * (W - 19)}"
-            )
+        manager_status = None
+        if initialize_models:
+            if not quiet:
+                darwin.info("")
+            manager_status = modelManager.initialize()
+            if not quiet:
+                darwin.info("")
+                if manager_status.all_ready:
+                    darwin.success(f"{'-- All Systems Operational ' + '-' * (W - 28)}", style="green bold")
+                else:
+                    darwin.warning(f"{'-- Issues Detected ' + '-' * (W - 19)}")
 
         return {
             "store": {
@@ -82,8 +82,8 @@ class StoreOrchestrator:
                 ] if is_default else [],
             },
             "models": {
-                "all_ready": manager_status.all_ready,
-                "missing_required": manager_status.missing_required,
+                "all_ready": manager_status.all_ready if manager_status else None,
+                "missing_required": manager_status.missing_required if manager_status else [],
                 "categories": {
                     name: {
                         "available": cs.available,
@@ -93,8 +93,8 @@ class StoreOrchestrator:
                         "available_models": cs.available_models,
                     }
                     for name, cs in manager_status.categories.items()
-                },
-            },
+                } if manager_status else {},
+            } if manager_status else None,
         }
 
     @property

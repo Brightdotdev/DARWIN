@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import contextvars
 import dataclasses
-import json
 import threading
 import time
 import warnings
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Callable
+from typing import Any, Dict, List, Optional, Set, Callable
 
 
 # ---------------------------------------------------------------------------
@@ -516,6 +515,13 @@ class DarwinLogger:
         elif not _persist:
             _persist_dir = None
 
+        # Close old history store before creating a new one (#20)
+        if self._history is not None:
+            try:
+                self._history.close()
+            except Exception:
+                pass
+
         self._history = _create_history_store(
             max_memory=_max_memory, persist_dir=_persist_dir
         )
@@ -583,8 +589,11 @@ class DarwinLogger:
             for sub in self._subscribers:
                 try:
                     self._dispatch(sub, event)
-                except Exception:
-                    pass
+                except Exception as e:
+                    warnings.warn(
+                        f"Subscriber {type(sub).__name__} failed: {e}",
+                        stacklevel=2,
+                    )
 
     def _dispatch(self, sub: EventSubscriber, event: DarwinEvent) -> None:
         if isinstance(event, LogEvent):
@@ -785,7 +794,16 @@ class DarwinLogger:
     # Shutdown
     # ------------------------------------------------------------------
     def shutdown(self) -> None:
-        self._history.flush()
+        if self._sse_server:
+            try:
+                self._sse_server.shutdown()
+            except Exception:
+                pass
+            self._sse_server = None
+        try:
+            self._history.close()
+        except Exception:
+            pass
         with self._lock:
             self._subscribers.clear()
 

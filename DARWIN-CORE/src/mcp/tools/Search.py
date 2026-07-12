@@ -1,13 +1,33 @@
-import json
 import traceback
 from typing import Optional
+
+from mcp.types import ToolAnnotations
 
 from src.core.Orchestrators.lib import RetrievalParameters, resolve_store
 from src.core.Orchestrators.lib import Method, MergeStrategy, FallbackStrategy
 
+_MAX_QUERY_LEN = 4096
+
+
+def _validate_query(query: str) -> str:
+    query = query.strip()
+    if not query:
+        raise ValueError("query must not be empty")
+    if len(query) > _MAX_QUERY_LEN:
+        raise ValueError(f"query exceeds {_MAX_QUERY_LEN} chars")
+    return query
+
 
 def register(mcp, retrieval_orch):
-    @mcp.tool()
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Search Darwin",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
     def search_darwin(
         query: str,
         method: Method = "hybrid",
@@ -27,6 +47,7 @@ def register(mcp, retrieval_orch):
         rerank: bool = False,
     ) -> dict:
         try:
+            query = _validate_query(query)
             params = RetrievalParameters(
                 query=query,
                 method=method,
@@ -48,7 +69,7 @@ def register(mcp, retrieval_orch):
             if store:
                 from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
                 resolved = resolve_store(store)
-                resolved.bootstrap()
+                resolved.bootstrap(quiet=True)
                 ctx = RetrievalOrchestrator(store=resolved).retrieve_and_resolve(params)
             else:
                 ctx = retrieval_orch.retrieve_and_resolve(params)

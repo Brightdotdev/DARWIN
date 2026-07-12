@@ -24,7 +24,6 @@ pip install -e .
 
 # 3. Bootstrap (creates store, downloads required models)
 darwin init
-# or: python -m src.cli init
 
 # 4. Ingest documents
 darwin ingest ./my-docs/
@@ -41,12 +40,20 @@ darwin mcp
 ## Architecture
 
 ```
-CLI (src/cli.py) ──> init | mcp | admin | ingest | search
-                        │
-MCP Server (FastMCP) ──> 10 tools: search, pipeline, models, store
-                        │
+darwin (user CLI)        darwin-admin (power-user CLI)
+  │                         │
+  ├── init                  ├── models status|install|switch|...
+  ├── setup                 ├── store files|audit|health|repair
+  ├── mcp [--sse|--http]    ├── pipeline run|ingest|index|purge
+  ├── ingest <target>       ├── logs query|sessions|stats|export|...
+  ├── search <query>        ├── system info
+  ├── config [target]       └── status
+  └── status
+        │
+MCP Server (FastMCP) ──> 11 tools + 5 resources: search, pipeline, models, store
+        │
 Orchestrators ──> RetrievalOrch | PipelineOrch | ModelOrch | StoreOrch
-                        │
+        │
 Core Engine:
   ┌─────────────────────────────────────────────┐
   │  DarwinStore — file registry, artifacts,    │
@@ -60,14 +67,14 @@ Core Engine:
 
 ### Layers
 
-| Layer | What | For |
+| Layer | What | Entry point |
 |---|---|---|
-| **CLI** | `python -m src.cli` | Users |
-| **MCP** | 10 agent tools | AI agents |
-| **Admin** | 17 orchestrator commands | Power users |
-| **Orchestrators** | Retrieval, Pipeline, Models, Store | Programmatic API |
-| **lib.py** | Typed params with Literal enums | Single source of truth for defaults |
-| **Store** | Parquet, NumPy, USearch, BM25 persistence | Local disk |
+| **User CLI** | `darwin` — init, setup, mcp, ingest, search, config, status | `src/cli.py` |
+| **Admin CLI** | `darwin-admin` — models, store, pipeline, logs, system, status | `src/admin/cli.py` |
+| **MCP** | 11 tools + 5 resources for AI agents | `src/mcp/` |
+| **Orchestrators** | Retrieval, Pipeline, Models, Store | `src/core/Orchestrators/` |
+| **lib.py** | Typed params with Literal enums | `src/core/Orchestrators/lib.py` |
+| **Store** | Parquet, NumPy, USearch, BM25 persistence | `src/core/Storage/` |
 
 ---
 
@@ -75,9 +82,9 @@ Core Engine:
 
 | Module | Path | Purpose |
 |---|---|---|
-| **CLI** | `src/cli.py` | Main entry point |
-| **Admin** | `src/admin/cli.py` | Full orchestrator control (17 commands) |
-| **MCP** | `src/mcp/` | FastMCP server + 10 tools |
+| **CLI** | `src/cli.py` | User entry point (`darwin`) |
+| **Admin** | `src/admin/cli.py` | Admin entry point (`darwin-admin`) |
+| **MCP** | `src/mcp/` | FastMCP server + 11 tools + 5 resources |
 | **Orchestrators** | `src/core/Orchestrators/` | Retrieval, Pipeline, Models, Store |
 | **Orchestrators/lib.py** | `src/core/Orchestrators/lib.py` | Parameter library with Literal types |
 | **Storage** | `src/core/Storage/` | DarwinStore — file registry, artifacts, indices |
@@ -85,75 +92,154 @@ Core Engine:
 | **Retrival** | `src/core/Retrival/` | Hybrid, semantic, keyword search with reranking |
 | **Models** | `src/core/Models/` | Model registry (40+), inference factories, downloaders |
 | **Logger** | `src/core/Logger/` | Structured session logging |
-| **Features** | `src/features/` | Knowledge graphs, summarization, image OCR/vision |
+| **Features** | `src/features/` | Knowledge graphs, summarization, image analysis |
 | **Agent** | `src/agent/LLM/` | LLM client, config, manager |
-| **Lib** | `src/lib/` | Path resolution, key management, utilities |
+| **Lib** | `src/lib/` | Path resolution, key management, network utils |
 
 ---
 
-## CLI Reference
+## CLI Reference — `darwin` (User)
 
-### `python -m src.cli init`
+After `pip install -e .`, the `darwin` command is available globally.
+
+### `darwin init`
 
 Bootstrap store + download required models.
 
 ```bash
-python -m src.cli init                          # default: required models only
-python -m src.cli init --profile recommended    # also install OCR, reranker, vision
-python -m src.cli init --no-download            # register models without downloading
+darwin init                          # default: required models only
+darwin init --profile recommended    # also install OCR, reranker, vision
+darwin init --no-download            # register models without downloading
 ```
 
-### `python -m src.cli mcp`
+| Option | Default | Description |
+|---|---|---|
+| `--profile` | `required` | Model profile: `required` or `recommended` |
+| `--no-download` | false | Register models without downloading files |
+
+### `darwin setup`
+
+One-shot setup (directories, models, workspace).
+
+```bash
+darwin setup                     # interactive guided setup
+darwin setup preset server       # non-interactive server preset
+darwin setup models              # configure models
+darwin setup embeddings          # configure embedding model only
+darwin setup logs                # configure logging
+darwin setup storage             # configure storage directory
+darwin setup paths               # show all derived paths
+darwin setup validate            # validate current configuration
+darwin setup status              # show current state, disk usage
+darwin setup reset               # clear all config and start fresh
+darwin setup doctor              # diagnose common issues
+```
+
+See [src/Setup.py](src/Setup.py) for full setup command reference.
+
+### `darwin mcp`
 
 Start the MCP server for AI agent integration.
 
 ```bash
-python -m src.cli mcp                        # stdio (for agent subprocess)
-python -m src.cli mcp --sse --port 8080      # SSE (for network/Docker)
+darwin mcp                        # stdio (default — for agent subprocess)
+darwin mcp --sse --port 8765      # SSE (legacy network transport)
+darwin mcp --http --port 8765     # Streamable HTTP (recommended)
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `--sse` | false | Use SSE transport instead of stdio |
-| `--port` | 8080 | SSE server port |
+| `--sse` | false | Legacy SSE transport |
+| `--http` | false | Streamable HTTP transport (recommended) |
+| `--port` | 8765 | Port for network mode |
+| `--host` | 127.0.0.1 | Host for network mode |
 
-### `python -m src.cli admin`
+See [src/mcp/README.md](src/mcp/README.md) for full MCP reference (tools, resources, endpoints).
 
-Full orchestrator control — 17 commands across 5 groups.
+### `darwin ingest`
 
-```bash
-python -m src.cli admin setup interactive
-python -m src.cli admin models status
-python -m src.cli admin store files
-python -m src.cli admin pipeline run ./docs --ocr --recursive
-python -m src.cli admin system info
-```
-
-See [src/admin/README.md](src/admin/README.md) for full reference.
-
-### `python -m src.cli ingest`
-
-Quick one-off ingest shortcut.
+Quick one-off ingest.
 
 ```bash
-python -m src.cli ingest <target> [--ocr] [--recursive]
+darwin ingest ./my-docs/
+darwin ingest ./papers/ --ocr --recursive
+darwin ingest https://example.com/page --store my-store
 ```
 
-Delegates to admin pipeline ingest under the hood.
+| Option | Description |
+|---|---|
+| `--store` | Store ID, name, or path (default: auto) |
+| `--ocr` | Enable OCR for scanned documents |
+| `--recursive` | Recurse into subdirectories |
 
-### `python -m src.cli search`
+### `darwin search`
 
 Quick one-off search.
 
 ```bash
-python -m src.cli search "what is Darwin?"
-python -m src.cli search "NVIDIA Nemotron" --method semantic --top-k 10
+darwin search "what is graph rag"
+darwin search "NVIDIA Nemotron" --method semantic --top-k 10
+darwin search "DNA" --store my-store
 ```
 
 | Option | Default | Description |
 |---|---|---|
-| `--method` | hybrid | Search method: hybrid, semantic, keyword |
+| `--method` | hybrid | Search method: `hybrid`, `semantic`, `keyword` |
 | `--top-k` | 5 | Number of results |
+| `--store` | auto | Store ID, name, or path |
+
+### `darwin config`
+
+Generate client config for MCP integration.
+
+```bash
+darwin config                 # generate config for all clients
+darwin config claude          # Claude Desktop config only
+darwin config cursor          # Cursor config only
+darwin config vscode          # VS Code (Continue) config only
+darwin config sse             # Network SSE config
+darwin config http            # Network Streamable HTTP config
+darwin config all --copy      # generate all + copy to clipboard
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--host` | 127.0.0.1 | Host for network config |
+| `--port` | 8765 | Port for network config |
+| `--copy` | false | Copy generated config to clipboard |
+
+### `darwin status`
+
+Overview: store files, installed models, preferences.
+
+```bash
+darwin status
+darwin status --store my-store
+```
+
+---
+
+## CLI Reference — `darwin-admin` (Power User)
+
+Full orchestrator control. 30 subcommands across 7 groups.
+
+```bash
+darwin-admin <group> <command> [options]
+```
+
+See [src/admin/README.md](src/admin/README.md) for complete reference.
+
+### Groups
+
+| Group | Commands | Description |
+|---|---|---|
+| `setup` | `interactive`, `profile`, `onboard` | First-time configuration |
+| `models` | `status`, `list`, `install`, `uninstall`, `switch`, `keys` | Model lifecycle |
+| `store` | `status`, `files`, `file`, `audit`, `health`, `repair` | Store introspection |
+| `pipeline` | `run`, `ingest`, `index`, `purge` | Pipeline execution |
+| `logs` | `query`, `sessions`, `session-info`, `stats`, `purge`, `export`, `compact`, `set-retention` | Log management |
+| `system` | `info` | Hardware detection + recommendations |
+| `status` | — | Overview dashboard |
 
 ---
 
@@ -180,6 +266,11 @@ ctx = orchestrator.retrieve_and_resolve(cfg)
 ## Docker
 
 The entrypoint auto-runs `darwin setup preset server --yes` on first start. No manual init needed.
+
+When running with `--sse` or `--http`, the server also exposes:
+- `GET /health` — returns `{"status": "ok", "checks": {...}}` (503 when degraded)
+- `GET /stream` — SSE log stream for dashboards
+- `GET /history` — query historical logs (`?session=&levels=&limit=`)
 
 ```bash
 # Build & start (auto-setup on first run, MCP SSE on port 8080)
@@ -250,6 +341,26 @@ volumes:
   ├── logs/
   └── models/
 ```
+
+---
+
+## Security
+
+Darwin includes input validation and safety hardening across all MCP tools and CLI commands:
+
+| Protection | Scope | Detail |
+|---|---|---|
+| **Query length limit** | Search | Max 4096 characters |
+| **Path traversal block** | Store, Pipeline | `..` in paths rejected |
+| **Filename validation** | Store, Pipeline | Invalid characters, empty names, length limits |
+| **Stage whitelist** | Pipeline | Only valid stage names accepted (`ingest`, `extract`, `parse`, `chunk`, `ocr`, `clean`, `index`, `embed`, `ingestion`, `indexing`) |
+| **Model ID validation** | Models | Length limits, invalid characters blocked |
+| **Category validation** | Models | Must match registered `ModelCategory` values |
+| **Port availability** | MCP Server | Auto-scans for free port with `SO_REUSEADDR` |
+| **Health checks** | `/health` endpoint | Checks store (file count) and models (all_ready), returns 503 when degraded |
+| **Error propagation** | All tools | Try/except with structured error returns instead of silent swallowing |
+| **Thread safety** | TerminalUi, SQLiteHistoryStore | Lock-protected console output and DB access |
+| **History store lifecycle** | DarwinLogger | Old history closed on reconfigure, SSE server shutdown on exit |
 
 ---
 

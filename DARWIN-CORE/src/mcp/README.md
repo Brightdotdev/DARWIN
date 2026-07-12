@@ -1,42 +1,51 @@
 # Darwin MCP Server
 
-Model Context Protocol server exposing Darwin as AI-agent tools,
+Model Context Protocol server exposing Darwin as AI-agent tools and resources,
 with built-in log streaming for real-time dashboards.
 
 ## Quick start
 
 ```bash
 # stdio (default — for subprocess by AI assistants)
-python -m src.mcp
+darwin mcp
 
-# SSE (network — for Docker / remote clients + log streaming)
-python -m src.mcp --sse --port 8765
+# SSE (legacy network transport)
+darwin mcp --sse --port 8765
+
+# Streamable HTTP (recommended for production)
+darwin mcp --http --port 8765
 ```
+
+All transports share the same 11 tools, 5 resources, and validation logic.
+The unified server (`UnifiedServer.py`) handles SSE, HTTP, log streaming,
+history, and health in a single process.
 
 ## Transports
 
 | Transport | Use case | Command |
 |-----------|----------|---------|
-| stdio | AI agent subprocess (Claude, Cursor) | `python -m src.mcp` |
-| SSE | Network / Docker / remote clients | `python -m src.mcp --sse --port 8765` |
+| **stdio** | AI agent subprocess (Claude, Cursor) | `darwin mcp` |
+| **SSE** | Legacy network / Docker | `darwin mcp --sse` |
+| **Streamable HTTP** | Production / remote clients | `darwin mcp --http` |
 
-## Endpoints (SSE mode)
+## Endpoints
 
-When running with `--sse`, the unified server provides these endpoints:
+When running with `--sse` or `--http`, the unified server provides:
 
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/sse` | MCP SSE | AI agent tool calls |
-| `/messages/` | MCP POST | AI agent message handling |
+| `/sse` | MCP SSE | AI agent tool calls (SSE mode) |
+| `/messages/` | MCP POST | AI agent message handling (SSE mode) |
+| `/mcp` | MCP Streamable HTTP | AI agent tool calls (HTTP mode) |
 | `/stream` | SSE | Real-time darwin log events (UI dashboard) |
 | `/history` | GET | Query historical logs (`?session=&levels=&limit=`) |
-| `/health` | GET | Health check (returns `ok`) |
+| `/health` | GET | Health check (checks store + models) |
 
-**Logs never flow to the AI agent.**  The `/stream` endpoint is for UI
-consumers (web dashboards, IDE plugins).  The agent uses `/sse` for
-tool calls only.
+**Logs never flow to the AI agent.** The `/stream` endpoint is for UI
+consumers (web dashboards, IDE plugins). The agent uses `/sse` or `/mcp`
+for tool calls only.
 
-## Available tools (10)
+## Available tools (11)
 
 ### Search
 - **`search_darwin`** — Query the knowledge base with hybrid/semantic/keyword search.
@@ -53,34 +62,112 @@ tool calls only.
 - **`recommend_models`** — Get model recommendations for your hardware.
 
 ### Store
+- **`create_store`** — Create a new DarwinStore at a given path.
 - **`list_files`** — All files with pipeline status.
 - **`file_status`** — Detailed status for one file.
+
+## Available resources (5)
+
+| URI | Description |
+|-----|-------------|
+| `darwin://store/files` | List of files tracked by the current store |
+| `darwin://store/report` | Full pipeline report for the current store |
+| `darwin://store/stats` | Store statistics: file count, stages |
+| `darwin://models/status` | Model status across all categories |
+| `darwin://models/recommendations` | Recommended models for each category |
+
+## Tool annotations
+
+All tools include MCP-compliant annotations for client-side safety:
+
+| Tool | readOnly | destructive | idempotent | openWorld |
+|------|----------|-------------|------------|-----------|
+| `search_darwin` | yes | no | yes | no |
+| `run_pipeline` | no | no | no | no |
+| `purge_artifacts` | no | **yes** | yes | no |
+| `pipeline_report` | yes | no | yes | no |
+| `model_status` | yes | no | yes | no |
+| `install_model` | no | no | no | **yes** |
+| `switch_model` | no | no | yes | no |
+| `recommend_models` | yes | no | yes | no |
+| `create_store` | no | no | yes | no |
+| `list_files` | yes | no | yes | no |
+| `file_status` | yes | no | yes | no |
+
+## Input validation
+
+All tool parameters are validated before reaching orchestrators:
+
+- **Search**: query max 4096 chars, non-empty
+- **Pipeline**: stage whitelist (`ingest`, `extract`, `parse`, `chunk`, `ocr`, `clean`, `index`, `embed`, `ingestion`, `indexing`), target path non-empty + max 2048 chars, invalid characters blocked, filenames validated (non-empty, length, traversal, invalid chars)
+- **Models**: category whitelist (`embedding`, `nlp`, `ocr`, `reranker`, `vision`), model_id max 256 chars, invalid characters blocked
+- **Store**: path max 2048 chars, `..` traversal blocked, invalid characters blocked, filename validation on `file_status`, name max 256 chars
+
+All tools return structured `{"success": bool, "data": ..., "error": ...}` responses. Exceptions are caught and returned as error objects with traceback detail.
+
+## Health endpoint
+
+`GET /health` checks store and models:
+
+```json
+{
+  "status": "ok",
+  "checks": {
+    "store": { "status": "ok", "files": 12 },
+    "models": { "status": "ok", "all_ready": true, "summary": "5/5 ready" }
+  }
+}
+```
+
+Returns HTTP 503 when any check is degraded or errored.
+
+## Client config generation
+
+```bash
+# Generate config for Claude Desktop
+darwin config claude
+
+# Generate config for all clients + copy to clipboard
+darwin config all --copy
+
+# Network config (SSE or HTTP)
+darwin config sse --host 127.0.0.1 --port 8765
+darwin config http --host 127.0.0.1 --port 8765
+```
 
 ## Adding a new tool
 
 1. Create or edit a file in `src/mcp/tools/`
-2. Add a `register(mcp, ...)` function with `@mcp.tool()` decorators
-3. Wire it in `src/mcp/Server.py` (stdio) and `src/mcp/UnifiedServer.py` (SSE):
+2. Add a `register(mcp, ...)` function with `@mcp.tool(annotations=ToolAnnotations(...))` decorators
+3. Wire it in `src/mcp/Server.py` (stdio) and `src/mcp/UnifiedServer.py` (SSE/HTTP):
    ```python
    import src.mcp.tools.MyTool as MyTool
    MyTool.register(mcp, dependency)
    ```
 
+## Adding a new resource
+
+1. Add a function in `src/mcp/tools/Resources.py` with `@mcp.resource("darwin://...")`
+2. Wire it in the `register()` function (already called from Server.py and UnifiedServer.py)
+
 ## Architecture
 
 ```
 Logger/                   mcp/
-  DarwinLogger.py           UnifiedServer.py  ← subscribes to darwin events
-  TerminalUi.py             Server.py         ← CLI entry point
+  DarwinLogger.py           UnifiedServer.py  ← subscribes to darwin events, SSE + HTTP + health
+  TerminalUi.py             Server.py         ← stdio entry point (create_mcp_app)
   SQLiteHistoryStore.py     tools/*.py        ← tool implementations
-  DarwinMP.py
+  lib.py                    tools/Resources.py ← resource definitions
 ```
 
-- **Logger** is pure — it emits events and stores them.  Zero imports
+- **Logger** is pure — it emits events and stores them. Zero imports
   from Orchestrators / Storage / Pipeline.
 - **mcp/UnifiedServer** uses FastMCP with `custom_route()` to mount
-  log SSE, history, and health endpoints alongside the MCP SSE transport.
-- **mcp/Server** is a thin CLI that delegates to `UnifiedServer` (SSE) or
-  creates a stdio FastMCP (stdio).
+  log SSE, history, and health endpoints alongside the MCP transports.
+  Health checks store + models, returns 503 when degraded.
+- **mcp/Server** builds a FastMCP via `create_mcp_app()` and runs
+  stdio transport.
 - **DarwinLogger.configure(mode=SSE/BOTH)** starts `UnifiedServer` in a
-  background thread, same as before.
+  background thread. `shutdown()` closes SSE server + history store.
+- **Tool annotations** — all 11 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
+- **Input validation** — all tools validate parameters before reaching orchestrators. Exceptions returned as structured error objects, never silently swallowed.

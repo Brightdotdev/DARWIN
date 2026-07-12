@@ -25,7 +25,7 @@ class LoggerOrchestrator:
     def configure(
         mode: str = "terminal",
         persist: bool = True,
-        show_banner: bool = False,
+        show_banner: bool = True,
         log_filter: str = "all",
         sse_port: int = 8765,
         sse_host: str = "127.0.0.1",

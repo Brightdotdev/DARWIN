@@ -20,7 +20,7 @@ def run_init(profile: str = "required", no_download: bool = False):
     from src.core.Storage.DarwinStore import DarwinStore
 
     store = DarwinStore()
-    store.bootstrap()
+    store.bootstrap(quiet=True)
     console.print(f"  Store: [green]{store.store_name}[/green] @ {store.darwin_dir}")
     console.print(
         f"  Sources: {len(store.get_pipeline_report() or [])} files registered"

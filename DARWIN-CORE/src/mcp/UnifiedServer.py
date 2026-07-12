@@ -1,17 +1,20 @@
 """
-Single server providing log SSE streaming + MCP tools + history + health.
+Single server providing MCP tools + log streaming + history + health.
 
-Endpoints (SSE mode):
-  /sse                MCP SSE (FastMCP built-in)
-  /messages/          MCP messages (FastMCP built-in)
+Transports:
+  SSE  (legacy)     /sse + /messages/
+  HTTP (modern)     /mcp (Streamable HTTP)
+
+Endpoints:
   /stream             Log SSE — real-time darwin events
   /history            Query historical logs
-  /health             Health check
+  /health             Health check (store + models)
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import queue
 import threading
@@ -24,7 +27,9 @@ from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
-from src.core.Logger.DarwinLogger import darwin, LogType, LogEvent, DarwinEvent
+from src.core.Logger.DarwinLogger import (
+    darwin, LogType, LogEvent, DarwinEvent, EventSubscriber,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -32,45 +37,41 @@ from src.core.Logger.DarwinLogger import darwin, LogType, LogEvent, DarwinEvent
 # ---------------------------------------------------------------------------
 
 
-class SSEQueueSubscriber:
+class SSEQueueSubscriber(EventSubscriber):
     """Thread-safe subscriber that buffers DarwinEvents for SSE consumers."""
 
     def __init__(self, maxsize: int = 1000):
         self._queue: queue.Queue = queue.Queue(maxsize=maxsize)
         self._closed = False
 
-    # ---- darwin callback interface ----
-
     def on_log(self, event: LogEvent) -> None:
         self._put(event)
 
-    def on_progress_start(self, event: DarwinEvent) -> None:
+    def on_progress_start(self, event) -> None:
         self._put(event)
 
-    def on_progress_update(self, event: DarwinEvent) -> None:
+    def on_progress_update(self, event) -> None:
         self._put(event)
 
-    def on_progress_end(self, event: DarwinEvent) -> None:
+    def on_progress_end(self, event) -> None:
         self._put(event)
 
-    def on_spinner_start(self, event: DarwinEvent) -> None:
+    def on_spinner_start(self, event) -> None:
         self._put(event)
 
-    def on_spinner_update(self, event: DarwinEvent) -> None:
+    def on_spinner_update(self, event) -> None:
         self._put(event)
 
-    def on_spinner_end(self, event: DarwinEvent) -> None:
+    def on_spinner_end(self, event) -> None:
         self._put(event)
 
-    def on_session_start(self, event: DarwinEvent) -> None:
+    def on_session_start(self, event) -> None:
         self._put(event)
 
-    def on_session_end(self, event: DarwinEvent) -> None:
+    def on_session_end(self, event) -> None:
         self._put(event)
 
-    # ---- internal ----
-
-    def _put(self, event: DarwinEvent) -> None:
+    def _put(self, event) -> None:
         if self._closed:
             return
         try:
@@ -85,7 +86,7 @@ class SSEQueueSubscriber:
                 event = await loop.run_in_executor(None, self._queue.get, True, 1.0)
                 yield json.dumps(_event_to_dict(event), default=str)
             except queue.Empty:
-                yield ""
+                continue
             except Exception:
                 continue
 
@@ -93,10 +94,13 @@ class SSEQueueSubscriber:
         self._closed = True
 
 
-def _event_to_dict(event: DarwinEvent) -> dict:
+def _event_to_dict(event) -> dict:
     """Serialize any DarwinEvent to a dict with a type discriminator."""
-    base = {"type": event.__class__.__name__}
-    base.update({k: v for k, v in event.__dict__.items() if not k.startswith("_")})
+    if dataclasses.is_dataclass(event) and not isinstance(event, type):
+        base = dataclasses.asdict(event)
+    else:
+        base = dict(event.__dict__) if hasattr(event, "__dict__") else {}
+    base["type"] = event.__class__.__name__
     if hasattr(base.get("log_type"), "value"):
         base["log_type"] = base["log_type"].value
     return base
@@ -121,9 +125,14 @@ class UnifiedServer:
         self,
         host: str = "127.0.0.1",
         port: int = 8765,
+        max_port_retries: int = 10,
+        transport: str = "sse",
     ):
         self.host = host
+        self._requested_port = port
         self.port = port
+        self.max_port_retries = max_port_retries
+        self.transport = transport
         self._mcp: Optional[FastMCP] = None
         self._uvicorn_server = None
         self._thread: Optional[threading.Thread] = None
@@ -132,24 +141,66 @@ class UnifiedServer:
 
     # ---- app construction ----
 
+    def _resolve_port(self) -> int:
+        """Check port availability, scan for a free one if occupied."""
+        from src.lib.NetUtils import is_port_available, find_available_port
+
+        if is_port_available(self.host, self._requested_port):
+            self.port = self._requested_port
+            return self.port
+
+        darwin.warning(
+            f"Port {self._requested_port} in use — scanning for free port..."
+        )
+        found = find_available_port(
+            self.host, self._requested_port + 1, self.max_port_retries
+        )
+        if found is None:
+            raise OSError(
+                f"No available port found in range "
+                f"{self._requested_port}-{self._requested_port + self.max_port_retries - 1}"
+            )
+        self.port = found
+        darwin.info(f"Using port {self.port} instead", style="green")
+        self._save_port_to_config(self.port)
+        return self.port
+
+    @staticmethod
+    def _save_port_to_config(port: int) -> None:
+        """Persist the resolved port to logging.json so MCP and logger share it."""
+        import json
+        try:
+            from src.lib.AppPaths import default_config_dir
+            path = default_config_dir() / "logging.json"
+            if not path.exists():
+                return
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("sse_port") != port:
+                data["sse_port"] = port
+                path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+                darwin.info(f"Saved port {port} to logging.json")
+        except Exception:
+            pass
+
     def _build_app(self) -> FastMCP:
         """Register all MCP tools + custom HTTP routes and return the FastMCP instance."""
 
         from mcp.server.fastmcp import FastMCP
 
-        # Lazy imports inside orchestrators / tools
         from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
         from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
         from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+        from src.core.Orchestrators.ModelOrchestrator import modelsOrchestrator
         import src.mcp.tools.Search as Search
         import src.mcp.tools.Pipeline as Pipeline
         import src.mcp.tools.Models as Models
         import src.mcp.tools.Store as Store
+        import src.mcp.tools.Resources as Resources
 
         mcp = FastMCP("darwin-mcp", host=self.host, port=self.port)
 
         orch = StoreOrchestrator()
-        orch.bootstrap()
+        orch.bootstrap(quiet=True)
         retrieval = RetrievalOrchestrator(store=orch.store)
         pipeline = PipelineOrchestrator(store=orch.store)
 
@@ -157,6 +208,7 @@ class UnifiedServer:
         Pipeline.register(mcp, pipeline)
         Models.register(mcp)
         Store.register(mcp, orch.store)
+        Resources.register(mcp, orch.store, models_orchestrator=modelsOrchestrator)
 
         # ---- custom HTTP routes ----
 
@@ -185,16 +237,51 @@ class UnifiedServer:
             """Query historical logs."""
             session = request.query_params.get("session")
             levels_raw = request.query_params.get("levels", "")
-            limit = int(request.query_params.get("limit", 100))
+            try:
+                limit = min(int(request.query_params.get("limit", 100)), 10000)
+            except (ValueError, TypeError):
+                limit = 100
             levels = None
             if levels_raw:
-                levels = {LogType(l.strip()) for l in levels_raw.split(",") if l.strip()}
+                try:
+                    levels = {LogType(l.strip()) for l in levels_raw.split(",") if l.strip()}
+                except ValueError:
+                    pass
             logs = darwin.get_logs(session=session, levels=levels, limit=limit)
             return JSONResponse([l.to_dict() for l in logs])
 
         @mcp.custom_route("/health", methods=["GET"])
-        async def health_check(request: Request) -> Response:
-            return Response("ok", status_code=200)
+        async def health_check(request: Request) -> JSONResponse:
+            checks = {}
+            healthy = True
+
+            try:
+                report = orch.store.get_pipeline_report()
+                checks["store"] = {
+                    "status": "ok",
+                    "files": len(report) if isinstance(report, list) else 0,
+                }
+            except Exception as e:
+                checks["store"] = {"status": "error", "error": str(e)}
+                healthy = False
+
+            try:
+                status = modelsOrchestrator.status()
+                checks["models"] = {
+                    "status": "ok" if status.all_ready else "degraded",
+                    "all_ready": status.all_ready,
+                    "summary": status.summary,
+                }
+                if not status.all_ready:
+                    healthy = False
+            except Exception as e:
+                checks["models"] = {"status": "error", "error": str(e)}
+                healthy = False
+
+            return JSONResponse(
+                {"status": "ok" if healthy else "degraded", "checks": checks},
+                status_code=200 if healthy else 503,
+            )
 
         self._mcp = mcp
         return mcp
@@ -203,6 +290,7 @@ class UnifiedServer:
 
     def start(self) -> None:
         """Start the uvicorn server in a background daemon thread."""
+        self._resolve_port()
         self._build_app()
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -213,7 +301,10 @@ class UnifiedServer:
         try:
             import uvicorn
 
-            app = self._mcp.sse_app()
+            if self.transport == "http":
+                app = self._mcp.streamable_http_app()
+            else:
+                app = self._mcp.sse_app()
             config = uvicorn.Config(
                 app,
                 host=self.host,
@@ -231,11 +322,18 @@ class UnifiedServer:
 
     # ---- lifecycle: foreground (for CLI) ----
 
-    def run_foreground(self) -> None:
-        """Block and serve.  Used by ``python -m src.mcp --sse``."""
+    def run_foreground(self, transport: str = "sse") -> None:
+        """Block and serve.  Used by ``python -m src.mcp --sse`` or ``--http``."""
+        self._resolve_port()
         self._build_app()
         import uvicorn
-        app = self._mcp.sse_app()
+
+        if transport == "http":
+            darwin.info(f"Starting Streamable HTTP on {self.host}:{self.port}")
+            app = self._mcp.streamable_http_app()
+        else:
+            darwin.info(f"Starting SSE on {self.host}:{self.port}")
+            app = self._mcp.sse_app()
         uvicorn.run(app, host=self.host, port=self.port, log_level="info")
 
     # ---- shutdown ----

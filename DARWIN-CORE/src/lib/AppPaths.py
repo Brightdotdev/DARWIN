@@ -1,8 +1,11 @@
 # AppPaths.py
+import logging
 import platform
 from pathlib import Path
 from typing import Optional
 import os
+
+logger = logging.getLogger("darwin.app_paths")
 
 _DARWIN_BASE: Optional[Path] = None
 
@@ -98,15 +101,15 @@ def ensure_directories() -> bool:
     # Check base directory exists and is writable
     if not base.exists():
         if docker:
-            print(f"❌ FATAL: DARWIN_BASE_DIR='{base}' does not exist inside Docker.")
-            print("   Please mount a persistent volume at that path.")
+            logger.error(f"DARWIN_BASE_DIR='{base}' does not exist inside Docker.")
+            logger.error("Please mount a persistent volume at that path.")
             return False
         else:
             # Try to create it
             try:
                 base.mkdir(parents=True, exist_ok=True)
             except PermissionError:
-                print(f"❌ FATAL: Cannot create DARWIN_BASE_DIR='{base}'. Permission denied.")
+                logger.error(f"Cannot create DARWIN_BASE_DIR='{base}'. Permission denied.")
                 return False
 
     # Check each subdirectory
@@ -118,21 +121,19 @@ def ensure_directories() -> bool:
             test_file.touch()
             test_file.unlink()
         except (PermissionError, OSError) as e:
-            print(f"❌ FATAL: Directory '{d}' is not writable: {e}")
+            logger.error(f"Directory '{d}' is not writable: {e}")
             if docker:
-                print("   In Docker, ensure you have mounted a volume with write permissions.")
+                logger.error("In Docker, ensure you have mounted a volume with write permissions.")
             return False
 
     # Warn if running in Docker and the base directory might be ephemeral
     if docker:
         # Check if base is on a tmpfs (simplistic: if it's under /tmp or /dev/shm)
         if any(base.is_relative_to(Path(p)) for p in ["/tmp", "/dev/shm", "/var/tmp"]):
-            print("⚠️  WARNING: DARWIN_BASE_DIR points to a temporary location in Docker.")
-            print("   Data will be lost when the container stops.")
-            print("   Please use a persistent volume mount.")
-            # We still return True because it's technically writable,
-            # but we warn aggressively.
+            logger.warning("DARWIN_BASE_DIR points to a temporary location in Docker.")
+            logger.warning("Data will be lost when the container stops.")
+            logger.warning("Please use a persistent volume mount.")
         else:
-            print("✅ Docker volume detected. Data will persist.")
+            logger.info("Docker volume detected. Data will persist.")
 
     return True

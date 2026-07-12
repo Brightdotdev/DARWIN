@@ -15,7 +15,7 @@ import sqlite3
 import threading
 import time
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
@@ -145,7 +145,7 @@ class SQLiteHistoryStore:
             return
         try:
             rows = []
-            now_str = datetime.utcnow().isoformat()
+            now_str = datetime.now(tz=timezone.utc).isoformat()
             for e in self._pending:
                 rows.append(
                     (
@@ -350,7 +350,11 @@ class SQLiteHistoryStore:
             return count
 
     def close(self) -> None:
-        self.flush()
-        if self._db:
-            self._db.close()
-            self._db = None
+        with self._lock:
+            self._flush_unlocked()
+            if self._db:
+                try:
+                    self._db.close()
+                except Exception:
+                    pass
+                self._db = None
