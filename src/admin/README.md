@@ -6,7 +6,7 @@ Full orchestrator control for power users. 30 subcommands across 7 groups.
 
 ```bash
 darwin-admin <group> <command> [options]
-# or:   
+# or:
 python -m src.admin <group> <command> [options]
 ```
 
@@ -20,9 +20,32 @@ python -m src.admin <group> <command> [options]
 
 | Command | Description |
 |---------|-------------|
-| `interactive` | Guided numbered menus — detect hardware, choose models, set API keys |
+| `interactive` | Guided per-category setup — detect hardware, pick models, configure logging |
 | `profile --profile recommended` | Non-interactive, install recommended model profile |
 | `onboard --preferences embedding=... nlp=...` | Non-interactive with explicit model IDs |
+
+#### Interactive setup flow
+
+The interactive setup walks through each step sequentially:
+
+1. **Detect system** — RAM, disk, CPU, GPU, hardware tier (fast, no model init)
+2. **Per-category model selection** — one category at a time:
+   - **Embedding (required):** Lists all models, user picks one (recommended is default)
+   - **Optional categories** (reranker, nlp, ocr, vision): Shows recommended model + requirements, user can accept, browse all, or skip
+3. **API keys** — prompts only for keys needed by selected API models
+4. **Install** — downloads local models only (API models just need keys)
+5. **Logging** — mode (terminal/sse/both/none), persistence, retention, SSE port
+
+#### Config detection
+
+When run, setup checks all three config files:
+- `darwin.json` — setup config (models, keys, environment)
+- `logging.json` — logging mode, SSE port, retention
+- `models.json` — active model per category
+
+If all three exist, offers: change specific setting / full re-run / exit.
+If partial: offers to complete missing pieces.
+If none: runs full setup.
 
 ### `models` — Model lifecycle
 
@@ -126,10 +149,28 @@ darwin-admin pipeline run ./docs --ocr
 
 By default, `status` shows store info and file counts without initializing models (fast). Use `--initialize` to also run model initialization and show model readiness status (slower).
 
+## Logging modes
+
+The logging configuration supports four modes:
+
+| Mode | Description |
+|------|-------------|
+| `terminal` | Logs to console only (default) |
+| `sse` | Stream logs via SSE (for MCP / remote viewing) |
+| `both` | Console + SSE simultaneously |
+| `none` | Silent (no log output) |
+
+Additional settings:
+- **persist** — Save logs to SQLite history (separate from mode)
+- **retention_days** — How long to keep logs (3, 7, 14, 30 days, or never)
+- **sse_port** — Port for SSE streaming (shared with MCP server, auto-resolved if busy)
+
+These are saved to `logging.json` in the config directory. MCP reads the port from this file at startup.
+
 ## Examples
 
 ```bash
-# Interactive setup (guided menus, numbered selection)
+# Interactive setup (per-category guided flow)
 darwin-admin setup interactive
 
 # Non-interactive setup (Docker/CI)

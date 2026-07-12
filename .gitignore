@@ -23,6 +23,8 @@ teststore/
 darwinstoretest/
 **/darwinstoretest/
 
+darwin.md
+
 **/retrieval_test_results/
 ephemeral_output/**
 /ephemeral_output/**

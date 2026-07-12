@@ -14,6 +14,9 @@ darwin mcp --sse --port 8765
 
 # Streamable HTTP (recommended for production)
 darwin mcp --http --port 8765
+
+# Override port for this session only (does not save to config)
+darwin mcp --temp-port 9000
 ```
 
 All transports share the same 11 tools, 5 resources, and validation logic.
@@ -22,11 +25,24 @@ history, and health in a single process.
 
 ## Transports
 
-| Transport | Use case | Command |
-|-----------|----------|---------|
-| **stdio** | AI agent subprocess (Claude, Cursor) | `darwin mcp` |
-| **SSE** | Legacy network / Docker | `darwin mcp --sse` |
-| **Streamable HTTP** | Production / remote clients | `darwin mcp --http` |
+| Transport | Use case | Command | Logs on stdout? |
+|-----------|----------|---------|-----------------|
+| **stdio** | AI agent subprocess (Claude, Cursor) | `darwin mcp` | No — silenced for clean JSON-RPC |
+| **SSE** | Legacy network / Docker | `darwin mcp --sse` | Yes — visible on terminal |
+| **Streamable HTTP** | Production / remote clients | `darwin mcp --http` | Yes — visible on terminal |
+
+## Port sharing
+
+MCP and the logger SSE server share the same port. The port is read from
+`logging.json` at startup (field: `sse_port`). If the port is busy,
+`UnifiedServer._resolve_port()` scans for a free one and saves it back
+to `logging.json`.
+
+```bash
+# The port in logging.json is used by both MCP and logger
+darwin mcp --http          # reads port from logging.json
+darwin mcp --temp-port 9000  # overrides for this session only
+```
 
 ## Endpoints
 
@@ -99,7 +115,7 @@ All tools include MCP-compliant annotations for client-side safety:
 All tool parameters are validated before reaching orchestrators:
 
 - **Search**: query max 4096 chars, non-empty
-- **Pipeline**: stage whitelist (`ingest`, `extract`, `parse`, `chunk`, `ocr`, `clean`, `index`, `embed`, `ingestion`, `indexing`), target path non-empty + max 2048 chars, invalid characters blocked, filenames validated (non-empty, length, traversal, invalid chars)
+- **Pipeline**: stage whitelist, target path non-empty + max 2048 chars, invalid characters blocked, filenames validated
 - **Models**: category whitelist (`embedding`, `nlp`, `ocr`, `reranker`, `vision`), model_id max 256 chars, invalid characters blocked
 - **Store**: path max 2048 chars, `..` traversal blocked, invalid characters blocked, filename validation on `file_status`, name max 256 chars
 
@@ -160,14 +176,10 @@ Logger/                   mcp/
   lib.py                    tools/Resources.py ← resource definitions
 ```
 
-- **Logger** is pure — it emits events and stores them. Zero imports
-  from Orchestrators / Storage / Pipeline.
-- **mcp/UnifiedServer** uses FastMCP with `custom_route()` to mount
-  log SSE, history, and health endpoints alongside the MCP transports.
-  Health checks store + models, returns 503 when degraded.
-- **mcp/Server** builds a FastMCP via `create_mcp_app()` and runs
-  stdio transport.
-- **DarwinLogger.configure(mode=SSE/BOTH)** starts `UnifiedServer` in a
-  background thread. `shutdown()` closes SSE server + history store.
+- **Logger** is pure — it emits events and stores them. Zero imports from Orchestrators / Storage / Pipeline.
+- **mcp/UnifiedServer** uses FastMCP with `custom_route()` to mount log SSE, history, and health endpoints alongside the MCP transports. Health checks store + models, returns 503 when degraded. Saves resolved port back to `logging.json`.
+- **mcp/Server** builds a FastMCP via `create_mcp_app()` and runs stdio transport.
+- **DarwinLogger.configure(mode=SSE/BOTH)** starts `UnifiedServer` in a background thread. `shutdown()` closes SSE server + history store.
+- **Stdio mode** — logger is silenced (`mode=none`) to keep stdout clean for JSON-RPC. Logs still go to SQLite history and SSE stream if configured.
 - **Tool annotations** — all 11 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
 - **Input validation** — all tools validate parameters before reaching orchestrators. Exceptions returned as structured error objects, never silently swallowed.
