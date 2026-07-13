@@ -203,7 +203,6 @@ class PipelineParameters:
         from src.core.Orchestrators.PipelineOrchestrator import (
             PipelineParameters as _PP,
             ParsingArgs as _ParsingArgs,
-            ChunkingArgs as _ChunkingArgs,
             IndexingArgs as _IndexingArgs,
         )
 
@@ -218,7 +217,6 @@ class PipelineParameters:
                 precise=self.precise,
                 rerun=self.rerun,
             )
-            internal.chunking = _ChunkingArgs(files=file_list, rerun=self.rerun)
         if "indexing" in self.stages:
             internal.indexing = _IndexingArgs(
                 threshold=self.threshold,

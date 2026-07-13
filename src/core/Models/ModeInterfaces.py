@@ -1,9 +1,3 @@
-# src/core/Models/ModelLoading/API/EmbeddingInferenceInterface.py
-"""
-Unified interface for all embedding inference backends.
-Both local (ONNX) and remote (API) implementations must conform to this contract.
-"""
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional, Union

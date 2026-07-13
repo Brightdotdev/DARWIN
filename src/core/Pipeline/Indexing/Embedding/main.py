@@ -1,9 +1,5 @@
 import sys
-import argparse
 from pathlib import Path
-from typing import List, Dict, Any, Optional
-
-import numpy as np
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -122,6 +118,7 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def main() -> int:
+    import argparse
     parser = argparse.ArgumentParser(description="Embed chunked documents")
 
     parser.add_argument("path", nargs="?", default=".")

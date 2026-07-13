@@ -1,25 +1,6 @@
-# src/pipleline/Ingestion/Chunking/StructuralClassifier.py
-
-"""
-Fast, lightweight, document‑agnostic structural classifier.
-
-Classifies text chunks into one of:
-    body | heading | table | caption | footnote | toc | index | copyright | cover | separator
-
-Uses a priority cascade:
-    1. Hard overrides (source + page range)
-    2. Position heuristics (front/back matter)
-    3. Pattern matching (regex)
-    4. N‑gram similarity (character n‑grams + cosine similarity)
-    5. Default → "body"
-
-All logic is pure Python with optional numpy for faster vector ops.
-"""
-
 import re
 import math
-from typing import Dict, List, Optional, Tuple, Any
-from collections import Counter, defaultdict
+from typing import Dict, List, Optional, Tuple
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration

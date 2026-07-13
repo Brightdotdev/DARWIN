@@ -174,7 +174,7 @@ See [src/admin/README.md](src/admin/README.md) for complete reference.
 | Group | Commands | Description |
 |---|---|---|
 | `setup` | `interactive`, `profile`, `onboard` | First-time configuration |
-| `models` | `status`, `list`, `install`, `uninstall`, `switch`, `keys` | Model lifecycle |
+| `models` | `status`, `list`, `install`, `discard`, `switch`, `keys` | Model lifecycle |
 | `store` | `status`, `files`, `file`, `audit`, `health`, `repair` | Store introspection |
 | `pipeline` | `run`, `ingest`, `index`, `purge` | Pipeline execution |
 | `logs` | `query`, `sessions`, `session-info`, `stats`, `purge`, `export`, `compact`, `set-retention` | Log management |

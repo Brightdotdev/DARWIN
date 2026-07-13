@@ -28,9 +28,6 @@ _STYLE_COLORS = frozenset({
 
 _STYLE_MODIFIERS = frozenset({"dim", "bold"})
 
-_STYLE_ADDITIVE = frozenset({
-    "italic", "underline", "strike", "blink", "reverse",
-})
 
 # Semantic aliases — shorthand for common style combos
 _STYLE_ALIASES = {

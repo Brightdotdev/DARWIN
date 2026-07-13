@@ -13,7 +13,6 @@ from src.core.Storage.DarwinStore import DarwinStore
 
 # ── Stage handlers ─────────────────────────────────────────────────────────────
 from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
-from src.core.Pipeline.Ingestion.Chunking.lib import ChunkingArgs
 from src.core.Pipeline.Indexing.lib import IndexingArgs
 from src.core.Pipeline.Ingestion.main import handle_ingestion
 from src.core.Pipeline.Indexing.main import handle_indexing
@@ -35,13 +34,7 @@ class PipelineStage(str, Enum):
 
 @dataclass
 class StageParameters:
-    """
-    Strongly-typed bag of stage arguments (internal).
-    Only populate the fields for the stages you intend to run.
-    Constructed by lib.py PipelineParameters.build().
-    """
     parsing: Optional[ParsingArgs] = None
-    chunking: Optional[ChunkingArgs] = None
     indexing: Optional[IndexingArgs] = None
 
 
@@ -117,8 +110,7 @@ class PipelineOrchestrator:
             if stage == PipelineStage.INGESTION:
                 if params.parsing is None:
                     return "Ingestion stage requires StageParameters.parsing"
-                if params.chunking is None:
-                    return "Ingestion stage requires StageParameters.chunking"
+               
             elif stage == PipelineStage.INDEXING:
                 if params.indexing is None:
                     return "Indexing stage requires StageParameters.indexing"
@@ -275,12 +267,13 @@ class PipelineOrchestrator:
     # ── Stage runners ───────────────────────────────────────────────────────────
 
     def _run_ingestion(self, params: StageParameters) -> None:
-        if not params.parsing or not params.chunking:
-            darwin.error("ParsingArgs and ChunkingArgs required")
+        if not params.parsing:
+            darwin.error("ParsingArgs  required")
             return
-        handle_ingestion(params.parsing, params.chunking, self.store)
+        handle_ingestion(params.parsing, self.store)
 
     def _run_indexing(self, params: StageParameters) -> None:
+        
         if not params.indexing:
             darwin.error("IndexingArgs required")
             return

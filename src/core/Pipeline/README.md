@@ -17,48 +17,97 @@ Document ──> Ingestion ──> Indexing ──> Search-ready
 
 ## Ingestion
 
+**Entry:** `src/core/Pipeline/Ingestion/main.py :: handle_ingestion()`
+
+```python
+from src.core.Pipeline.Ingestion.main import handle_ingestion
+from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
+from src.core.Storage.DarwinStore import DarwinStore
+
+store = DarwinStore()
+args = ParsingArgs(
+    target=".",
+    files=["document.pdf"],
+    images=True,
+    caption=True,
+    ocr=False,
+    precise=False,
+    recursive=False,
+    rerun=False,
+    save=True,
+    skip_if_markdown=False,
+)
+handle_ingestion(args, store)
+```
+
 ### Parsing
 
 **Entry:** `src/core/Pipeline/Ingestion/Parsing/main.py :: handle_parsing()`
 
-Supported formats (from `lib.py :: SUPPORTED_TYPES`):
+Supported formats (from `Parsing/lib.py :: SUPPORTED_TYPES`):
 
-| Extension | Extractor |
+| Extension | Extractor backend |
 |---|---|
-| `.pdf` | PyMuPDF, PyMuPDF4LLM |
-| `.docx`, `.pptx` | python-docx, python-pptx |
-| `.txt`, `.md` | Plain text |
-| `.html`, `.htm` | Trafilatura |
-| `.csv`, `.xlsx`, `.ods` | Tabular parsers |
-| `.epub` | EPUB parser |
+| `.pdf` | PyMuPDF / PyMuPDF4LLM (precise mode) |
+| `.docx`, `.pptx`, `.txt`, `.md` | MarkItDown |
+| `.html`, `.htm` | Trafilatura (html processor) |
+| `.xml` | XML parser |
+| `.csv`, `.tsv` | CSV/tabular parser |
+| `.xlsx`, `.xls`, `.ods` | Spreadsheet parser |
+| `.epub` | Ebook parser |
 | `.eml` | Email parser |
-| URLs | `UrlExtractor` + `UrlFetcher` (via httpx) |
+| URLs | `UrlExtractor` + `UrlFetcher` (httpx) |
 
 ```python
 from src.core.Pipeline.Ingestion.Parsing.main import handle_parsing
 from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
+from src.core.Storage.DarwinStore import DarwinStore
 
-args = ParsingArgs(strategy="auto", ocr=True)
-result = handle_parsing("document.pdf", args)
-# result.markdown, result.metadata, result.images
+store = DarwinStore()
+args = ParsingArgs(target=".", files=["report.pdf"], images=True, caption=False)
+docs = handle_parsing(args, store)
+# List[ParsedDocument] — each has: display_text, embedding_text, filename,
+#   page_count, file_type, metadata, error, images
 ```
 
 ### Chunking
 
 **Entry:** `src/core/Pipeline/Ingestion/Chunking/main.py :: handle_chunking()`
 
-Chunks are sentence-aware with structural classification (header, body, table, list).
+Chunks are sentence-aware with structural classification (header, body, table, list) and directional overlap (none, left, right, both).
 
 ```python
 from src.core.Pipeline.Ingestion.Chunking.main import handle_chunking
 from src.core.Pipeline.Ingestion.Chunking.lib import ChunkingArgs
+from src.core.Storage.DarwinStore import DarwinStore
 
-args = ChunkingArgs(chunk_size=512, overlap=64, overlap_direction="right")
-chunks = handle_chunking(markdown_text, args)
-# List of Chunk objects with text, metadata, structural_type
+store = DarwinStore()
+args = ChunkingArgs(files=["report.pdf"], rerun=False)
+handle_chunking(args, store)
+# Chunks are saved to the store via store.save_records()
 ```
 
 ## Indexing
+
+**Entry:** `src/core/Pipeline/Indexing/main.py :: handle_indexing()`
+
+```python
+from src.core.Pipeline.Indexing.main import handle_indexing
+from src.core.Pipeline.Indexing.lib import IndexingArgs
+from src.core.Storage.DarwinStore import DarwinStore
+
+store = DarwinStore()
+args = IndexingArgs(
+    path=".",
+    threshold=0.5,
+    idf_smoothing=0.1,
+    files=["report.pdf"],  # None = all chunked files
+    rerun=False,
+    only_kw=False,
+    only_semantic=False,
+)
+handle_indexing(args, store)
+```
 
 ### BM25
 
@@ -68,31 +117,34 @@ Builds sparse BM25 matrix (SciPy NPZ) + token metadata (Parquet).
 
 ```python
 from src.core.Pipeline.Indexing.BM25.main import handle_bm25_indexing
+from src.core.Pipeline.Indexing.BM25.lib import BM25IndexingArgs
+from src.core.Storage.DarwinStore import DarwinStore
 
-handle_bm25_indexing(store, file_hash, chunks_df, args)
+store = DarwinStore()
+args = BM25IndexingArgs(
+    files=["report.pdf"],  # None = all chunked files
+    threshold=0.5,
+    idf_smoothing=0.1,
+    rerun=False,
+)
+handle_bm25_indexing(args, store)
 ```
 
 ### Embedding
 
 **Entry:** `src/core/Pipeline/Indexing/Embedding/main.py :: handle_embedding()`
 
-Generates dense embeddings via ONNX, stores NumPy float16 + USearch vector index.
+Generates dense embeddings via the active embedding model, stores NumPy float16 + USearch vector index.
 
 ```python
 from src.core.Pipeline.Indexing.Embedding.main import handle_embedding
+from src.core.Pipeline.Indexing.Embedding.lib import EmbeddingArgs
+from src.core.Storage.DarwinStore import DarwinStore
 
-handle_embedding(store, file_hash, chunks_df, args)
-```
-
-## End-to-End
-
-```python
-from src.core.Pipeline.Ingestion.main import handle_ingestion
-from src.core.Pipeline.Indexing.main import handle_indexing
-
-# Ingest
-ingest_result = handle_ingestion(store, file_hash, file_path, parsing_args, chunking_args)
-
-# Index
-index_result = handle_indexing(store, file_hash, chunk_df, indexing_args)
+store = DarwinStore()
+args = EmbeddingArgs(
+    files=["report.pdf"],  # None = all chunked files
+    rerun=False,
+)
+handle_embedding(args, store)
 ```

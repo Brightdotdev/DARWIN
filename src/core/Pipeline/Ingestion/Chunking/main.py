@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import sys
-import argparse
 import time
-import asyncio
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -14,8 +12,8 @@ if __name__ == "__main__":
 
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Pipeline.Ingestion.Chunking.Chunker import chunk_document
-from src.core.Pipeline.Ingestion.Chunking.lib import Chunk, ChunkingArgs
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Pipeline.Ingestion.Chunking.lib import  ChunkingArgs
+from src.core.Logger.DarwinLogger import darwin
 
 
 # ── file resolution ────────────────────────────────────────────────────────────
@@ -97,7 +95,6 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
             failed += 1
             continue
 
-        content_hash = source.content_hash
 
         if not args.rerun and store.has_records(filename):
             darwin.info(f"{filename} already chunked (use --rerun to re-chunk)")
@@ -175,6 +172,7 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
 
 async def main() -> int:
     from src.lib.Utils import ensure_writable_directory
+    import argparse
 
     parser = argparse.ArgumentParser(
         description="Chunk parsed documents into embedding-ready pieces"
@@ -230,4 +228,6 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    import asyncio
+
     asyncio.run(main())

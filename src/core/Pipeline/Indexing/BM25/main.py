@@ -1,8 +1,6 @@
 
 
 import sys
-import argparse
-import asyncio
 from pathlib import Path
 
 if __name__ == "__main__":
@@ -15,7 +13,6 @@ from src.core.Pipeline.Indexing.BM25.BM25Indexer import (
     run_bm25_indexing_pipeline,
 )
 from src.core.Pipeline.Indexing.BM25.lib import (
-    BM25Data,
     BM25IndexingArgs,
     DOMAIN_STOP_THRESHOLD,
     DEFAULT_IDF_SMOOTHING,
@@ -99,6 +96,8 @@ def handle_bm25_indexing(args: BM25IndexingArgs, store:DarwinStore) -> None:
 # ── CLI ────────────────────────────────────────────────────────────────────────
 
 async def main() -> int:
+    import argparse
+
     parser = argparse.ArgumentParser(
         description="Build BM25 sparse index from chunked documents"
     )
@@ -161,4 +160,5 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    import asyncio
     asyncio.run(main())

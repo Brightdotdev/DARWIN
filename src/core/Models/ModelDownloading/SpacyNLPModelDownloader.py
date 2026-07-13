@@ -16,7 +16,6 @@ from time import sleep
 from typing import Optional
 
 from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.ModelUtils import DownloadError, IntegrityError
 from src.lib.InternetChecker import wait_for_internet, check_internet_robust
 from src.core.Models.lib import SPACY_URLS, tarball_urls
 

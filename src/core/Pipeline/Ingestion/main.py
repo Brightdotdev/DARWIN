@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import sys
-import argparse
 from pathlib import Path
 from typing import List, Optional
 
@@ -22,7 +21,7 @@ from src.core.Pipeline.Ingestion.Chunking.main import handle_chunking
 from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
 from src.core.Pipeline.Ingestion.Chunking.lib import ChunkingArgs
 from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.lib.Utils import ensure_writable_directory
 
 
@@ -98,18 +97,18 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
     return parsed
 
 
-def run_chunking(filenames: List[str], base_args: ChunkingArgs, store: DarwinStore) -> None:
+def run_chunking(filenames: List[str], rerun: bool, store: DarwinStore) -> None:
     darwin.info("")
     darwin.info("━" * 50)
     darwin.info("")
     darwin.info(" 2/2 Chunking")
     darwin.info("")
 
-    args = ChunkingArgs(**{**vars(base_args), "files": filenames})
+    args = ChunkingArgs(rerun=rerun, files=filenames)
     handle_chunking(args, store=store)
 
 
-def  handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs, store: DarwinStore) -> None:
+def  handle_ingestion(parsing_args: ParsingArgs, store: DarwinStore) -> None:
     darwin.info("")
     darwin.info("━" * 50)
     darwin.info("  INGESTION PIPELINE")
@@ -122,11 +121,11 @@ def  handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs, st
         darwin.error("No documents available to chunk. Aborting.")
         return
 
-    run_chunking(parsed_files, chunking_args, store)
+    run_chunking(parsed_files, parsing_args.rerun, store)
 
     darwin.info("")
     darwin.info("━" * 50)
-    darwin.success("  INGESTION COMPLETE")
+    darwin.success("INGESTION COMPLETE")
     darwin.info("━" * 50)
     darwin.info("")
 
@@ -134,6 +133,7 @@ def  handle_ingestion(parsing_args: ParsingArgs, chunking_args: ChunkingArgs, st
 # ── CLI ───────────────────────────────────────────────────────────────────
 
 def main() -> int:
+    import argparse
     parser = argparse.ArgumentParser(
         description="Unified ingestion pipeline - parse and chunk documents"
     )
@@ -186,10 +186,8 @@ def main() -> int:
                 skip_if_markdown=args.skip_if_markdown,
             )
 
-            chunking_args = ChunkingArgs(
-                rerun=args.rerun,
-            )
-
+         
+         
                     
             if args.store_dir and ensure_writable_directory(args.store_dir):
                 store = DarwinStore(args.store_dir)
@@ -197,7 +195,7 @@ def main() -> int:
                 store = DarwinStore()
 
 
-            handle_ingestion(parsing_args, chunking_args, store=store)
+            handle_ingestion(parsing_args, store=store)
 
         return 0
 

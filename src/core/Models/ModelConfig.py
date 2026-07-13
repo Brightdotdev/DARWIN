@@ -79,9 +79,3 @@ def ensure_model_path(model_id: str, base_dir: Optional[Path] = None, category: 
 
     
 
-
-if __name__ == "__main__":
-   path = ensure_model_path("HuggingFaceTB/SmolVLM-256M-Instruct-onnx", category="vision")
-   set_active_model("vision", "HuggingFaceTB/SmolVLM-256M-Instruct-onnx")
-   print(path)
-

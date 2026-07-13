@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import multiprocessing
 import time
-import argparse
 import hashlib
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -361,6 +360,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
 
 def main() -> int:
     from src.lib.Utils import ensure_writable_directory
+    import argparse
     parser = argparse.ArgumentParser(description="Parse documents into .darwin format")
     parser.add_argument("path", nargs="?", default=".", help="File or directory to parse")
     parser.add_argument("--rerun", "-R", action="store_true", help="Reprocess cached files")

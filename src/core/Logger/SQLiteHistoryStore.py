@@ -8,8 +8,6 @@ SQLiteHistoryStore — Ring buffer + SQLite‑backed persistence for Darwin Logg
 """
 
 from __future__ import annotations
-
-import dataclasses
 import json
 import sqlite3
 import threading
@@ -22,15 +20,7 @@ from typing import Any, Dict, List, Optional, Set
 from src.core.Logger.DarwinLogger import (
     DarwinEvent,
     LogEvent,
-    LogType,
-    ProgressStartEvent,
-    ProgressUpdateEvent,
-    ProgressEndEvent,
-    SpinnerStartEvent,
-    SpinnerUpdateEvent,
-    SpinnerEndEvent,
-    SessionStartEvent,
-    SessionEndEvent,
+    LogType
 )
 
 _RETENTION_DAYS = 14

@@ -297,44 +297,6 @@ def get_models_per_provider(
     as_dicts: bool = False,
     predicate: Optional[Callable[[ModelSpec], bool]] = None,
 ) -> List[ModelSpec] | List[Dict[str, Any]]:
-    """
-    Return all models registered under a given provider.
-
-    This is the battle-tested version — handles edge cases, supports
-    filtering, sorting, and custom predicates.
-
-    Parameters
-    ----------
-    provider : str
-        Provider name (e.g. "openai", "google", "openrouter").
-        Case-insensitive. "local" is a special value for local models.
-    category : ModelCategory, optional
-        Filter to a single category (e.g. ModelCategory.VISION).
-    tier : ModelTier, optional
-        Filter to a single tier (e.g. ModelTier.ORCA).
-    include_local : bool, default False
-        If True and provider == "local", return all local models
-        (those with is_local=True). Otherwise local models are
-        excluded from provider lookups.
-    sort_by : str, default "model_id"
-        Field to sort by. Options: "model_id", "tier", "ram_gb",
-        "disk_mb", "category".
-    reverse : bool, default False
-        Reverse the sort order.
-    as_dicts : bool, default False
-        Return list of dicts instead of ModelSpec objects.
-    predicate : callable, optional
-        Additional filter function: fn(spec) -> bool.
-
-    Returns
-    -------
-    List[ModelSpec] or List[Dict[str, Any]]
-
-    Raises
-    ------
-    ValueError
-        If provider is not found and include_local is False.
-    """
     provider = provider.lower().strip()
 
     # Special case: "local" provider

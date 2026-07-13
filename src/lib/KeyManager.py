@@ -229,3 +229,22 @@ def clear_api_key(provider: str) -> None:
         pass
     os.environ.pop(env_var, None)
     darwin.info(f"Removed API key for {provider}")
+
+
+def remove_key(provider: str) -> bool:
+    """Remove an API key. Returns True on success, False on failure."""
+    provider = provider.lower().strip()
+    env_var = PROVIDER_ENV_MAP.get(provider)
+    if not env_var:
+        darwin.error(f"Unknown provider: '{provider}'")
+        return False
+    try:
+        keyring.delete_password(APP_NAME, provider)
+    except keyring.errors.PasswordDeleteError:
+        pass
+    except Exception as e:
+        darwin.error(f"Failed to remove key for {provider}: {e}")
+        return False
+    os.environ.pop(env_var, None)
+    darwin.info(f"Removed API key for {provider}")
+    return True

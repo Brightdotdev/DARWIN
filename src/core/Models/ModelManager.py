@@ -11,7 +11,7 @@ from pathlib import Path
 
 from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec, get_specs_by_category,MODEL_SPECS
 from src.core.Models.ModelConfig import get_active_model, set_active_model
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 # Import all factories
 from src.core.Models.Infrence.EmbeddingInferenceFactory import (

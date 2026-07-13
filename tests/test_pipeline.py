@@ -27,11 +27,10 @@ from src.core.Storage.DarwinStore import DarwinStore
 
 from src.core.Orchestrators.PipelineOrchestrator import (
     PipelineOrchestrator,
-    PipelineParameters,
+    StageParameters,
     PipelineStage,
 )
 
-from src.core.Pipeline.Ingestion.Chunking.lib import ChunkingArgs
 from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs, url_to_slug
 from src.core.Pipeline.Indexing.lib import IndexingArgs
 from src.core.Pipeline.Indexing.BM25.lib import DOMAIN_STOP_THRESHOLD, DEFAULT_IDF_SMOOTHING
@@ -80,14 +79,13 @@ async def run_pipeline_test() -> int:
 
     pipeline = PipelineOrchestrator(store)
 
-    params = PipelineParameters(
+    params = StageParameters(
         parsing=ParsingArgs(
             target=None,
             files=ALL_SOURCES,
             images=True,
             save=True,
         ),
-        chunking=ChunkingArgs(FILE_NAMES),
         indexing=IndexingArgs(
             files=FILE_NAMES,
             threshold=DOMAIN_STOP_THRESHOLD,

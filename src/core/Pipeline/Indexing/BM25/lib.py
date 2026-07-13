@@ -14,10 +14,29 @@ STANDARD_STOPS: Set[str] = {
     "her", "us", "them", "his", "hers", "ours", "yours", "theirs", "mine",
 }
 
-DOMAIN_STOP_THRESHOLD      = 0.30
-MIN_TOKEN_LENGTH           = 2
-DEFAULT_IDF_SMOOTHING      = 0.5
-AGGRESSIVE_IDF_SMOOTHING   = 1.0
+# Terms appearing in more than this fraction of documents are treated as
+# domain-specific stop words and excluded from indexing.
+# Range: 0.0 - 1.0 (Typical: 0.20 - 0.50)
+DOMAIN_STOP_THRESHOLD = 0.30
+
+# Minimum token length (in characters) required for a term to be indexed.
+# Shorter tokens are ignored.
+# Range: 1 - 5 (Typical: 2)
+MIN_TOKEN_LENGTH = 2
+
+# Default IDF smoothing factor used when computing BM25 IDF.
+# Balances the influence of rare and common terms.
+# Range: 0.0 - 1.0 (Typical: 0.5)
+DEFAULT_IDF_SMOOTHING = 0.5
+
+# Higher IDF smoothing factor that reduces the weight difference between
+# rare and common terms, producing more conservative rankings.
+# Range: 0.5 - 2.0 (Typical: 1.0)
+AGGRESSIVE_IDF_SMOOTHING = 1.0
+
+# Lower IDF smoothing factor that preserves stronger weighting for rare
+# terms, making rankings more sensitive to uncommon keywords.
+# Range: 0.0 - 0.5 (Typical: 0.1)
 CONSERVATIVE_IDF_SMOOTHING = 0.1
 
 
@@ -44,11 +63,17 @@ def precompute_idfs(
 @dataclass
 class BM25IndexingArgs:
     files: list[str] = field(default_factory=list)
-    
-    threshold:     float         = DOMAIN_STOP_THRESHOLD
-    idf_smoothing: float         = DEFAULT_IDF_SMOOTHING
-    rerun:         bool          = False
 
+    threshold: float = DOMAIN_STOP_THRESHOLD
+    idf_smoothing: float = DEFAULT_IDF_SMOOTHING
+    rerun: bool = False
+
+    def __post_init__(self):
+        # Clamp threshold to the valid range [0.0, 1.0].
+        self.threshold = max(0.0, min(self.threshold, 1.0))
+
+        # Clamp IDF smoothing to the valid range [0.0, 2.0].
+        self.idf_smoothing = max(0.0, min(self.idf_smoothing, 2.0))
 
 # ── BM25Data ───────────────────────────────────────────────────────────────────
 

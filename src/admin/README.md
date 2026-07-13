@@ -71,9 +71,39 @@ If none: runs full setup.
 | `status` | Show installed status per category |
 | `list [--category] [--provider]` | List all registered models (with optional filters) |
 | `install <model_id>... [--no-download] [--force]` | Install one or more models |
-| `uninstall <model_id>... [--keep-files]` | Remove models |
+| `discard --category <cat> [--all] [--active] [--inactive] [--delete]` | Discard models per category |
 | `switch <category> <model_id> [--no-download]` | Change active model for a category |
 | `keys set/status/remove --provider <name> [--key]` | Manage API keys |
+
+#### Discard (category-based)
+
+Discard models from one or more categories. Supports multiple `--category` flags.
+
+```bash
+# Interactive: shows installed models, user picks which to discard
+darwin-admin models discard --category embedding
+
+# Discard all installed models in a category
+darwin-admin models discard --category embedding --all --delete
+
+# Discard only the active model
+darwin-admin models discard --category embedding nlp --active --delete
+
+# Discard only inactive models (keep the active one)
+darwin-admin models discard --category ocr --inactive --delete
+```
+
+| Flag | Description |
+|------|-------------|
+| `--category`, `-c` | Category name(s) to discard from (required, can repeat) |
+| `--all` | Discard all installed models in each category |
+| `--active` | Discard only the active model |
+| `--inactive` | Discard only inactive models (keep the active one) |
+| `--delete` | Delete model files from disk (default: keep files) |
+
+**Behavior when no scope flag is given:**
+- Single installed model → discarded directly
+- Multiple installed models → interactive selector (pick one, all, or skip)
 
 ### `store` — Store introspection
 
@@ -223,6 +253,11 @@ darwin-admin models list --category embedding
 darwin-admin models install intfloat/multilingual-e5-small-onnx
 darwin-admin models switch embedding intfloat/multilingual-e5-large-onnx
 darwin-admin models keys set openai sk-...
+
+# Discard models (category-based)
+darwin-admin models discard --category embedding --all --delete
+darwin-admin models discard --category embedding nlp --active --delete
+darwin-admin models discard --category ocr --inactive --delete
 
 # Store inspection
 darwin-admin store status

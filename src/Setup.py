@@ -1,26 +1,5 @@
 """
 Darwin Setup — Onboarding and configuration for the Darwin RAG MCP server.
-
-Command Hierarchy
-─────────────────
-  darwin setup                    -> Guided interactive onboarding
-  darwin setup preset <name>      -> One-shot preset (non-interactive)
-  darwin setup models             -> Configure / reconfigure models
-  darwin setup embeddings         -> Configure embedding model only
-  darwin setup logs               -> Configure logging
-  darwin setup storage            -> Configure storage directory
-  darwin setup paths              -> Show all derived paths
-  darwin setup validate           -> Validate current configuration
-  darwin setup status             -> Show current state, disk usage, active models
-  darwin setup reset              -> Clear all config and start fresh
-  darwin setup doctor             -> Diagnose common issues
-
-Architecture
-────────────
-  DarwinSetup        -> Pure-Python programmatic API. Zero CLI dependencies.
-  SetupRenderer      -> Human-facing output. JSON mode bypasses entirely.
-  SetupFlow          -> Explicit state machine for the setup run.
-  Click commands     -> Thin wrappers that call DarwinSetup methods.
 """
 
 from __future__ import annotations
