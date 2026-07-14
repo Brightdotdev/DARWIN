@@ -297,7 +297,6 @@ async def main() -> int:
     parser.add_argument("--test", action="store_true", help="Run a quick test call to all configured providers")
     parser.add_argument("--test-json", action="store_true", help="Run a test with a simple JSON schema")
     parser.add_argument("--remove-provider", type=str, metavar="PROVIDER", help="Remove a provider by name")
-    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
     
     parser.add_argument("--no-keychain", action="store_true", help="Do not load keys from OS keychain")
     parser.add_argument("--profile", type=str, default=None, help="Load a specific provider profile at startup")
@@ -311,9 +310,6 @@ async def main() -> int:
         
 
     darwin.configure(
-        
-        sse_port=args.sse_port,
-        
         show_banner=True,
     )
 

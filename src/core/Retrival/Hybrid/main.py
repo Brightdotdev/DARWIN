@@ -7,8 +7,6 @@ Hybrid search: BM25 + Dense Vector (semantic) fusion – CLI entry point.
 from __future__ import annotations
 
 import time
-import argparse
-from pathlib import Path
 from typing import List, Dict, Any, Tuple
 
 from src.core.Logger.DarwinLogger import darwin
@@ -63,7 +61,7 @@ def _normalize_scores(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _rrf_fusion(
     keyword_results: List[Dict[str, Any]],
     semantic_results: List[Dict[str, Any]],
-    rrf_k: int = 60,
+    rrf_k: int = DEFAULT_RRF_K,
     semantic_weight: float = 1.0,
     keyword_weight: float = 1.0,
 ) -> List[HybridSearchResult]:
@@ -191,7 +189,7 @@ def handle_hybrid_search(
         b=args.b,
         per_doc_top_k=args.per_doc_top_k,
     )
-    keyword_raw = handle_keyword_search(kw_args, store=store) or []
+    keyword_raw = handle_keyword_search(kw_args, store=store)
     darwin.info(f"Keyword: {len(keyword_raw)} results")
 
     # Semantic search
@@ -202,7 +200,7 @@ def handle_hybrid_search(
         min_score=0.0,
         per_doc_top_k=args.per_doc_top_k,
     )
-    semantic_raw = handle_semantic_search(sem_args, store=store) or []
+    semantic_raw = handle_semantic_search(sem_args, store=store)
     darwin.info(f"Semantic: {len(semantic_raw)} results")
 
     if not keyword_raw and not semantic_raw:
@@ -293,10 +291,8 @@ def handle_hybrid_search(
 
 # ---- CLI ----
 def main() -> int:
-    import sys
     import argparse
     from src.core.Storage.DarwinStore import DarwinStore
-    from src.lib.Utils import ensure_writable_directory
 
     parser = argparse.ArgumentParser(description="Hybrid search (BM25 + semantic)")
     parser.add_argument("query", nargs="?", help="Search query")
@@ -334,9 +330,7 @@ def main() -> int:
         help="Limit results per document (None=unlimited). Prevents large docs from dominating.",
     )
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    parser.add_argument(
-        "--sse-port", type=int, default=8765, help="WebSocket server port"
-    )
+    parser.add_argument("--sse", action="store_true", help="Enable SSE logging")
 
     args = parser.parse_args()
 
@@ -344,13 +338,18 @@ def main() -> int:
     if not query:
         parser.error("Query required (either positional or --query)")
 
-    darwin.configure(sse_port=args.sse_port, show_banner=True)
+    from src.core.Logger.DarwinLogger import OutputMode
+
+    darwin.configure(
+        show_banner=True,
+        mode=OutputMode.BOTH if args.sse else OutputMode.TERMINAL,
+    )
 
     try:
         store = DarwinStore(args.store_dir) if args.store_dir else DarwinStore()
         search_args = HybridSearchArgs(
             query=query,
-            files=args.file,
+            files=args.file or [],
             top_k=args.top_k,
             pool_size=args.pool_size,
             rrf_k=args.rrf_k,

@@ -1,10 +1,4 @@
-"""
-src/features/Retrival/Hybrid/HybridSearch.py
---------------------------------------------
-Hybrid search: combine semantic and keyword results using RRF.
-"""
-
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import List, Optional
 
 from src.core.Retrival.Semantic.SemanticSearch import (
@@ -166,8 +160,16 @@ def search_single_document_hybrid(
     with ThreadPoolExecutor(max_workers=2) as executor:
         sem_future = executor.submit(_semantic)
         kw_future = executor.submit(_keyword)
-        semantic_results = sem_future.result()
-        keyword_results = kw_future.result()
+        try:
+            semantic_results = sem_future.result(timeout=60)
+        except FuturesTimeoutError:
+            darwin.warning("Semantic search timed out after 60s")
+            semantic_results = []
+        try:
+            keyword_results = kw_future.result(timeout=60)
+        except FuturesTimeoutError:
+            darwin.warning("Keyword search timed out after 60s")
+            keyword_results = []
 
     if not semantic_results and not keyword_results:
         darwin.warning("No results from either semantic or keyword search")
@@ -236,8 +238,16 @@ def search_across_documents_hybrid(
     with ThreadPoolExecutor(max_workers=2) as executor:
         sem_future = executor.submit(_semantic)
         kw_future = executor.submit(_keyword)
-        semantic_results = sem_future.result()
-        keyword_results = kw_future.result()
+        try:
+            semantic_results = sem_future.result(timeout=120)
+        except FuturesTimeoutError:
+            darwin.warning("Semantic search timed out after 120s")
+            semantic_results = []
+        try:
+            keyword_results = kw_future.result(timeout=120)
+        except FuturesTimeoutError:
+            darwin.warning("Keyword search timed out after 120s")
+            keyword_results = []
 
     darwin.info(f"Semantic: {len(semantic_results)} candidates")
     darwin.info(f"Keyword: {len(keyword_results)} candidates")

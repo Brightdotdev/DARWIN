@@ -1,17 +1,10 @@
-"""
-src/features/Retrival/Reranking/Reranker.py
--------------------------------------------
-Cross‑encoder reranking for improved search precision.
-"""
-
 from dataclasses import dataclass, field
 from typing import List, Optional, Any
 import numpy as np
 
-from src.core.Retrival.lib import OverlapDirection, ChunkLink
+from src.core.Retrival.lib import OverlapDirection, ChunkLink,DEFAULT_TOP_K,DEFAULT_RERANK_WEIGHT
 from src.core.Logger.DarwinLogger import darwin
 
-DEFAULT_TOP_K = 100
 
 
 @dataclass
@@ -82,7 +75,7 @@ def rerank_results(
     query: str,
     candidates: List[Any],
     top_k: int = DEFAULT_TOP_K,
-    original_score_weight: float = 0.3,
+    original_score_weight: float =DEFAULT_RERANK_WEIGHT,
 ) -> List[RerankedResult]:
     """Re‑score candidate chunks with a cross‑encoder."""
     from src.core.Models.ModelManager import modelManager
@@ -165,8 +158,7 @@ def rerank_results(
         ))
 
     reranked.sort(key=lambda x: x.final_score, reverse=True)
-    result_count = min(top_k, len(reranked))
-    darwin.success(f"Reranked: returning top {result_count} results")
+    darwin.success(f"Reranked: returning top {min(top_k, len(reranked))} results")
     return reranked[:top_k]
 
 

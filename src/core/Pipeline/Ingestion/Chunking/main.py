@@ -184,17 +184,12 @@ async def main() -> int:
         help="Files to chunk (paths or bare filenames). Omit to chunk all parsed files.",
     )
     parser.add_argument("--rerun",   "-R", action="store_true", help="Rechunk even if fresh chunks exist")
-    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
 
     args = parser.parse_args()
 
 
     darwin.configure(
-        
-        sse_port=args.sse_port,
-        
-        
         show_banner=True,
     )
 

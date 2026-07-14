@@ -147,17 +147,11 @@ async def main() -> int:
     mode.add_argument("--only-semantic", action="store_true", help="Run semantic embedding only")
 
     
-    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
-    
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
 
     args = parser.parse_args()
 
     darwin.configure(
-        
-        sse_port=args.sse_port,
-        
-        
         show_banner=True,
     )
 

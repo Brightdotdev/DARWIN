@@ -1,10 +1,8 @@
-from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 from src.core.Pipeline.Indexing.BM25.lib import  compute_idf
 
 
-DEFAULT_TOP_K = 40
-DEFAULT_K1 = 1.5
+
 
 
 

@@ -1,9 +1,4 @@
-"""
-src/features/Retrival/Semantic/main.py - Semantic search CLI
-"""
-
 import sys
-import argparse
 from pathlib import Path
 from typing import List
 
@@ -32,13 +27,13 @@ def _validate_files(files: List[str], store: DarwinStore, mode: str = "semantic"
     return valid
 
 
-def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List[SemanticSearchResult] | None:
+def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List[SemanticSearchResult]:
     from src.core.Models.ModelConfig import get_active_model
     model_name = get_active_model("embedding")
 
     if model_name is None:
         darwin.error("No active embedding model found. Run model setup first.")
-        return None
+        return []
 
     darwin.info("")
     darwin.info("Semantic Search")
@@ -53,7 +48,7 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
         tobe_searched = _validate_files(args.files, store)
         if not tobe_searched:
             darwin.error("No valid files to search. Search aborted.")
-            return None
+            return []
         darwin.info(f"Searching {len(tobe_searched)} valid files for '{args.query}'")
     else:
         tobe_searched = [
@@ -66,7 +61,7 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
 
     if not tobe_searched:
         darwin.warning("No searchable files found. Run the embedding pipeline first.")
-        return None
+        return []
 
     results = search_across_documents(
         query=args.query,
@@ -86,7 +81,7 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
         darwin.info("  - Using different or more specific keywords")
         darwin.info("  - Lowering the minimum score threshold (--min-score)")
         darwin.info("  - Searching a specific file with --file")
-        return None
+        return []
 
     darwin.success(f"Found {len(results)} results")
     darwin.info("")
@@ -107,7 +102,8 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
 
 
 def main() -> int:
-    from src.core.Storage.DarwinStore import DarwinStore
+    import argparse
+
     from src.lib.Utils import ensure_writable_directory
 
     parser = argparse.ArgumentParser(
@@ -122,7 +118,7 @@ def main() -> int:
     parser.add_argument("--per-doc-top-k", type=int, default=None,
                         help="Limit results per document (None=unlimited). Use to prevent large documents from dominating.")
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
+    parser.add_argument("--sse", action="store_true", help="Enable SSE logging")
 
     args = parser.parse_args()
 
@@ -130,12 +126,17 @@ def main() -> int:
     if not query:
         parser.error("Query required (either positional or --query)")
 
-    darwin.configure(sse_port=args.sse_port, show_banner=True)
+    from src.core.Logger.DarwinLogger import OutputMode
+
+    darwin.configure(
+        show_banner=True,
+        mode=OutputMode.BOTH if args.sse else OutputMode.TERMINAL,
+    )
 
     try:
         search_args = SemanticSearchArgs(
             query=query,
-            files=args.file,
+            files=args.file or [],
             top_k=args.top_k,
             min_score=args.min_score,
             per_doc_top_k=args.per_doc_top_k,   # <-- new

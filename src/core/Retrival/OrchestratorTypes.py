@@ -82,11 +82,18 @@ class OrchestratorConfig:
             "filter_structural": self.filter_structural,
             "structural_penalty_factor": self.structural_penalty_factor,
             "fallback_strategy": self.fallback_strategy.value,
+            "fallback_top_k": self.fallback_top_k,
+            "fallback_max_chars": self.fallback_max_chars,
+            "fallback_min_score": self.fallback_min_score,
+            "fallback_min_passages": self.fallback_min_passages,
             "include_metadata": self.include_metadata,
             "include_audit": self.include_audit,
+            "include_raw_results": self.include_raw_results,
+            "return_empty_on_fallback": self.return_empty_on_fallback,
             "rerank": self.rerank,
             "rerank_weight": self.rerank_weight,
             "rerank_top_k": self.rerank_top_k,
+            "log_level": self.log_level,
         }
 
 

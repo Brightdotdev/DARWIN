@@ -1,9 +1,3 @@
-"""
-src/features/Retrival/Semantic/SemanticSearch.py
------------------------------------------------
-Semantic search orchestration: embed query once, reuse across documents.
-"""
-
 import numpy as np
 from typing import List, Optional
 
@@ -11,6 +5,7 @@ from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Pipeline.Indexing.Embedding.Embedder import EmbeddingSession
 from src.core.Logger.DarwinLogger import darwin
 from src.core.Retrival.lib import OverlapDirection, SemanticSearchResult, ChunkLink
+from src.core.Retrival.retrieval_utils import normalize_links
 
 _RESULT_COLUMNS = [
     "text",
@@ -24,18 +19,6 @@ _RESULT_COLUMNS = [
     "overlap_direction",
     "structural_type",
 ]
-
-
-def _normalize_links(links_raw: list) -> list:
-    out = []
-    for l in links_raw or []:
-        if isinstance(l, dict):
-            out.append(ChunkLink(url=l.get("url", ""), text=l.get("text", "")))
-        elif isinstance(l, ChunkLink):
-            out.append(l)
-        else:
-            out.append(ChunkLink(url=str(l), text=""))
-    return out
 
 
 def _rows_to_results(
@@ -58,7 +41,7 @@ def _rows_to_results(
                 page_end=row.get("page_end", 0),
                 heading=row.get("heading", ""),
                 chunk_index=row.get("index", 0),
-                links=_normalize_links(row.get("links", [])),
+                links=normalize_links(row.get("links", [])),
                 overlap_direction=od,
             )
         )
@@ -75,6 +58,7 @@ def search_single_document(
     use_usearch: bool = True,
     session: Optional[EmbeddingSession] = None,
     query_vec: Optional[np.ndarray] = None,
+    per_doc_top_k: Optional[int] = None,
 ) -> List[SemanticSearchResult]:
     """
     Search within a single document.
@@ -103,7 +87,10 @@ def search_single_document(
             )
         if not rows:
             return []
-        return _rows_to_results(rows, default_source=filename)
+        results = _rows_to_results(rows, default_source=filename)
+        if per_doc_top_k is not None and per_doc_top_k > 0:
+            results = results[:per_doc_top_k]
+        return results
     else:
         # Reuse provided session and vector
         rows = store.search_single(
@@ -116,7 +103,10 @@ def search_single_document(
         )
         if not rows:
             return []
-        return _rows_to_results(rows, default_source=filename)
+        results = _rows_to_results(rows, default_source=filename)
+        if per_doc_top_k is not None and per_doc_top_k > 0:
+            results = results[:per_doc_top_k]
+        return results
 
 
 def _search_across_documents_with_vector(

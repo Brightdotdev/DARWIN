@@ -4,6 +4,18 @@ from enum import Enum
 
 from src.core.Logger.DarwinLogger import darwin
 
+
+RETRIVAL_COLUMNS = [
+            "index",
+            "text",
+            "clean",
+            "page",
+            "page_end",
+            "heading",
+            "structural_type",
+            "links",
+            "overlap_direction",]
+
 # -------------------- ENUMS & BASE MODELS --------------------
 class OverlapDirection(str, Enum):
     NONE = "none"
@@ -39,6 +51,9 @@ DEFAULT_KEYWORD_WEIGHT = 1.0
 DEFAULT_MIN_SCORE = 0.0
 DEFAULT_RERANK_WEIGHT = 0.3
 DEFAULT_RERANK_TOP_K = 100
+
+# Infrastructure
+DEFAULT_SSE_PORT = 8765
 
 # -------------------- HELPER FUNCTIONS FOR VALIDATION --------------------
 def _clamp_float(value: float, min_val: float, max_val: float, param_name: str) -> float:

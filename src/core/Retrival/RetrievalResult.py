@@ -9,6 +9,7 @@ from src.core.Retrival.lib import (
     ChunkLink,
     SearchAudit,
 )
+from src.core.Retrival.retrieval_utils import normalize_links, ensure_overlap_direction
 
 
 class ResultType(str, Enum):
@@ -65,18 +66,6 @@ class RetrievalResult:
         )
 
 
-def _normalize_links(links_raw: Any) -> List[ChunkLink]:
-    out = []
-    for l in links_raw or []:
-        if isinstance(l, dict):
-            out.append(ChunkLink(url=l.get("url", ""), text=l.get("text", "")))
-        elif isinstance(l, ChunkLink):
-            out.append(l)
-        else:
-            out.append(ChunkLink(url=str(l), text=""))
-    return out
-
-
 def from_hybrid(r: Any) -> RetrievalResult:
     score = getattr(r, "final_score", None)
     if score is None:
@@ -91,10 +80,10 @@ def from_hybrid(r: Any) -> RetrievalResult:
         page_end=getattr(r, "page_end", None),
         heading=getattr(r, "heading", None),
         chunk_index=getattr(r, "chunk_index", None),
-        overlap_direction=_ensure_overlap_direction(
+        overlap_direction=ensure_overlap_direction(
             getattr(r, "overlap_direction", OverlapDirection.NONE)
         ),
-        links=_normalize_links(getattr(r, "links", [])),
+        links=normalize_links(getattr(r, "links", [])),
         rrf_score=getattr(r, "rrf_score", None),
         semantic_score=getattr(r, "semantic_score", None),
         keyword_score=getattr(r, "keyword_score", None),
@@ -116,26 +105,15 @@ def from_semantic(r: Any) -> RetrievalResult:
         page_end=getattr(r, "page_end", None),
         heading=getattr(r, "heading", None),
         chunk_index=getattr(r, "chunk_index", None),
-        overlap_direction=_ensure_overlap_direction(
+        overlap_direction=ensure_overlap_direction(
             getattr(r, "overlap_direction", OverlapDirection.NONE)
         ),
-        links=_normalize_links(getattr(r, "links", [])),
+        links=normalize_links(getattr(r, "links", [])),
         matched_terms=getattr(r, "matched_terms", None),
         rerank_score=getattr(r, "rerank_score", None),
         rerank_original_score=getattr(r, "original_score", None),
         audit=getattr(r, "audit", None),
     )
-
-
-def _ensure_overlap_direction(val: Any) -> OverlapDirection:
-    if isinstance(val, OverlapDirection):
-        return val
-    if isinstance(val, str):
-        try:
-            return OverlapDirection(val)
-        except ValueError:
-            pass
-    return OverlapDirection.NONE
 
 
 def from_keyword(r: Any) -> RetrievalResult:
@@ -149,10 +127,10 @@ def from_keyword(r: Any) -> RetrievalResult:
         page_end=getattr(r, "page_end", None),
         heading=getattr(r, "heading", None),
         chunk_index=getattr(r, "chunk_index", None),
-        overlap_direction=_ensure_overlap_direction(
+        overlap_direction=ensure_overlap_direction(
             getattr(r, "overlap_direction", OverlapDirection.NONE)
         ),
-        links=_normalize_links(getattr(r, "links", [])),
+        links=normalize_links(getattr(r, "links", [])),
         matched_terms=getattr(r, "matched_terms", None),
         rerank_score=getattr(r, "rerank_score", None),
         rerank_original_score=getattr(r, "original_score", None),

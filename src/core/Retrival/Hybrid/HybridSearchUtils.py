@@ -105,8 +105,7 @@ def merge_results(
             if hasattr(r, "matched_terms") and r.matched_terms:
                 seen[k].matched_terms.update(r.matched_terms)
 
-
-
+    return list(seen.values())
 
 def build_ranked_lists(
     items: List[HybridSearchResult],

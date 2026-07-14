@@ -371,10 +371,7 @@ def main() -> int:
     parser.add_argument("--file", "-f", nargs="+", default=None, help="Parse specific file(s) or URL(s)")
     parser.add_argument("--precise", action="store_true", help="Use precise extraction (layout-aware for PDFs, markdown output for HTML)")
     parser.add_argument("--no-save", action="store_true", help="Don't save markdown files (preview only)")
-    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
-    
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-   
     args = parser.parse_args()
 
     if (args.caption or args.ocr) and not args.images:
@@ -382,10 +379,6 @@ def main() -> int:
 
 
     darwin.configure(
-        
-        sse_port=args.sse_port,
-        
-        
         show_banner=True,
     )
 

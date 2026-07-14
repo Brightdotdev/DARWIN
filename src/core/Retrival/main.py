@@ -68,7 +68,7 @@ def _run_hybrid(args: RetrievalArgs, store) -> List[Any]:
         b=args.b,
         per_doc_top_k=args.per_doc_top_k,  # <-- propagate
     )
-    return handle_hybrid_search(hybrid_args, store=store) or []
+    return handle_hybrid_search(hybrid_args, store=store)
 
 
 def _run_semantic(args: RetrievalArgs, store) -> List[Any]:
@@ -79,7 +79,7 @@ def _run_semantic(args: RetrievalArgs, store) -> List[Any]:
         min_score=args.min_score,
         per_doc_top_k=args.per_doc_top_k,  # <-- propagate
     )
-    return handle_semantic_search(sem_args, store=store) or []
+    return handle_semantic_search(sem_args, store=store)
 
 
 def _run_keyword(args: RetrievalArgs, store) -> List[Any]:
@@ -91,7 +91,7 @@ def _run_keyword(args: RetrievalArgs, store) -> List[Any]:
         b=args.b,
         per_doc_top_k=args.per_doc_top_k,  # <-- propagate
     )
-    return handle_keyword_search(kw_args, store=store) or []
+    return handle_keyword_search(kw_args, store=store)
 
 
 def _rerank(
@@ -145,7 +145,8 @@ def _rerank(
         darwin.warning("Reranker not available, skipping")
         return candidates
     except Exception as e:
-        darwin.error(f"Reranking failed: {e}, returning original order")
+        darwin.error(f"Reranking failed: {type(e).__name__}: {e}")
+        darwin.info("Returning original order")
         return candidates
 
 
@@ -287,9 +288,8 @@ Examples:
     rerank.add_argument("--rerank-top-k", type=int, default=DEFAULT_RERANK_TOP_K)
 
     parser.add_argument("--store-dir", default=None)
-    parser.add_argument("--sse-port", type=int, default=8765)
     parser.add_argument(
-        "--no-ws", action="store_true", help="Disable WebSocket logging"
+        "--sse", action="store_true", help="Enable SSE logging (requires SSE server)"
     )
 
     return parser
@@ -306,7 +306,12 @@ def main() -> int:
     if not query:
         parser.error("Query required")
 
-    darwin.configure(sse_port=cli.sse_port, show_banner=True)
+    from src.core.Logger.DarwinLogger import OutputMode
+
+    darwin.configure(
+        show_banner=True,
+        mode=OutputMode.BOTH if cli.sse else OutputMode.TERMINAL,
+    )
 
     try:
         args = RetrievalArgs(
@@ -326,8 +331,6 @@ def main() -> int:
             rerank_weight=cli.rerank_weight,
             rerank_top_k=cli.rerank_top_k,
             store_dir=cli.store_dir,
-            sse_port=cli.sse_port,
-            no_ws=cli.no_ws,
         )
 
         with darwin.session("retrieval"):

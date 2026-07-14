@@ -167,16 +167,10 @@ async def main() -> int:
     )
 
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    
-    parser.add_argument("--sse-port", type=int, default=8765)
 
     args = parser.parse_args()
 
     darwin.configure(
-        
-        sse_port=args.sse_port,
-        
-        
         show_banner=True,
     )
 

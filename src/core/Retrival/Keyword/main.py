@@ -1,6 +1,5 @@
 # main.py (search)
 import sys
-import argparse
 import time
 from pathlib import Path
 from typing import List
@@ -96,7 +95,7 @@ def _display_search_results(
 
 def handle_keyword_search(
     args: KeywordSearchArgs, store: DarwinStore
-) -> List[KeywordSearchResult] | None:
+) -> List[KeywordSearchResult]:
     darwin.info("")
     darwin.info("Keyword Search")
     darwin.info(f"Query: {args.query}")
@@ -109,13 +108,12 @@ def handle_keyword_search(
     _display_search_results(results, args)
 
     if not results:
-        return None
+        return []
     return results
 
 
 def main() -> int:
-    from src.core.Storage.DarwinStore import DarwinStore
-
+    import argparse
     parser = argparse.ArgumentParser(
         description="BM25 keyword search over indexed documents"
     )
@@ -131,7 +129,7 @@ def main() -> int:
     parser.add_argument("--b", type=float, default=DEFAULT_B)
     parser.add_argument("--json", "-j", action="store_true")
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    parser.add_argument("--sse-port", type=int, default=8765, help="server port")
+    parser.add_argument("--sse", action="store_true", help="Enable SSE logging")
     parser.add_argument(
         "--top-k-per-doc", type=int, default=None, help="Max retrival per document"
     )
@@ -144,12 +142,17 @@ def main() -> int:
     if not query:
         parser.error("Query required (either as positional or --query)")
 
-    darwin.configure(sse_port=args.sse_port, show_banner=True)
+    from src.core.Logger.DarwinLogger import OutputMode
+
+    darwin.configure(
+        show_banner=True,
+        mode=OutputMode.BOTH if args.sse else OutputMode.TERMINAL,
+    )
 
     try:
         search_args = KeywordSearchArgs(
             query=query,
-            files=args.file,
+            files=args.file or [],
             top_k=args.top_k,
             k1=args.k1,
             b=args.b,

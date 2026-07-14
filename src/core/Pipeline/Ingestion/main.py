@@ -153,18 +153,12 @@ def main() -> int:
 
     # chunking flags
 
-    # CHANGED: unified darwin.configure flags (consistent across all pipelines)
-    parser.add_argument("--sse-port", type=int, default=8765, help="WebSocket server port")
-    
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
 
     args = parser.parse_args()
 
     # CHANGED: use darwin.configure() — no manual WebSocket imports
     darwin.configure(
-
-        sse_port=args.sse_port,
-        
         show_banner=True,
     )
 

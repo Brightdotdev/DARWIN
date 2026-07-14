@@ -111,8 +111,6 @@ async def main() -> int:
                         help=f"IDF smoothing parameter (default: {DEFAULT_IDF_SMOOTHING})")
     parser.add_argument("--rerun",    "-R",  action="store_true",                help="Re-index even if fresh index exists")
     parser.add_argument("--store-dir", default=None, help="Darwin store directory")
-    
-    parser.add_argument("--sse-port", type=int, default=8765,                     help="WebSocket server port (default: 8765)")
 
     args = parser.parse_args()
 
@@ -121,10 +119,6 @@ async def main() -> int:
 
     # Setup WebSocket
     darwin.configure(
-        
-        sse_port=args.sse_port,
-        
-        
         show_banner=True,
     )
 

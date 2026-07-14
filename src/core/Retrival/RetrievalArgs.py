@@ -20,7 +20,11 @@ from src.core.Retrival.lib import (
     DEFAULT_B,
     DEFAULT_RERANK_WEIGHT,
     DEFAULT_RERANK_TOP_K,
+    _clamp_float,
+    _warn_and_reset_int,
+    _warn_and_reset_float,
 )
+from src.core.Logger.DarwinLogger import darwin
 
 
 @dataclass
@@ -56,5 +60,26 @@ class RetrievalArgs:
 
     # Storage & logging
     store_dir: Optional[str] = None
-    sse_port: int = 8765
-    no_sse: bool = False
+
+    def __post_init__(self) -> None:
+        """Runtime validation with safe moderation for all parameters."""
+        self.top_k = _warn_and_reset_int(self.top_k, 1, DEFAULT_TOP_K, "top_k")
+        self.pool_size = max(self.top_k, _warn_and_reset_int(
+            self.pool_size, 1, DEFAULT_POOL_SIZE, "pool_size"
+        ))
+        self.rrf_k = _warn_and_reset_int(self.rrf_k, 1, DEFAULT_RRF_K, "rrf_k")
+        self.k1 = _clamp_float(self.k1, 0.01, 3.0, "BM25 'k1'")
+        self.b = _clamp_float(self.b, 0.0, 1.0, "BM25 'b'")
+        self.semantic_weight = _warn_and_reset_float(
+            self.semantic_weight, 0.0, DEFAULT_SEMANTIC_WEIGHT, "semantic_weight"
+        )
+        self.keyword_weight = _warn_and_reset_float(
+            self.keyword_weight, 0.0, DEFAULT_KEYWORD_WEIGHT, "keyword_weight"
+        )
+        self.min_score = _clamp_float(self.min_score, 0.0, 1.0, "min_score")
+        if self.per_doc_top_k is not None and self.per_doc_top_k < 1:
+            darwin.warning(
+                f"per_doc_top_k must be >= 1 or None. "
+                f"Received {self.per_doc_top_k}; reset to None."
+            )
+            self.per_doc_top_k = None
