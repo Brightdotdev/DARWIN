@@ -3,16 +3,15 @@ MCP tools for PipelineOrchestrator.
 Exposes run_pipeline, purge_artifacts, and pipeline_report via FastMCP.
 """
 
-import json
 import re
-import traceback
 from typing import Optional
 
 from mcp.types import ToolAnnotations
 
 from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
-from src.core.Orchestrators.lib import PipelineMode, resolve_store
+from src.core.Orchestrators.lib import resolve_store
 from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+from src.core.Logger.DarwinLogger import darwin
 
 _STAGE_MAP = {
     "ingest": "ingestion", "extract": "ingestion", "parse": "ingestion",
@@ -70,7 +69,7 @@ def register(mcp, pipeline):
             openWorldHint=False,
         ),
     )
-    def run_pipeline(
+    async def run_pipeline(
         stages: list[str],
         target: str = "",
         store: Optional[str] = None,
@@ -84,9 +83,19 @@ def register(mcp, pipeline):
         only_kw: bool = False,
         only_semantic: bool = False,
         strict: bool = True,
-        log_mode: PipelineMode = "quiet",
     ) -> dict:
-        """Run ingestion/indexing pipeline stages."""
+        """Run ingestion/indexing pipeline stages.
+
+        Stages: 'ingestion' (or aliases: ingest, extract, parse, chunk, ocr, clean)
+                'indexing'  (or aliases: index, embed)
+
+        Usage tips:
+        - Always pass a 'target' path or URL for ingestion.
+        - Use 'rerun=true' to re-process files that already have artifacts.
+        - 'strict=true' (default) halts on first failure; set false to continue.
+        - Logs returned are filtered to WARNING/ERROR/SUCCESS only.
+        - Pass store name/path/ID to run against a specific store.
+        """
         try:
             stages = _validate_stages(stages)
             target = _validate_target(target)
@@ -104,14 +113,17 @@ def register(mcp, pipeline):
                 only_kw=only_kw,
                 only_semantic=only_semantic,
                 strict=strict,
-                log_mode=log_mode,
             )
-            if store:
-                resolved = resolve_store(store)
-                resolved.bootstrap(quiet=True)
-                result = PipelineOrchestrator(store=resolved).build_pipeline(params)
-            else:
-                result = pipeline.build_pipeline(params)
+
+            def _blocking():
+                if store:
+                    resolved = resolve_store(store)
+                    resolved.bootstrap(quiet=True)
+                    return PipelineOrchestrator(store=resolved).build_pipeline(params)
+                return pipeline.build_pipeline(params)
+
+            import asyncio
+            result = await asyncio.get_event_loop().run_in_executor(None, _blocking)
             return {
                 "success": result.success,
                 "data": {
@@ -121,7 +133,8 @@ def register(mcp, pipeline):
                 },
             }
         except Exception as e:
-            return {"success": False, "error": str(e), "detail": traceback.format_exc()}
+            darwin.error(f"run_pipeline failed: {type(e).__name__}: {e}")
+            return {"success": False, "error": str(e)}
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -132,15 +145,32 @@ def register(mcp, pipeline):
             openWorldHint=False,
         ),
     )
-    def purge_artifacts(stages: list[str], filenames: list[str]) -> dict:
-        """Delete pipeline artifacts for specific files."""
+    async def purge_artifacts(stages: list[str], filenames: list[str], dry_run: bool = False) -> dict:
+        """Delete pipeline artifacts for specific files.
+
+        Usage tips:
+        - Always pass dry_run=true first to preview what will be deleted.
+        - Stages: 'ingestion' removes markdown/records; 'indexing' removes embeddings/vector/bm25.
+        - filenames must be exact matches to the original filenames used during ingestion.
+        """
         try:
             stages = _validate_stages(stages)
             filenames = _validate_filenames(filenames)
-            pipeline.purge(stages, filenames)
+            if dry_run:
+                return {"success": True, "data": {
+                    "message": "Dry run — no changes made",
+                    "stages": stages,
+                    "filenames": filenames,
+                }}
+
+            import asyncio
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: pipeline.purge(stages, filenames)
+            )
             return {"success": True, "data": {"message": "Purge completed"}}
         except Exception as e:
-            return {"success": False, "error": str(e), "detail": traceback.format_exc()}
+            darwin.error(f"purge_artifacts failed: {type(e).__name__}: {e}")
+            return {"success": False, "error": str(e)}
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -151,10 +181,20 @@ def register(mcp, pipeline):
             openWorldHint=False,
         ),
     )
-    def pipeline_report(filename: Optional[str] = None) -> dict:
-        """Get pipeline report for files."""
+    async def pipeline_report(filename: Optional[str] = None) -> dict:
+        """Get pipeline report for files — shows which stages are complete per file.
+
+        Usage tips:
+        - Call without arguments to see all files.
+        - Pass a specific filename to check that file's status only.
+        - Use this before running pipeline to decide if rerun is needed.
+        """
         try:
-            report = pipeline.store.get_pipeline_report(filename)
+            import asyncio
+            report = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: pipeline.store.get_pipeline_report(filename)
+            )
             return {"success": True, "data": report}
         except Exception as e:
-            return {"success": False, "error": str(e), "detail": traceback.format_exc()}
+            darwin.error(f"pipeline_report failed: {type(e).__name__}: {e}")
+            return {"success": False, "error": str(e)}

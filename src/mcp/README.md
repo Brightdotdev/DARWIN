@@ -19,7 +19,7 @@ darwin mcp --http --port 8765
 darwin mcp --temp-port 9000
 ```
 
-All transports share the same 11 tools, 5 resources, and validation logic.
+All transports share the same 7 tools, 3 resources, and validation logic.
 The unified server (`UnifiedServer.py`) handles SSE, HTTP, log streaming,
 history, and health in a single process.
 
@@ -61,7 +61,7 @@ When running with `--sse` or `--http`, the unified server provides:
 consumers (web dashboards, IDE plugins). The agent uses `/sse` or `/mcp`
 for tool calls only.
 
-## Available tools (11)
+## Available tools (7)
 
 ### Search
 - **`search_darwin`** — Query the knowledge base with hybrid/semantic/keyword search.
@@ -71,26 +71,18 @@ for tool calls only.
 - **`purge_artifacts`** — Delete pipeline artifacts for specific files.
 - **`pipeline_report`** — Get processing status for files.
 
-### Models
-- **`model_status`** — Check which models are installed per category.
-- **`install_model`** — Download and register a model.
-- **`switch_model`** — Change the active model for a category.
-- **`recommend_models`** — Get model recommendations for your hardware.
-
 ### Store
 - **`create_store`** — Create a new DarwinStore at a given path.
 - **`list_files`** — All files with pipeline status.
 - **`file_status`** — Detailed status for one file.
 
-## Available resources (5)
+## Available resources (3)
 
 | URI | Description |
 |-----|-------------|
 | `darwin://store/files` | List of files tracked by the current store |
 | `darwin://store/report` | Full pipeline report for the current store |
 | `darwin://store/stats` | Store statistics: file count, stages |
-| `darwin://models/status` | Model status across all categories |
-| `darwin://models/recommendations` | Recommended models for each category |
 
 ## Tool annotations
 
@@ -102,10 +94,6 @@ All tools include MCP-compliant annotations for client-side safety:
 | `run_pipeline` | no | no | no | no |
 | `purge_artifacts` | no | **yes** | yes | no |
 | `pipeline_report` | yes | no | yes | no |
-| `model_status` | yes | no | yes | no |
-| `install_model` | no | no | no | **yes** |
-| `switch_model` | no | no | yes | no |
-| `recommend_models` | yes | no | yes | no |
 | `create_store` | no | no | yes | no |
 | `list_files` | yes | no | yes | no |
 | `file_status` | yes | no | yes | no |
@@ -116,10 +104,9 @@ All tool parameters are validated before reaching orchestrators:
 
 - **Search**: query max 4096 chars, non-empty
 - **Pipeline**: stage whitelist, target path non-empty + max 2048 chars, invalid characters blocked, filenames validated
-- **Models**: category whitelist (`embedding`, `nlp`, `ocr`, `reranker`, `vision`), model_id max 256 chars, invalid characters blocked
 - **Store**: path max 2048 chars, `..` traversal blocked, invalid characters blocked, filename validation on `file_status`, name max 256 chars
 
-All tools return structured `{"success": bool, "data": ..., "error": ...}` responses. Exceptions are caught and returned as error objects with traceback detail.
+All tools return structured `{"success": bool, "data": ..., "error": ...}` responses. Exceptions are caught and returned as error objects (traceback logged server-side only).
 
 ## Health endpoint
 
@@ -155,7 +142,7 @@ darwin config http --host 127.0.0.1 --port 8765
 
 1. Create or edit a file in `src/mcp/tools/`
 2. Add a `register(mcp, ...)` function with `@mcp.tool(annotations=ToolAnnotations(...))` decorators
-3. Wire it in `src/mcp/Server.py` (stdio) and `src/mcp/UnifiedServer.py` (SSE/HTTP):
+3. Wire it in `src/mcp/app_factory.py`:
    ```python
    import src.mcp.tools.MyTool as MyTool
    MyTool.register(mcp, dependency)
@@ -171,15 +158,18 @@ darwin config http --host 127.0.0.1 --port 8765
 ```
 Logger/                   mcp/
   DarwinLogger.py           UnifiedServer.py  ← subscribes to darwin events, SSE + HTTP + health
-  TerminalUi.py             Server.py         ← stdio entry point (create_mcp_app)
-  SQLiteHistoryStore.py     tools/*.py        ← tool implementations
-  lib.py                    tools/Resources.py ← resource definitions
+  TerminalUi.py             Server.py         ← stdio entry point
+  SQLiteHistoryStore.py     app_factory.py    ← single source of truth for tool registration
+  lib.py                    tools/*.py        ← tool implementations
+                            tools/Resources.py ← resource definitions
 ```
 
 - **Logger** is pure — it emits events and stores them. Zero imports from Orchestrators / Storage / Pipeline.
-- **mcp/UnifiedServer** uses FastMCP with `custom_route()` to mount log SSE, history, and health endpoints alongside the MCP transports. Health checks store + models, returns 503 when degraded. Saves resolved port back to `logging.json`.
-- **mcp/Server** builds a FastMCP via `create_mcp_app()` and runs stdio transport.
+- **mcp/UnifiedServer** uses FastMCP with `custom_route()` to mount log SSE, history, and health endpoints alongside the MCP transports. Health checks store, returns 503 when degraded. Saves resolved port back to `logging.json`.
+- **mcp/Server** builds a FastMCP via `app_factory.create_mcp_app()` and runs stdio transport.
+- **mcp/app_factory** is the single source of truth — both Server.py and UnifiedServer.py call `create_mcp_app()` so adding a tool only requires one edit.
 - **DarwinLogger.configure(mode=SSE/BOTH)** starts `UnifiedServer` in a background thread. `shutdown()` closes SSE server + history store.
 - **Stdio mode** — logger is silenced (`mode=none`) to keep stdout clean for JSON-RPC. Logs still go to SQLite history and SSE stream if configured.
-- **Tool annotations** — all 11 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
+- **Tool annotations** — all 7 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
 - **Input validation** — all tools validate parameters before reaching orchestrators. Exceptions returned as structured error objects, never silently swallowed.
+- **Async tools** — all tool functions are async with blocking orchestrator calls dispatched via `run_in_executor`.

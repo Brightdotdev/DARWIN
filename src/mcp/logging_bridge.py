@@ -1,0 +1,67 @@
+"""
+MCP Logging Bridge — forwards DarwinLogger events as MCP log notifications.
+
+When a tool runs, it creates an MCPLogBridge subscriber that listens to
+DarwinLogger events and forwards them as ctx.log() calls to the MCP client
+(Claude Desktop, Cursor, etc.).
+
+Usage in tool handlers:
+    bridge = MCPLogBridge(ctx)
+    darwin.subscribe(bridge)
+    try:
+        # ... tool logic ...
+    finally:
+        darwin.unsubscribe(bridge)
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from src.core.Logger.DarwinLogger import LogEvent, LogType
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import Context
+
+
+class MCPLogBridge:
+    """Subscribes to DarwinLogger and forwards events as MCP log notifications."""
+
+    _LEVEL_MAP = {
+        LogType.DEBUG: "debug",
+        LogType.INFO: "info",
+        LogType.SUCCESS: "info",
+        LogType.WARNING: "warning",
+        LogType.ERROR: "error",
+    }
+
+    def __init__(self, ctx: Context) -> None:
+        self._ctx = ctx
+        self._closed = False
+
+    def on_event(self, event: LogEvent) -> None:
+        """Called by DarwinLogger for each log event. Schedules async MCP send."""
+        if self._closed:
+            return
+        import asyncio
+
+        level = self._LEVEL_MAP.get(event.log_type, "info")
+        message = event.message or ""
+        logger = f"darwin.{event.session}" if event.session else "darwin"
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send(level, message, logger))
+        except RuntimeError:
+            pass
+
+    async def _send(self, level: str, message: str, logger: str) -> None:
+        if self._closed:
+            return
+        try:
+            await self._ctx.log(level, message, logger_name=logger)
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        self._closed = True

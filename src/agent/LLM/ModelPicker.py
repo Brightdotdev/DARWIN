@@ -46,6 +46,11 @@ _PROVIDER_MAP: dict[str, dict[str, str]] = {
         "think": "gemini-2.5-pro",
         "normal": "gemini-2.5-pro",
     },
+    "google": {  # alias for PROVIDER_ENV_MAP consistency
+        "fast": "gemini-2.5-flash",
+        "think": "gemini-2.5-pro",
+        "normal": "gemini-2.5-pro",
+    },
     "groq": {
         "fast": "llama-3.1-8b-instant",
         "think": "llama-3.3-70b-versatile",

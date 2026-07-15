@@ -72,13 +72,17 @@ class DarwinStore(StoreSearch):
     def _register_self(self) -> str:
         """Register this store in the central registry and write .darwin_store_id."""
         store_id_file = self.paths.indexes_dir / ".darwin_store_id"
-        if store_id_file.exists():
+        try:
             store_id = store_id_file.read_text().strip()
-        else:
+        except (FileNotFoundError, OSError):
             import uuid
 
             store_id = str(uuid.uuid4())
-            store_id_file.write_text(store_id)
+            try:
+                store_id_file.write_text(store_id)
+            except OSError:
+                # Another process may have created it — read theirs
+                store_id = store_id_file.read_text().strip()
         # Register/update in central registry, passing the user-provided name
         self._store_registry.register(self._darwin_dir, store_id, name=self._store_name)
         return store_id
@@ -859,9 +863,8 @@ class DarwinStore(StoreSearch):
             "files_needing_work": sum(
                 1
                 for s in files
-                if not self._get_content_status(
-                    self._sources.find_by_name(s).content_hash
-                )["is_core_complete"]
+                if (src := self._sources.find_by_name(s))
+                and not self._get_content_status(src.content_hash)["is_core_complete"]
             ),
             "keyword_searchable_files": kw_searchable,
             "total_chunks": total_chunks,

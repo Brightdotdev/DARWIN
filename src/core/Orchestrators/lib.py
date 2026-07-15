@@ -49,7 +49,6 @@ Method = Literal["hybrid", "semantic", "keyword"]
 MergeStrategy = Literal["none", "adjacent", "aggressive"]
 FallbackStrategy = Literal["expand", "relax", "both"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
-PipelineMode = Literal["quiet", "normal"]
 
 # ═══════════════════════════════════════════════════════════════════
 # Store resolver
@@ -196,7 +195,6 @@ class PipelineParameters:
     only_semantic: bool = False
     rerun: bool = False
     strict: bool = True
-    log_mode: PipelineMode = "quiet"
 
     def build(self):
         """Convert to internal (PipelineParameters, stages) for the orchestrator."""

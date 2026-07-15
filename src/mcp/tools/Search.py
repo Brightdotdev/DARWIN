@@ -1,10 +1,10 @@
-import traceback
 from typing import Optional
 
 from mcp.types import ToolAnnotations
 
 from src.core.Orchestrators.lib import RetrievalParameters, resolve_store
 from src.core.Orchestrators.lib import Method, MergeStrategy, FallbackStrategy
+from src.core.Logger.DarwinLogger import darwin
 
 _MAX_QUERY_LEN = 4096
 
@@ -28,7 +28,7 @@ def register(mcp, retrieval_orch):
             openWorldHint=False,
         ),
     )
-    def search_darwin(
+    async def search_darwin(
         query: str,
         method: Method = "hybrid",
         store: Optional[str] = None,
@@ -46,6 +46,18 @@ def register(mcp, retrieval_orch):
         fallback_strategy: FallbackStrategy = "both",
         rerank: bool = False,
     ) -> dict:
+        """Search the DARWIN knowledge base for relevant passages.
+
+        Usage tips:
+        - Check 'summary' in the result for a quick overview before reading passages.
+        - method='hybrid' (default) combines keyword + semantic; best for most queries.
+        - method='semantic' is better for conceptual/fuzzy queries.
+        - method='keyword' is better for exact terms or code references.
+        - If results are sparse, try lowering min_passage_score (e.g. 0.15).
+        - fallback_used=true means hybrid search broadened — check fallback_reason.
+        - Pass store name/path/ID to search a specific store.
+        - Use prefer_sources/exclude_sources to target or skip specific files.
+        """
         try:
             query = _validate_query(query)
             params = RetrievalParameters(
@@ -66,13 +78,17 @@ def register(mcp, retrieval_orch):
                 fallback_strategy=fallback_strategy,
                 rerank=rerank,
             )
-            if store:
-                from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-                resolved = resolve_store(store)
-                resolved.bootstrap(quiet=True)
-                ctx = RetrievalOrchestrator(store=resolved).retrieve_and_resolve(params)
-            else:
-                ctx = retrieval_orch.retrieve_and_resolve(params)
+
+            def _blocking():
+                if store:
+                    from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                    resolved = resolve_store(store)
+                    resolved.bootstrap(quiet=True)
+                    return RetrievalOrchestrator(store=resolved).retrieve_and_resolve(params)
+                return retrieval_orch.retrieve_and_resolve(params)
+
+            import asyncio
+            ctx = await asyncio.get_event_loop().run_in_executor(None, _blocking)
             if ctx is None or ctx.is_empty():
                 return {"success": True, "data": {"passages": [], "total": 0}}
 
@@ -91,4 +107,5 @@ def register(mcp, retrieval_orch):
                 },
             }
         except Exception as e:
-            return {"success": False, "error": str(e), "detail": traceback.format_exc()}
+            darwin.error(f"search_darwin failed: {type(e).__name__}: {e}")
+            return {"success": False, "error": str(e)}

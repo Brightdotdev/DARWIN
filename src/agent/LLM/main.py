@@ -287,7 +287,7 @@ def _remove_provider_interactive():
 # -------------------------------------------------------------------
 # CLI entry point
 # -------------------------------------------------------------------
-async def main() -> int:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Darwin LLM Manager – configuration and test harness."
     )
@@ -446,4 +446,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(main())

@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Darwin Logs</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-row: #161b22;
+    --bg-row-alt: #1c2128;
+    --bg-header: #0d1117;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-dim: #8b949e;
+    --accent: #6C63FF;
+    --debug: #666;
+    --info: #8B9DAF;
+    --success: #00D4AA;
+    --warning: #FFD93D;
+    --error: #FF6B6B;
+    --s1: #6C63FF;
+    --s2: #00D4AA;
+    --s3: #FF6B6B;
+    --s4: #FFD93D;
+    --s5: #A78BFA;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    background: var(--bg-header);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+  .brand .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    flex-shrink: 0;
+  }
+  .brand .dot.disconnected { background: var(--error); }
+  .brand .dot.connecting { background: var(--warning); animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .status-badges {
+    display: flex; gap: 6px; align-items: center;
+  }
+  .badge {
+    font-size: 10px; font-weight: 600; padding: 2px 7px;
+    border-radius: 4px; white-space: nowrap;
+  }
+  .badge-cached {
+    background: rgba(108,99,255,0.15); color: var(--accent);
+    border: 1px solid rgba(108,99,255,0.3);
+  }
+  .badge-live {
+    background: rgba(0,212,170,0.15); color: var(--success);
+    border: 1px solid rgba(0,212,170,0.3);
+  }
+  .badge-live.disconnected {
+    background: rgba(255,107,107,0.1); color: var(--error);
+    border-color: rgba(255,107,107,0.3);
+  }
+  .controls {
+    display: flex; align-items: center; gap: 8px;
+    flex: 1; min-width: 0; flex-wrap: wrap;
+  }
+  .search-box {
+    background: var(--bg-row); border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; color: var(--text);
+    font-family: inherit; font-size: 12px; width: 200px; outline: none;
+  }
+  .search-box:focus { border-color: var(--accent); }
+  .filter-btn {
+    background: var(--bg-row); border: 1px solid var(--border);
+    border-radius: 6px; padding: 3px 8px; color: var(--text-dim);
+    font-family: inherit; font-size: 11px; cursor: pointer;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .filter-btn:hover { border-color: var(--text-dim); color: var(--text); }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(108,99,255,0.1); }
+  .filter-btn[data-level="debug"].active { border-color: var(--debug); color: var(--debug); background: rgba(102,102,102,0.1); }
+  .filter-btn[data-level="info"].active { border-color: var(--info); color: var(--info); background: rgba(139,157,175,0.1); }
+  .filter-btn[data-level="success"].active { border-color: var(--success); color: var(--success); background: rgba(0,212,170,0.1); }
+  .filter-btn[data-level="warning"].active { border-color: var(--warning); color: var(--warning); background: rgba(255,217,61,0.1); }
+  .filter-btn[data-level="error"].active { border-color: var(--error); color: var(--error); background: rgba(255,107,107,0.1); }
+  .stats {
+    color: var(--text-dim); font-size: 11px;
+    white-space: nowrap; margin-left: auto;
+  }
+  .scroll-container {
+    flex: 1; overflow-y: auto; position: relative;
+  }
+  .scroll-container::-webkit-scrollbar { width: 6px; }
+  .scroll-container::-webkit-scrollbar-track { background: var(--bg); }
+  .scroll-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  #load-more {
+    text-align: center; padding: 8px; color: var(--text-dim);
+    font-size: 11px; display: none; cursor: pointer;
+  }
+  #load-more.visible { display: block; }
+  #load-more:hover { color: var(--accent); }
+  .empty-state {
+    text-align: center; padding: 40px 16px; color: var(--text-dim);
+  }
+  .empty-state .icon { font-size: 32px; margin-bottom: 12px; opacity: 0.4; }
+  .empty-state .title { font-size: 14px; color: var(--text); margin-bottom: 6px; }
+  .empty-state .hint { font-size: 11px; }
+  .empty-state .retry-btn {
+    margin-top: 12px; background: var(--bg-row); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 14px; color: var(--accent);
+    font-family: inherit; font-size: 11px; cursor: pointer;
+  }
+  .empty-state .retry-btn:hover { border-color: var(--accent); }
+  .log-entry {
+    display: flex; align-items: flex-start;
+    padding: 3px 16px; border-left: 3px solid transparent;
+    transition: background 0.1s; cursor: default;
+  }
+  .log-entry:nth-child(odd) { background: var(--bg-row); }
+  .log-entry:nth-child(even) { background: var(--bg-row-alt); }
+  .log-entry:hover { background: rgba(108,99,255,0.06); }
+  .log-entry .time {
+    color: var(--text-dim); flex-shrink: 0; width: 75px;
+    font-size: 11px; padding-top: 1px;
+  }
+  .log-entry .src-badge {
+    flex-shrink: 0; padding: 0 5px; border-radius: 3px;
+    font-size: 9px; font-weight: 700; margin: 0 6px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    padding-top: 1px; line-height: 18px;
+  }
+  .src-badge.cached { background: rgba(108,99,255,0.12); color: var(--accent); }
+  .src-badge.live { background: rgba(0,212,170,0.12); color: var(--success); }
+  .log-entry .session-badge {
+    flex-shrink: 0; padding: 0 6px; border-radius: 4px;
+    font-size: 10px; font-weight: 600; margin: 0 8px;
+    max-width: 110px; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; background: rgba(255,255,255,0.06);
+  }
+  .log-entry .level {
+    flex-shrink: 0; width: 55px; font-weight: 600;
+    font-size: 11px; text-transform: uppercase; padding-top: 1px;
+  }
+  .log-entry .msg {
+    flex: 1; min-width: 0; word-break: break-word;
+  }
+  .log-entry.level-debug { border-left-color: var(--debug); }
+  .log-entry.level-debug .level { color: var(--debug); }
+  .log-entry.level-info { border-left-color: var(--info); }
+  .log-entry.level-info .level { color: var(--info); }
+  .log-entry.level-success { border-left-color: var(--success); }
+  .log-entry.level-success .level { color: var(--success); }
+  .log-entry.level-warning { border-left-color: var(--warning); }
+  .log-entry.level-warning .level { color: var(--warning); }
+  .log-entry.level-error { border-left-color: var(--error); }
+  .log-entry.level-error .level { color: var(--error); }
+  .log-entry.hidden { display: none; }
+  .payload-toggle {
+    color: var(--accent); cursor: pointer; font-size: 10px;
+    margin-left: 6px; text-decoration: underline dotted;
+  }
+  .payload-toggle:hover { color: #8B83FF; }
+  .payload-block {
+    display: none; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 4px; padding: 6px 10px; margin-top: 4px;
+    font-size: 11px; white-space: pre-wrap; word-break: break-all;
+    max-height: 300px; overflow-y: auto; color: var(--text-dim);
+  }
+  .payload-block.visible { display: block; }
+  .divider-line {
+    border: none; border-top: 1px dashed var(--border);
+    margin: 4px 16px; position: relative;
+  }
+  .divider-label {
+    position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
+    background: var(--bg); padding: 0 8px; font-size: 10px;
+    color: var(--text-dim); white-space: nowrap;
+  }
+  footer {
+    border-top: 1px solid var(--border); padding: 6px 16px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11px; color: var(--text-dim); background: var(--bg-header);
+    flex-shrink: 0;
+  }
+  #pause-btn {
+    background: none; border: 1px solid var(--border); border-radius: 4px;
+    padding: 2px 8px; color: var(--text-dim); font-family: inherit;
+    font-size: 11px; cursor: pointer;
+  }
+  #pause-btn:hover { border-color: var(--text-dim); }
+  #pause-btn.paused { border-color: var(--warning); color: var(--warning); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="dot connecting" id="status-dot"></span>
+    DARWIN LOGS
+  </div>
+  <div class="status-badges">
+    <span class="badge badge-cached" id="cached-badge" title="Logs loaded from database">CACHED: 0</span>
+    <span class="badge badge-live disconnected" id="live-badge" title="Live SSE stream">LIVE: OFF</span>
+  </div>
+  <div class="controls">
+    <input type="text" class="search-box" id="search" placeholder="Filter logs...">
+    <button class="filter-btn active" data-level="all" onclick="toggleFilter('all',this)">ALL</button>
+    <button class="filter-btn" data-level="debug" onclick="toggleFilter('debug',this)">DBG</button>
+    <button class="filter-btn" data-level="info" onclick="toggleFilter('info',this)">INF</button>
+    <button class="filter-btn" data-level="success" onclick="toggleFilter('success',this)">OK</button>
+    <button class="filter-btn" data-level="warning" onclick="toggleFilter('warning',this)">WRN</button>
+    <button class="filter-btn" data-level="error" onclick="toggleFilter('error',this)">ERR</button>
+    <span class="stats" id="stats">0 logs</span>
+  </div>
+</header>
+
+<div class="scroll-container" id="scroll-container">
+  <div id="load-more">Loading older logs...</div>
+  <div id="log-list"></div>
+</div>
+
+<footer>
+  <span id="session-info"></span>
+  <button id="pause-btn" onclick="togglePause()">Pause</button>
+</footer>
+
+<script>
+const COLORS = ['#6C63FF','#00D4AA','#FF6B6B','#FFD93D','#A78BFA'];
+const LEVEL_ORDER = ['debug','info','success','warning','error'];
+const API_BASE = window.location.origin;
+
+let sessionColors = {};
+let colorIdx = 0;
+let allLogs = [];
+let activeFilter = 'all';
+let paused = false;
+let autoScroll = true;
+let hasMore = true;
+let loadingMore = false;
+let oldestTs = null;
+let sseSource = null;
+let totalLoaded = 0;
+let cachedCount = 0;
+let liveCount = 0;
+let sseConnected = false;
+let sseRetryDelay = 1000;
+let dividerInserted = false;
+
+function getSessionColor(session) {
+  if (!session) return COLORS[0];
+  if (!sessionColors[session]) {
+    sessionColors[session] = COLORS[colorIdx % COLORS.length];
+    colorIdx++;
+  }
+  return sessionColors[session];
+}
+
+function formatTime(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function renderLog(entry, source) {
+  const color = getSessionColor(entry.session);
+  const level = entry.log_type || 'info';
+  const time = entry.datetime ? entry.datetime.split('T')[1]?.substring(0,8) : formatTime(entry.timestamp);
+  const hasPayload = entry.payload != null;
+  const src = source || 'cached';
+
+  const el = document.createElement('div');
+  el.className = `log-entry level-${level}`;
+  el.style.borderLeftColor = color;
+  el.dataset.level = level;
+  el.dataset.text = (entry.message || '').toLowerCase();
+  el.dataset.session = entry.session || '';
+  el.dataset.ts = entry.timestamp;
+  el.dataset.src = src;
+
+  let payloadHtml = '';
+  if (hasPayload) {
+    const payloadStr = typeof entry.payload === 'string' ? entry.payload : JSON.stringify(entry.payload, null, 2);
+    payloadHtml = `<span class="payload-toggle" onclick="togglePayload(this)">[data]</span><div class="payload-block">${escapeHtml(payloadStr)}</div>`;
+  }
+
+  el.innerHTML = `
+    <span class="time">${time}</span>
+    <span class="src-badge ${src}">${src === 'live' ? 'LIVE' : 'DB'}</span>
+    <span class="session-badge" style="color:${color};border:1px solid ${color}33">${escapeHtml(entry.session || '-')}</span>
+    <span class="level">${level}</span>
+    <span class="msg">${escapeHtml(entry.message || '')}${payloadHtml}</span>
+  `;
+  return el;
+}
+
+function insertLiveDivider() {
+  if (dividerInserted) return;
+  dividerInserted = true;
+  const list = document.getElementById('log-list');
+  const hr = document.createElement('hr');
+  hr.className = 'divider-line';
+  hr.innerHTML = '<span class="divider-label">LIVE FROM HERE</span>';
+  list.appendChild(hr);
+}
+
+function updateBadges() {
+  document.getElementById('cached-badge').textContent = `CACHED: ${cachedCount}`;
+  const liveBadge = document.getElementById('live-badge');
+  if (sseConnected) {
+    liveBadge.textContent = `LIVE: ${liveCount}`;
+    liveBadge.classList.remove('disconnected');
+  } else {
+    liveBadge.textContent = 'LIVE: OFF';
+    liveBadge.classList.add('disconnected');
+  }
+}
+
+function applyFilters() {
+  const search = document.getElementById('search').value.toLowerCase();
+  let visible = 0;
+  document.querySelectorAll('.log-entry').forEach(el => {
+    const matchLevel = activeFilter === 'all' || el.dataset.level === activeFilter;
+    const matchSearch = !search || el.dataset.text.includes(search) || el.dataset.session.includes(search);
+    const show = matchLevel && matchSearch;
+    el.classList.toggle('hidden', !show);
+    if (show) visible++;
+  });
+  document.getElementById('stats').textContent = `${visible} / ${totalLoaded} logs`;
+}
+
+function togglePayload(btn) {
+  btn.nextElementSibling.classList.toggle('visible');
+}
+
+function toggleFilter(level, btn) {
+  activeFilter = level;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  applyFilters();
+}
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('pause-btn');
+  btn.classList.toggle('paused', paused);
+  btn.textContent = paused ? 'Resume' : 'Pause';
+}
+
+function checkAutoScroll() {
+  const c = document.getElementById('scroll-container');
+  const threshold = 80;
+  autoScroll = (c.scrollHeight - c.scrollTop - c.clientHeight) < threshold;
+}
+
+function showEmptyState(message, hint, showRetry) {
+  const list = document.getElementById('log-list');
+  list.innerHTML = `
+    <div class="empty-state">
+      <div class="icon">&#x1F4CB;</div>
+      <div class="title">${escapeHtml(message)}</div>
+      <div class="hint">${escapeHtml(hint || '')}</div>
+      ${showRetry ? '<button class="retry-btn" onclick="loadInitial()">Retry</button>' : ''}
+    </div>
+  `;
+}
+
+async function loadOlder() {
+  if (loadingMore || !hasMore || !oldestTs) return;
+  loadingMore = true;
+  document.getElementById('load-more').classList.add('visible');
+
+  try {
+    const resp = await fetch(`${API_BASE}/history?before=${oldestTs}&limit=100`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    if (!data || data.length === 0) {
+      hasMore = false;
+      document.getElementById('load-more').textContent = 'No more logs';
+      return;
+    }
+
+    const container = document.getElementById('scroll-container');
+    const prevHeight = container.scrollHeight;
+    const list = document.getElementById('log-list');
+
+    data.sort((a, b) => b.timestamp - a.timestamp);
+    const frag = document.createDocumentFragment();
+    data.forEach(entry => {
+      frag.appendChild(renderLog(entry, 'cached'));
+      cachedCount++;
+      totalLoaded++;
+    });
+    list.insertBefore(frag, list.firstChild);
+
+    oldestTs = data.reduce((min, e) => Math.min(min, e.timestamp), oldestTs);
+    container.scrollTop = container.scrollHeight - prevHeight;
+    updateBadges();
+    applyFilters();
+  } catch (e) {
+    document.getElementById('load-more').textContent = 'Failed to load - click to retry';
+    document.getElementById('load-more').onclick = loadOlder;
+  } finally {
+    loadingMore = false;
+    if (hasMore) document.getElementById('load-more').classList.remove('visible');
+  }
+}
+
+async function loadInitial() {
+  const list = document.getElementById('log-list');
+  list.innerHTML = '<div class="empty-state"><div class="title" style="color:var(--text-dim)">Loading cached logs...</div></div>';
+
+  try {
+    const resp = await fetch(`${API_BASE}/history?limit=500`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+
+    list.innerHTML = '';
+    dividerInserted = false;
+    cachedCount = 0;
+    liveCount = 0;
+    totalLoaded = 0;
+
+    if (!data || data.length === 0) {
+      showEmptyState('No cached logs yet', 'Logs will appear here as darwin runs. The live stream will show real-time logs below.');
+      hasMore = false;
+      updateBadges();
+      applyFilters();
+      return;
+    }
+
+    data.sort((a, b) => a.timestamp - b.timestamp);
+    data.forEach(entry => {
+      list.appendChild(renderLog(entry, 'cached'));
+      cachedCount++;
+      totalLoaded++;
+    });
+
+    if (data.length > 0) {
+      oldestTs = Math.min(...data.map(e => e.timestamp));
+    }
+    if (data.length < 500) hasMore = false;
+
+    updateBadges();
+    applyFilters();
+    const c = document.getElementById('scroll-container');
+    c.scrollTop = c.scrollHeight;
+  } catch (e) {
+    showEmptyState(
+      'Could not connect to darwin',
+      `Make sure the MCP server is running. Open the dashboard from the server URL, not as a local file.`,
+      true
+    );
+    hasMore = false;
+    updateBadges();
+  }
+}
+
+function connectSSE() {
+  if (sseSource) sseSource.close();
+  sseSource = new EventSource(`${API_BASE}/stream`);
+
+  sseSource.onopen = () => {
+    sseConnected = true;
+    sseRetryDelay = 1000;
+    document.getElementById('status-dot').className = 'dot';
+    updateBadges();
+  };
+
+  sseSource.onerror = () => {
+    sseConnected = false;
+    document.getElementById('status-dot').className = 'dot disconnected';
+    updateBadges();
+    sseSource.close();
+    setTimeout(connectSSE, sseRetryDelay);
+    sseRetryDelay = Math.min(sseRetryDelay * 2, 30000);
+  };
+
+  sseSource.addEventListener('log', (e) => {
+    try {
+      const entry = JSON.parse(e.data);
+      insertLiveDivider();
+      const list = document.getElementById('log-list');
+      const el = renderLog(entry, 'live');
+      list.appendChild(el);
+      liveCount++;
+      totalLoaded++;
+
+      if (!oldestTs || entry.timestamp < oldestTs) oldestTs = entry.timestamp;
+
+      updateBadges();
+      applyFilters();
+      if (autoScroll && !paused) {
+        const c = document.getElementById('scroll-container');
+        c.scrollTop = c.scrollHeight;
+      }
+    } catch (err) {}
+  });
+}
+
+document.getElementById('scroll-container').addEventListener('scroll', function() {
+  checkAutoScroll();
+  if (this.scrollTop < 60 && hasMore && !loadingMore) {
+    loadOlder();
+  }
+});
+
+document.getElementById('search').addEventListener('input', applyFilters);
+
+loadInitial();
+connectSSE();
+</script>
+</body>
+</html>

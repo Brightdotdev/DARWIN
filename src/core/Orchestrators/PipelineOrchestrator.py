@@ -44,7 +44,7 @@ class PipelineResult:
     parameters_validated: bool = False
     stages_completed: List[PipelineStage] = field(default_factory=list)
     stages_failed: Dict[str, str] = field(default_factory=dict)
-    logs: Dict[str, List[Any]] = field(default_factory=dict)
+    logs: Dict[str, List[str]] = field(default_factory=dict)
     summary: str = ""
 
 
@@ -117,11 +117,14 @@ class PipelineOrchestrator:
             
         return None
 
-    def _log_levels(self, mode: str) -> Set[LogType]:
-        """Quiet = warnings, errors, and successes only. Normal = everything."""
-        if mode == "quiet":
-            return {LogType.WARNING, LogType.ERROR, LogType.SUCCESS}
-        return {LogType.INFO, LogType.SUCCESS, LogType.WARNING, LogType.ERROR}
+    def _log_levels(self) -> Set[LogType]:
+        """Always filter to warnings, errors, and successes only."""
+        return {LogType.WARNING, LogType.ERROR, LogType.SUCCESS}
+
+    @staticmethod
+    def _format_logs(events: list) -> list[str]:
+        """Convert LogEvents to readable [session][LEVEL] message strings."""
+        return [f"[{e.session}][{e.log_type.name}] {e.message}" for e in events]
 
     # ── Main entrypoint ─────────────────────────────────────────────────────────
 
@@ -144,25 +147,20 @@ class PipelineOrchestrator:
         internal, raw_stages = params.build()
         stages = self._coerce_stages(raw_stages)
         strict = params.strict
-        log_mode = params.log_mode
-
-        if log_mode not in ("quiet", "normal"):
-            darwin.warning(f"Invalid log_mode '{log_mode}', defaulting to 'quiet'")
-            log_mode = "quiet"
 
         result = PipelineResult(success=True, parameters_validated=False)
-        levels = self._log_levels(log_mode)
+        levels = self._log_levels()
 
         # ── Orchestrator session wraps everything ──
-        with darwin.session("PIPLEINE"):
+        with darwin.session("PIPELINE"):
             # 1. Pre-validate
             validation_error = self._validate(internal, stages)
             if validation_error:
                 darwin.error(f"Pipeline parameter validation failed: {validation_error}")
                 result.success = False
                 result.summary = f"Validation failed: {validation_error}"
-                result.logs["orchestrator"] = darwin.get_logs(
-                    session="PIPLEINE", levels=levels
+                result.logs["orchestrator"] = self._format_logs(
+                    darwin.get_logs(session="PIPELINE", levels=levels)
                 )
                 return result
 
@@ -177,7 +175,7 @@ class PipelineOrchestrator:
 
             # 3. Execute per-stage with isolated sessions
             for stage in ordered:
-                session_name = f"pipeline_{stage.value}"
+                session_name = f"{stage.value.capitalize()}"
                 with darwin.session(session_name):
                     darwin.info(f"Starting stage '{stage.value}'")
                     try:
@@ -198,8 +196,8 @@ class PipelineOrchestrator:
                             break
 
                 # Capture this stage's logs (failed or not)
-                result.logs[stage.value] = darwin.get_logs(
-                    session=session_name, levels=levels
+                result.logs[stage.value] = self._format_logs(
+                    darwin.get_logs(session=session_name, levels=levels)
                 )
 
             # 4. Finalize
@@ -210,8 +208,8 @@ class PipelineOrchestrator:
                 darwin.error(f"Pipeline completed with failures: {result.summary}")
 
             # Capture orchestrator-level logs
-            result.logs["orchestrator"] = darwin.get_logs(
-                session="PIPLEINE", levels=levels
+            result.logs["orchestrator"] = self._format_logs(
+                darwin.get_logs(session="PIPELINE", levels=levels)
             )
 
         return result

@@ -14,22 +14,7 @@ import argparse
 
 from src.mcp.UnifiedServer import UnifiedServer
 from src.mcp.Server import run_stdio
-
-
-def _read_logging_port() -> int:
-    """Read sse_port from logging.json. Returns 8765 if unavailable."""
-    import json
-    from pathlib import Path
-
-    try:
-        from src.lib.AppPaths import default_config_dir
-        path = default_config_dir() / "logging.json"
-        if path.exists():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data.get("sse_port", 8765)
-    except Exception:
-        pass
-    return 8765
+from src.cli import _read_logging_port
 
 
 def main():
@@ -43,7 +28,7 @@ def main():
         const="sse",
         dest="transport",
         default="stdio",
-        help="Run with SSE transport (legacy, default for backward compat)",
+        help="Run with SSE transport (legacy)",
     )
     transport_group.add_argument(
         "--http",

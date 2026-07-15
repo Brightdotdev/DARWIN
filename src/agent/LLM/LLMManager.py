@@ -36,7 +36,7 @@ class LLMManager:
                 cls._config = cls._deserialize_config(raw)
                 cls._client = None
                 darwin.success(f"Configuration loaded from {cls._config_path}")
-            except (json.JSONDecodeError, Exception) as e:
+            except Exception as e:
                 darwin.warning(
                     f"Failed to load config from {cls._config_path}: {e}. Starting with clean config."
                 )

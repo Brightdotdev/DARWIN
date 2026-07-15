@@ -157,13 +157,11 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # CHANGED: use darwin.configure() — no manual WebSocket imports
     darwin.configure(
         show_banner=True,
     )
 
     try:
-        # CHANGED: wrap entire pipeline in session context manager
         with darwin.session("ingestion"):
             target = resolve_target(args.path, args.file)
 

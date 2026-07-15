@@ -53,9 +53,14 @@ def write_json(path: Path, data: Any, compact: bool = False, max_retries: int = 
             return
         except (PermissionError, OSError) as e:
             if attempt == max_retries - 1:
+                import warnings
+                warnings.warn(
+                    f"Atomic write failed after {max_retries} attempts ({e}). "
+                    f"Falling back to direct write — data may be corrupted on crash."
+                )
                 path.write_text(json_str, encoding="utf-8")
                 if tmp.exists():
-                    tmp.unlink()
+                    tmp.unlink(missing_ok=True)
                 return
             time.sleep(0.1 * (attempt + 1))
 

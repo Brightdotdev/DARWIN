@@ -103,8 +103,7 @@ class LLMClient:
     ) -> tuple[str, ProviderConfig]:
         prov = provider or self.default_provider
         if prov not in self.providers:
-            darwin.error(f"Provider '{prov}' not configured")
-            return f"Error: Provider '{prov}' not configured", None
+            raise ValueError(f"Provider '{prov}' not configured")
         return prov, self.providers[prov]
 
     def _build_litellm_model(self, provider: str, model: str) -> str:

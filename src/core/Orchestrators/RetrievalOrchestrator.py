@@ -56,7 +56,16 @@ class RetrievalOrchestrator:
         cfg = params.build()
         if isinstance(cfg.files, str):
             cfg.files = [cfg.files]
-        return self._retrieve_and_resolve_internal(cfg, _is_fallback=False)
+        with darwin.session("RETRIEVAL"):
+            darwin.info(f"Retrieval orchestrator started for query '{cfg.query}'")
+            darwin.info(f"Method: {cfg.method} | Top K: {cfg.top_k} | Max Chars: {cfg.max_chars}")
+            darwin.info(f"Max per source: {cfg.max_per_source} | Merge strategy: {cfg.merge_strategy}")
+            darwin.info(f"Structural penalties: {'enabled' if cfg.filter_structural else 'disabled'}")
+            darwin.info(f"Rerank: {'enabled' if cfg.rerank else 'disabled'} | Rerank weight: {cfg.rerank_weight}")
+            darwin.info(f"Source filters: exclude={cfg.exclude_sources}, prefer={cfg.prefer_sources}")
+            darwin.info(f"Fallback thresholds: top_k={cfg.fallback_top_k}, max_chars={cfg.fallback_max_chars}, min_score={cfg.fallback_min_score}")
+            darwin.info(f"Return empty on fallback: {cfg.return_empty_on_fallback}")
+            return self._retrieve_and_resolve_internal(cfg, _is_fallback=False)
 
     # ════════════════════════════════════════════════════════════════
     # Internal — operates on raw OrchestratorConfig

@@ -1,10 +1,10 @@
 import re
-import traceback
 from typing import Optional
 
 from mcp.types import ToolAnnotations
 
 from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
+from src.core.Logger.DarwinLogger import darwin
 
 _MAX_PATH_LEN = 2048
 _MAX_NAME_LEN = 256
@@ -57,27 +57,29 @@ def register(mcp, store):
             openWorldHint=False,
         ),
     )
-    def create_store(
+    async def create_store(
         path: str,
         name: Optional[str] = None,
     ) -> dict:
         """Create a new DarwinStore at the given path for isolating data.
 
-        Use this to separate work, research, or personal documents into their
-        own store. Returns store_id — pass it to run_pipeline or search_darwin
-        to operate on this store specifically.
-
-        Args:
-            path: Writable filesystem path where the store will live.
-            name: Optional human-readable label (defaults to directory name).
+        Usage tips:
+        - Use this to create project-specific stores before running pipeline.
+        - Pass the returned store ID to other tools via the 'store' parameter.
+        - name is optional; if omitted, the store is identified by path only.
         """
         try:
             path = _validate_path(path)
             name = _validate_name(name)
-            meta = StoreOrchestrator.create_store(path, name)
+
+            import asyncio
+            meta = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: StoreOrchestrator.create_store(path, name)
+            )
             return {"success": True, "data": meta}
         except Exception as e:
-            return {"success": False, "error": str(e), "detail": traceback.format_exc()}
+            darwin.error(f"create_store failed: {type(e).__name__}: {e}")
+            return {"success": False, "error": str(e)}
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -88,12 +90,22 @@ def register(mcp, store):
             openWorldHint=False,
         ),
     )
-    def list_files() -> dict:
+    async def list_files() -> dict:
+        """List all files tracked by the default store with their pipeline status.
+
+        Usage tips:
+        - Returns the pipeline report — each file shows completed stages.
+        - Use this to find exact filenames before running purge_artifacts.
+        """
         try:
-            report = store.get_pipeline_report()
+            import asyncio
+            report = await asyncio.get_event_loop().run_in_executor(
+                None, store.get_pipeline_report
+            )
             return {"success": True, "data": report}
         except Exception as e:
-            return {"success": False, "error": str(e), "detail": traceback.format_exc()}
+            darwin.error(f"list_files failed: {type(e).__name__}: {e}")
+            return {"success": False, "error": str(e)}
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -104,10 +116,20 @@ def register(mcp, store):
             openWorldHint=False,
         ),
     )
-    def file_status(filename: str) -> dict:
+    async def file_status(filename: str) -> dict:
+        """Get detailed status for a single file across all pipeline stages.
+
+        Usage tips:
+        - Use this to check what artifacts exist for a specific file.
+        - filename must match the original filename used during ingestion.
+        """
         try:
             filename = _validate_filename(filename)
-            status = store.file_status(filename)
+            import asyncio
+            status = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: store.file_status(filename)
+            )
             return {"success": True, "data": status}
         except Exception as e:
-            return {"success": False, "error": str(e), "detail": traceback.format_exc()}
+            darwin.error(f"file_status failed: {type(e).__name__}: {e}")
+            return {"success": False, "error": str(e)}

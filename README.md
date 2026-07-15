@@ -58,19 +58,19 @@ darwin (user CLI)        darwin-admin (power-user CLI)
                             │   uninstall [--dry-run] [--keep-package]
                             └── status [--initialize]
         │
-MCP Server (FastMCP) ──> 11 tools + 5 resources: search, pipeline, models, store
+MCP Server (FastMCP) ──> 7 tools + 3 resources: search, pipeline, store
         │
-Orchestrators ──> RetrievalOrch | PipelineOrch | ModelOrch | StoreOrch
+Orchestrators ──> RetrievalOrch | PipelineOrch | StoreOrch
         │
 Core Engine:
   ┌─────────────────────────────────────────────┐
   │  DarwinStore — file registry, artifacts,    │
   │  search indexes (Parquet, NumPy, USearch)   │
-  ├─────────────┬────────────┬──────────────────┤
-  │  Pipeline   │  Retrieval │  Models          │
-  │  (ingest,   │  (hybrid,  │  (registry,      │
-  │   index)    │   sem, kw) │   inference)     │
-  └─────────────┴────────────┴──────────────────┘
+  ├─────────────────┬──────────────────────────┤
+  │  Pipeline       │  Retrieval               │
+  │  (ingest,       │  (hybrid, sem, kw)       │
+  │   index)        │                          │
+  └─────────────────┴──────────────────────────┘
 ```
 
 ### Layers
@@ -79,8 +79,8 @@ Core Engine:
 |---|---|---|
 | **User CLI** | `darwin` — mcp, config | `src/cli.py` |
 | **Admin CLI** | `darwin-admin` — setup, models, store, pipeline, logs, system, uninstall, status | `src/admin/` |
-| **MCP** | 11 tools + 5 resources for AI agents | `src/mcp/` |
-| **Orchestrators** | Retrieval, Pipeline, Models, Store | `src/core/Orchestrators/` |
+| **MCP** | 7 tools + 3 resources for AI agents | `src/mcp/` |
+| **Orchestrators** | Retrieval, Pipeline, Store | `src/core/Orchestrators/` |
 | **lib.py** | Typed params with Literal enums | `src/core/Orchestrators/lib.py` |
 | **Store** | Parquet, NumPy, USearch, BM25 persistence | `src/core/Storage/` |
 
@@ -96,8 +96,8 @@ Core Engine:
 | | `src/admin/setup.py` | Interactive onboarding + config helpers |
 | | `src/admin/commands_*.py` | Command handlers per group (models, store, pipeline, logs, system) |
 | | `src/admin/uninstall.py` | Full darwin uninstall (discover stores, clean artifacts, remove data) |
-| **MCP** | `src/mcp/` | FastMCP server + 11 tools + 5 resources |
-| **Orchestrators** | `src/core/Orchestrators/` | Retrieval, Pipeline, Models, Store |
+| **MCP** | `src/mcp/` | FastMCP server + 7 tools + 3 resources |
+| **Orchestrators** | `src/core/Orchestrators/` | Retrieval, Pipeline, Store |
 | **Orchestrators/lib.py** | `src/core/Orchestrators/lib.py` | Parameter library with Literal types |
 | **Storage** | `src/core/Storage/` | DarwinStore — file registry, artifacts, indices |
 | **Pipeline** | `src/core/Pipeline/` | Ingestion (parse + chunk), Indexing (BM25 + embeddings) |
@@ -302,7 +302,7 @@ Darwin includes input validation and safety hardening across all MCP tools and C
 | **Stage whitelist** | Pipeline | Only valid stage names accepted |
 | **Model ID validation** | Models | Length limits, invalid characters blocked |
 | **Category validation** | Models | Must match registered `ModelCategory` values |
-| **Port availability** | MCP Server | Auto-scans for free port with `SO_REUSEADDR`, saves to config |
+| **Port availability** | MCP Server | Auto-scans for free port, saves to config |
 | **Health checks** | `/health` endpoint | Checks store and models, returns 503 when degraded |
 | **Stdio log silencing** | MCP stdio | Logger silenced on stdout to protect JSON-RPC channel |
 | **Error propagation** | All tools | Try/except with structured error returns instead of silent swallowing |

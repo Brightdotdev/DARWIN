@@ -138,18 +138,19 @@ class TestSearch:
 class TestMCP:
     @staticmethod
     def _mcp():
-        from src.mcp.Server import create_mcp_app
-        return create_mcp_app()
+        from src.mcp.app_factory import create_mcp_app
+        mcp, _orch = create_mcp_app()
+        return mcp
 
     def test_mcp_imports(self):
         """MCP module initialises without crashing."""
         mcp = self._mcp()
         assert mcp.name == "darwin-mcp"
 
-    def test_mcp_10_tools(self):
+    def test_mcp_7_tools(self):
         mcp = self._mcp()
         tools = mcp._tool_manager._tools
-        assert len(tools) >= 10
+        assert len(tools) >= 7
 
     def test_mcp_create_store_tool(self):
         """create_store tool exists and produces store metadata."""

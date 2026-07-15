@@ -164,17 +164,13 @@ class Summarizer:
         batch_size: int = 16,
     ):
         if min_sentence_words < 1:
-            darwin.error(f"min_sentence_words must be >= 1, got {min_sentence_words}")
-            return None
+            raise ValueError(f"min_sentence_words must be >= 1, got {min_sentence_words}")
         if chunk_sentences < 1:
-            darwin.error(f"chunk_sentences must be >= 1, got {chunk_sentences}")
-            return None
+            raise ValueError(f"chunk_sentences must be >= 1, got {chunk_sentences}")
         if chunk_size < 1000:
-            darwin.error(f"chunk_size must be >= 1000, got {chunk_size}")
-            return None
+            raise ValueError(f"chunk_size must be >= 1000, got {chunk_size}")
         if batch_size < 1:
-            darwin.error(f"batch_size must be >= 1, got {batch_size}")
-            return None
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
 
         self.min_sentence_words = min_sentence_words
         self.chunk_sentences = chunk_sentences
@@ -262,6 +258,7 @@ class Summarizer:
         self,
         text: str,
         max_sentences: int = DEFAULT_SENTENCE_COUNT,
+        chunk_size: Optional[int] = None,
     ) -> str:
         """Chunked summarization for very long documents."""
         if not self.available or len(text) < MIN_CHARS_TO_SUMMARIZE:
@@ -270,10 +267,12 @@ class Summarizer:
             darwin.error(f"max_sentences must be >= 1, got {max_sentences}")
             return ""
 
-        if len(text) <= self.chunk_size:
+        effective_chunk_size = chunk_size or self.chunk_size
+
+        if len(text) <= effective_chunk_size:
             return self._textrank(text, max_sentences)
 
-        chunks = self._split_into_sentence_chunks(text, self.chunk_size)
+        chunks = self._split_into_sentence_chunks(text, effective_chunk_size)
         if not chunks:
             return text
 
@@ -569,7 +568,7 @@ def summarize_long(
     max_sentences: int = DEFAULT_SENTENCE_COUNT,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
 ) -> str:
-    return _get_summarizer().summarize_long(text, max_sentences)
+    return _get_summarizer().summarize_long(text, max_sentences, chunk_size)
 
 
 def summarize_for_conversation(text: str) -> str:

@@ -406,7 +406,7 @@ class ImageHandler:
             if not self.ensure_for_stages(stages):
                 return [ImageProcessResult(error="Required model(s) not available") for _ in image_inputs]
 
-        results: List[ImageProcessResult] = [ImageProcessResult(error="Not processed")] * total
+        results: List[ImageProcessResult] = [ImageProcessResult(error="Not processed") for _ in range(total)]
 
         def process_one(idx: int, inp: Union[str, Path, Image.Image, bytes]) -> Tuple[int, ImageProcessResult]:
             _notify_batch(stream_callback, f"Processing {idx+1}/{total}...", idx+1, total)

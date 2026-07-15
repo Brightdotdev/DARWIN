@@ -33,44 +33,69 @@ APP_NAME = "darwin"
 
 def _validate_openai(key: str) -> bool:
     from openai import OpenAI
-    OpenAI(api_key=key).models.list(limit=1, timeout=10)
-    return True
+    try:
+        OpenAI(api_key=key).models.list(limit=1, timeout=10)
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 def _validate_anthropic(key: str) -> bool:
-    litellm.completion(
-        model="anthropic/claude-3-haiku-20240307",
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=1, api_key=key, timeout=10, num_retries=1,
-    )
-    return True
+    try:
+        litellm.completion(
+            model="anthropic/claude-3-haiku-20240307",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=1, api_key=key, timeout=10, num_retries=1,
+        )
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 def _validate_google(key: str) -> bool:
-    litellm.completion(
-        model="gemini/gemini-2.0-flash",
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=1, api_key=key, timeout=10, num_retries=1,
-    )
-    return True
+    try:
+        litellm.completion(
+            model="gemini/gemini-2.0-flash",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=1, api_key=key, timeout=10, num_retries=1,
+        )
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 def _validate_mistral(key: str) -> bool:
-    litellm.completion(
-        model="mistral/mistral-tiny",
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=1, api_key=key, timeout=10, num_retries=1,
-    )
-    return True
+    try:
+        litellm.completion(
+            model="mistral/mistral-tiny",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=1, api_key=key, timeout=10, num_retries=1,
+        )
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 def _validate_groq(key: str) -> bool:
-    litellm.completion(
-        model="groq/llama-3.1-8b-instant",
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=1, api_key=key, timeout=10, num_retries=1,
-    )
-    return True
+    try:
+        litellm.completion(
+            model="groq/llama-3.1-8b-instant",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=1, api_key=key, timeout=10, num_retries=1,
+        )
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 
@@ -87,30 +112,45 @@ def _validate_cohere(key: str) -> bool:
         return False
 
 def _validate_together(key: str) -> bool:
-    litellm.completion(
-        model="together/mistralai/Mixtral-8x7B-Instruct-v0.1",
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=1, api_key=key, timeout=10, num_retries=1,
-    )
-    return True
+    try:
+        litellm.completion(
+            model="together/mistralai/Mixtral-8x7B-Instruct-v0.1",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=1, api_key=key, timeout=10, num_retries=1,
+        )
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 def _validate_openrouter(key: str) -> bool:
-    litellm.completion(
-        model="openrouter/openai/gpt-4o",
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=1, api_key=key, timeout=10, num_retries=1,
-    )
-    return True
+    try:
+        litellm.completion(
+            model="openrouter/openai/gpt-4o",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=1, api_key=key, timeout=10, num_retries=1,
+        )
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 def _validate_deepseek(key: str) -> bool:
-    litellm.completion(
-        model="deepseek/deepseek-chat",
-        messages=[{"role": "user", "content": "Hi"}],
-        max_tokens=1, api_key=key, timeout=10, num_retries=1,
-    )
-    return True
+    try:
+        litellm.completion(
+            model="deepseek/deepseek-chat",
+            messages=[{"role": "user", "content": "Hi"}],
+            max_tokens=1, api_key=key, timeout=10, num_retries=1,
+        )
+        return True
+    except Exception as e:
+        if "authentication" not in str(e).lower() and "401" not in str(e):
+            raise RuntimeError(f"Network/validation error: {type(e).__name__}: {e}") from e
+        return False
 
 
 # --------------------------------------------------------------------------------

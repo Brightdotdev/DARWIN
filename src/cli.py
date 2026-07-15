@@ -9,18 +9,22 @@ import argparse
 import sys
 
 
+DEFAULT_PORT = 8765
+
+
 def _read_logging_port() -> int:
-    """Read sse_port from logging.json. Returns 8765 if unavailable."""
+    """Read sse_port from logging.json. Returns DEFAULT_PORT if unavailable."""
     import json
     try:
         from src.lib.AppPaths import default_config_dir
         path = default_config_dir() / "logging.json"
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
-            return data.get("sse_port", 8765)
-    except Exception:
-        pass
-    return 8765
+            return int(data.get("sse_port", DEFAULT_PORT))
+    except (json.JSONDecodeError, ValueError, OSError) as e:
+        import warnings
+        warnings.warn(f"Failed to read logging.json: {e}")
+    return DEFAULT_PORT
 
 
 def _mcp(args):
@@ -28,7 +32,7 @@ def _mcp(args):
     from src.mcp.Server import run_stdio
     from src.mcp.UnifiedServer import UnifiedServer
 
-    port = args.temp_port or (args.port if args.port != 8765 else _read_logging_port())
+    port = args.temp_port or args.port or _read_logging_port()
 
     if args.http:
         server = UnifiedServer(host=args.host, port=port, transport="http")
@@ -38,7 +42,7 @@ def _mcp(args):
         server.run_foreground(transport="sse")
     else:
         darwin.configure(mode="none", override=True)
-        run_stdio()
+        run_stdio(host=args.host, port=port)
 
 
 def _config(args):
@@ -86,7 +90,7 @@ def _config(args):
 
     if target in ("sse", "http", "all"):
         host = args.host or "127.0.0.1"
-        port = args.port or 8765
+        port = args.port or _read_logging_port()
         transport = "http" if target == "http" else "sse"
         endpoint = f"http://{host}:{port}"
         if transport == "sse":

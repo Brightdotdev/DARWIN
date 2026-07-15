@@ -8,7 +8,7 @@ Unlike tools (which execute actions), resources provide context for the agent.
 import json
 
 
-def register(mcp, store, models_orchestrator=None):
+def register(mcp, store):
     """Register MCP resources on a FastMCP instance."""
 
     @mcp.resource("darwin://store/files")
@@ -51,39 +51,3 @@ def register(mcp, store, models_orchestrator=None):
             }, indent=2)
         except Exception as e:
             return json.dumps({"error": str(e)})
-
-    if models_orchestrator is not None:
-        @mcp.resource("darwin://models/status")
-        def models_status() -> str:
-            """Current model status across all categories."""
-            try:
-                status = models_orchestrator.status()
-                return json.dumps({
-                    "all_ready": status.all_ready,
-                    "summary": status.summary,
-                    "categories": {
-                        name: {
-                            "available": cs.available,
-                            "active": cs.active_model_id,
-                            "error": cs.error,
-                        }
-                        for name, cs in status.categories.items()
-                    },
-                }, indent=2)
-            except Exception as e:
-                return json.dumps({"error": str(e)})
-
-        @mcp.resource("darwin://models/recommendations")
-        def models_recommendations() -> str:
-            """Recommended models for each category."""
-            try:
-                recs = models_orchestrator.get_recommendations()
-                return json.dumps({
-                    "embedding": recs.embedding,
-                    "nlp": recs.nlp,
-                    "ocr": recs.ocr,
-                    "reranker": recs.reranker,
-                    "vision": recs.vision,
-                }, indent=2)
-            except Exception as e:
-                return json.dumps({"error": str(e)})

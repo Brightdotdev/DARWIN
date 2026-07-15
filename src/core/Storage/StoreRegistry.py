@@ -193,11 +193,14 @@ class StoreRegistry:
 
     def set_default(self, store_id: str) -> None:
         """Mark a store as the default."""
-        self._conn.execute(
-            "UPDATE stores SET is_default = 0"
-        )
-        self._conn.execute(
-            "UPDATE stores SET is_default = 1 WHERE id = ?",
-            (store_id,),
-        )
-        self._conn.commit()
+        self._conn.execute("BEGIN")
+        try:
+            self._conn.execute("UPDATE stores SET is_default = 0")
+            self._conn.execute(
+                "UPDATE stores SET is_default = 1 WHERE id = ?",
+                (store_id,),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise

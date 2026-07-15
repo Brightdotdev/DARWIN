@@ -18,13 +18,14 @@ import dataclasses
 import json
 import queue
 import threading
+from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
 from starlette.requests import Request
-from starlette.responses import Response, JSONResponse
+from starlette.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from src.core.Logger.DarwinLogger import (
@@ -77,7 +78,8 @@ class SSEQueueSubscriber(EventSubscriber):
         try:
             self._queue.put_nowait(event)
         except queue.Full:
-            pass
+            import warnings
+            warnings.warn("SSE event queue full — event dropped")
 
     async def iter_events(self, loop: asyncio.AbstractEventLoop):
         """Async generator yielding JSON-encoded event strings."""
@@ -87,7 +89,8 @@ class SSEQueueSubscriber(EventSubscriber):
                 yield json.dumps(_event_to_dict(event), default=str)
             except queue.Empty:
                 continue
-            except Exception:
+            except Exception as e:
+                darwin.debug(f"SSE event iteration error: {type(e).__name__}: {e}")
                 continue
 
     def close(self) -> None:
@@ -168,7 +171,6 @@ class UnifiedServer:
     @staticmethod
     def _save_port_to_config(port: int) -> None:
         """Persist the resolved port to logging.json so MCP and logger share it."""
-        import json
         try:
             from src.lib.AppPaths import default_config_dir
             path = default_config_dir() / "logging.json"
@@ -179,36 +181,15 @@ class UnifiedServer:
                 data["sse_port"] = port
                 path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
                 darwin.info(f"Saved port {port} to logging.json")
-        except Exception:
-            pass
+        except Exception as e:
+            darwin.debug(f"Failed to save port to logging.json: {type(e).__name__}: {e}")
 
     def _build_app(self) -> FastMCP:
         """Register all MCP tools + custom HTTP routes and return the FastMCP instance."""
-
-        from mcp.server.fastmcp import FastMCP
-
-        from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
-        from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-        from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+        from src.mcp.app_factory import create_mcp_app
         from src.core.Orchestrators.ModelOrchestrator import modelsOrchestrator
-        import src.mcp.tools.Search as Search
-        import src.mcp.tools.Pipeline as Pipeline
-        import src.mcp.tools.Models as Models
-        import src.mcp.tools.Store as Store
-        import src.mcp.tools.Resources as Resources
 
-        mcp = FastMCP("darwin-mcp", host=self.host, port=self.port)
-
-        orch = StoreOrchestrator()
-        orch.bootstrap(quiet=True)
-        retrieval = RetrievalOrchestrator(store=orch.store)
-        pipeline = PipelineOrchestrator(store=orch.store)
-
-        Search.register(mcp, retrieval)
-        Pipeline.register(mcp, pipeline)
-        Models.register(mcp)
-        Store.register(mcp, orch.store)
-        Resources.register(mcp, orch.store, models_orchestrator=modelsOrchestrator)
+        mcp, orch = create_mcp_app(host=self.host, port=self.port)
 
         # ---- custom HTTP routes ----
 
@@ -234,20 +215,22 @@ class UnifiedServer:
 
         @mcp.custom_route("/history", methods=["GET"])
         async def log_history(request: Request) -> JSONResponse:
-            """Query historical logs."""
+            """Query historical logs. Supports ?before=<timestamp> for lazy loading."""
             session = request.query_params.get("session")
             levels_raw = request.query_params.get("levels", "")
             try:
                 limit = min(int(request.query_params.get("limit", 100)), 10000)
             except (ValueError, TypeError):
                 limit = 100
+            before_raw = request.query_params.get("before")
+            before_ts = float(before_raw) if before_raw else None
             levels = None
             if levels_raw:
                 try:
                     levels = {LogType(l.strip()) for l in levels_raw.split(",") if l.strip()}
                 except ValueError:
                     pass
-            logs = darwin.get_logs(session=session, levels=levels, limit=limit)
+            logs = darwin.get_logs(session=session, levels=levels, before=before_ts, limit=limit)
             return JSONResponse([l.to_dict() for l in logs])
 
         @mcp.custom_route("/health", methods=["GET"])
@@ -282,6 +265,13 @@ class UnifiedServer:
                 {"status": "ok" if healthy else "degraded", "checks": checks},
                 status_code=200 if healthy else 503,
             )
+
+        @mcp.custom_route("/dashboard", methods=["GET"])
+        async def dashboard(request: Request):
+            """Serve the log dashboard HTML."""
+            from starlette.responses import HTMLResponse
+            html_path = Path(__file__).parent / "dashboard.html"
+            return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
         self._mcp = mcp
         return mcp
@@ -334,6 +324,7 @@ class UnifiedServer:
         else:
             darwin.info(f"Starting SSE on {self.host}:{self.port}")
             app = self._mcp.sse_app()
+        darwin.info(f"Dashboard: http://{self.host}:{self.port}/dashboard")
         uvicorn.run(app, host=self.host, port=self.port, log_level="info")
 
     # ---- shutdown ----

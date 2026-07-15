@@ -53,7 +53,7 @@ params = PipelineParameters(
     indexing={"method": "hybrid"},
 )
 stages = [PipelineStage.INGESTION, PipelineStage.INDEXING]
-result = orch.build_pipeline(params, stages, strict=True, log_mode="normal")
+result = orch.build_pipeline(params, stages, strict=True)
 
 # Purge artifacts
 orch.purge([PipelineStage.INGESTION], ["doc1.pdf", "doc2.pdf"])
