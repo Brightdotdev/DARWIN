@@ -3,36 +3,6 @@ lib.py — Central parameter library for Darwin orchestrators.
 Single source of truth for all parameter defaults with Literal types
 for IDE intellisense and MCP schema generation.
 
-Usage:
-    from src.core.Orchestrators.lib import RetrievalParameters, PipelineParameters
-
-    # Retrieval — defaults fill what you omit
-    params = RetrievalParameters(query="hello", method="hybrid")
-    cfg = params.build()
-    ctx = orchestrator.retrieve_and_resolve(cfg)
-
-    # Pipeline — defaults fill what you omit  
-    params = PipelineParameters(target="./docs", ocr=True)
-    internal_params, stages = params.build()
-    result = orchestrator.build_pipeline(internal_params, stages)
-
-Store resolution — every parameter set accepts an optional store identifier
-that is resolved to a DarwinStore instance at call time:
-
-    params = RetrievalParameters(query="hello", store="work_store")
-    store = resolve_store(params.store)
-    orch = RetrievalOrchestrator(store=store)
-    ctx = orch.retrieve_and_resolve(params)
-
-Resolve priority:
-    1. Store ID (UUID) via DarwinStore.load_store()
-    2. Store name via DarwinStore.load_store_by_name()
-    3. Filesystem path via DarwinStore(path)
-    4. Default store (DarwinStore()) on any error or None
-
-Target (PipelineParameters) accepts both local paths and static URLs.
-Only static HTML pages are scraped — JavaScript-heavy frameworks
-(e.g. Vite, React SPAs) are not supported.
 """
 
 from __future__ import annotations
@@ -197,17 +167,15 @@ class PipelineParameters:
     strict: bool = True
 
     def build(self):
-        """Convert to internal (PipelineParameters, stages) for the orchestrator."""
-        from src.core.Orchestrators.PipelineOrchestrator import (
-            PipelineParameters as _PP,
-            ParsingArgs as _ParsingArgs,
-            IndexingArgs as _IndexingArgs,
-        )
+        """Convert to internal (StageParameters, stages) for the orchestrator."""
+        from src.core.Orchestrators.PipelineOrchestrator import StageParameters
+        from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
+        from src.core.Pipeline.Indexing.lib import IndexingArgs
 
-        internal = _PP()
+        internal = StageParameters()
         file_list = self.files or []
         if "ingestion" in self.stages:
-            internal.parsing = _ParsingArgs(
+            internal.parsing = ParsingArgs(
                 target=self.target,
                 files=file_list,
                 ocr=self.ocr,
@@ -216,7 +184,7 @@ class PipelineParameters:
                 rerun=self.rerun,
             )
         if "indexing" in self.stages:
-            internal.indexing = _IndexingArgs(
+            internal.indexing = IndexingArgs(
                 threshold=self.threshold,
                 idf_smoothing=self.idf_smoothing,
                 only_kw=self.only_kw,

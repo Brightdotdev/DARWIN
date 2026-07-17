@@ -119,7 +119,7 @@ def  handle_ingestion(parsing_args: ParsingArgs, store: DarwinStore) -> None:
 
     if not parsed_files:
         darwin.error("No documents available to chunk. Aborting.")
-        return
+        raise RuntimeError("Ingestion failed: no documents were parsed")
 
     run_chunking(parsed_files, parsing_args.rerun, store)
 

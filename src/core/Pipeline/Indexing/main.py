@@ -63,7 +63,7 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
     files = _resolve_input_files(args.files, store)
     if args.files is not None and files == []:
         darwin.error("No valid input files have chunks — aborting")
-        return
+        raise RuntimeError("Indexing failed: no valid input files have chunks")
 
     run_kw = not args.only_semantic
     run_semantic = not args.only_kw
@@ -86,6 +86,8 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
         darwin.info("Indexing all chunked files")
     darwin.info("")
 
+    errors: list[str] = []
+
     if run_kw:
         darwin.info(f"{step_label(' KW')} Running BM25 keyword indexing")
         try:
@@ -98,7 +100,8 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
         except Exception as e:
             import traceback
             darwin.error(f"BM25 indexing failed — {type(e).__name__}: {e}")
-            darwin.info(traceback.format_exc())
+            darwin.error(traceback.format_exc())
+            errors.append(f"BM25: {e}")
         darwin.info("")
 
     if run_semantic:
@@ -112,7 +115,11 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
             import traceback
             darwin.error(f"Embedding failed — {type(e).__name__}: {e}")
             darwin.error(traceback.format_exc())
+            errors.append(f"Embedding: {e}")
         darwin.info("")
+
+    if errors:
+        raise RuntimeError(f"Indexing failed: {'; '.join(errors)}")
 
     darwin.success("Indexing complete")
 

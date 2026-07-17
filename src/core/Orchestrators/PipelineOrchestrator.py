@@ -186,7 +186,6 @@ class PipelineOrchestrator:
                         err_msg = f"{e}"
                         darwin.error(
                             f"Stage '{stage.value}' failed: {err_msg}",
-                            payload={"error": err_msg},
                         )
                         darwin.error(traceback.format_exc())
                         result.stages_failed[stage.value] = err_msg
