@@ -119,7 +119,7 @@ async def main() -> int:
 
     # Setup WebSocket
     darwin.configure(
-        show_banner=True,
+        
     )
 
     

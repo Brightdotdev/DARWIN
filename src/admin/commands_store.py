@@ -62,13 +62,19 @@ def cmd_store_files(args, _get_store):
 def cmd_store_file(args, _get_store):
     store = _get_store()
     s = store.file_status(args.filename)
-    _r.panel(f"File: {args.filename}", str(s))
+    if isinstance(s, dict):
+        _r.tree(f"File: {args.filename}", [(k, v) for k, v in s.items()])
+    else:
+        _r.panel(f"File: {args.filename}", str(s))
 
 
 def cmd_store_audit(args, _get_store):
     store = _get_store()
     a = store.full_audit()
-    _r.panel("Full Audit", str(a))
+    if isinstance(a, dict):
+        _r.tree("Full Audit", [(k, v) for k, v in a.items()])
+    else:
+        _r.panel("Full Audit", str(a))
 
 
 def cmd_store_health(args, _get_store):

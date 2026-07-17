@@ -171,7 +171,7 @@ async def main() -> int:
     args = parser.parse_args()
 
     darwin.configure(
-        show_banner=True,
+        
     )
 
     if args.store_dir and ensure_writable_directory(args.store_dir):

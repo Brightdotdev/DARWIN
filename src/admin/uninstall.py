@@ -117,11 +117,24 @@ def _remove_artifacts(artifacts: List[Path], dry_run: bool = False) -> List[str]
     return log
 
 
-def _remove_global_registry() -> List[str]:
+def _remove_global_registry(dry_run: bool = False) -> List[str]:
     """Remove ~/.darwin/ (the global store registry)."""
     darwin_home = Path.home() / ".darwin"
     if not darwin_home.exists():
         return ["~/.darwin/ not found (nothing to remove)"]
+
+    # Safety check: validate it looks like a darwin registry
+    expected = {"stores_registry.db", "config"}
+    actual = {d.name for d in darwin_home.iterdir()} if darwin_home.is_dir() else set()
+    if not (expected & actual):
+        return [
+            f"WARNING: ~/.darwin/ doesn't look like a darwin registry "
+            f"(contents: {actual}). Skipping."
+        ]
+
+    if dry_run:
+        return [f"[dry-run] would remove {darwin_home}"]
+
     try:
         shutil.rmtree(darwin_home)
         return [f"removed {darwin_home}"]
@@ -239,7 +252,7 @@ def cmd_uninstall(args):
 
     # ── Step 3: Remove global store registry ──
     _r.section("Step 3: Removing global store registry")
-    logs = _remove_global_registry() if not dry_run else ["[dry-run] would remove ~/.darwin/"]
+    logs = _remove_global_registry(dry_run=dry_run)
     all_logs.extend(logs)
     for log in logs:
         _r._out(f"  {log}")

@@ -158,7 +158,7 @@ def main() -> int:
     args = parser.parse_args()
 
     darwin.configure(
-        show_banner=True,
+        
     )
 
     try:

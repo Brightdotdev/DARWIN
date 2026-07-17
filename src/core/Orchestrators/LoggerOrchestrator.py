@@ -25,7 +25,6 @@ class LoggerOrchestrator:
     def configure(
         mode: str = "terminal",
         persist: bool = True,
-        show_banner: bool = True,
         log_filter: str = "all",
         sse_port: int = 8765,
         sse_host: str = "127.0.0.1",
@@ -46,7 +45,6 @@ class LoggerOrchestrator:
         darwin.configure(
             mode=mode_map.get(mode, OutputMode.TERMINAL),
             persist=persist,
-            show_banner=show_banner,
             log_filter=filter_map.get(log_filter, LogFilter.ALL),
             sse_port=sse_port,
             sse_host=sse_host,

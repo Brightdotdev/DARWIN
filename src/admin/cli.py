@@ -54,13 +54,17 @@ def _get_models(init_models: bool = False):
 
 
 def main():
+    from src.core.Logger.DarwinLogger import darwin
+    darwin.configure()
     parser = argparse.ArgumentParser(
         prog="darwin-admin",
         description="Darwin Admin — Full orchestrator control for power users",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  darwin-admin setup interactive
+  darwin-admin setup                          # Interactive setup (guided)
+  darwin-admin setup --preset recommended     # One-shot: models + logging
+  darwin-admin setup logging                  # Reconfigure logging only
   darwin-admin status
   darwin-admin models status
   darwin-admin models install intfloat/multilingual-e5-small-onnx
@@ -92,25 +96,15 @@ Examples:
     _pipeline_mod.add_args(sub, _get_pipeline)
     _logs_mod.add_args(sub)
     _system_mod.add_args(sub, _get_models)
+    _system_mod.add_status_args(sub)
     _uninstall_mod.add_args(sub)
 
-    # Top-level status command
-    from src.admin.commands_system import cmd_status
-    sp = sub.add_parser("status", help="Overview: store files, installed models, preferences")
-    sp.add_argument("--store", help="Store ID, name, or path")
-    sp.add_argument("--initialize", action="store_true", help="Also initialize models (slow)")
-    sp.set_defaults(func=cmd_status)
-
     args = parser.parse_args()
-
-    from src.core.Logger.DarwinLogger import darwin
-    darwin.configure(show_banner=False)
 
     try:
         args.func(args)
     except KeyboardInterrupt:
         _r._out()
-        _r.warn("Interrupted.")
         sys.exit(130)
     except Exception as e:
         _r.err(f"{type(e).__name__}: {e}")

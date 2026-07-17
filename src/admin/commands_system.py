@@ -59,3 +59,11 @@ def add_args(sub, _get_models):
         "action", nargs="?", default="info", choices=["info"], help="Show system info"
     )
     p.set_defaults(func=lambda a: cmd_system_info(a, _get_models))
+
+
+def add_status_args(sub):
+    """Register the top-level 'status' command."""
+    sp = sub.add_parser("status", help="Overview: store files, installed models, preferences")
+    sp.add_argument("--store", help="Store ID, name, or path")
+    sp.add_argument("--initialize", action="store_true", help="Also initialize models (slow)")
+    sp.set_defaults(func=cmd_status)

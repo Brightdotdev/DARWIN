@@ -129,7 +129,7 @@ def main() -> int:
     from src.core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
-        show_banner=True,
+        
         mode=OutputMode.BOTH if args.sse else OutputMode.TERMINAL,
     )
 

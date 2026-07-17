@@ -6,12 +6,14 @@ Exposes run_pipeline, purge_artifacts, and pipeline_report via FastMCP.
 import re
 from typing import Optional
 
+from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
 from src.core.Orchestrators.lib import resolve_store
 from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
 from src.core.Logger.DarwinLogger import darwin
+from src.mcp.logging_bridge import darwin_bridge
 
 _STAGE_MAP = {
     "ingest": "ingestion", "extract": "ingestion", "parse": "ingestion",
@@ -70,6 +72,7 @@ def register(mcp, pipeline):
         ),
     )
     async def run_pipeline(
+        ctx: Context,
         stages: list[str],
         target: str = "",
         store: Optional[str] = None,
@@ -96,45 +99,46 @@ def register(mcp, pipeline):
         - Logs returned are filtered to WARNING/ERROR/SUCCESS only.
         - Pass store name/path/ID to run against a specific store.
         """
-        try:
-            stages = _validate_stages(stages)
-            target = _validate_target(target)
-            params = PipelineInput(
-                target=target,
-                store=store,
-                stages=stages,
-                files=[files] if files else None,
-                ocr=ocr,
-                recursive=recursive,
-                precise=precise,
-                rerun=rerun,
-                threshold=threshold,
-                idf_smoothing=idf_smoothing,
-                only_kw=only_kw,
-                only_semantic=only_semantic,
-                strict=strict,
-            )
+        async with darwin_bridge(ctx):
+            try:
+                stages = _validate_stages(stages)
+                target = _validate_target(target)
+                params = PipelineInput(
+                    target=target,
+                    store=store,
+                    stages=stages,
+                    files=[files] if files else None,
+                    ocr=ocr,
+                    recursive=recursive,
+                    precise=precise,
+                    rerun=rerun,
+                    threshold=threshold,
+                    idf_smoothing=idf_smoothing,
+                    only_kw=only_kw,
+                    only_semantic=only_semantic,
+                    strict=strict,
+                )
 
-            def _blocking():
-                if store:
-                    resolved = resolve_store(store)
-                    resolved.bootstrap(quiet=True)
-                    return PipelineOrchestrator(store=resolved).build_pipeline(params)
-                return pipeline.build_pipeline(params)
+                def _blocking():
+                    if store:
+                        resolved = resolve_store(store)
+                        resolved.bootstrap(quiet=True)
+                        return PipelineOrchestrator(store=resolved).build_pipeline(params)
+                    return pipeline.build_pipeline(params)
 
-            import asyncio
-            result = await asyncio.get_event_loop().run_in_executor(None, _blocking)
-            return {
-                "success": result.success,
-                "data": {
-                    "stages_completed": [s.value for s in result.stages_completed],
-                    "stages_failed": result.stages_failed,
-                    "summary": result.summary,
-                },
-            }
-        except Exception as e:
-            darwin.error(f"run_pipeline failed: {type(e).__name__}: {e}")
-            return {"success": False, "error": str(e)}
+                import asyncio
+                result = await asyncio.get_event_loop().run_in_executor(None, _blocking)
+                return {
+                    "success": result.success,
+                    "data": {
+                        "stages_completed": [s.value for s in result.stages_completed],
+                        "stages_failed": result.stages_failed,
+                        "summary": result.summary,
+                    },
+                }
+            except Exception as e:
+                darwin.error(f"run_pipeline failed: {type(e).__name__}: {e}")
+                return {"success": False, "error": str(e)}
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -145,7 +149,7 @@ def register(mcp, pipeline):
             openWorldHint=False,
         ),
     )
-    async def purge_artifacts(stages: list[str], filenames: list[str], dry_run: bool = False) -> dict:
+    async def purge_artifacts(ctx: Context, stages: list[str], filenames: list[str], dry_run: bool = False) -> dict:
         """Delete pipeline artifacts for specific files.
 
         Usage tips:
@@ -153,24 +157,25 @@ def register(mcp, pipeline):
         - Stages: 'ingestion' removes markdown/records; 'indexing' removes embeddings/vector/bm25.
         - filenames must be exact matches to the original filenames used during ingestion.
         """
-        try:
-            stages = _validate_stages(stages)
-            filenames = _validate_filenames(filenames)
-            if dry_run:
-                return {"success": True, "data": {
-                    "message": "Dry run — no changes made",
-                    "stages": stages,
-                    "filenames": filenames,
-                }}
+        async with darwin_bridge(ctx):
+            try:
+                stages = _validate_stages(stages)
+                filenames = _validate_filenames(filenames)
+                if dry_run:
+                    return {"success": True, "data": {
+                        "message": "Dry run — no changes made",
+                        "stages": stages,
+                        "filenames": filenames,
+                    }}
 
-            import asyncio
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: pipeline.purge(stages, filenames)
-            )
-            return {"success": True, "data": {"message": "Purge completed"}}
-        except Exception as e:
-            darwin.error(f"purge_artifacts failed: {type(e).__name__}: {e}")
-            return {"success": False, "error": str(e)}
+                import asyncio
+                await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: pipeline.purge(stages, filenames)
+                )
+                return {"success": True, "data": {"message": "Purge completed"}}
+            except Exception as e:
+                darwin.error(f"purge_artifacts failed: {type(e).__name__}: {e}")
+                return {"success": False, "error": str(e)}
 
     @mcp.tool(
         annotations=ToolAnnotations(
@@ -181,7 +186,7 @@ def register(mcp, pipeline):
             openWorldHint=False,
         ),
     )
-    async def pipeline_report(filename: Optional[str] = None) -> dict:
+    async def pipeline_report(ctx: Context, filename: Optional[str] = None) -> dict:
         """Get pipeline report for files — shows which stages are complete per file.
 
         Usage tips:
@@ -189,12 +194,13 @@ def register(mcp, pipeline):
         - Pass a specific filename to check that file's status only.
         - Use this before running pipeline to decide if rerun is needed.
         """
-        try:
-            import asyncio
-            report = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: pipeline.store.get_pipeline_report(filename)
-            )
-            return {"success": True, "data": report}
-        except Exception as e:
-            darwin.error(f"pipeline_report failed: {type(e).__name__}: {e}")
-            return {"success": False, "error": str(e)}
+        async with darwin_bridge(ctx):
+            try:
+                import asyncio
+                report = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: pipeline.store.get_pipeline_report(filename)
+                )
+                return {"success": True, "data": report}
+            except Exception as e:
+                darwin.error(f"pipeline_report failed: {type(e).__name__}: {e}")
+                return {"success": False, "error": str(e)}

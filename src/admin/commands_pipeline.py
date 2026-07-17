@@ -4,8 +4,6 @@ Pipeline execution and maintenance command handlers for darwin-admin.
 Commands: run, ingest, index, purge
 """
 
-import sys
-
 from src.admin.renderer import _r
 
 
@@ -54,7 +52,7 @@ def _run_pipeline_stages(
 
 
 def cmd_pipeline_run(args, _get_pipeline):
-    success = _run_pipeline_stages(
+    _run_pipeline_stages(
         args.target, args.files, ["ingestion", "indexing"],
         args.ocr, args.recursive, args.precise,
         args.threshold, args.idf_smoothing,
@@ -62,24 +60,20 @@ def cmd_pipeline_run(args, _get_pipeline):
         store_ref=getattr(args, "store", None),
         _get_pipeline=_get_pipeline,
     )
-    if not success:
-        sys.exit(1)
 
 
 def cmd_pipeline_ingest(args, _get_pipeline):
-    success = _run_pipeline_stages(
+    _run_pipeline_stages(
         args.target, args.files, ["ingestion"],
         args.ocr, args.recursive, args.precise,
         None, None, False, False, args.rerun,
         store_ref=getattr(args, "store", None),
         _get_pipeline=_get_pipeline,
     )
-    if not success:
-        sys.exit(1)
 
 
 def cmd_pipeline_index(args, _get_pipeline):
-    success = _run_pipeline_stages(
+    _run_pipeline_stages(
         None, args.files, ["indexing"],
         False, False, False,
         args.threshold, args.idf_smoothing,
@@ -87,18 +81,12 @@ def cmd_pipeline_index(args, _get_pipeline):
         store_ref=getattr(args, "store", None),
         _get_pipeline=_get_pipeline,
     )
-    if not success:
-        sys.exit(1)
 
 
 def cmd_pipeline_purge(args, _get_pipeline):
-    try:
-        pipe = _get_pipeline(getattr(args, "store", None))
-        pipe.purge(args.stages, args.filenames)
-        _r.ok(f"Purged {', '.join(args.stages)} for {len(args.filenames)} file(s)")
-    except Exception as e:
-        _r.err(f"{type(e).__name__}: {e}")
-        sys.exit(1)
+    pipe = _get_pipeline(getattr(args, "store", None))
+    pipe.purge(args.stages, args.filenames)
+    _r.ok(f"Purged {', '.join(args.stages)} for {len(args.filenames)} file(s)")
 
 
 def add_args(sub, _get_pipeline):

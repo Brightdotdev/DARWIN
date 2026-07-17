@@ -1,6 +1,6 @@
 # Darwin Admin CLI
 
-Full orchestrator control for power users. 31 subcommands across 8 groups.
+Full orchestrator control for power users. 32 subcommands across 8 groups.
 
 ## Usage
 
@@ -21,9 +21,9 @@ The admin module is split by concern across multiple files:
 ```
 src/admin/
   cli.py                 — Entry point, argparse builder, lazy orchestrator singletons
-  renderer.py            — AdminRenderer: ANSI output, tables, panels, trees
-  setup.py               — Interactive onboarding + config helpers
-  commands_models.py     — Model lifecycle: status, list, install, uninstall, switch, keys
+  renderer.py            — AdminRenderer: ANSI output, tables, panels, trees, interactive prompts
+  setup.py               — Interactive onboarding + config helpers + logging reconfigure
+  commands_models.py     — Model lifecycle: status, list, install, discard, switch, keys
   commands_store.py      — Store introspection: status, files, file, audit, health, repair
   commands_pipeline.py   — Pipeline execution: run, ingest, index, purge
   commands_logs.py       — Log management: query, sessions, stats, purge, export, compact
@@ -35,11 +35,32 @@ src/admin/
 
 ### `setup` — First-time configuration
 
+```bash
+darwin-admin setup                          # Interactive setup (guided)
+darwin-admin setup --preset recommended     # One-shot: models + logging (no prompts)
+darwin-admin setup logging                  # Reconfigure logging only
+darwin-admin setup validate                 # Validate current config
+darwin-admin setup doctor                   # Diagnose common issues
+darwin-admin setup reset                    # Reset config (keeps models with --keep-models)
+```
+
 | Command | Description |
 |---------|-------------|
-| `interactive` | Guided per-category setup — detect hardware, pick models, configure logging |
+| (no args) | Interactive guided setup (default) |
+| `--preset required\|recommended` | One-shot setup with a preset (no prompts) |
+| `logging` | Reconfigure logging interactively |
+| `validate` | Validate config files and embedding model |
+| `doctor` | Diagnose config issues, disk space, model status |
+| `reset` | Reset configuration files |
 | `profile --profile recommended` | Non-interactive, install recommended model profile |
 | `onboard --preferences embedding=... nlp=...` | Non-interactive with explicit model IDs |
+
+| Flag | Description |
+|------|-------------|
+| `--preset <required\|recommended>` | One-shot setup: resolve models, download, configure logging |
+| `--yes`, `-y` | Skip confirmation prompts (use defaults for logging) |
+| `--no-download` | Skip model downloads (assumes models are cached locally) |
+| `--keep-models` | On reset, keep downloaded models and config files |
 
 #### Interactive setup flow
 
@@ -51,7 +72,7 @@ The interactive setup walks through each step sequentially:
    - **Optional categories** (reranker, nlp, ocr, vision): Shows recommended model + requirements, user can accept, browse all, or skip
 3. **API keys** — prompts only for keys needed by selected API models
 4. **Install** — downloads local models only (API models just need keys)
-5. **Logging** — mode (terminal/sse/both/none), persistence, retention, SSE port
+5. **Logging** — mode (terminal/sse/both/none), persistence, retention, verbosity
 
 #### Config detection
 
@@ -72,8 +93,17 @@ If none: runs full setup.
 | `list [--category] [--provider]` | List all registered models (with optional filters) |
 | `install <model_id>... [--no-download] [--force]` | Install one or more models |
 | `discard --category <cat> [--all] [--active] [--inactive] [--delete]` | Discard models per category |
-| `switch <category> <model_id> [--no-download]` | Change active model for a category |
+| `switch [category] [model_id] [--no-download]` | Change active model for a category |
 | `keys set/status/remove --provider <name> [--key]` | Manage API keys |
+
+#### Switch (fully interactive)
+
+`switch` works with or without arguments:
+- No args → prompts for category, then prompts for model
+- `switch embedding` → prompts for model within embedding category
+- `switch embedding model-id` → direct switch
+
+When switching between providers, you'll see a comparison and can optionally discard the old key.
 
 #### Discard (category-based)
 
@@ -105,14 +135,24 @@ darwin-admin models discard --category ocr --inactive --delete
 - Single installed model → discarded directly
 - Multiple installed models → interactive selector (pick one, all, or skip)
 
+#### Keys (API key management)
+
+```bash
+darwin-admin models keys set openai sk-...    # Set a key
+darwin-admin models keys status               # Show all key statuses
+darwin-admin models keys remove openai        # Remove a key
+```
+
+`--provider` is required for `set` and `remove`. `--key` is required for `set`.
+
 ### `store` — Store introspection
 
 | Command | Description |
 |---------|-------------|
 | `status` | Store overview (sources, pipeline stages, searchable files) |
 | `files` | List all files with pipeline stage and search readiness |
-| `file <filename>` | Detailed status for one file |
-| `audit` | Full store audit |
+| `file <filename>` | Detailed status for one file (formatted as tree) |
+| `audit` | Full store audit (formatted as tree) |
 | `health [--model <id>]` | Health check (embedding or registry) |
 | `repair [--dry-run]` | Repair integrity issues |
 
@@ -150,36 +190,18 @@ You can run both together (`run`), or each stage independently (`ingest`, `index
 - `--only-semantic` — Build vector index only (skip BM25)
 - `--precise` — Precision parsing mode (slower but more accurate text extraction)
 
-**What happens during a run:**
-```
-darwin-admin pipeline run ./docs --ocr
-```
-1. Store is located (or created if new)
-2. Files are discovered in `./docs/` (recursively if `--recursive`)
-3. Each file is parsed (PDF→markdown, HTML→text, DOCX→text, etc.)
-4. OCR is applied to scanned pages (if `--ocr` and Tesseract available)
-5. Parsed text is chunked into passages (~512 tokens each)
-6. BM25 keyword index is built from chunks
-7. Embeddings are generated and stored (NumPy + USearch)
-8. Results are logged with success/failure per file
-
-**Expected output:**
-- Successful files show `OK` with stage completion
-- Failed files show `ERR` with the specific error
-- Summary shows total files processed, chunks created, time elapsed
-
 ### `logs` — Log management
 
 | Command | Description |
 |---------|-------------|
 | `query [--session] [--levels] [--limit]` | Query log entries |
-| `sessions` | List all log sessions |
+| `sessions` | List all sessions |
 | `session-info <session-id>` | Detailed info for one session |
 | `stats` | Log statistics |
-| `purge [--older-than]` | Purge old logs |
+| `purge [--days]` | Purge old logs |
 | `purge-session <session-id>` | Purge a specific session |
-| `export [--format] [--output]` | Export logs |
-| `compact` | Compact log storage |
+| `export --output <path> [--session]` | Export logs to JSONL |
+| `compact` | VACUUM SQLite database |
 | `set-retention <days>` | Set log retention policy |
 
 ### `system` — Diagnostics
@@ -215,8 +237,8 @@ darwin-admin uninstall --keep-package  # clean data only, keep the package
 
 1. **Discovers stores** — queries `~/.darwin/stores_registry.db` for all registered stores (main + extra)
 2. **Cleans extra stores** — for each store outside the main base dir, removes only `indexes/`, `registry.db`, `.darwin_store_id`, `checkpoints/`, `conversations/` (leaves your original files untouched)
-3. **Removes global registry** — deletes `~/.darwin/`
-4. **Removes main data directory** — deletes `%LOCALAPPDATA%/Darwin` (Windows), `~/Library/Application Support/Darwin` (macOS), or `~/.local/share/darwin` (Linux)
+3. **Removes global registry** — validates `~/.darwin/` looks like a darwin registry before deletion
+4. **Removes main data directory** — deletes `%LOCALAPPDATA%/Darwin` (Windows), `~/Library/Application Support/Darwin` (macOS), or `~/.local/share/darwin` (Linux) — with content validation before deletion
 5. **Uninstalls package** — runs `pip uninstall darwin-core --yes` (skipped with `--keep-package`)
 
 ## Logging modes
@@ -225,27 +247,64 @@ The logging configuration supports four modes:
 
 | Mode | Description |
 |------|-------------|
-| `terminal` | Logs to console only (default) |
+| `terminal` | Logs to console only (default). Darwin ASCII banner always shows on startup. |
 | `sse` | Stream logs via SSE (for MCP / remote viewing) |
 | `both` | Console + SSE simultaneously |
 | `none` | Silent (no log output) |
 
 Additional settings:
 - **persist** — Save logs to SQLite history (separate from mode)
+- **log_filter** — Verbosity: `all` (default), `quiet` (errors + warnings + success), `silent` (errors only)
 - **retention_days** — How long to keep logs (3, 7, 14, 30 days, or never)
 - **sse_port** — Port for SSE streaming (shared with MCP server, auto-resolved if busy)
 
 These are saved to `logging.json` in the config directory. MCP reads the port from this file at startup.
 
+## HTTP Endpoints
+
+The MCP server exposes these HTTP endpoints (default: `http://127.0.0.1:8765`):
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/stream` | GET | SSE stream of real-time log events |
+| `/history` | GET | Query historical logs. Params: `?session=&levels=&limit=&before=` |
+| `/banner` | GET | Darwin ASCII banner as JSON. Response: `{"banner": ["line1", ...]}` |
+| `/health` | GET | Server health check (store, models) |
+| `/dashboard` | GET | Web-based log dashboard (HTML) |
+
+### Frontend integration example
+
+```javascript
+// Fetch banner once on load
+const { banner } = await fetch("http://127.0.0.1:8765/banner").then(r => r.json());
+
+// Connect to live log stream
+const sse = new EventSource("http://127.0.0.1:8765/stream");
+sse.onmessage = (e) => {
+  const { message, log_type, session } = JSON.parse(e.data);
+  // log_type: "info" | "warning" | "error" | "success"
+};
+```
+
 ## Examples
 
 ```bash
 # Interactive setup (per-category guided flow)
-darwin-admin setup interactive
+darwin-admin setup
+
+# One-shot setup (no prompts, downloads models, configures logging)
+darwin-admin setup --preset recommended
+
+# Reconfigure logging only
+darwin-admin setup logging
 
 # Non-interactive setup (Docker/CI)
 darwin-admin setup profile --profile recommended --no-download
 darwin-admin setup onboard --preferences embedding=intfloat/multilingual-e5-small-onnx
+
+# Validate and diagnose
+darwin-admin setup validate
+darwin-admin setup doctor
 
 # Model management
 darwin-admin models status
@@ -269,7 +328,6 @@ darwin-admin store health
 darwin-admin pipeline run /data/docs --ocr --recursive
 darwin-admin pipeline ingest /data/papers/
 darwin-admin pipeline index --threshold 0.6
-darwin-admin pipeline index --files doc1.pdf --store my-store
 darwin-admin pipeline purge file1.pdf file2.pdf --stages ingestion
 
 # System info and status

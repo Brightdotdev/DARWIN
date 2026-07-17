@@ -1,43 +1,39 @@
 """
 Interactive setup and onboarding command handlers for darwin-admin.
 
-Commands: interactive, profile, onboard
+Commands: interactive, profile, onboard, preset, validate, doctor, reset, logging
 """
 
 import json as _json
+import os
+import sys
+import shutil
+import tempfile
+import time
+from pathlib import Path
 
 from src.admin.renderer import _r
 
 
-# ══════════════════════════════════════════════════════════════
-# Interactive helpers
-# ══════════════════════════════════════════════════════════════
-
-
-def _interactive_select(prompt, options, default=None):
-    """Numbered interactive selector."""
-    _r.section(prompt)
-    for i, (key, desc) in enumerate(options, 1):
-        _r._out(f"  [{i}] {key}  {_r._dim(desc)}")
-    while True:
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON atomically — write to temp file, then rename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
         try:
-            raw = input(
-                f"  Enter [1-{len(options)}]"
-                + (f" (default: {default})" if default else "")
-                + ": "
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            _r._out()
-            raise KeyboardInterrupt
-        if not raw and default is not None:
-            return options[default - 1][0]
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(options):
-                return options[idx - 1][0]
-        except ValueError:
+            os.unlink(tmp)
+        except OSError:
             pass
-        _r.err("Invalid selection.")
+        raise
+
+
+# ══════════════════════════════════════════════════════════════
+# Config status helpers
+# ══════════════════════════════════════════════════════════════
 
 
 def _setup_status():
@@ -106,6 +102,76 @@ def _show_setup_status(status, content):
         _r._out(f"  {_r._dim('Last setup: ' + str(ts))}")
 
     _r._out()
+
+
+# ══════════════════════════════════════════════════════════════
+# Environment detection
+# ══════════════════════════════════════════════════════════════
+
+
+def detect_environment():
+    """Detect runtime environment characteristics."""
+    from src.lib.AppPaths import is_running_in_docker
+    env = {
+        "docker": is_running_in_docker(),
+        "ci": any(
+            os.environ.get(k)
+            for k in ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "JENKINS_URL",
+                       "TRAVIS", "CIRCLECI", "BUILDKITE", "DRONE"]
+        ),
+        "ssh": any(
+            os.environ.get(k) for k in ["SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"]
+        ),
+        "kubernetes": "KUBERNETES_SERVICE_HOST" in os.environ,
+        "platform": sys.platform,
+    }
+    env["ephemeral"] = env["docker"] or env["ci"] or env["kubernetes"]
+    env["headless"] = env["ci"] or env["ssh"] or not sys.stdin.isatty()
+    return env
+
+
+def calculate_disk_impact(preferences):
+    """Calculate disk space impact of model installation.
+
+    Args:
+        preferences: {category_name: model_id}
+
+    Returns:
+        dict with required_mb, available_mb, after_mb, warning
+    """
+    from src.core.Models.Lib.ModelRegistry import find_spec
+    from src.lib.AppPaths import set_darwin_base_dir
+
+    required_mb = 0
+    for model_id in preferences.values():
+        spec = find_spec(model_id)
+        if spec and spec.is_local and spec.disk_mb:
+            required_mb += spec.disk_mb
+
+    base = set_darwin_base_dir()
+    try:
+        usage = shutil.disk_usage(str(base))
+        available_mb = usage.free // (1024 * 1024)
+    except Exception:
+        available_mb = None
+
+    if available_mb is not None:
+        after_mb = available_mb - required_mb
+        warning = None
+        if after_mb < 500:
+            warning = f"Low disk space ({after_mb}MB remaining)"
+        elif after_mb < 1024:
+            warning = f"Disk space getting tight ({after_mb}MB remaining)"
+    else:
+        after_mb = None
+        warning = "Could not check disk space"
+
+    return {
+        "required_mb": required_mb,
+        "available_mb": available_mb,
+        "after_mb": after_mb,
+        "warning": warning,
+    }
 
 
 def _setup_detect_and_recommend(_get_models):
@@ -191,7 +257,7 @@ def _setup_category(models, cat, desc, recommended, *, required=False):
         options.insert(0, ("recommended", f"Use recommended: {recommended}"))
     options.append(("browse", "Browse all options in this category"))
 
-    choice = _interactive_select(
+    choice = _r.interactive_select(
         f"  {cat}?",
         options,
         default=1 if rec_spec else 2,
@@ -323,7 +389,7 @@ def _setup_install_selected(models, selected):
         _r.info("No models to install.")
 
 
-def _setup_logging_interactive():
+def _setup_logging_interactive(yes: bool = False):
     """Interactively configure logging.json.
 
     Modes:
@@ -339,39 +405,46 @@ def _setup_logging_interactive():
     from src.lib.AppPaths import default_config_dir
 
     _r.section("Step 5: Logging")
-    _r._out("  [1] terminal   — Logs to console only")
-    _r._out("  [2] sse        — Stream logs via SSE (for MCP / remote)")
-    _r._out("  [3] both       — Console + SSE simultaneously")
-    _r._out("  [4] none       — Silent (no log output)")
-    try:
-        raw = input("  Select mode [1-4] (default: 1): ").strip()
-    except (EOFError, KeyboardInterrupt):
-        _r._out()
-        raise KeyboardInterrupt
-    mode_map = {"1": "terminal", "2": "sse", "3": "both", "4": "none"}
-    mode = mode_map.get(raw, "terminal")
 
-    _r._out()
-    try:
-        persist_raw = input("  Save logs to history? [y/n] (default: y): ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        _r._out()
-        raise KeyboardInterrupt
-    persist = persist_raw != "n"
+    if yes:
+        mode, persist, retention = "terminal", True, 14
+        _r._out(f"  Mode:      {_r._dim(mode)} (default)")
+        _r._out(f"  Persist:   {_r._dim('yes')} (default)")
+        _r._out(f"  Retention: {_r._dim('14 days')} (default)")
+    else:
+        _r._out("  [1] terminal   — Logs to console only")
+        _r._out("  [2] sse        — Stream logs via SSE (for MCP / remote)")
+        _r._out("  [3] both       — Console + SSE simultaneously")
+        _r._out("  [4] none       — Silent (no log output)")
+        try:
+            raw = input("  Select mode [1-4] (default: 1): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            _r._out()
+            raise KeyboardInterrupt
+        mode_map = {"1": "terminal", "2": "sse", "3": "both", "4": "none"}
+        mode = mode_map.get(raw, "terminal")
 
-    _r._out()
-    ret_choice = _interactive_select(
-        "Log retention",
-        [
-            ("3", "3 days"),
-            ("7", "7 days"),
-            ("14", "14 days"),
-            ("30", "30 days"),
-            ("0", "Never — delete logs immediately"),
-        ],
-        default=3,
-    )
-    retention = int(ret_choice)
+        _r._out()
+        try:
+            persist_raw = input("  Save logs to history? [y/n] (default: y): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            _r._out()
+            raise KeyboardInterrupt
+        persist = persist_raw != "n"
+
+        _r._out()
+        ret_choice = _r.interactive_select(
+            "Log retention",
+            [
+                ("3", "3 days"),
+                ("7", "7 days"),
+                ("14", "14 days"),
+                ("30", "30 days"),
+                ("0", "Never — delete logs immediately"),
+            ],
+            default=3,
+        )
+        retention = int(ret_choice)
 
     sse_port = 8765
     sse_host = "127.0.0.1"
@@ -397,22 +470,161 @@ def _setup_logging_interactive():
         "max_memory": 10000,
         "sse_port": sse_port,
         "sse_host": sse_host,
-        "show_banner": True,
         "log_filter": "all",
     }
 
     path = default_config_dir() / "logging.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_json.dumps(logging_cfg, indent=2), encoding="utf-8")
+    _atomic_write_json(path, logging_cfg)
 
     port_note = f", port {sse_port}" if mode in ("sse", "both") else ""
     _r.ok(f"logging.json written ({mode}, persist={persist}, {retention}d retention{port_note})")
 
 
-def _cmd_change_settings(_get_models):
+def _setup_logging_defaults(retention_days=14):
+    """Write recommended logging.json without prompts (for presets)."""
+    from src.lib.AppPaths import default_config_dir
+    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+
+    logging_cfg = {
+        "mode": "terminal",
+        "persist": True,
+        "retention_days": retention_days,
+        "max_memory": 10000,
+        "sse_port": 8765,
+        "sse_host": "127.0.0.1",
+        "log_filter": "all",
+    }
+
+    path = default_config_dir() / "logging.json"
+    _atomic_write_json(path, logging_cfg)
+
+    LoggerOrchestrator.configure(
+        mode="terminal",
+        persist=True,
+        log_filter="all",
+        persist_config=True,
+        override=True,
+    )
+
+    _r.ok(f"Logging configured (terminal, persist=true, {retention_days}d retention)")
+
+
+def cmd_setup_logging(_args, _get_models):
+    """Interactively reconfigure logging without re-running full setup."""
+    from src.lib.AppPaths import default_config_dir
+
+    _r.header("Reconfigure Logging")
+
+    # Show current config
+    cfg_path = default_config_dir() / "logging.json"
+    if cfg_path.exists():
+        try:
+            current = _json.loads(cfg_path.read_text(encoding="utf-8"))
+            _r.section("Current")
+            _r._out(f"    Mode:        {current.get('mode', 'terminal')}")
+            _r._out(f"    Persist:     {current.get('persist', True)}")
+            _r._out(f"    Filter:      {current.get('log_filter', 'all')}")
+            _r._out(f"    Retention:   {current.get('retention_days', '?')} days")
+            _r._out()
+        except Exception:
+            pass
+
+    # Mode
+    raw = _r.interactive_select(
+        "Output mode",
+        [
+            ("terminal", "Console logs only (recommended)"),
+            ("sse", "Stream logs via SSE (for MCP / remote)"),
+            ("both", "Console + SSE simultaneously"),
+            ("none", "Silent (no log output)"),
+        ],
+        default=1,
+    )
+    mode = raw
+
+    # Persist
+    _r._out()
+    try:
+        persist_raw = input("  Save logs to history? [y/n] (default: y): ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        _r._out()
+        raise KeyboardInterrupt
+    persist = persist_raw != "n"
+
+    # Filter
+    log_filter = _r.interactive_select(
+        "Log verbosity",
+        [
+            ("all", "Everything (default)"),
+            ("quiet", "Errors + warnings + success only"),
+            ("silent", "Errors only"),
+        ],
+        default=1,
+    )
+
+    # Retention
+    ret_choice = _r.interactive_select(
+        "Log retention",
+        [
+            ("3", "3 days"),
+            ("7", "7 days"),
+            ("14", "14 days"),
+            ("30", "30 days"),
+            ("0", "Never — delete logs immediately"),
+        ],
+        default=3,
+    )
+    retention = int(ret_choice)
+
+    # SSE port (only if needed)
+    sse_port = 8765
+    sse_host = "127.0.0.1"
+    if mode in ("sse", "both"):
+        from src.lib.NetUtils import is_port_available, find_available_port
+
+        if is_port_available(sse_host, sse_port):
+            _r.ok(f"Port {sse_port} available")
+        else:
+            _r.warn(f"Port {sse_port} in use — scanning...")
+            found = find_available_port(sse_host, sse_port + 1, 10)
+            if found:
+                sse_port = found
+                _r.ok(f"Using port {sse_port}")
+            else:
+                _r.err("No available port found — SSE disabled")
+                mode = "terminal"
+
+    # Save
+    logging_cfg = {
+        "mode": mode,
+        "persist": persist,
+        "retention_days": retention,
+        "max_memory": 10000,
+        "sse_port": sse_port,
+        "sse_host": sse_host,
+        "log_filter": log_filter,
+    }
+
+    _atomic_write_json(cfg_path, logging_cfg)
+
+    # Apply immediately
+    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    LoggerOrchestrator.configure(
+        mode=mode,
+        persist=persist,
+        log_filter=log_filter,
+        persist_config=True,
+        override=True,
+    )
+
+    port_note = f", port {sse_port}" if mode in ("sse", "both") else ""
+    _r.ok(f"Logging updated ({mode}, persist={persist}, filter={log_filter}, {retention}d retention{port_note})")
+
+
+def _cmd_change_settings(_get_models, yes: bool = False):
     """Sub-menu for changing specific config areas."""
     _r.header("Change Settings")
-    choice = _interactive_select(
+    choice = _r.interactive_select(
         "What would you like to change?",
         [
             ("models", "Re-select and reinstall models"),
@@ -431,7 +643,7 @@ def _cmd_change_settings(_get_models):
             _setup_install_selected(models, selected)
 
     elif choice == "logging":
-        _setup_logging_interactive()
+        _setup_logging_interactive(yes=yes)
 
     elif choice == "api-keys":
         models = _get_models(init_models=False)
@@ -458,7 +670,7 @@ def _cmd_change_settings(_get_models):
         _setup_full_interactive(_get_models)
 
 
-def _setup_full_interactive(_get_models):
+def _setup_full_interactive(_get_models, yes: bool = False):
     """The full interactive setup flow."""
     _r.header("Darwin Interactive Setup")
 
@@ -475,7 +687,21 @@ def _setup_full_interactive(_get_models):
 
     _setup_api_keys_for_selected(models, selected)
     _setup_install_selected(models, selected)
-    _setup_logging_interactive()
+    _setup_logging_interactive(yes=yes)
+
+    # Disk impact summary
+    prefs = {cat: mid for cat, (mid, _) in selected.items()}
+    if prefs:
+        impact = calculate_disk_impact(prefs)
+        _r.section("Disk Impact")
+        _r._out(f"    Required:  {impact['required_mb']}MB")
+        if impact["available_mb"] is not None:
+            _r._out(f"    Available: {impact['available_mb']}MB")
+            _r._out(f"    After:     {impact['after_mb']}MB")
+        else:
+            _r._out(f"    Available: {_r._dim('unknown')}")
+        if impact["warning"]:
+            _r.warn(impact["warning"])
 
     _r._out()
     _r.ok("Setup complete")
@@ -494,12 +720,13 @@ def _setup_full_interactive(_get_models):
 def cmd_setup_interactive(args, _get_models):
     """Config-aware interactive onboarding."""
     status, content = _setup_status()
-    count = sum(status.values())
+    all_configured = all(status.values())
+    any_configured = any(status.values())
 
-    if count == 3:
+    if all_configured:
         _r.header("Darwin Setup")
         _show_setup_status(status, content)
-        choice = _interactive_select(
+        choice = _r.interactive_select(
             "Everything looks configured. What would you like to do?",
             [
                 ("change", "Change a specific setting (models, logging, API keys)"),
@@ -512,16 +739,16 @@ def cmd_setup_interactive(args, _get_models):
             _r.ok("Keeping current configuration.")
             return
         elif choice == "change":
-            _cmd_change_settings(_get_models)
+            _cmd_change_settings(_get_models, yes=getattr(args, "yes", False))
         else:
-            _setup_full_interactive(_get_models)
+            _setup_full_interactive(_get_models, yes=getattr(args, "yes", False))
 
-    elif count > 0:
+    elif any_configured:
         _r.header("Darwin Setup")
         missing = [k.replace("_json", ".json") for k, v in status.items() if not v]
         _show_setup_status(status, content)
         _r.info(f"Missing: {', '.join(missing)}")
-        choice = _interactive_select(
+        choice = _r.interactive_select(
             "How would you like to proceed?",
             [
                 ("complete", "Complete the missing pieces"),
@@ -534,12 +761,12 @@ def cmd_setup_interactive(args, _get_models):
             _r.ok("Keeping current configuration.")
             return
         elif choice == "complete":
-            _cmd_change_settings(_get_models)
+            _cmd_change_settings(_get_models, yes=getattr(args, "yes", False))
         else:
-            _setup_full_interactive(_get_models)
+            _setup_full_interactive(_get_models, yes=getattr(args, "yes", False))
 
     else:
-        _setup_full_interactive(_get_models)
+        _setup_full_interactive(_get_models, yes=getattr(args, "yes", False))
 
 
 def cmd_setup_profile(args, _get_models):
@@ -558,9 +785,16 @@ def cmd_setup_profile(args, _get_models):
 
 def cmd_setup_onboard(args, _get_models):
     """Non-interactive onboarding with preference dict."""
+    from src.core.Models.Lib.ModelSpec import ModelCategory
+
     models = _get_models(init_models=False)
     if args.preferences:
         prefs = dict(kv.split("=", 1) for kv in args.preferences)
+        valid_cats = {c.value for c in ModelCategory}
+        for cat in prefs:
+            if cat.lower() not in valid_cats:
+                _r.err(f"Unknown category: '{cat}' (valid: {', '.join(sorted(valid_cats))})")
+                return
     else:
         prefs = None
     report = models.onboard(preferences=prefs, auto_download=not args.no_download)
@@ -572,26 +806,270 @@ def cmd_setup_onboard(args, _get_models):
         _r.err(f"{cat}: {err}")
 
 
+def cmd_setup_validate(args):
+    """Validate the current Darwin configuration."""
+    from src.lib.AppPaths import default_config_dir, default_models_config_dir
+
+    darwin_path = default_config_dir() / "darwin.json"
+    logging_path = default_config_dir() / "logging.json"
+    models_path = default_models_config_dir() / "models.json"
+
+    _r.header("Validate Configuration")
+    ok = []
+    issues = []
+
+    # Config files
+    for label, path in [("darwin.json", darwin_path), ("logging.json", logging_path), ("models.json", models_path)]:
+        if path.exists():
+            ok.append(f"{label} exists")
+            try:
+                _json.loads(path.read_text(encoding="utf-8"))
+                ok.append(f"{label} is valid JSON")
+            except Exception as e:
+                issues.append(f"{label} is corrupted: {e}")
+        else:
+            issues.append(f"{label} missing")
+
+    # Embedding model
+    if models_path.exists():
+        try:
+            from src.core.Models.ModelConfig import load_active_models
+            active = load_active_models()
+            emb = active.get("embedding")
+            if emb:
+                from src.core.Models.Lib.ModelRegistry import find_spec
+                spec = find_spec(emb)
+                if spec:
+                    ok.append(f"Embedding model registered: {emb}")
+                else:
+                    issues.append(f"Embedding model unknown: {emb}")
+            else:
+                issues.append("No embedding model configured")
+        except Exception as e:
+            issues.append(f"Could not read models config: {e}")
+
+    for item in ok:
+        _r.ok(item)
+    for item in issues:
+        _r.err(item)
+
+    _r._out()
+    if not issues:
+        _r.ok("Configuration is valid")
+    else:
+        _r.err(f"{len(issues)} issue(s) found")
+
+
+def cmd_setup_doctor(_get_models):
+    """Diagnose common Darwin issues."""
+    from src.lib.AppPaths import default_config_dir, default_models_config_dir, set_darwin_base_dir
+
+    _r.header("Darwin Doctor")
+    checks = []
+
+    # Config files
+    darwin_path = default_config_dir() / "darwin.json"
+    logging_path = default_config_dir() / "logging.json"
+    models_path = default_models_config_dir() / "models.json"
+
+    checks.append(("Config file exists", darwin_path.exists(), "Run: darwin-admin setup interactive"))
+    checks.append(("Logging config exists", logging_path.exists(), "Run: darwin-admin setup interactive"))
+    checks.append(("Models config exists", models_path.exists(), "Run: darwin-admin setup interactive"))
+
+    # Disk space
+    try:
+        usage = shutil.disk_usage(str(set_darwin_base_dir()))
+        free_mb = usage.free // (1024 * 1024)
+        checks.append((f"Disk space ({free_mb}MB free)", free_mb > 500, "Free up disk space"))
+    except Exception:
+        checks.append(("Disk space check", False, "Could not check disk space"))
+
+    # Models
+    if models_path.exists():
+        try:
+            from src.core.Models.ModelConfig import load_active_models
+            active = load_active_models()
+            emb = active.get("embedding")
+            if emb:
+                from src.core.Models.Lib.ModelRegistry import find_spec
+                spec = find_spec(emb)
+                checks.append((f"Embedding model '{emb}' registered", spec is not None, "Re-run setup"))
+                if spec and spec.is_local:
+                    models = _get_models(init_models=False)
+                    downloaded = models.is_downloaded(spec.category, spec.model_id)
+                    checks.append((f"Embedding model downloaded", downloaded, f"Run: darwin-admin models install {emb}"))
+            else:
+                checks.append(("Embedding model configured", False, "Run: darwin-admin setup interactive"))
+        except Exception:
+            checks.append(("Model check", False, "Could not read model config"))
+
+    for name, ok, fix in checks:
+        if ok:
+            _r.ok(name)
+        else:
+            _r.err(f"{name} — {fix}")
+
+    _r._out()
+    failed = sum(1 for _, ok, _ in checks if not ok)
+    if failed == 0:
+        _r.ok("All checks passed")
+    else:
+        _r.warn(f"{failed} issue(s) found")
+
+
+def cmd_setup_reset(args):
+    """Reset Darwin configuration. Optionally keep downloaded models."""
+    from src.lib.AppPaths import default_config_dir, default_models_config_dir
+
+    if not args.yes:
+        action = "keep models" if args.keep_models else "remove everything"
+        try:
+            confirm = input(f"  Reset Darwin? This will {action}. [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            _r._out()
+            return
+        if confirm != "y":
+            _r._out("Cancelled.")
+            return
+
+    _r.header("Reset Darwin Configuration")
+
+    # Backup darwin.json
+    darwin_path = default_config_dir() / "darwin.json"
+    if darwin_path.exists():
+        backup = darwin_path.with_suffix(f".backup.{int(time.time())}.json")
+        shutil.copy2(darwin_path, backup)
+        _r.ok(f"Config backed up to {backup}")
+        darwin_path.unlink()
+
+    # Remove logging.json (unless keeping configs)
+    logging_path = default_config_dir() / "logging.json"
+    if not args.keep_models and logging_path.exists():
+        logging_path.unlink()
+
+    # Remove models.json (unless keeping configs)
+    models_path = default_models_config_dir() / "models.json"
+    if not args.keep_models and models_path.exists():
+        models_path.unlink()
+
+    # Optionally remove downloaded models
+    if not args.keep_models:
+        models_dir = default_models_config_dir().parent / "models"
+        if models_dir.exists():
+            shutil.rmtree(models_dir)
+            _r.ok(f"Models directory removed: {models_dir}")
+
+    _r.ok("Configuration reset")
+    _r.next_steps([
+        "darwin-admin setup interactive   # Re-run setup",
+    ])
+
+
+def _setup_preset(args, _get_models):
+    """One-shot preset-based setup — resolve, download, configure."""
+    models = _get_models(init_models=False)
+    preset = args.preset
+
+    _r.header(f"Setup: {preset}")
+
+    # Show system info
+    system = models.detect_system()
+    _r.section("System")
+    _r._out(f"    RAM: {system.ram_gb}GB | Disk: {system.disk_free_gb}GB | "
+            f"CPU: {system.cpu_cores} cores | GPU: {system.gpu_name or 'None'}")
+    _r._out(f"    Tier: {system.tier}")
+
+    # Resolve and install via orchestrator
+    results = models.setup_profile(
+        profile=preset,
+        auto_download=not args.no_download,
+    )
+
+    if not results:
+        _r.err("Profile resolved to no models")
+        return
+
+    _r.section("Models")
+    all_ok = True
+    for cat, res in results.items():
+        if res.success:
+            _r.ok(f"{cat.value}: {res.model_id}")
+        else:
+            _r.err(f"{cat.value}: {res.error or 'failed'}")
+            all_ok = False
+
+    # Configure logging with sensible defaults
+    _setup_logging_defaults(retention_days=14)
+
+    if all_ok:
+        _r.ok("Setup complete")
+    else:
+        _r.warn("Setup completed with some failures")
+
+    _r.next_steps([
+        "darwin mcp               # Start the MCP server",
+        "darwin-admin status       # Check system status",
+        "darwin-admin setup logging  # Reconfigure logging",
+    ])
+
+
+def _setup_dispatch(args, _get_models):
+    """Dispatch setup — subcommand, preset, or default to interactive."""
+    action = getattr(args, "action", None)
+
+    if action in ("required", "recommended"):
+        _r.err(f"Did you mean: darwin-admin setup --preset {action}?")
+        return
+
+    if action == "validate":
+        cmd_setup_validate(args)
+    elif action == "doctor":
+        cmd_setup_doctor(_get_models)
+    elif action == "reset":
+        cmd_setup_reset(args)
+    elif action == "profile":
+        cmd_setup_profile(args, _get_models)
+    elif action == "onboard":
+        cmd_setup_onboard(args, _get_models)
+    elif action == "logging":
+        cmd_setup_logging(args, _get_models)
+    elif getattr(args, "preset", None):
+        _setup_preset(args, _get_models)
+    else:
+        cmd_setup_interactive(args, _get_models)
+
+
 def add_args(sub, _get_models):
     """Register setup subcommands."""
-    p = sub.add_parser("setup", help="Initial setup and onboarding")
-    sp = p.add_subparsers(dest="setup_action", required=True)
-
-    i = sp.add_parser("interactive", help="Interactive setup with guided menus")
-    i.set_defaults(func=lambda a: cmd_setup_interactive(a, _get_models))
-
-    prof = sp.add_parser("profile", help="Non-interactive profile-based setup")
-    prof.add_argument(
+    p = sub.add_parser("setup", help="Setup and onboarding")
+    p.add_argument(
+        "action", nargs="?", default=None,
+        choices=["interactive", "profile", "onboard", "validate", "doctor", "reset", "logging"],
+        help="Subcommand (default: interactive)",
+    )
+    p.add_argument(
+        "--preset", choices=["required", "recommended"],
+        help="One-shot setup with a preset (downloads models)",
+    )
+    p.add_argument(
+        "--no-download", action="store_true",
+        help="Skip model downloads (assumes models are cached locally)",
+    )
+    p.add_argument(
+        "--yes", "-y", action="store_true",
+        help="Skip confirmations",
+    )
+    p.add_argument(
         "--profile", default="required",
-        choices=["required", "recommended"], help="Model profile to install",
+        choices=["required", "recommended"],
+        help="Profile for 'profile' action (default: required)",
     )
-    prof.add_argument("--no-download", action="store_true", help="Skip auto-download")
-    prof.set_defaults(func=lambda a: cmd_setup_profile(a, _get_models))
-
-    o = sp.add_parser("onboard", help="Non-interactive onboard with preferences")
-    o.add_argument(
+    p.add_argument(
         "--preferences", "-p", nargs="+", metavar="CAT=MODEL_ID",
-        help="e.g. embedding=intfloat/multilingual-e5-small-onnx",
+        help="Preferences for 'onboard' action",
     )
-    o.add_argument("--no-download", action="store_true")
-    o.set_defaults(func=lambda a: cmd_setup_onboard(a, _get_models))
+    p.add_argument(
+        "--keep-models", action="store_true",
+        help="Keep downloaded models on reset",
+    )
+    p.set_defaults(func=lambda a: _setup_dispatch(a, _get_models))

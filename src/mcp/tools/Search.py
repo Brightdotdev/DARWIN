@@ -1,10 +1,12 @@
 from typing import Optional
 
+from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from src.core.Orchestrators.lib import RetrievalParameters, resolve_store
 from src.core.Orchestrators.lib import Method, MergeStrategy, FallbackStrategy
 from src.core.Logger.DarwinLogger import darwin
+from src.mcp.logging_bridge import darwin_bridge
 
 _MAX_QUERY_LEN = 4096
 
@@ -29,6 +31,7 @@ def register(mcp, retrieval_orch):
         ),
     )
     async def search_darwin(
+        ctx: Context,
         query: str,
         method: Method = "hybrid",
         store: Optional[str] = None,
@@ -58,54 +61,55 @@ def register(mcp, retrieval_orch):
         - Pass store name/path/ID to search a specific store.
         - Use prefer_sources/exclude_sources to target or skip specific files.
         """
-        try:
-            query = _validate_query(query)
-            params = RetrievalParameters(
-                query=query,
-                method=method,
-                store=store,
-                files=[files] if files else None,
-                top_k=top_k,
-                max_passages=max_passages,
-                max_chars=max_chars,
-                min_passage_score=min_passage_score,
-                merge_strategy=merge_strategy,
-                fill_gaps=fill_gaps,
-                max_per_source=max_per_source,
-                prefer_sources=[prefer_sources] if prefer_sources else None,
-                exclude_sources=[exclude_sources] if exclude_sources else None,
-                filter_structural=filter_structural,
-                fallback_strategy=fallback_strategy,
-                rerank=rerank,
-            )
+        async with darwin_bridge(ctx):
+            try:
+                query = _validate_query(query)
+                params = RetrievalParameters(
+                    query=query,
+                    method=method,
+                    store=store,
+                    files=[files] if files else None,
+                    top_k=top_k,
+                    max_passages=max_passages,
+                    max_chars=max_chars,
+                    min_passage_score=min_passage_score,
+                    merge_strategy=merge_strategy,
+                    fill_gaps=fill_gaps,
+                    max_per_source=max_per_source,
+                    prefer_sources=[prefer_sources] if prefer_sources else None,
+                    exclude_sources=[exclude_sources] if exclude_sources else None,
+                    filter_structural=filter_structural,
+                    fallback_strategy=fallback_strategy,
+                    rerank=rerank,
+                )
 
-            def _blocking():
-                if store:
-                    from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-                    resolved = resolve_store(store)
-                    resolved.bootstrap(quiet=True)
-                    return RetrievalOrchestrator(store=resolved).retrieve_and_resolve(params)
-                return retrieval_orch.retrieve_and_resolve(params)
+                def _blocking():
+                    if store:
+                        from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                        resolved = resolve_store(store)
+                        resolved.bootstrap(quiet=True)
+                        return RetrievalOrchestrator(store=resolved).retrieve_and_resolve(params)
+                    return retrieval_orch.retrieve_and_resolve(params)
 
-            import asyncio
-            ctx = await asyncio.get_event_loop().run_in_executor(None, _blocking)
-            if ctx is None or ctx.is_empty():
-                return {"success": True, "data": {"passages": [], "total": 0}}
+                import asyncio
+                ctx_result = await asyncio.get_event_loop().run_in_executor(None, _blocking)
+                if ctx_result is None or ctx_result.is_empty():
+                    return {"success": True, "data": {"passages": [], "total": 0}}
 
-            return {
-                "success": True,
-                "data": {
-                    "passages": [p.to_dict() for p in ctx.passages],
-                    "total": ctx.total_passages,
-                    "total_chars": ctx.total_chars,
-                    "sources": ctx.sources_used,
-                    "max_score": ctx.max_score,
-                    "avg_score": ctx.avg_score,
-                    "elapsed_ms": ctx.elapsed_ms,
-                    "fallback_used": ctx.fallback_used,
-                    "fallback_reason": ctx.fallback_reason,
-                },
-            }
-        except Exception as e:
-            darwin.error(f"search_darwin failed: {type(e).__name__}: {e}")
-            return {"success": False, "error": str(e)}
+                return {
+                    "success": True,
+                    "data": {
+                        "passages": [p.to_dict() for p in ctx_result.passages],
+                        "total": ctx_result.total_passages,
+                        "total_chars": ctx_result.total_chars,
+                        "sources": ctx_result.sources_used,
+                        "max_score": ctx_result.max_score,
+                        "avg_score": ctx_result.avg_score,
+                        "elapsed_ms": ctx_result.elapsed_ms,
+                        "fallback_used": ctx_result.fallback_used,
+                        "fallback_reason": ctx_result.fallback_reason,
+                    },
+                }
+            except Exception as e:
+                darwin.error(f"search_darwin failed: {type(e).__name__}: {e}")
+                return {"success": False, "error": str(e)}

@@ -441,7 +441,6 @@ class DarwinLogger:
         max_memory: int = 10_000,
         sse_port: int = 8765,
         sse_host: str = "127.0.0.1",
-        show_banner: bool = True,
         log_filter: LogFilter = LogFilter.ALL,
         persist_config: bool = True,
         override: bool = False,
@@ -449,6 +448,12 @@ class DarwinLogger:
         if self._configured and not override:
             warnings.warn("configure() already called — pass override=True to reapply")
             return
+
+        # ── Coerce string mode to OutputMode enum ──
+        if isinstance(mode, str):
+            mode = OutputMode(mode)
+        if isinstance(log_filter, str):
+            log_filter = LogFilter(log_filter)
 
         from src.lib.AppPaths import default_logs_dir
 
@@ -464,7 +469,6 @@ class DarwinLogger:
             _max_memory = saved.get("max_memory", max_memory)
             _sse_port = saved.get("sse_port", sse_port)
             _sse_host = saved.get("sse_host", sse_host)
-            _show_banner = saved.get("show_banner", show_banner)
             _filter_str = saved.get("log_filter", log_filter.value)
             _log_filter = next(
                 (f for f in LogFilter if f.value == _filter_str), log_filter
@@ -476,7 +480,6 @@ class DarwinLogger:
             _max_memory = max_memory
             _sse_port = sse_port
             _sse_host = sse_host
-            _show_banner = show_banner
             _log_filter = log_filter
 
             # ── Persist the new config ──
@@ -489,7 +492,6 @@ class DarwinLogger:
                         "max_memory": _max_memory,
                         "sse_port": _sse_port,
                         "sse_host": _sse_host,
-                        "show_banner": _show_banner,
                         "log_filter": _log_filter.value,
                     }
                 )
@@ -524,32 +526,27 @@ class DarwinLogger:
         )
 
         if _mode in (OutputMode.TERMINAL, OutputMode.BOTH):
-            self._attach_terminal(_show_banner)
+            self._attach_terminal()
         if _mode in (OutputMode.SSE, OutputMode.BOTH):
-            self._start_sse(_sse_host, _sse_port, _show_banner)
+            self._start_sse(_sse_host, _sse_port)
 
-    def _attach_terminal(self, show_banner: bool) -> None:
+    def _attach_terminal(self) -> None:
         try:
             from src.core.Logger.TerminalUi import TerminalUI
 
             tui = TerminalUI()
-            if show_banner:
-                tui.show_banner()
+            tui.show_banner()
             self.subscribe(tui)
         except ImportError:
             pass
 
-    def _start_sse(self, host: str, port: int, show_banner: bool) -> None:
+    def _start_sse(self, host: str, port: int) -> None:
         try:
             from src.mcp.UnifiedServer import UnifiedServer
-            from src.core.Logger.lib import ASCII_BANNER
 
             server = UnifiedServer(host=host, port=port)
             server.start()
             self._sse_server = server
-
-            if show_banner:
-                self.logjson({"banner": ASCII_BANNER}, LogType.INFO)
 
         except Exception as e:
             self._emit(

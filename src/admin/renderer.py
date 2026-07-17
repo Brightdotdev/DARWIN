@@ -76,6 +76,16 @@ class AdminRenderer:
         self._out(f"  {self._bright(title)}")
         self._out(self._divider())
 
+    def show_banner(self) -> None:
+        """Print the Darwin ASCII banner."""
+        from src.core.Logger.lib import ASCII_BANNER
+        for line in ASCII_BANNER:
+            try:
+                self._out(line)
+            except UnicodeEncodeError:
+                stream = sys.stdout
+                stream.buffer.write((line + "\n").encode("utf-8", errors="replace"))
+
     def section(self, title: str) -> None:
         self._out(f"\n  {self._bright(title)}")
 
@@ -160,6 +170,31 @@ class AdminRenderer:
         self._out(f"\n  {self._bright('Next steps')}")
         for step in steps:
             self._out(f"    {step}")
+
+    def interactive_select(self, prompt: str, options: List[Tuple[str, str]], default: int = None) -> str:
+        """Numbered interactive selector. Returns the selected key."""
+        self.section(prompt)
+        for i, (key, desc) in enumerate(options, 1):
+            self._out(f"  [{i}] {key}  {self._dim(desc)}")
+        while True:
+            try:
+                raw = input(
+                    f"  Enter [1-{len(options)}]"
+                    + (f" (default: {default})" if default else "")
+                    + ": "
+                ).strip()
+            except (EOFError, KeyboardInterrupt):
+                self._out()
+                raise KeyboardInterrupt
+            if not raw and default is not None:
+                return options[default - 1][0]
+            try:
+                idx = int(raw)
+                if 1 <= idx <= len(options):
+                    return options[idx - 1][0]
+            except ValueError:
+                pass
+            self.err("Invalid selection.")
 
 
 # Global renderer instance

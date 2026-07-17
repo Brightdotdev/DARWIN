@@ -378,9 +378,7 @@ def main() -> int:
         parser.error("--caption and --ocr require --images to be set")
 
 
-    darwin.configure(
-        show_banner=True,
-    )
+    darwin.configure()
 
     try:
         with darwin.session("parsing"):

@@ -9,48 +9,17 @@ from typing import List
 from src.admin.renderer import _r
 
 
-def _interactive_select(prompt, options, default=None):
-    """Numbered interactive selector."""
-    _r.section(prompt)
-    for i, (key, desc) in enumerate(options, 1):
-        _r._out(f"  [{i}] {key}  {_r._dim(desc)}")
-    while True:
-        try:
-            raw = input(
-                f"  Enter [1-{len(options)}]"
-                + (f" (default: {default})" if default else "")
-                + ": "
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
-            _r._out()
-            raise KeyboardInterrupt
-        if not raw and default is not None:
-            return options[default - 1][0]
-        try:
-            idx = int(raw)
-            if 1 <= idx <= len(options):
-                return options[idx - 1][0]
-        except ValueError:
-            pass
-        _r.err("Invalid selection.")
-
-
 def _get_installed_in_category(models, cat_enum) -> List[str]:
     """Return list of model_ids that are installed (downloaded or API-keyed) in a category."""
-    from src.core.Models.ModelConfig import get_active_model
     from src.lib.KeyManager import is_key_set, load_keys_from_keychain
 
     specs = models.list_registered(category=cat_enum)
     installed = []
+    load_keys_from_keychain(log=False)
     for s in specs:
         if s["is_api"]:
-            if s.get("requires_provider"):
-                try:
-                    load_keys_from_keychain(log=False)
-                    if is_key_set(s["requires_provider"]):
-                        installed.append(s["model_id"])
-                except Exception:
-                    pass
+            if s.get("requires_provider") and is_key_set(s["requires_provider"]):
+                installed.append(s["model_id"])
         else:
             if models.is_downloaded(cat_enum, s["model_id"]):
                 installed.append(s["model_id"])
@@ -187,7 +156,7 @@ def cmd_models_discard(args, _get_models):
                     options.append((mid, mid + tag))
                 options.append(("skip", f"Skip {cat_name}"))
 
-                choice = _interactive_select(
+                choice = _r.interactive_select(
                     f"Discard models from {cat_name}?",
                     options,
                     default=len(options),  # default: skip
@@ -219,7 +188,8 @@ def cmd_models_discard(args, _get_models):
 def cmd_models_switch(args, _get_models):
     """Switch active model. Fully interactive: no args → category → model."""
     from src.core.Models.ModelConfig import get_active_model
-    from src.core.Models.Lib.ModelSpec import ModelCategory, find_spec
+    from src.core.Models.Lib.ModelSpec import ModelCategory
+    from src.core.Models.Lib.ModelRegistry import  find_spec
 
     models = _get_models(init_models=False)
 
@@ -238,7 +208,7 @@ def cmd_models_switch(args, _get_models):
             options.append((cname, label))
 
         options.append(("cancel", "Cancel"))
-        cat_name = _interactive_select("Which category?", options, default=len(options))
+        cat_name = _r.interactive_select("Which category?", options, default=len(options))
         if cat_name == "cancel":
             _r._out(f"  {_r._dim('switch cancelled')}")
             return
@@ -272,10 +242,18 @@ def cmd_models_switch(args, _get_models):
 
         if len(options) == 1:
             target_id = installed[0]
-            _r.info(f"Only one model installed — switching to {target_id}")
+            _r.info(f"Only one model installed: {target_id}")
+            try:
+                confirm = input(f"  Switch {cat_name} to {target_id}? [Y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                _r._out()
+                return
+            if confirm == "n":
+                _r._out(f"  {_r._dim('switch cancelled')}")
+                return
         else:
             options.append(("cancel", "Cancel — don't switch"))
-            choice = _interactive_select(
+            choice = _r.interactive_select(
                 f"Switch {cat_name} to which model?",
                 options,
                 default=len(options),  # default: cancel
@@ -345,6 +323,12 @@ def cmd_models_switch(args, _get_models):
 
 def cmd_models_keys(args, _get_models):
     models = _get_models(init_models=False)
+    if args.action in ("set", "remove") and not args.provider:
+        _r.err(f"--provider is required for '{args.action}'")
+        return
+    if args.action == "set" and not args.key:
+        _r.err("--key is required for 'set'")
+        return
     if args.action == "set":
         ok = models.set_key(args.provider, args.key)
         if ok:

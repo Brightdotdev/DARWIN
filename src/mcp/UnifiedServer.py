@@ -273,6 +273,12 @@ class UnifiedServer:
             html_path = Path(__file__).parent / "dashboard.html"
             return HTMLResponse(html_path.read_text(encoding="utf-8"))
 
+        @mcp.custom_route("/banner", methods=["GET"])
+        async def banner(request: Request) -> JSONResponse:
+            """Return the Darwin ASCII banner for frontend display."""
+            from src.core.Logger.lib import ASCII_BANNER
+            return JSONResponse({"banner": ASCII_BANNER})
+
         self._mcp = mcp
         return mcp
 

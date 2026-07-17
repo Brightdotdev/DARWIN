@@ -190,7 +190,7 @@ async def main() -> int:
 
 
     darwin.configure(
-        show_banner=True,
+        
     )
 
     try:

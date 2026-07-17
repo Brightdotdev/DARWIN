@@ -125,7 +125,7 @@ def _config(args):
 
 def main():
     from src.core.Logger.DarwinLogger import darwin
-    darwin.configure(show_banner=True, override=True)
+    darwin.configure( override=True)
     parser = argparse.ArgumentParser(
         prog="darwin",
         description=(

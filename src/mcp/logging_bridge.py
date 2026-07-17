@@ -1,24 +1,28 @@
 """
 MCP Logging Bridge — forwards DarwinLogger events as MCP log notifications.
 
-When a tool runs, it creates an MCPLogBridge subscriber that listens to
-DarwinLogger events and forwards them as ctx.log() calls to the MCP client
-(Claude Desktop, Cursor, etc.).
+Two ways to use:
 
-Usage in tool handlers:
-    bridge = MCPLogBridge(ctx)
-    darwin.subscribe(bridge)
-    try:
-        # ... tool logic ...
-    finally:
-        darwin.unsubscribe(bridge)
+1. Context manager in tool handlers (preferred):
+       from src.mcp.logging_bridge import darwin_bridge
+       async with darwin_bridge(ctx):
+           # ... tool logic ...
+
+2. Manual subscribe/unsubscribe:
+       bridge = MCPLogBridge(ctx)
+       darwin.subscribe(bridge)
+       try:
+           # ... tool logic ...
+       finally:
+           darwin.unsubscribe(bridge)
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, AsyncIterator
 
-from src.core.Logger.DarwinLogger import LogEvent, LogType
+from src.core.Logger.DarwinLogger import darwin, LogEvent, LogType
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import Context
@@ -65,3 +69,15 @@ class MCPLogBridge:
 
     def close(self) -> None:
         self._closed = True
+
+
+@asynccontextmanager
+async def darwin_bridge(ctx: Context) -> AsyncIterator[None]:
+    """Subscribe DarwinLogger → MCP for the duration of a tool call."""
+    bridge = MCPLogBridge(ctx)
+    darwin.subscribe(bridge)
+    try:
+        yield
+    finally:
+        bridge.close()
+        darwin.unsubscribe(bridge)
