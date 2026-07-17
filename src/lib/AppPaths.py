@@ -49,6 +49,7 @@ def set_darwin_base_dir(path: Optional[Path] = None) -> Path:
 
 
 
+
 # Directory getters with environment variable overrides
 def default_models_dir() -> Path:
     """Platform-appropriate models directory."""
@@ -70,6 +71,12 @@ def default_models_config_dir() -> Path:
     return default_models_dir() / "config"
 
 
+
+def default_darwin_config():
+    return default_config_dir() / "darwin.json"
+
+def default_logging_config():
+    return default_config_dir() / "logging.json"
 
 
 def is_running_in_docker() -> bool:

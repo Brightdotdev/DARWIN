@@ -4,24 +4,36 @@ Pipeline execution and maintenance command handlers for darwin-admin.
 Commands: run, ingest, index, purge
 """
 
+from src.admin.lib import (
+    PipelineAction,
+    DEFAULT_INDEXING_THRESHOLD,
+    DEFAULT_IDF_SMOOTHING,
+    ns_to,
+    PipelineRunArgs,
+    PipelineIngestArgs,
+    PipelineIndexArgs,
+    PipelinePurgeArgs,
+)
 from src.admin.renderer import _r
 
 
 def _run_pipeline_stages(
-    target,
-    files,
-    stages,
-    ocr,
-    recursive,
-    precise,
-    threshold,
-    idf_smoothing,
-    only_kw,
-    only_semantic,
-    rerun,
-    store_ref,
+    *,
+    target: str,
+    files: str | None,
+    stages: list[str],
+    ocr: bool,
+    recursive: bool,
+    precise: bool,
+    threshold: float | None,
+    idf_smoothing: float | None,
+    only_kw: bool,
+    only_semantic: bool,
+    rerun: bool,
+    store_ref: str | None,
     _get_pipeline,
-):
+) -> bool:
+    """Shared pipeline execution. Returns True on success."""
     pipe = _get_pipeline(store_ref)
     from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
 
@@ -34,8 +46,8 @@ def _run_pipeline_stages(
         recursive=recursive,
         precise=precise,
         rerun=rerun,
-        threshold=threshold if threshold is not None else 0.5,
-        idf_smoothing=idf_smoothing if idf_smoothing is not None else 1.5,
+        threshold=threshold if threshold is not None else DEFAULT_INDEXING_THRESHOLD,
+        idf_smoothing=idf_smoothing if idf_smoothing is not None else DEFAULT_IDF_SMOOTHING,
         only_kw=only_kw,
         only_semantic=only_semantic,
     )
@@ -51,45 +63,67 @@ def _run_pipeline_stages(
     return result.success
 
 
-def cmd_pipeline_run(args, _get_pipeline):
+def cmd_pipeline_run(args: PipelineRunArgs, _get_pipeline) -> None:
     _run_pipeline_stages(
-        args.target, args.files, ["ingestion", "indexing"],
-        args.ocr, args.recursive, args.precise,
-        args.threshold, args.idf_smoothing,
-        args.only_kw, args.only_semantic, args.rerun,
-        store_ref=getattr(args, "store", None),
+        target=args.target,
+        files=args.files,
+        stages=["ingestion", "indexing"],
+        ocr=args.ocr,
+        recursive=args.recursive,
+        precise=args.precise,
+        threshold=args.threshold,
+        idf_smoothing=args.idf_smoothing,
+        only_kw=args.only_kw,
+        only_semantic=args.only_semantic,
+        rerun=args.rerun,
+        store_ref=args.store,
         _get_pipeline=_get_pipeline,
     )
 
 
-def cmd_pipeline_ingest(args, _get_pipeline):
+def cmd_pipeline_ingest(args: PipelineIngestArgs, _get_pipeline) -> None:
     _run_pipeline_stages(
-        args.target, args.files, ["ingestion"],
-        args.ocr, args.recursive, args.precise,
-        None, None, False, False, args.rerun,
-        store_ref=getattr(args, "store", None),
+        target=args.target,
+        files=args.files,
+        stages=["ingestion"],
+        ocr=args.ocr,
+        recursive=args.recursive,
+        precise=args.precise,
+        threshold=None,
+        idf_smoothing=None,
+        only_kw=False,
+        only_semantic=False,
+        rerun=args.rerun,
+        store_ref=args.store,
         _get_pipeline=_get_pipeline,
     )
 
 
-def cmd_pipeline_index(args, _get_pipeline):
+def cmd_pipeline_index(args: PipelineIndexArgs, _get_pipeline) -> None:
     _run_pipeline_stages(
-        None, args.files, ["indexing"],
-        False, False, False,
-        args.threshold, args.idf_smoothing,
-        args.only_kw, args.only_semantic, args.rerun,
-        store_ref=getattr(args, "store", None),
+        target="",
+        files=args.files,
+        stages=["indexing"],
+        ocr=False,
+        recursive=False,
+        precise=False,
+        threshold=args.threshold,
+        idf_smoothing=args.idf_smoothing,
+        only_kw=args.only_kw,
+        only_semantic=args.only_semantic,
+        rerun=args.rerun,
+        store_ref=args.store,
         _get_pipeline=_get_pipeline,
     )
 
 
-def cmd_pipeline_purge(args, _get_pipeline):
-    pipe = _get_pipeline(getattr(args, "store", None))
+def cmd_pipeline_purge(args: PipelinePurgeArgs, _get_pipeline) -> None:
+    pipe = _get_pipeline(args.store)
     pipe.purge(args.stages, args.filenames)
     _r.ok(f"Purged {', '.join(args.stages)} for {len(args.filenames)} file(s)")
 
 
-def add_args(sub, _get_pipeline):
+def add_args(sub, _get_pipeline) -> None:
     """Register pipeline subcommands."""
     p = sub.add_parser("pipeline", help="Pipeline execution and maintenance")
     sp = p.add_subparsers(dest="pipeline_action", required=True)
@@ -102,16 +136,17 @@ def add_args(sub, _get_pipeline):
     r.add_argument("--recursive", action="store_true", help="Recursive directory scan")
     r.add_argument("--precise", action="store_true", help="Precision parsing mode")
     r.add_argument(
-        "--threshold", type=float, default=0.5, help="Indexing threshold (default: 0.5)"
+        "--threshold", type=float, default=DEFAULT_INDEXING_THRESHOLD,
+        help=f"Indexing threshold (default: {DEFAULT_INDEXING_THRESHOLD})",
     )
     r.add_argument(
-        "--idf-smoothing", type=float, default=1.5,
-        help="BM25 IDF smoothing (default: 1.5)",
+        "--idf-smoothing", type=float, default=DEFAULT_IDF_SMOOTHING,
+        help=f"BM25 IDF smoothing (default: {DEFAULT_IDF_SMOOTHING})",
     )
     r.add_argument("--only-kw", action="store_true", help="Keyword-only indexing")
     r.add_argument("--only-semantic", action="store_true", help="Semantic-only indexing")
     r.add_argument("--rerun", action="store_true", help="Re-process even if done")
-    r.set_defaults(func=lambda a: cmd_pipeline_run(a, _get_pipeline))
+    r.set_defaults(func=lambda a: cmd_pipeline_run(ns_to(PipelineRunArgs, a), _get_pipeline))
 
     i = sp.add_parser("ingest", help="Ingestion only (parse + chunk)")
     i.add_argument("target", help="Path or static URL to ingest")
@@ -121,17 +156,17 @@ def add_args(sub, _get_pipeline):
     i.add_argument("--recursive", action="store_true")
     i.add_argument("--precise", action="store_true")
     i.add_argument("--rerun", action="store_true")
-    i.set_defaults(func=lambda a: cmd_pipeline_ingest(a, _get_pipeline))
+    i.set_defaults(func=lambda a: cmd_pipeline_ingest(ns_to(PipelineIngestArgs, a), _get_pipeline))
 
     ix = sp.add_parser("index", help="Indexing only (BM25 + embeddings)")
     ix.add_argument("--files", "-f", help="Specific files to index")
     ix.add_argument("--store", help="Store ID, name, or path (default: auto)")
-    ix.add_argument("--threshold", type=float, default=0.5)
-    ix.add_argument("--idf-smoothing", type=float, default=1.5)
+    ix.add_argument("--threshold", type=float, default=DEFAULT_INDEXING_THRESHOLD)
+    ix.add_argument("--idf-smoothing", type=float, default=DEFAULT_IDF_SMOOTHING)
     ix.add_argument("--only-kw", action="store_true")
     ix.add_argument("--only-semantic", action="store_true")
     ix.add_argument("--rerun", action="store_true")
-    ix.set_defaults(func=lambda a: cmd_pipeline_index(a, _get_pipeline))
+    ix.set_defaults(func=lambda a: cmd_pipeline_index(ns_to(PipelineIndexArgs, a), _get_pipeline))
 
     pu = sp.add_parser("purge", help="Purge pipeline artifacts for files")
     pu.add_argument("filenames", nargs="+", help="Files to purge")
@@ -140,4 +175,4 @@ def add_args(sub, _get_pipeline):
         "--stages", nargs="+", default=["ingestion", "indexing"],
         choices=["ingestion", "indexing"], help="Stages to purge",
     )
-    pu.set_defaults(func=lambda a: cmd_pipeline_purge(a, _get_pipeline))
+    pu.set_defaults(func=lambda a: cmd_pipeline_purge(ns_to(PipelinePurgeArgs, a), _get_pipeline))

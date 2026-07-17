@@ -1,6 +1,6 @@
 # Darwin Admin CLI
 
-Full orchestrator control for power users. 32 subcommands across 8 groups.
+Full orchestrator control for power users. 32+ subcommands across 8 groups.
 
 ## Usage
 
@@ -14,12 +14,15 @@ python -m src.admin <group> <command> [options]
 |---|---|
 | `--verbose`, `-v` | Enable verbose error output (shows full tracebacks) |
 
-## Module Structure
+Ctrl+C at any point exits cleanly (no partial state saved).
 
-The admin module is split by concern across multiple files:
+---
+
+## Module Structure
 
 ```
 src/admin/
+  lib.py                 — Types, enums, constants, dataclasses (no magic strings)
   cli.py                 — Entry point, argparse builder, lazy orchestrator singletons
   renderer.py            — AdminRenderer: ANSI output, tables, panels, trees, interactive prompts
   setup.py               — Interactive onboarding + config helpers + logging reconfigure
@@ -28,8 +31,82 @@ src/admin/
   commands_pipeline.py   — Pipeline execution: run, ingest, index, purge
   commands_logs.py       — Log management: query, sessions, stats, purge, export, compact
   commands_system.py     — System info + top-level status dashboard
-  uninstall.py           — Full darwin uninstall (discover stores, clean artifacts, remove data)
+  uninstall.py           — Full uninstall (discover stores, clean artifacts, remove data)
 ```
+
+### Architecture
+
+```
+cli.py  main()
+  │
+  ├── _r.show_banner()              ← prints ASCII banner (never saved to logs)
+  ├── argparse parses command
+  └── args.func(args)               ← dispatches to the correct handler
+        │
+        ├── setup.py                ← _setup_dispatch() → subcommand or interactive
+        ├── commands_models.py      ← cmd_models_status/list/install/discard/switch/keys
+        ├── commands_store.py       ← cmd_store_status/files/file/audit/health/repair
+        ├── commands_pipeline.py    ← cmd_pipeline_run/ingest/index/purge
+        ├── commands_logs.py        ← cmd_logs_query/sessions/stats/purge/export/compact
+        ├── commands_system.py      ← cmd_system_info / cmd_status
+        └── uninstall.py            ← cmd_uninstall
+```
+
+**Lazy singletons** — Orchestrators (`_store`, `_pipeline`, `_models`) are created on first use, not at import time. Each command module receives a `_get_*` factory function, not an instance.
+
+---
+
+## Types (`lib.py`)
+
+All shared types live in `lib.py`. No magic strings or raw dicts are passed between functions.
+
+### Enums
+
+| Enum | Values | Used by |
+|------|--------|---------|
+| `ModelCategory` | `embedding`, `reranker`, `nlp`, `ocr`, `vision` | Setup, models |
+| `OutputMode` | `terminal`, `sse`, `both`, `none` | Setup logging |
+| `LogFilter` | `all`, `quiet`, `silent` | Setup logging |
+| `SetupAction` | `interactive`, `profile`, `onboard`, `validate`, `doctor`, `reset`, `logging` | Setup dispatch |
+| `SetupPreset` | `required`, `recommended` | One-shot setup |
+| `KeyAction` | `set`, `status`, `remove` | Models keys |
+| `StoreAction` | `status`, `files`, `file`, `audit`, `health`, `repair` | Store commands |
+| `PipelineAction` | `run`, `ingest`, `index`, `purge` | Pipeline commands |
+| `LogAction` | `query`, `sessions`, `session-info`, `stats`, `purge`, `purge-session`, `export`, `compact`, `set-retention` | Log commands |
+| `ConfigFile` | `darwin`, `logging`, `models` | Setup validation |
+
+### Dataclasses
+
+| Class | Fields | Used by |
+|-------|--------|---------|
+| `SetupStatus` | `darwin_json: bool`, `logging_json: bool`, `models_json: bool` | Setup detection |
+| `DiskImpact` | `required_mb`, `available_mb`, `after_mb`, `warning` | Setup disk check |
+| `LoggingConfig` | `mode`, `persist`, `retention_days`, `max_memory`, `sse_port`, `sse_host`, `log_filter` | Logging writes |
+| `DoctorCheck` | `name`, `passed`, `fix` | Doctor diagnostics |
+| `CategoryLabel` | `category`, `description`, `required` | Setup category order |
+
+### Constants
+
+| Constant | Default | Used by |
+|----------|---------|---------|
+| `DEFAULT_SSE_PORT` | `8765` | Setup logging, MCP server |
+| `DEFAULT_SSE_HOST` | `127.0.0.1` | Setup logging |
+| `DEFAULT_RETENTION_DAYS` | `14` | Setup logging |
+| `DEFAULT_MAX_MEMORY` | `10_000` | Setup logging |
+| `DEFAULT_INDEXING_THRESHOLD` | `0.5` | Pipeline indexing |
+| `DEFAULT_IDF_SMOOTHING` | `1.5` | Pipeline BM25 |
+
+### Utilities
+
+| Function | Purpose |
+|----------|---------|
+| `atomic_write_json(path, data)` | Write JSON atomically (temp file → os.replace). Interrupt-safe. |
+| `is_ci()` | True in CI/CD environments |
+| `is_ssh()` | True over SSH |
+| `is_kubernetes()` | True in Kubernetes |
+| `is_headless()` | True when no interactive terminal |
+
+---
 
 ## Commands
 
@@ -44,10 +121,10 @@ darwin-admin setup doctor                   # Diagnose common issues
 darwin-admin setup reset                    # Reset config (keeps models with --keep-models)
 ```
 
-| Command | Description |
-|---------|-------------|
-| (no args) | Interactive guided setup (default) |
-| `--preset required\|recommended` | One-shot setup with a preset (no prompts) |
+| Subcommand | Description |
+|------------|-------------|
+| *(no args)* | Interactive guided setup (default) |
+| `--preset required\|recommended` | One-shot: resolve models, download, configure logging |
 | `logging` | Reconfigure logging interactively |
 | `validate` | Validate config files and embedding model |
 | `doctor` | Diagnose config issues, disk space, model status |
@@ -57,44 +134,72 @@ darwin-admin setup reset                    # Reset config (keeps models with --
 
 | Flag | Description |
 |------|-------------|
-| `--preset <required\|recommended>` | One-shot setup: resolve models, download, configure logging |
+| `--preset <required\|recommended>` | One-shot setup (no prompts) |
 | `--yes`, `-y` | Skip confirmation prompts (use defaults for logging) |
 | `--no-download` | Skip model downloads (assumes models are cached locally) |
 | `--keep-models` | On reset, keep downloaded models and config files |
 
 #### Interactive setup flow
 
-The interactive setup walks through each step sequentially:
+```
+Step 1: Detect system
+  └── RAM, disk, CPU, GPU, hardware tier (fast, no model init)
 
-1. **Detect system** — RAM, disk, CPU, GPU, hardware tier (fast, no model init)
-2. **Per-category model selection** — one category at a time:
-   - **Embedding (required):** Lists all models, user picks one (recommended is default)
-   - **Optional categories** (reranker, nlp, ocr, vision): Shows recommended model + requirements, user can accept, browse all, or skip
-3. **API keys** — prompts only for keys needed by selected API models
-4. **Install** — downloads local models only (API models just need keys)
-5. **Logging** — mode (terminal/sse/both/none), persistence, retention, verbosity
+Step 2: Configure models per category
+  ├── embedding (required) — lists all models, user picks one
+  ├── reranker (optional)  — recommended model + accept/browse/skip
+  ├── nlp (optional)
+  ├── ocr (optional)
+  └── vision (optional)
+
+Step 3: API keys
+  └── Prompts only for keys needed by selected API models
+
+Step 4: Install
+  └── Downloads local models (API models just need keys)
+
+Step 5: Logging
+  └── Mode, persistence, retention, verbosity
+```
 
 #### Config detection
 
-When run, setup checks all three config files:
+When run, setup checks three config files via `SetupStatus`:
+
 - `darwin.json` — setup config (models, keys, environment)
 - `logging.json` — logging mode, SSE port, retention
 - `models.json` — active model per category
 
-If all three exist, offers: change specific setting / full re-run / exit.
-If partial: offers to complete missing pieces.
-If none: runs full setup.
+| State | Behavior |
+|-------|----------|
+| All three exist | Offers: change specific / full re-run / exit |
+| Partial | Offers to complete missing pieces / full re-run / exit |
+| None | Runs full setup |
+
+#### One-shot preset (no prompts)
+
+```bash
+darwin-admin setup --preset recommended
+```
+
+Resolves models for your hardware tier, downloads them, writes `logging.json` with defaults (terminal, persist, 14d retention). Does **not** prompt for API keys — run `models keys set` afterward.
+
+#### Atomic config writes
+
+All config writes use `atomic_write_json()` — writes to a temp file, then `os.replace()`. If interrupted mid-write, only the `.tmp` file exists; the original config is never half-written.
+
+---
 
 ### `models` — Model lifecycle
 
 | Command | Description |
 |---------|-------------|
 | `status` | Show installed status per category |
-| `list [--category] [--provider]` | List all registered models (with optional filters) |
+| `list [--category] [--provider]` | List all registered models |
 | `install <model_id>... [--no-download] [--force]` | Install one or more models |
-| `discard --category <cat> [--all] [--active] [--inactive] [--delete]` | Discard models per category |
+| `discard --category <cat> [--all\|--active\|--inactive] [--delete]` | Discard models per category |
 | `switch [category] [model_id] [--no-download]` | Change active model for a category |
-| `keys set/status/remove --provider <name> [--key]` | Manage API keys |
+| `keys set\|status\|remove --provider <name> [--key]` | Manage API keys |
 
 #### Switch (fully interactive)
 
@@ -145,6 +250,8 @@ darwin-admin models keys remove openai        # Remove a key
 
 `--provider` is required for `set` and `remove`. `--key` is required for `set`.
 
+---
+
 ### `store` — Store introspection
 
 | Command | Description |
@@ -155,6 +262,8 @@ darwin-admin models keys remove openai        # Remove a key
 | `audit` | Full store audit (formatted as tree) |
 | `health [--model <id>]` | Health check (embedding or registry) |
 | `repair [--dry-run]` | Repair integrity issues |
+
+---
 
 ### `pipeline` — Pipeline execution
 
@@ -184,11 +293,13 @@ You can run both together (`run`), or each stage independently (`ingest`, `index
 - `--rerun` — Re-process files even if already done
 
 **Indexing parameters:**
-- `--threshold <float>` — Minimum relevance score to include a chunk (default: 0.5). Lower = more results, higher = more precise
-- `--idf-smoothing <float>` — BM25 IDF smoothing factor (default: 1.5). Higher = more weight on rare terms
+- `--threshold <float>` — Minimum relevance score (default: 0.5)
+- `--idf-smoothing <float>` — BM25 IDF smoothing (default: 1.5)
 - `--only-kw` — Build keyword index only (skip embeddings)
 - `--only-semantic` — Build vector index only (skip BM25)
-- `--precise` — Precision parsing mode (slower but more accurate text extraction)
+- `--precise` — Precision parsing mode (slower but more accurate)
+
+---
 
 ### `logs` — Log management
 
@@ -204,11 +315,15 @@ You can run both together (`run`), or each stage independently (`ingest`, `index
 | `compact` | VACUUM SQLite database |
 | `set-retention <days>` | Set log retention policy |
 
+---
+
 ### `system` — Diagnostics
 
 | Command | Description |
 |---------|-------------|
 | `info` | Hardware detection + model recommendations |
+
+---
 
 ### `status` — Overview
 
@@ -216,11 +331,13 @@ You can run both together (`run`), or each stage independently (`ingest`, `index
 |---------|-------------|
 | `status [--store] [--initialize]` | Dashboard: store files, installed models, preferences |
 
-By default, `status` shows store info and file counts without initializing models (fast). Use `--initialize` to also run model initialization and show model readiness status (slower).
+By default, `status` shows store info and file counts without initializing models (fast). Use `--initialize` to also run model initialization (slower).
+
+---
 
 ### `uninstall` — Remove darwin
 
-Safely removes all darwin data from the system. Discovers all registered stores (main + extra), removes only darwin artifacts from extra stores (keeping user files), cleans the main data directory, and optionally uninstalls the pip package.
+Safely removes all darwin data. Discovers all registered stores, removes only darwin artifacts from extra stores (keeping user files), validates directories before deletion.
 
 ```bash
 darwin-admin uninstall              # full cleanup + pip uninstall
@@ -235,30 +352,32 @@ darwin-admin uninstall --keep-package  # clean data only, keep the package
 
 **What it does:**
 
-1. **Discovers stores** — queries `~/.darwin/stores_registry.db` for all registered stores (main + extra)
-2. **Cleans extra stores** — for each store outside the main base dir, removes only `indexes/`, `registry.db`, `.darwin_store_id`, `checkpoints/`, `conversations/` (leaves your original files untouched)
-3. **Removes global registry** — validates `~/.darwin/` looks like a darwin registry before deletion
-4. **Removes main data directory** — deletes `%LOCALAPPDATA%/Darwin` (Windows), `~/Library/Application Support/Darwin` (macOS), or `~/.local/share/darwin` (Linux) — with content validation before deletion
+1. **Discovers stores** — queries `~/.darwin/stores_registry.db` for all registered stores
+2. **Cleans extra stores** — removes only `indexes/`, `registry.db`, `.darwin_store_id`, `checkpoints/`, `conversations/` (leaves your original files untouched)
+3. **Removes global registry** — validates `~/.darwin/` before deletion
+4. **Removes main data directory** — with content validation
 5. **Uninstalls package** — runs `pip uninstall darwin-core --yes` (skipped with `--keep-package`)
+
+---
 
 ## Logging modes
 
-The logging configuration supports four modes:
-
 | Mode | Description |
 |------|-------------|
-| `terminal` | Logs to console only (default). Darwin ASCII banner always shows on startup. |
+| `terminal` | Logs to console only (default). ASCII banner shows on startup. |
 | `sse` | Stream logs via SSE (for MCP / remote viewing) |
 | `both` | Console + SSE simultaneously |
 | `none` | Silent (no log output) |
 
 Additional settings:
 - **persist** — Save logs to SQLite history (separate from mode)
-- **log_filter** — Verbosity: `all` (default), `quiet` (errors + warnings + success), `silent` (errors only)
-- **retention_days** — How long to keep logs (3, 7, 14, 30 days, or never)
+- **log_filter** — `all` (default), `quiet` (errors + warnings + success), `silent` (errors only)
+- **retention_days** — 3, 7, 14, 30 days, or never
 - **sse_port** — Port for SSE streaming (shared with MCP server, auto-resolved if busy)
 
-These are saved to `logging.json` in the config directory. MCP reads the port from this file at startup.
+These are saved to `logging.json`. MCP reads the port at startup.
+
+---
 
 ## HTTP Endpoints
 
@@ -284,62 +403,4 @@ sse.onmessage = (e) => {
   const { message, log_type, session } = JSON.parse(e.data);
   // log_type: "info" | "warning" | "error" | "success"
 };
-```
-
-## Examples
-
-```bash
-# Interactive setup (per-category guided flow)
-darwin-admin setup
-
-# One-shot setup (no prompts, downloads models, configures logging)
-darwin-admin setup --preset recommended
-
-# Reconfigure logging only
-darwin-admin setup logging
-
-# Non-interactive setup (Docker/CI)
-darwin-admin setup profile --profile recommended --no-download
-darwin-admin setup onboard --preferences embedding=intfloat/multilingual-e5-small-onnx
-
-# Validate and diagnose
-darwin-admin setup validate
-darwin-admin setup doctor
-
-# Model management
-darwin-admin models status
-darwin-admin models list --category embedding
-darwin-admin models install intfloat/multilingual-e5-small-onnx
-darwin-admin models switch embedding intfloat/multilingual-e5-large-onnx
-darwin-admin models keys set openai sk-...
-
-# Discard models (category-based)
-darwin-admin models discard --category embedding --all --delete
-darwin-admin models discard --category embedding nlp --active --delete
-darwin-admin models discard --category ocr --inactive --delete
-
-# Store inspection
-darwin-admin store status
-darwin-admin store files
-darwin-admin store audit
-darwin-admin store health
-
-# Pipeline operations
-darwin-admin pipeline run /data/docs --ocr --recursive
-darwin-admin pipeline ingest /data/papers/
-darwin-admin pipeline index --threshold 0.6
-darwin-admin pipeline purge file1.pdf file2.pdf --stages ingestion
-
-# System info and status
-darwin-admin system info
-darwin-admin status                     # fast — no model init
-darwin-admin status --initialize        # full — with model init
-
-# Uninstall (clean all darwin data)
-darwin-admin uninstall --dry-run        # preview first
-darwin-admin uninstall --keep-package   # remove data only
-darwin-admin uninstall                  # full cleanup + pip uninstall
-
-# Verbose error output (shows tracebacks)
-darwin-admin --verbose pipeline run /data/docs --ocr
 ```

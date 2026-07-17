@@ -1,8 +1,7 @@
 """
-darwin admin — Full orchestrator control for power users.
-All knobs, all dials. Wraps the four orchestrators.
+darwin-admin — Full orchestrator control for power users.
 
-Entry point:  src.admin:main()   or   darwin-admin
+Entry point: src.admin:main()  or  darwin-admin
 """
 
 import argparse
@@ -56,6 +55,8 @@ def _get_models(init_models: bool = False):
 def main():
     from src.core.Logger.DarwinLogger import darwin
     darwin.configure()
+    _r.show_banner()
+
     parser = argparse.ArgumentParser(
         prog="darwin-admin",
         description="Darwin Admin — Full orchestrator control for power users",
@@ -79,9 +80,10 @@ Examples:
     )
 
     sub = parser.add_subparsers(dest="command", required=True)
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose error output")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Enable verbose error output")
 
-    # Register all command groups — each module wires its own argparse + handlers
+    # Register all command groups
     from src.admin import setup as _setup_mod
     from src.admin import commands_models as _models_mod
     from src.admin import commands_store as _store_mod

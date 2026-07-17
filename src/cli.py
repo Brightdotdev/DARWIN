@@ -16,8 +16,8 @@ def _read_logging_port() -> int:
     """Read sse_port from logging.json. Returns DEFAULT_PORT if unavailable."""
     import json
     try:
-        from src.lib.AppPaths import default_config_dir
-        path = default_config_dir() / "logging.json"
+        from src.lib.AppPaths import default_logging_config
+        path = default_logging_config()
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
             return int(data.get("sse_port", DEFAULT_PORT))

@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from src.admin.lib import UninstallArgs, ns_to
 from src.admin.renderer import _r
 
 
@@ -199,10 +200,10 @@ def _pip_uninstall() -> bool:
 # ══════════════════════════════════════════════════════════════
 
 
-def cmd_uninstall(args):
+def cmd_uninstall(args: UninstallArgs):
     """Full darwin uninstall: clean data, optionally pip uninstall."""
-    dry_run = getattr(args, "dry_run", False)
-    skip_package = getattr(args, "keep_package", False)
+    dry_run = args.dry_run
+    skip_package = args.keep_package
 
     _r.header("Darwin Uninstall")
     if dry_run:
@@ -298,4 +299,4 @@ def add_args(sub):
         "--keep-package", action="store_true",
         help="Only clean data, don't pip-uninstall darwin-core",
     )
-    p.set_defaults(func=cmd_uninstall)
+    p.set_defaults(func=lambda a: cmd_uninstall(ns_to(UninstallArgs, a)))

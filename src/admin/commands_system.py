@@ -4,10 +4,15 @@ System info and status overview command handlers for darwin-admin.
 Commands: system info, status (top-level)
 """
 
+from src.admin.lib import (
+    ns_to,
+    SystemInfoArgs,
+    StatusArgs,
+)
 from src.admin.renderer import _r
 
 
-def cmd_system_info(args, _get_models):
+def cmd_system_info(args: SystemInfoArgs, _get_models) -> None:
     models = _get_models(init_models=False)
     system = models.detect_system()
     _r.header("System Info")
@@ -37,7 +42,7 @@ def cmd_system_info(args, _get_models):
     )
 
 
-def cmd_status(args):
+def cmd_status(args: StatusArgs) -> None:
     """Comprehensive overview: store files, installed models, preferences."""
     from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
     from src.core.Orchestrators.lib import resolve_store
@@ -48,22 +53,22 @@ def cmd_status(args):
     else:
         orch = StoreOrchestrator.get_default() or StoreOrchestrator()
 
-    init_models = getattr(args, "initialize", False)
+    init_models = args.initialize
     orch.bootstrap(initialize_models=init_models)
 
 
-def add_args(sub, _get_models):
+def add_args(sub, _get_models) -> None:
     """Register system subcommands."""
     p = sub.add_parser("system", help="System info and diagnostics")
     p.add_argument(
         "action", nargs="?", default="info", choices=["info"], help="Show system info"
     )
-    p.set_defaults(func=lambda a: cmd_system_info(a, _get_models))
+    p.set_defaults(func=lambda a: cmd_system_info(ns_to(SystemInfoArgs, a), _get_models))
 
 
-def add_status_args(sub):
+def add_status_args(sub) -> None:
     """Register the top-level 'status' command."""
     sp = sub.add_parser("status", help="Overview: store files, installed models, preferences")
     sp.add_argument("--store", help="Store ID, name, or path")
     sp.add_argument("--initialize", action="store_true", help="Also initialize models (slow)")
-    sp.set_defaults(func=cmd_status)
+    sp.set_defaults(func=lambda a: cmd_status(ns_to(StatusArgs, a)))

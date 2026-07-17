@@ -172,8 +172,8 @@ class UnifiedServer:
     def _save_port_to_config(port: int) -> None:
         """Persist the resolved port to logging.json so MCP and logger share it."""
         try:
-            from src.lib.AppPaths import default_config_dir
-            path = default_config_dir() / "logging.json"
+            from src.lib.AppPaths import default_logging_config
+            path = default_logging_config()
             if not path.exists():
                 return
             data = json.loads(path.read_text(encoding="utf-8"))

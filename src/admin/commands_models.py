@@ -6,15 +6,26 @@ Commands: status, list, install, discard, switch, keys
 
 from typing import List
 
+from src.admin.lib import (
+    KeyAction,
+    ModelCategory,
+    ns_to,
+    ModelsStatusArgs,
+    ModelsListArgs,
+    ModelsInstallArgs,
+    ModelsDiscardArgs,
+    ModelsSwitchArgs,
+    ModelsKeysArgs,
+)
 from src.admin.renderer import _r
 
 
-def _get_installed_in_category(models, cat_enum) -> List[str]:
+def _get_installed_in_category(models, cat_enum: ModelCategory) -> List[str]:
     """Return list of model_ids that are installed (downloaded or API-keyed) in a category."""
     from src.lib.KeyManager import is_key_set, load_keys_from_keychain
 
     specs = models.list_registered(category=cat_enum)
-    installed = []
+    installed: list[str] = []
     load_keys_from_keychain(log=False)
     for s in specs:
         if s["is_api"]:
@@ -26,7 +37,7 @@ def _get_installed_in_category(models, cat_enum) -> List[str]:
     return installed
 
 
-def cmd_models_status(args, _get_models):
+def cmd_models_status(args: ModelsStatusArgs, _get_models) -> None:
     models = _get_models(init_models=True)
     status = models.status()
     _r.header(f"Model Status — {status.summary}")
@@ -43,7 +54,7 @@ def cmd_models_status(args, _get_models):
     _r.table("Categories", ["Category", "Active Model", "Status", "Error"], rows)
 
 
-def cmd_models_list(args, _get_models):
+def cmd_models_list(args: ModelsListArgs, _get_models) -> None:
     models = _get_models(init_models=False)
     specs = models.list_registered()
     if args.category:
@@ -70,7 +81,7 @@ def cmd_models_list(args, _get_models):
     )
 
 
-def cmd_models_install(args, _get_models):
+def cmd_models_install(args: ModelsInstallArgs, _get_models) -> None:
     models = _get_models(init_models=False)
     _r.header(f"Installing {len(args.model_ids)} model(s)")
     for mid in args.model_ids:
@@ -84,13 +95,12 @@ def cmd_models_install(args, _get_models):
             _r.err(f"{mid}: {result.error}")
 
 
-def cmd_models_discard(args, _get_models):
-    """Discard models per category with --all/--active/--active/inactive selection."""
+def cmd_models_discard(args: ModelsDiscardArgs, _get_models) -> None:
+    """Discard models per category with --all/--active/--inactive selection."""
     from src.core.Models.ModelConfig import get_active_model
-    from src.core.Models.Lib.ModelSpec import ModelCategory
 
     models = _get_models(init_models=False)
-    delete = getattr(args, "delete", False)
+    delete = args.delete
     categories = args.category
 
     if not categories:
@@ -105,11 +115,10 @@ def cmd_models_discard(args, _get_models):
             return
 
     # Determine scope flags
-    scope_all = getattr(args, "all", False)
-    scope_active = getattr(args, "active", False)
-    scope_inactive = getattr(args, "inactive", False)
+    scope_all = args.discard_all
+    scope_active = args.active
+    scope_inactive = args.inactive
 
-    # Check for conflicting flags
     scope_flags = sum([scope_all, scope_active, scope_inactive])
     if scope_flags > 1:
         _r.err("Use only one of --all, --active, or --inactive")
@@ -127,8 +136,7 @@ def cmd_models_discard(args, _get_models):
 
         active_id = get_active_model(cat_name.lower())
 
-        # Build list of model_ids to discard based on scope flags
-        to_discard = []
+        to_discard: list[str] = []
 
         if scope_all:
             to_discard = list(installed)
@@ -146,10 +154,8 @@ def cmd_models_discard(args, _get_models):
         else:
             # Interactive: no scope flag — let user pick
             if len(installed) == 1:
-                # Only one model, discard it directly
                 to_discard = list(installed)
             else:
-                # Multiple installed — interactive selection
                 options = [("all", f"Discard ALL {len(installed)} models in {cat_name}")]
                 for mid in installed:
                     tag = " (active)" if mid == active_id else ""
@@ -159,7 +165,7 @@ def cmd_models_discard(args, _get_models):
                 choice = _r.interactive_select(
                     f"Discard models from {cat_name}?",
                     options,
-                    default=len(options),  # default: skip
+                    default=len(options),
                 )
 
                 if choice == "skip":
@@ -170,7 +176,6 @@ def cmd_models_discard(args, _get_models):
                 else:
                     to_discard = [choice]
 
-        # Perform discard
         _r.section(f"Discarding {len(to_discard)} model(s) from {cat_name}")
         for mid in to_discard:
             _r.info(f"Discarding {mid}...")
@@ -185,18 +190,16 @@ def cmd_models_discard(args, _get_models):
     _r.ok(f"Total discarded: {total_discarded} model(s)")
 
 
-def cmd_models_switch(args, _get_models):
+def cmd_models_switch(args: ModelsSwitchArgs, _get_models) -> None:
     """Switch active model. Fully interactive: no args → category → model."""
     from src.core.Models.ModelConfig import get_active_model
-    from src.core.Models.Lib.ModelSpec import ModelCategory
-    from src.core.Models.Lib.ModelRegistry import  find_spec
+    from src.core.Models.Lib.ModelRegistry import find_spec
 
     models = _get_models(init_models=False)
 
     # ── Step 1: resolve category ──────────────────────────────────────
     cat_name = args.category
     if not cat_name:
-        # Show categories with installed counts
         options = []
         for cat_enum in ModelCategory:
             cname = cat_enum.value
@@ -256,7 +259,7 @@ def cmd_models_switch(args, _get_models):
             choice = _r.interactive_select(
                 f"Switch {cat_name} to which model?",
                 options,
-                default=len(options),  # default: cancel
+                default=len(options),
             )
             if choice == "cancel":
                 _r._out(f"  {_r._dim('switch cancelled')}")
@@ -321,28 +324,28 @@ def cmd_models_switch(args, _get_models):
             _r.info(f"Key for {old_provider} kept (remove later with: darwin-admin models keys remove {old_provider})")
 
 
-def cmd_models_keys(args, _get_models):
+def cmd_models_keys(args: ModelsKeysArgs, _get_models) -> None:
     models = _get_models(init_models=False)
-    if args.action in ("set", "remove") and not args.provider:
+    if args.action in (KeyAction.SET.value, KeyAction.REMOVE.value) and not args.provider:
         _r.err(f"--provider is required for '{args.action}'")
         return
-    if args.action == "set" and not args.key:
+    if args.action == KeyAction.SET.value and not args.key:
         _r.err("--key is required for 'set'")
         return
-    if args.action == "set":
+    if args.action == KeyAction.SET.value:
         ok = models.set_key(args.provider, args.key)
         if ok:
             _r.ok(f"{args.provider} key set")
         else:
             _r.err("Failed to set key")
-    elif args.action == "status":
+    elif args.action == KeyAction.STATUS.value:
         statuses = models.list_key_status()
         rows = [
             (p, _r._green("set") if s else _r._red("missing"))
             for p, s in statuses.items()
         ]
         _r.table("API Keys", ["Provider", "Status"], rows)
-    elif args.action == "remove":
+    elif args.action == KeyAction.REMOVE.value:
         ok = models.remove_key(args.provider)
         if ok:
             _r.ok(f"{args.provider} key removed")
@@ -350,31 +353,31 @@ def cmd_models_keys(args, _get_models):
             _r.err("Failed to remove key")
 
 
-def add_args(sub, _get_models):
-    """Register model subcommands and return a lazy-bound handler map."""
+def add_args(sub, _get_models) -> None:
+    """Register model subcommands."""
     p = sub.add_parser("models", help="Model lifecycle management")
     sp = p.add_subparsers(dest="model_action", required=True)
 
     s = sp.add_parser("status", help="Show model status across categories")
-    s.set_defaults(func=lambda a: cmd_models_status(a, _get_models))
+    s.set_defaults(func=lambda a: cmd_models_status(ns_to(ModelsStatusArgs, a), _get_models))
 
     l = sp.add_parser("list", help="List registered models")
     l.add_argument("--category", "-c", help="Filter by category")
     l.add_argument("--provider", "-p", help="Filter by provider")
-    l.set_defaults(func=lambda a: cmd_models_list(a, _get_models))
+    l.set_defaults(func=lambda a: cmd_models_list(ns_to(ModelsListArgs, a), _get_models))
 
     i = sp.add_parser("install", help="Install one or more models")
     i.add_argument("model_ids", nargs="+", help="Model ID(s) to install")
     i.add_argument("--no-download", action="store_true", help="Skip auto-download")
     i.add_argument("--force", action="store_true", help="Force re-download")
-    i.set_defaults(func=lambda a: cmd_models_install(a, _get_models))
+    i.set_defaults(func=lambda a: cmd_models_install(ns_to(ModelsInstallArgs, a), _get_models))
 
     d = sp.add_parser("discard", help="Discard models per category")
     d.add_argument(
         "--category", "-c", nargs="+", required=True, metavar="CAT",
         help="Category name(s): embedding, reranker, nlp, ocr, vision",
     )
-    d.add_argument("--all", action="store_true", dest="all",
+    d.add_argument("--all", action="store_true", dest="discard_all",
                    help="Discard all installed models in each category")
     d.add_argument("--active", action="store_true",
                    help="Discard only the active model in each category")
@@ -382,7 +385,7 @@ def add_args(sub, _get_models):
                    help="Discard only inactive models in each category")
     d.add_argument("--delete", action="store_true",
                    help="Delete model files from disk")
-    d.set_defaults(func=lambda a: cmd_models_discard(a, _get_models))
+    d.set_defaults(func=lambda a: cmd_models_discard(ns_to(ModelsDiscardArgs, a), _get_models))
 
     sw = sp.add_parser("switch", help="Switch active model for a category")
     sw.add_argument("category", nargs="?", default=None, help="Category (interactive if omitted)")
@@ -390,12 +393,12 @@ def add_args(sub, _get_models):
     sw.add_argument(
         "--no-download", action="store_true", help="Skip auto-download if missing"
     )
-    sw.set_defaults(func=lambda a: cmd_models_switch(a, _get_models))
+    sw.set_defaults(func=lambda a: cmd_models_switch(ns_to(ModelsSwitchArgs, a), _get_models))
 
     k = sp.add_parser("keys", help="API key management")
-    k.add_argument("action", choices=["set", "status", "remove"], help="Key operation")
+    k.add_argument("action", choices=[a.value for a in KeyAction], help="Key operation")
     k.add_argument(
         "--provider", "-p", help="Provider name (openai, gemini, groq, etc.)"
     )
     k.add_argument("--key", "-k", help="API key value (required for 'set')")
-    k.set_defaults(func=lambda a: cmd_models_keys(a, _get_models))
+    k.set_defaults(func=lambda a: cmd_models_keys(ns_to(ModelsKeysArgs, a), _get_models))
