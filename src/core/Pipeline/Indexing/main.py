@@ -98,9 +98,7 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
                 rerun=args.rerun,
             ), store=store)
         except Exception as e:
-            import traceback
-            darwin.error(f"BM25 indexing failed — {type(e).__name__}: {e}")
-            darwin.error(traceback.format_exc())
+            darwin.error(f"BM25 indexing failed — {e}")
             errors.append(f"BM25: {e}")
         darwin.info("")
 
@@ -112,9 +110,7 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
                 rerun=args.rerun,
             ), store=store)
         except Exception as e:
-            import traceback
-            darwin.error(f"Embedding failed — {type(e).__name__}: {e}")
-            darwin.error(traceback.format_exc())
+            darwin.error(f"Embedding failed — {e}")
             errors.append(f"Embedding: {e}")
         darwin.info("")
 

@@ -14,6 +14,7 @@ from src.core.Pipeline.Ingestion.Parsing.lib import (
     is_supported,
     URL_RE,
     is_good_enough,
+    words_to_pages,
 )
 from src.core.Pipeline.Ingestion.Parsing.TextExtractors import (
     parse_html,
@@ -85,7 +86,7 @@ def parse(
     path = Path(source).resolve()
     if not path.exists():
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name or path.name,
+             embedding_text="", filename=display_name or path.name,
             page_count=0, file_type="unknown",
             error=f"file not found: {path}",
         )
@@ -94,7 +95,7 @@ def parse(
     if file_type is None:
         supported = ", ".join(SUPPORTED_TYPES.keys())
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name or path.name,
+             embedding_text="", filename=display_name or path.name,
             page_count=0, file_type="unsupported",
             error=f"unsupported file type '{path.suffix}' — supported: {supported}",
         )
@@ -102,7 +103,7 @@ def parse(
     size_error = check_file_size(path)
     if size_error:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name or path.name,
+             embedding_text="", filename=display_name or path.name,
             page_count=0, file_type=file_type,
             error=size_error,
         )
@@ -133,14 +134,14 @@ def parse_url(
     err = validate_url(url)
     if err:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name or url,
+             embedding_text="", filename=display_name or url,
             page_count=0, file_type="unknown", error=err,
         )
 
     data, content_type, fetch_err = fetch_url(url, timeout=timeout)
     if fetch_err:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name or url,
+             embedding_text="", filename=display_name or url,
             page_count=0, file_type="unknown", error=fetch_err,
         )
 
@@ -190,7 +191,7 @@ def _parse_url_with_data(
             file_type = detect_type(tmp_path)
             if file_type is None:
                 return ParsedDocument(
-                    display_text="", embedding_text="", filename=display_name or url,
+                     embedding_text="", filename=display_name or url,
                     page_count=0, file_type="unsupported",
                     error=f"unsupported content from URL (type: {content_type})",
                 )
@@ -209,18 +210,18 @@ def _parse_url_with_data(
             error_msg = metadata.get("error") or "extracted text is empty or garbled"
             darwin.error(error_msg)
             return ParsedDocument(
-                display_text="", embedding_text="", filename=display_name or url,
+                 embedding_text="", filename=display_name or url,
                 page_count=0, file_type="html", error=error_msg,
             )
 
         return ParsedDocument(
-            display_text=text, embedding_text=text, filename=display_name or url,
-            page_count=_words_to_pages(text), file_type="html",
+             embedding_text=text, filename=display_name or url,
+            page_count=words_to_pages(text), file_type="html",
             metadata=metadata, error=None,
         )
     darwin.error(f"unsupported content type '{content_type}'")
     return ParsedDocument(
-        display_text="", embedding_text="", filename=display_name or url,
+         embedding_text="", filename=display_name or url,
         page_count=0, file_type="unsupported",
         error=f"unsupported content type '{content_type}'",
     )
@@ -239,38 +240,34 @@ def _dispatch_parser(
     parser = PARSER_MAP.get(file_type)
     if parser is None:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name,
+             embedding_text="", filename=display_name,
             page_count=0, file_type=file_type,
             error=f"no parser registered for type '{file_type}'",
         )
     try:
         darwin.info(f"Parsing {display_name} as {file_type}...")
-        display_text, embedding_text, page_count, metadata, all_images = parser(
+        embedding_text, page_count, metadata, all_images = parser(
             path, images_dir=images_dir, caption=caption, precise=precise
         )
     except Exception as e:
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name,
+             embedding_text="", filename=display_name,
             page_count=0, file_type=file_type,
             error=f"{type(e).__name__}: {e}",
         )
 
     if not is_good_enough(embedding_text, darwin):
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name,
+             embedding_text="", filename=display_name,
             page_count=page_count, file_type=file_type, metadata=metadata,
             error="parsed text is empty or garbled",
         )
 
     return ParsedDocument(
-        display_text=display_text, embedding_text=embedding_text,
+         embedding_text=embedding_text,
         filename=display_name, page_count=page_count,
         file_type=file_type, images=all_images, metadata=metadata, error=None,
     )
-
-
-def _words_to_pages(text: str, words_per_page: int = 500) -> int:
-    return max(1, len(text.split()) // words_per_page)
 
 
 # ── Directory scanner ────────────────────────────────────────────────────────

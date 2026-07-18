@@ -45,7 +45,6 @@ def run_test(name: str, parser_fn, **kwargs):
         print(f" Success")
     print(f"   Filename: {doc.filename}")
     print(f"   Page count: {doc.page_count}")
-    print(f"   Display text length: {len(doc.display_text or '')} chars")
     print(f"   Embedding text length: {len(doc.embedding_text or '')} chars")
     print(f"   Images: {len(doc.images)}")
     if doc.metadata:

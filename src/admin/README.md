@@ -276,18 +276,18 @@ You can run both together (`run`), or each stage independently (`ingest`, `index
 
 | Command | Description |
 |---------|-------------|
-| `run <target> [--ocr] [--recursive] [options]` | Full ingest + index |
-| `ingest <target> [options]` | Parse + chunk only (no indexing) |
-| `index [--files] [--store] [--threshold] [options]` | BM25 + embedding indexing only |
+| `run [target] [--files f1 f2] [--ocr] [--recursive] [options]` | Full ingest + index |
+| `ingest [target] [--files f1 f2] [options]` | Parse + chunk only (no indexing) |
+| `index [--files f1 f2] [--store] [--threshold] [options]` | BM25 + embedding indexing only |
 | `purge <filenames>... [--stages] [--store]` | Remove artifacts for files |
 
-**Required parameters:**
-- `run` and `ingest` require a `target` — a file path, directory, or static URL
-- `purge` requires one or more `filenames` to clean up
+**Target:**
+- `run` and `ingest` accept an optional `target` — a directory path or static URL (default: `.`)
+- If `--files` is provided, `target` is ignored for file discovery
 
 **Optional parameters (common):**
 - `--store <id|name|path>` — Target a specific store (default: auto-detect)
-- `--files <file1,file2>` — Process only specific files (comma-separated)
+- `--files <file1> [file2 ...]` — Process only specific files (space-separated, repeatable)
 - `--ocr` — Enable OCR for scanned PDFs (ingestion only)
 - `--recursive` — Recurse into subdirectories (ingestion only)
 - `--rerun` — Re-process files even if already done

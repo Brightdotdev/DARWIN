@@ -203,13 +203,10 @@ class DarwinStore(StoreSearch):
             return
 
         def _write():
-            display = getattr(doc, "display_text", "") or doc.get("display_text", "")
             embedding = getattr(doc, "embedding_text", "") or doc.get(
                 "embedding_text", ""
             )
-            write_text_atomic(
-                self.paths.artifact_path(h, "markdown", "display"), display
-            )
+        
             write_text_atomic(
                 self.paths.artifact_path(h, "markdown", "source"), embedding
             )
@@ -221,7 +218,6 @@ class DarwinStore(StoreSearch):
                 "filename",
                 "images",
                 "embedding_text",
-                "display_text",
             }
             extras = {k: v for k, v in dd.items() if k not in skip}
             self._meta.update(h, "markdown", extras=extras)
@@ -240,6 +236,7 @@ class DarwinStore(StoreSearch):
             return path.read_text(encoding="utf-8")
         except Exception as e:
             darwin.error(f"Error reading markdown for {filename}: {e}")
+            
             return None
 
     def delete_markdown(self, filename: str) -> bool:
@@ -251,7 +248,6 @@ class DarwinStore(StoreSearch):
             "markdown",
             [
                 self.paths.artifact_path(h, "markdown", "source"),
-                self.paths.artifact_path(h, "markdown", "display"),
             ],
         )
 

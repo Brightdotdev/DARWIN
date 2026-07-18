@@ -3,7 +3,6 @@ Darwin PipelineOrchestrator — end-to-end pipeline execution.
 Typed parameters, per-stage session logging, stage purge.
 """
 
-import traceback
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Union
@@ -187,7 +186,6 @@ class PipelineOrchestrator:
                         darwin.error(
                             f"Stage '{stage.value}' failed: {err_msg}",
                         )
-                        darwin.error(traceback.format_exc())
                         result.stages_failed[stage.value] = err_msg
                         result.success = False
                         if strict:
@@ -265,14 +263,11 @@ class PipelineOrchestrator:
 
     def _run_ingestion(self, params: StageParameters) -> None:
         if not params.parsing:
-            darwin.error("ParsingArgs  required")
-            return
+            raise RuntimeError("ParsingArgs required for ingestion stage")
         handle_ingestion(params.parsing, self.store)
 
     def _run_indexing(self, params: StageParameters) -> None:
-        
         if not params.indexing:
-            darwin.error("IndexingArgs required")
-            return
+            raise RuntimeError("IndexingArgs required for indexing stage")
         handle_indexing(params.indexing, self.store)
 

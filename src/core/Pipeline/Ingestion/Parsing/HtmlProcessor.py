@@ -69,8 +69,8 @@ def extract_content(
                 meta = bare_extraction(html_bytes, output_format="dict", url=url, with_metadata=True)
                 if isinstance(meta, dict):
                     meta_dict = {k: v for k, v in meta.items() if k != "text"}
-            except Exception:
-                pass
+            except Exception as e:
+                darwin.warning(f"Failed to extract metadata from {url}: {e}")
             darwin.info(f"Trafilatura extracted {len(extracted)} chars from {url}")
             return extracted, meta_dict
 

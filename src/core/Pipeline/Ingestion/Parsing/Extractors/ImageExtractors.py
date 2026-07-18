@@ -2,6 +2,7 @@ import fitz
 from pathlib import Path
 from typing import List, Dict, Optional, Set, Tuple
 
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Ingestion.Parsing.Extractors.Constants import (
     MIN_IMAGE_SIZE_PX, MAX_IMAGES_PER_PAGE, MAX_IMAGES_PER_DOC,
 )
@@ -16,7 +17,7 @@ def _is_image_xref(doc: fitz.Document, xref: int) -> bool:
         if "/ImageMask true" in obj:
             return False
         return True
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -92,7 +93,8 @@ def extract_page_images(
             xref_to_slot[xref] = slot
             global_img_count += 1
 
-        except Exception:
+        except Exception as e:
+            darwin.warning(f"Failed to extract image xref {xref} on page {page_num}: {e}")
             continue
 
     return extracted, global_img_count, xref_to_slot

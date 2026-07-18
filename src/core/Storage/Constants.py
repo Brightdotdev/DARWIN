@@ -12,7 +12,7 @@ OPTIONAL_ARTIFACT_KEYS = {
 
 ARTIFACT_MANIFEST = {
     "images": {"dir": "images/"},
-    "markdown": {"source": "markdown.md", "display": "display-markdown.md"},
+    "markdown": {"source": "markdown.md"},
     "chunks": {"file": "chunks.parquet"},
     "vector": {"index": "vectors/vector.usearch", "meta": "vectors/vector.meta.json"},
     "embeddings": {

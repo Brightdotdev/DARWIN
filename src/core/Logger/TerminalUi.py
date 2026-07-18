@@ -90,11 +90,10 @@ class TerminalUI(EventSubscriber):
 
     def on_session_start(self, event: SessionStartEvent) -> None:
         self._current_session = event.name
-        self.console.print(f"  [dim]Session started: {event.name}[/dim]")
 
     def on_session_end(self, event: SessionEndEvent) -> None:
         self._current_session = ""
-        self.console.print(f"  [dim]Session ended: {event.name}[/dim]")
+    
 
     def on_log(self, event: LogEvent) -> None:
         icon = _ICONS.get(event.log_type, "")

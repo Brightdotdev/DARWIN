@@ -41,7 +41,7 @@ def _run_pipeline_stages(
         target=target or "",
         store=store_ref,
         stages=stages,
-        files=[files] if files else None,
+        files=files,
         ocr=ocr,
         recursive=recursive,
         precise=precise,
@@ -129,9 +129,9 @@ def add_args(sub, _get_pipeline) -> None:
     sp = p.add_subparsers(dest="pipeline_action", required=True)
 
     r = sp.add_parser("run", help="Full ingest + index pipeline")
-    r.add_argument("target", help="Path or static URL to ingest")
+    r.add_argument("target", nargs="?", default=".", help="Directory or URL to process (default: .)")
     r.add_argument("--store", help="Store ID, name, or path (default: auto)")
-    r.add_argument("--files", "-f", help="Specific files (comma-separated)")
+    r.add_argument("--files", "-f", nargs="+", help="Specific file(s) to process")
     r.add_argument("--ocr", action="store_true", help="Enable OCR for scanned docs")
     r.add_argument("--recursive", action="store_true", help="Recursive directory scan")
     r.add_argument("--precise", action="store_true", help="Precision parsing mode")
@@ -149,9 +149,9 @@ def add_args(sub, _get_pipeline) -> None:
     r.set_defaults(func=lambda a: cmd_pipeline_run(ns_to(PipelineRunArgs, a), _get_pipeline))
 
     i = sp.add_parser("ingest", help="Ingestion only (parse + chunk)")
-    i.add_argument("target", help="Path or static URL to ingest")
+    i.add_argument("target", nargs="?", default=".", help="Directory or URL to process (default: .)")
     i.add_argument("--store", help="Store ID, name, or path (default: auto)")
-    i.add_argument("--files", "-f", help="Specific files")
+    i.add_argument("--files", "-f", nargs="+", help="Specific file(s) to process")
     i.add_argument("--ocr", action="store_true")
     i.add_argument("--recursive", action="store_true")
     i.add_argument("--precise", action="store_true")
@@ -159,7 +159,7 @@ def add_args(sub, _get_pipeline) -> None:
     i.set_defaults(func=lambda a: cmd_pipeline_ingest(ns_to(PipelineIngestArgs, a), _get_pipeline))
 
     ix = sp.add_parser("index", help="Indexing only (BM25 + embeddings)")
-    ix.add_argument("--files", "-f", help="Specific files to index")
+    ix.add_argument("--files", "-f", nargs="+", help="Specific file(s) to index")
     ix.add_argument("--store", help="Store ID, name, or path (default: auto)")
     ix.add_argument("--threshold", type=float, default=DEFAULT_INDEXING_THRESHOLD)
     ix.add_argument("--idf-smoothing", type=float, default=DEFAULT_IDF_SMOOTHING)

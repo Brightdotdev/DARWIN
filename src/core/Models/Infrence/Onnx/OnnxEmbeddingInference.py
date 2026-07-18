@@ -123,7 +123,6 @@ class OnnxEmbeddingInference(EmbeddingInferenceInterface):
         if len(shape) == 2:
             self._vector_size = shape[1]
         else:
-            darwin.warning("Could not infer vector size from model, using default 384")
             self._vector_size = 384
 
         darwin.info(

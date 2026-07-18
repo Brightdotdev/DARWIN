@@ -76,6 +76,14 @@ MIN_DIMENSION   = 100
 MAX_CAPTION_DIM = 512
 MAX_NEW_TOKENS  = 40
 
+# Page estimation
+DEFAULT_WORDS_PER_PAGE = 275
+
+
+def words_to_pages(text: str, words_per_page: int = DEFAULT_WORDS_PER_PAGE) -> int:
+    """Estimate page count from text word count."""
+    return max(1, len(text.split()) // words_per_page)
+
 
 # ── Quality gate ────────────────────────────────────────────────────────────
 
@@ -177,12 +185,10 @@ class ParsingArgs:
     precise:           bool = False
     save:              bool = True
     cleanup:           bool = True
-    skip_if_markdown:  bool = False
 
 
 @dataclass
 class ParsedDocument:
-    display_text:   str
     embedding_text: str
     filename:       str
     page_count:     int

@@ -247,8 +247,11 @@ def _extract_images_from_html(
             img_paths.append(local_path)
             img_entries.append(ExtractedImage(
                 path=local_path,
+                page=0,
                 index=idx,
                 caption="",
+                width=0,
+                height=0,
             ))
         except Exception as e:
             logs.append(f"  Failed to download image {idx}: {e}")
@@ -364,7 +367,7 @@ class BlobHandler:
         assembled = _assemble_text(segments)
         if not is_good_enough(assembled, darwin):
             return ParsedDocument(
-                display_text="", embedding_text="", filename=filename,
+                embedding_text="", filename=filename,
                 page_count=0, file_type="blob",
                 error="blob content is empty or garbled",
             )
@@ -388,7 +391,6 @@ class BlobHandler:
         page_count = max(1, len(assembled.split()) // 500)
 
         return ParsedDocument(
-            display_text=assembled,
             embedding_text=assembled,
             filename=filename,
             page_count=page_count,

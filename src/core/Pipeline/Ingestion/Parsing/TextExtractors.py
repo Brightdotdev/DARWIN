@@ -6,13 +6,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, List
 
 from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Ingestion.Parsing.lib import ExtractedImage
-
-
-def _words_to_pages(text: str, words_per_page: int = 275) -> int:
-    """Very rough page count for non‑PDF documents."""
-    word_count = len(text.split())
-    return max(1, round(word_count / words_per_page))
+from src.core.Pipeline.Ingestion.Parsing.lib import ExtractedImage, words_to_pages
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -45,7 +39,7 @@ def parse_html(
     if text is None:
         text = ""
 
-    page_count = _words_to_pages(text)
+    page_count = words_to_pages(text)
     return text, text, page_count, {}, []
 
 
@@ -66,7 +60,7 @@ def parse_xml(
     text = soup.get_text(separator="\n", strip=True)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
-    page_count = _words_to_pages(text)
+    page_count = words_to_pages(text)
     return text, text, page_count, {}, []
 
 
@@ -100,7 +94,7 @@ def parse_csv(
             cells.append("")
         md += "| " + " | ".join(cells[:len(header)]) + " |\n"
 
-    page_count = _words_to_pages(md)
+    page_count = words_to_pages(md)
     return md, md, page_count, {}, []
 
 
@@ -153,7 +147,7 @@ def parse_spreadsheet(
         md_parts.append("")
 
     full_md = "\n".join(md_parts).strip()
-    page_count = _words_to_pages(full_md)
+    page_count = words_to_pages(full_md)
     return full_md, full_md, page_count, {}, []
 
 
@@ -176,7 +170,7 @@ def _parse_ods(path: Path, images_dir, caption, precise):
             md_parts.append("| " + " | ".join(cells) + " |")
         md_parts.append("")
     full_md = "\n".join(md_parts).strip()
-    page_count = _words_to_pages(full_md)
+    page_count = words_to_pages(full_md)
     return full_md, full_md, page_count, {}, []
 
 
@@ -228,8 +222,8 @@ def parse_ebook(
                             "height": 0,
                             "slot": len(all_images),
                         })
-                    except (KeyError, FileNotFoundError):
-                        pass
+                    except (KeyError, FileNotFoundError) as e:
+                        darwin.warning(f"Failed to extract EPUB image {img_name}: {e}")
 
             for img_tag in soup.find_all("img"):
                 img_tag.decompose()
@@ -239,7 +233,7 @@ def parse_ebook(
             all_text.append(text)
 
         full_text = "\n\n---\n\n".join(all_text)
-        page_count = _words_to_pages(full_text)
+        page_count = words_to_pages(full_text)
 
         extracted = [ExtractedImage(
             path=Path(d["path"]),
@@ -280,6 +274,9 @@ def parse_email(
             content_disposition = str(part.get("Content-Disposition", ""))
             if "attachment" in content_disposition:
                 continue
+            ctype = part.get_content_type()
+            if ctype == "text/html":
+                continue
             payload = part.get_payload(decode=True)
             if payload:
                 charset = part.get_content_charset() or "utf-8"
@@ -287,13 +284,6 @@ def parse_email(
                     text = payload.decode(charset, errors="replace")
                 except (LookupError, UnicodeDecodeError):
                     text = payload.decode("utf-8", errors="replace")
-                if part.get_content_type() == "text/html":
-                    try:
-                        from bs4 import BeautifulSoup
-                        soup = BeautifulSoup(text, "html.parser")
-                        text = soup.get_text(separator="\n", strip=True)
-                    except ImportError:
-                        pass
                 body_parts.append(text)
     else:
         payload = msg.get_payload(decode=True)
@@ -327,5 +317,5 @@ def parse_email(
     lines.append(body)
 
     full_text = "\n".join(lines).strip()
-    page_count = _words_to_pages(full_text)
+    page_count = words_to_pages(full_text)
     return full_text, full_text, page_count, {}, []

@@ -173,11 +173,10 @@ class PipelineParameters:
         from src.core.Pipeline.Indexing.lib import IndexingArgs
 
         internal = StageParameters()
-        file_list = self.files or []
         if "ingestion" in self.stages:
             internal.parsing = ParsingArgs(
                 target=self.target,
-                files=file_list,
+                files=self.files,
                 ocr=self.ocr,
                 recursive=self.recursive,
                 precise=self.precise,
@@ -189,7 +188,7 @@ class PipelineParameters:
                 idf_smoothing=self.idf_smoothing,
                 only_kw=self.only_kw,
                 only_semantic=self.only_semantic,
-                files=file_list,
+                files=self.files,
                 rerun=self.rerun,
             )
         return internal, self.stages

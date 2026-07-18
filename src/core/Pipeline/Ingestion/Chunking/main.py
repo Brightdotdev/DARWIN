@@ -97,25 +97,14 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
 
 
         if not args.rerun and store.has_records(filename):
-            darwin.info(f"{filename} already chunked (use --rerun to re-chunk)")
+            darwin.warning(f"{filename} 'already chunked' (use --rerun to re-chunk)")
             succeeded += 1
             continue
 
-        tobe_chunked = store.load_markdown(filename)
-
-        if tobe_chunked is None:
+        chunk_text = store.load_markdown(filename)
+        
+        if chunk_text is None:
             darwin.error(f"{filename} has no markdown, skipping")
-            failed += 1
-            continue
-
-        if hasattr(tobe_chunked, "embedding_text"):
-            chunk_text = tobe_chunked.embedding_text
-        elif isinstance(tobe_chunked, str):
-            chunk_text = tobe_chunked
-        else:
-            darwin.error(
-                f"{filename} has unexpected markdown type: {type(tobe_chunked)}"
-            )
             failed += 1
             continue
 

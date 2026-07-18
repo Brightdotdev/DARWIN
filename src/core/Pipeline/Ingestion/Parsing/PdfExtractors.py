@@ -19,7 +19,7 @@ from src.core.Pipeline.Ingestion.Parsing.Extractors.FitzRawExtractor import fitz
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def normalize_image_path(img_path: Path, images_dir: Path = None) -> str:
+def normalize_image_path(img_path: Path, images_dir: Optional[Path] = None) -> str:
     """Return a relative path for display from the markdown file's perspective."""
     if images_dir:
         markdown_dir = images_dir.parent
@@ -50,22 +50,11 @@ def check_file_size(path: Path) -> Optional[str]:
 # ── Image slot replacement (used in main process after captioning) ─────────────
 
 def replace_image_slots(
-    display_text:   str,
     embedding_text: str,
     slot_map:       Dict[int, Dict],
-) -> Tuple[str, str]:
+) -> str:
     """Replace [Image:N] placeholders with final display/embedding tokens."""
-    def _display(m: re.Match) -> str:
-        idx  = int(m.group(1))
-        info = slot_map.get(idx)
-        if not info:
-            return "[Image]"
-        caption  = info.get("caption", "")
-        rel_path = info.get("rel_path", info.get("path", ""))
-        clean = _sanitize_caption(caption)
-        if clean:
-            return f"\n\n![{clean}]({rel_path})\n\n"
-        return f"\n\n![image]({rel_path})\n\n"
+
 
     def _embed(m: re.Match) -> str:
         idx  = int(m.group(1))
@@ -78,26 +67,23 @@ def replace_image_slots(
             return f"\n\n[Image: {clean}]\n\n"
         return "\n\n[Image]\n\n"
 
-    display_text   = IMAGE_SLOT_RE.sub(_display,   display_text)
     embedding_text = IMAGE_SLOT_RE.sub(_embed, embedding_text)
-    return display_text, embedding_text
+    return  embedding_text
 
 
 def _remap_image_slots(
-    display_text:   str,
     embedding_text: str,
     offset:         int,
-) -> Tuple[str, str]:
+) -> str:
     """Shift all [Image:N] slot indices in text by `offset`."""
     if offset == 0:
-        return display_text, embedding_text
+        return embedding_text
 
     def _shift(m: re.Match) -> str:
         return f"[Image:{int(m.group(1)) + offset}]"
 
-    display_text   = IMAGE_SLOT_RE.sub(_shift, display_text)
     embedding_text = IMAGE_SLOT_RE.sub(_shift, embedding_text)
-    return display_text, embedding_text
+    return  embedding_text
 
 
 # ── PDF chunk worker (no captioning) ──────────────────────────────────────────
@@ -120,14 +106,13 @@ def _parse_pdf_chunk(
         extractor = fitz_raw_extract  # FAST path
 
     try:
-        display_text, embedding_text, extracted_imgs = extractor(
+         embedding_text, extracted_imgs = extractor(
             pdf_path,
             pages,
             images_dir if do_images else None,
         )
     except Exception as e:
         return {
-            "display_text":   "",
             "embedding_text": "",
             "images":         [],
             "img_count":      0,
@@ -135,7 +120,6 @@ def _parse_pdf_chunk(
         }
 
     return {
-        "display_text":   display_text,
         "embedding_text": embedding_text,
         "images":         extracted_imgs,
         "img_count":      len(extracted_imgs),
@@ -150,14 +134,14 @@ def _parse_pdf_single(
     page_count:  int,
     metadata:    Dict,
     precise:     bool = False,
-) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+) -> Tuple[ str, int, Dict, List[ExtractedImage]]:
     """
     Parse a small PDF (single process, no chunking).
     Captioning is NOT performed here.
     """
     extractor = fitz_extract if precise else fitz_raw_extract
 
-    display_text, embedding_text, extracted_imgs = extractor(
+    embedding_text, extracted_imgs = extractor(
         str(path),
         list(range(page_count)),
         str(images_dir) if images_dir else None,
@@ -179,7 +163,7 @@ def _parse_pdf_single(
                 height=img_dict.get("height", 0),
             ))
 
-    return display_text, embedding_text, page_count, metadata, all_images
+    return  embedding_text, page_count, metadata, all_images
 
 
 def _parse_pdf_chunked(
@@ -189,7 +173,7 @@ def _parse_pdf_chunked(
     page_count:  int,
     metadata:    Dict,
     precise:     bool = False,
-) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+) -> Tuple[str, int, Dict, List[ExtractedImage]]:
     """
     Extract a large PDF using parallel chunk processing.
     Captioning NOT performed.
@@ -234,14 +218,13 @@ def _parse_pdf_chunked(
             except Exception as e:
                 darwin.warning(f"Chunk {chunk_idx + 1}/{n_chunks} failed: {e}")
                 chunk_results.append((chunk_idx, {
-                    "display_text": "", "embedding_text": "",
+                    "embedding_text": "",
                     "images": [], "img_count": 0, "error": str(e),
                 }))
 
     # Sort by chunk index to maintain page order
     chunk_results.sort(key=lambda x: x[0])
 
-    display_parts   = []
     embedding_parts = []
     all_raw_imgs    = []
     slot_offset = 0
@@ -250,12 +233,11 @@ def _parse_pdf_chunked(
         if result.get("error"):
             continue
 
-        d_text = result.get("display_text", "")
         e_text = result.get("embedding_text", "")
         imgs   = result.get("images", [])
 
         if slot_offset > 0 and imgs:
-            d_text, e_text = _remap_image_slots(d_text, e_text, slot_offset)
+             e_text = _remap_image_slots(e_text, slot_offset)
 
         for img_dict in imgs:
             adjusted = dict(img_dict)
@@ -266,10 +248,8 @@ def _parse_pdf_chunked(
             all_raw_imgs.append(adjusted)
 
         slot_offset += result.get("img_count", 0)
-        display_parts.append(d_text)
         embedding_parts.append(e_text)
 
-    display_text   = re.sub(r"\n{3,}", "\n\n", "\n\n".join(display_parts)).strip()
     embedding_text = re.sub(r"\n{3,}", "\n\n", "\n\n".join(embedding_parts)).strip()
 
     all_images = []
@@ -286,7 +266,7 @@ def _parse_pdf_chunked(
             ))
 
     darwin.info(f"Merged {n_chunks} chunks: {page_count} pages, {len(all_images)} images")
-    return display_text, embedding_text, page_count, metadata, all_images
+    return embedding_text, page_count, metadata, all_images
 
 
 # ── Main entry for PDF parsing ────────────────────────────────────────────────
@@ -296,9 +276,9 @@ def parse_pdf(
     images_dir:  Optional[Path] = None,
     caption:     bool = False,        # still accepted but ignored
     precise:     bool = False,
-) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+) -> Tuple[ str, int, Dict, List[ExtractedImage]]:
     """
-    Parse a PDF and return (display_text, embedding_text, page_count, metadata, images).
+    Parse a PDF and return ( embedding_text, page_count, metadata, images).
     Images are returned WITHOUT captions — captioning must be done later.
 
     SPEED TIERS:
@@ -331,15 +311,21 @@ def parse_pdf(
 
 # ── Non-PDF parsing (unchanged) ───────────────────────────────────────────────
 
-def parse_markitdown(path: Path) -> Tuple[str, str, int, Dict, List]:
+def parse_markitdown(
+    path: Path,
+    images_dir: Optional[Path] = None,
+    caption: bool = False,
+    precise: bool = False,
+) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
     """Parse non-PDF documents via MarkItDown."""
     from markitdown import MarkItDown
+
+    from src.core.Pipeline.Ingestion.Parsing.lib import words_to_pages
 
     result = MarkItDown().convert(str(path))
     text   = result.text_content or ""
     text   = re.sub(r"\n{3,}", "\n\n", text).strip()
 
-    word_count = len(text.split())
-    page_count = max(1, round(word_count / 275))
+    page_count = words_to_pages(text)
 
     return text, text, page_count, {}, []

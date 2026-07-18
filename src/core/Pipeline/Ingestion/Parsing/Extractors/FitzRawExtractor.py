@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Ingestion.Parsing.Extractors.ExtractorUtils import make_image_slot, make_page_header
 from src.core.Pipeline.Ingestion.Parsing.Extractors.ImageExtractors import extract_page_images
 from src.core.Pipeline.Ingestion.Parsing.Extractors.Constants import MAX_IMAGES_PER_DOC
@@ -14,13 +15,13 @@ def fitz_raw_extract(
     pdf_path: str,
     pages: List[int],
     images_dir: Optional[str] = None,
-) -> Tuple[str, str, List[Dict]]:
+) -> Tuple[ str, List[Dict]]:
     """
     Raw text extraction using PyMuPDF's plain text mode.
     Injects [Page N] headers before each page's text to maintain chunker compatibility.
 
     Returns:
-        (display_text, embedding_text, extracted_images)
+        ( embedding_text, extracted_images)
     """
     doc = fitz.open(pdf_path)
     img_dir = Path(images_dir) if images_dir else None
@@ -40,8 +41,8 @@ def fitz_raw_extract(
             end = page_labels[idx + 1]["startpage"] if idx + 1 < len(page_labels) else doc.page_count
             for i in range(end - start):
                 label_map[start + i] = str(entry.get("prefix", "") or (start + i + 1))
-    except Exception:
-        pass
+    except Exception as e:
+        darwin.warning(f"Page label extraction failed, using simple numbering: {e}")
 
     def _page_label(idx: int) -> str:
         if label_map and idx in label_map:
@@ -81,4 +82,4 @@ def fitz_raw_extract(
     full_text = "\n\n---\n\n".join(page_texts)
     full_text = re.sub(r"\n{3,}", "\n\n", full_text).strip()
 
-    return full_text, full_text, all_extracted_images
+    return full_text, all_extracted_images

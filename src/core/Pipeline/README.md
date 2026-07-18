@@ -35,7 +35,6 @@ args = ParsingArgs(
     recursive=False,
     rerun=False,
     save=True,
-    skip_if_markdown=False,
 )
 handle_ingestion(args, store)
 ```
@@ -66,7 +65,7 @@ from src.core.Storage.DarwinStore import DarwinStore
 store = DarwinStore()
 args = ParsingArgs(target=".", files=["report.pdf"], images=True, caption=False)
 docs = handle_parsing(args, store)
-# List[ParsedDocument] — each has: display_text, embedding_text, filename,
+# List[ParsedDocument] — each has:  embedding_text, filename,
 #   page_count, file_type, metadata, error, images
 ```
 

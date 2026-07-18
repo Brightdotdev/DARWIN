@@ -71,7 +71,7 @@ def parse_document_worker(
         elapsed = time.perf_counter() - t0
         worker_log(f"  [{elapsed:.1f}s] {display_name} FAILED", LogType.ERROR)
         return ParsedDocument(
-            display_text="", embedding_text="", filename=display_name,
+             embedding_text="", filename=display_name,
             page_count=0, file_type="unknown", error=f"{type(e).__name__}: {e}",
         )
 
@@ -141,7 +141,7 @@ def parse_documents(
                             images_by_doc[display_name] = doc.images
                     except Exception as e:
                         results[orig_idx] = ParsedDocument(
-                            display_text="", embedding_text="", filename=display_name,
+                             embedding_text="", filename=display_name,
                             page_count=0, file_type="unknown", error=str(e),
                         )
 
@@ -166,7 +166,6 @@ def parse_documents(
 def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument]:
     target_paths: List[Path] = []
     target_urls: List[str] = []
-
     # ── Separate URLs from local files ──────────────────────────────────────
     if args.files:
         for raw in args.files:
@@ -235,6 +234,12 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
         display = path.name
         if store.has_markdown(display) and not args.rerun:
             skipped_count += 1
+            parsed_document = ParsedDocument(
+                 embedding_text=store.load_markdown(display),
+                filename=display,
+                file_type=store.file_status(path).get("file_type", "unknown"),
+                page_count=store.file_status(path).get("page_count", 0),
+            )
             continue
         image_dir = store.ensure_image_dir(display) if args.images else None
         tasks_to_process.append((path, image_dir, display))
@@ -243,6 +248,11 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
     for slug, url, content_hash, data, content_type in url_registered_ok:
         if store.has_markdown(slug) and not args.rerun:
             skipped_count += 1
+            parsed_document = ParsedDocument(
+                 embedding_text=store.load_markdown(slug), filename=slug,
+                file_type=store.file_status(url).get("file_type", "unknown"),
+                page_count=store.file_status(url).get("page_count", 0),
+            )
             continue
         image_dir = store.ensure_image_dir(slug) if args.images else None
         tasks_to_process.append(((url, data, content_type), image_dir, slug))
@@ -318,8 +328,8 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
             }
         for doc in parsed_docs:
             if doc.filename == display_name:
-                doc.display_text, doc.embedding_text = replace_image_slots(
-                    doc.display_text, doc.embedding_text, slot_map
+                doc.embedding_text = replace_image_slots(
+                    doc.embedding_text, slot_map
                 )
                 break
 

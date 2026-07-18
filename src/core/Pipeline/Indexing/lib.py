@@ -1,5 +1,6 @@
 
 from dataclasses import dataclass, field
+from typing import Optional
 
 @dataclass
 class IndexingArgs:
@@ -8,7 +9,7 @@ class IndexingArgs:
     only_kw: bool = False
     path: str = "."
     only_semantic: bool = False
-    files: list[str] = field(default_factory=list)
+    files: Optional[list[str]] = None
     rerun: bool = False
 
     def __post_init__(self):

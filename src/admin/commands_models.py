@@ -47,7 +47,7 @@ def cmd_models_status(args: ModelsStatusArgs, _get_models) -> None:
             (
                 name,
                 cs.active_model_id or _r._dim("none"),
-                _r._green("ready") if cs.available else _r._red("missing"),
+                _r._green("ready") if cs.available else _r._dim("not available"),
                 cs.error or "",
             )
         )
@@ -341,10 +341,10 @@ def cmd_models_keys(args: ModelsKeysArgs, _get_models) -> None:
     elif args.action == KeyAction.STATUS.value:
         statuses = models.list_key_status()
         rows = [
-            (p, _r._green("set") if s else _r._red("missing"))
+            (p, _r._green("set") if s else _r._dim("not set"))
             for p, s in statuses.items()
         ]
-        _r.table("API Keys", ["Provider", "Status"], rows)
+        _r.table("", ["Provider", "Status"], rows)
     elif args.action == KeyAction.REMOVE.value:
         ok = models.remove_key(args.provider)
         if ok:

@@ -55,7 +55,6 @@ def _get_models(init_models: bool = False):
 def main():
     from src.core.Logger.DarwinLogger import darwin
     darwin.configure()
-    _r.show_banner()
 
     parser = argparse.ArgumentParser(
         prog="darwin-admin",

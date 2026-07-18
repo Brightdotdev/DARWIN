@@ -7,7 +7,6 @@ Retrieval Orchestrator – debloated, robust, with fallback recursion fix.
 from __future__ import annotations
 
 import time
-import traceback
 from collections import defaultdict
 from typing import List, Optional, Dict, Any, Set, Tuple
 
@@ -135,7 +134,6 @@ class RetrievalOrchestrator:
 
         except Exception as e:
             darwin.error(f"Retrieval failed: {e}")
-            darwin.error(traceback.format_exc())
             return self._empty_context(
                 cfg, elapsed_ms=int((time.perf_counter() - start_time) * 1000)
             )

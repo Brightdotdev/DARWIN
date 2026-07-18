@@ -473,9 +473,9 @@ class StoreRepairArgs:
 @dataclass(frozen=True)
 class PipelineRunArgs:
     """Args for ``darwin-admin pipeline run``."""
-    target: str = ""
+    target: str = "."
     store: Optional[str] = None
-    files: Optional[str] = None
+    files: Optional[List[str]] = None
     ocr: bool = False
     recursive: bool = False
     precise: bool = False
@@ -490,9 +490,9 @@ class PipelineRunArgs:
 @dataclass(frozen=True)
 class PipelineIngestArgs:
     """Args for ``darwin-admin pipeline ingest``."""
-    target: str = ""
+    target: str = "."
     store: Optional[str] = None
-    files: Optional[str] = None
+    files: Optional[List[str]] = None
     ocr: bool = False
     recursive: bool = False
     precise: bool = False
@@ -503,7 +503,7 @@ class PipelineIngestArgs:
 @dataclass(frozen=True)
 class PipelineIndexArgs:
     """Args for ``darwin-admin pipeline index``."""
-    files: Optional[str] = None
+    files: Optional[List[str]] = None
     store: Optional[str] = None
     threshold: float = DEFAULT_INDEXING_THRESHOLD
     idf_smoothing: float = DEFAULT_IDF_SMOOTHING

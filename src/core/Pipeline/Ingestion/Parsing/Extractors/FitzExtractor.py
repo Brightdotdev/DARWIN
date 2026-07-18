@@ -6,6 +6,7 @@ from PIL import Image as PILImage  # imported once
 
 import pymupdf4llm
 
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Ingestion.Parsing.Extractors.ExtractorUtils import (
     make_page_header,
     strip_pymupdf_markers,
@@ -122,7 +123,7 @@ def fitz_extract(
     pdf_path: str,
     pages: List[int],
     images_dir: Optional[str] = None,
-) -> Tuple[str, str, List[Dict]]:
+) -> Tuple[str, List[Dict]]:
     """
     UNIFIED precise extraction.
 
@@ -140,7 +141,7 @@ def fitz_extract(
 
     Returns
     -------
-    (display_text, embedding_text, extracted_images)
+    ( embedding_text, extracted_images)
     """
     img_dir = Path(images_dir) if images_dir else None
     do_images = bool(img_dir)
@@ -158,9 +159,8 @@ def fitz_extract(
             show_progress=False,
         )
         is_chunked = True
-    except Exception:
-        # Fallback: older versions that do not accept page_chunks
-        # We will call to_markdown for each page individually
+    except Exception as e:
+        darwin.warning(f"pymupdf4llm page_chunks failed, falling back to per-page: {e}")
         raw_result = []
         for p in pages:
             # We need to extract one page at a time; pymupdf4llm accepts pages as list of ints
@@ -180,7 +180,6 @@ def fitz_extract(
             # We'll do the per‑page extraction, which is correct but slower.
             # We'll create a temporary subdirectory for each page's images.
             import tempfile
-            import shutil
             page_results = []
             for page_num in pages:
                 with tempfile.TemporaryDirectory() as tmpdir:
@@ -243,8 +242,8 @@ def fitz_extract(
             if not label_map:
                 for i in range(doc.page_count):
                     label_map[i] = str(i + 1)
-    except Exception:
-        # If anything fails, use simple numbering
+    except Exception as e:
+        darwin.warning(f"Page label extraction failed, using simple numbering: {e}")
         label_map = {i: str(i + 1) for i in range(len(pages))}
 
     def _page_label(idx: int) -> str:
@@ -302,7 +301,8 @@ def fitz_extract(
             try:
                 with PILImage.open(img_path) as pil_img:
                     w, h = pil_img.size
-            except Exception:
+            except Exception as e:
+                darwin.warning(f"Failed to read image dimensions for {img_path.name}: {e}")
                 w, h = 0, 0
 
             if w < MIN_IMAGE_SIZE_PX or h < MIN_IMAGE_SIZE_PX:
@@ -327,7 +327,8 @@ def fitz_extract(
                 try:
                     with PILImage.open(img_path) as pil_img:
                         w, h = pil_img.size
-                except Exception:
+                except Exception as e:
+                    darwin.warning(f"Failed to read fallback image {img_path.name}: {e}")
                     continue
                 if w < MIN_IMAGE_SIZE_PX or h < MIN_IMAGE_SIZE_PX:
                     continue
@@ -345,7 +346,7 @@ def fitz_extract(
 
         # ── Convert markdown images → [Image:N] slots ────────────────────────
         if do_images and page_images:
-            md_with_slots, _ = convert_markdown_images_to_slots(raw_md, raw_md, page_images)
+            md_with_slots = convert_markdown_images_to_slots(raw_md, page_images)
         else:
             md_with_slots = raw_md
 
@@ -365,7 +366,6 @@ def fitz_extract(
 
     # ── 5. Final assembly ──────────────────────────────────────────────────────
     sep = "\n\n---\n\n"
-    display_text = re.sub(r"\n{3,}", "\n\n", sep.join(display_pages)).strip()
     embedding_text = re.sub(r"\n{3,}", "\n\n", sep.join(embedding_pages)).strip()
 
-    return display_text, embedding_text, all_extracted_images  # fixed variable name
+    return embedding_text, all_extracted_images  # fixed variable name

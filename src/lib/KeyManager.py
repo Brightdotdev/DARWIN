@@ -230,7 +230,7 @@ def load_keys_from_keychain(log: bool = True) -> None:
     loaded = 0
     skipped = 0
 
-    for provider, (env_var, _) in PROVIDER_REGISTRY.items():
+    for provider, (env_var,name) in PROVIDER_REGISTRY.items():
         # Already set in env — respect override, no log spam
         if os.environ.get(env_var, "").strip():
             skipped += 1
@@ -248,7 +248,7 @@ def load_keys_from_keychain(log: bool = True) -> None:
             os.environ[env_var] = key.strip()
             loaded += 1
             if log:
-                darwin.info(f"Loaded {env_var} from keychain")
+                darwin.info(f"Loaded {provider} key")
 
     if log:
         if loaded:

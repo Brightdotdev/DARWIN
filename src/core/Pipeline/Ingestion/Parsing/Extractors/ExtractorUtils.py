@@ -23,10 +23,9 @@ def make_page_header(label: str) -> str:
 
 
 def convert_markdown_images_to_slots(
-    display_text: str,
     embedding_text: str,
     extracted_imgs: List[Dict],
-) -> Tuple[str, str]:
+) ->str:
     """
     Replace Markdown ![](img.png) with [Image:N] slots,
     matching filenames to the extracted image list.
@@ -45,6 +44,5 @@ def convert_markdown_images_to_slots(
             return make_image_slot(filename_to_slot[filename])
         return match.group(0)
 
-    display_text = pattern.sub(replace, display_text)
     embedding_text = pattern.sub(replace, embedding_text)
-    return display_text, embedding_text
+    return  embedding_text

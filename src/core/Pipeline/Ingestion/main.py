@@ -17,6 +17,7 @@ import os
 os.environ["LITELLM_SUPPRESS_DEBUG_INFO"] = "True"
 
 from src.core.Pipeline.Ingestion.Parsing.main import handle_parsing
+from src.core.Pipeline.Ingestion.Parsing.Parser import scan_directory
 from src.core.Pipeline.Ingestion.Chunking.main import handle_chunking
 from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
 from src.core.Pipeline.Ingestion.Chunking.lib import ChunkingArgs
@@ -39,62 +40,67 @@ def resolve_target(path: str, files: Optional[List[str]]) -> str:
     return path
 
 
-def normalize_filenames(files: Optional[List[str]]) -> Optional[List[str]]:
-    if not files:
-        return None
-    return [Path(f).name for f in files]
-
-
-def split_markdown_state(files: List[str], store: DarwinStore):
-    has_md = [f for f in files if store.has_markdown(f)]
-    needs_md = [f for f in files if not store.has_markdown(f)]
-    return has_md, needs_md
-
-
 # ── pipeline ──────────────────────────────────────────────────────────────
 
 def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
-    files = normalize_filenames(parsing_args.files)
+    """Run parsing and return all successfully parsed filenames.
 
-    if parsing_args.skip_if_markdown and files:
-        has_md, needs_md = split_markdown_state(files, store)
+    Includes both cached (already had markdown) and newly parsed files.
+    The caller decides what to do with them — this function only ensures
+    every file has markdown in the store.
+    """
+    # ── Discover files: explicit list or directory scan ────────────────────
+    if parsing_args.files:
+        raw_files = parsing_args.files
+    else:
+        target_path = Path(parsing_args.target).resolve()
+        if not target_path.exists():
+            darwin.error(f"Target not found: {parsing_args.target}")
+            return []
+        discovered = scan_directory(target_path, recursive=parsing_args.recursive)
+        if not discovered:
+            return []
+        raw_files = [str(p) for p in discovered]
 
-        if has_md:
-            darwin.info(f" 1/2 Parsing skipped for {len(has_md)} file(s)")
-            for f in has_md:
-                darwin.info(f"  ✓ {f}")
-            darwin.info("")
+    # ── Split: already parsed vs needs parsing ────────────────────────────
+    cached_names: List[str] = []
+    needs_parsing: List[str] = []
 
-        if not needs_md:
-            return has_md
+    for f in raw_files:
+        name = Path(f).name
+        if store.has_markdown(name) and not parsing_args.rerun:
+            cached_names.append(name)
+        else:
+            needs_parsing.append(str(Path(f).resolve()))
 
-        darwin.info(f" 1/2 Parsing {len(needs_md)} file(s)")
+    if cached_names:
+        darwin.info(f"  Cache hit: {len(cached_names)} file(s)")
+        for f in cached_names:
+            darwin.info(f"  ✓ {f}")
         darwin.info("")
 
-        args = ParsingArgs(**{**vars(parsing_args), "files": needs_md})
-        docs = handle_parsing(args, store=store)
+    if not needs_parsing:
+        if parsing_args.rerun:
+            darwin.info("  All files cached, reprocessing.")
+        return cached_names
 
-        parsed = [d.filename for d in docs if not d.error]
-        return has_md + parsed
-
-    # normal path
-    darwin.info(" 1/2 Parsing")
+    darwin.info(f"  1/2 Parsing {len(needs_parsing)} file(s)")
     darwin.info("")
 
-    docs =  handle_parsing(parsing_args, store=store)
-    if not docs:
-        return []
+    args = ParsingArgs(**{**vars(parsing_args), "files": needs_parsing})
+    docs = handle_parsing(args, store=store)
 
     parsed = [d.filename for d in docs if not d.error]
     failed = [d.filename for d in docs if d.error]
 
     if failed:
-        darwin.warning(f"Skipping {len(failed)} failed parse(s)")
+        darwin.warning(f"  {len(failed)} file(s) failed to parse:")
         for f in failed:
-            darwin.warning(f"  ✗ {f}")
+            darwin.warning(f"    ✗ {f}")
         darwin.info("")
 
-    return parsed
+    # Return everything that has markdown — cached + newly parsed
+    return cached_names + parsed
 
 
 def run_chunking(filenames: List[str], rerun: bool, store: DarwinStore) -> None:
@@ -108,20 +114,23 @@ def run_chunking(filenames: List[str], rerun: bool, store: DarwinStore) -> None:
     handle_chunking(args, store=store)
 
 
-def  handle_ingestion(parsing_args: ParsingArgs, store: DarwinStore) -> None:
+def handle_ingestion(parsing_args: ParsingArgs, store: DarwinStore) -> None:
     darwin.info("")
     darwin.info("━" * 50)
     darwin.info("  INGESTION PIPELINE")
     darwin.info("━" * 50)
     darwin.info("")
 
-    parsed_files = run_parsing(parsing_args, store)
+    all_parsed = run_parsing(parsing_args, store)
 
-    if not parsed_files:
-        darwin.error("No documents available to chunk. Aborting.")
-        raise RuntimeError("Ingestion failed: no documents were parsed")
+    if not all_parsed:
+        darwin.error("No documents found to process.")
+        raise RuntimeError("Ingestion failed: no documents found")
 
-    run_chunking(parsed_files, parsing_args.rerun, store)
+    darwin.info(f"  {len(all_parsed)} file(s) with markdown, running chunking...")
+    darwin.info("")
+
+    run_chunking(all_parsed, parsing_args.rerun, store)
 
     darwin.info("")
     darwin.info("━" * 50)
@@ -148,7 +157,6 @@ def main() -> int:
     parser.add_argument("--precise", action="store_true", help="Use pymupdf4llm for layout-accurate extraction")
     parser.add_argument("--rerun", "-R", action="store_true", help="Reprocess cached files")
     parser.add_argument("--no-save", action="store_true", help="Don't save markdown files (preview only)")
-    parser.add_argument("--skip-if-markdown", action="store_true", help="Skip files already parsed")
     parser.add_argument("--ocr", action="store_true", help="Run OCR on extracted images (requires --images)")
 
     # chunking flags
@@ -175,7 +183,6 @@ def main() -> int:
                 ocr=args.ocr,
                 precise=args.precise,
                 save=not args.no_save,
-                skip_if_markdown=args.skip_if_markdown,
             )
 
          

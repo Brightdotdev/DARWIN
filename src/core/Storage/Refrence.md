@@ -221,7 +221,6 @@ Checks if markdown artifacts exist for the given file.
 ### `save_markdown(filename: str, doc: Any) -> None`
 
 Saves the markdown representation. `doc` can be a dataclass or dict with the following expected fields:
-- `display_text` (str) – display version.
 - `embedding_text` (str) – embedding version.
 - Any other metadata (title, author, etc.) will be stored in `meta.json` under the `markdown` stage.
 
@@ -233,7 +232,6 @@ Saves the markdown representation. `doc` can be a dataclass or dict with the fol
 **Example:**
 ```python
 doc = {
-    "display_text": "# Darwin\n\nCharles Darwin...",
     "embedding_text": "Darwin Charles natural selection...",
     "title": "Darwin",
     "author": "Unknown"
