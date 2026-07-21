@@ -41,6 +41,8 @@ class RetrievalResult:
     rerank_score: Optional[float] = None
     rerank_original_score: Optional[float] = None
 
+    structural_type: Optional[str] = None
+
     audit: Optional[SearchAudit] = None
 
     @property
@@ -67,16 +69,14 @@ class RetrievalResult:
 
 
 def from_hybrid(r: Any) -> RetrievalResult:
-    score = getattr(r, "final_score", None)
-    if score is None:
-        score = getattr(r, "rrf_score", 0.0)
+    score = getattr(r, "final_score", 0.0)
     return RetrievalResult(
         result_type=ResultType.HYBRID,
         score=score,
-        source=r.source,
-        text=r.text,
+        source=getattr(r, "source", ""),
+        text=getattr(r, "text", ""),
         clean=getattr(r, "clean", None),
-        page=r.page,
+        page=getattr(r, "page", 0),
         page_end=getattr(r, "page_end", None),
         heading=getattr(r, "heading", None),
         chunk_index=getattr(r, "chunk_index", None),
@@ -88,8 +88,7 @@ def from_hybrid(r: Any) -> RetrievalResult:
         semantic_score=getattr(r, "semantic_score", None),
         keyword_score=getattr(r, "keyword_score", None),
         matched_terms=getattr(r, "matched_terms", None),
-        rerank_score=getattr(r, "rerank_score", None),
-        rerank_original_score=getattr(r, "original_score", None),
+        structural_type=getattr(r, "structural_type", None),
         audit=getattr(r, "audit", None),
     )
 
@@ -98,10 +97,11 @@ def from_semantic(r: Any) -> RetrievalResult:
     return RetrievalResult(
         result_type=ResultType.SEMANTIC,
         score=getattr(r, "score", 0.0),
-        source=r.source,
-        text=r.text,
+        semantic_score=getattr(r, "score", None),
+        source=getattr(r, "source", ""),
+        text=getattr(r, "text", ""),
         clean=getattr(r, "clean", None),
-        page=r.page,
+        page=getattr(r, "page", 0),
         page_end=getattr(r, "page_end", None),
         heading=getattr(r, "heading", None),
         chunk_index=getattr(r, "chunk_index", None),
@@ -110,8 +110,7 @@ def from_semantic(r: Any) -> RetrievalResult:
         ),
         links=normalize_links(getattr(r, "links", [])),
         matched_terms=getattr(r, "matched_terms", None),
-        rerank_score=getattr(r, "rerank_score", None),
-        rerank_original_score=getattr(r, "original_score", None),
+        structural_type=getattr(r, "structural_type", None),
         audit=getattr(r, "audit", None),
     )
 
@@ -120,10 +119,11 @@ def from_keyword(r: Any) -> RetrievalResult:
     return RetrievalResult(
         result_type=ResultType.KEYWORD,
         score=getattr(r, "score", 0.0),
-        source=r.source,
-        text=r.text,
+        keyword_score=getattr(r, "score", None),
+        source=getattr(r, "source", ""),
+        text=getattr(r, "text", ""),
         clean=getattr(r, "clean", None),
-        page=r.page,
+        page=getattr(r, "page", 0),
         page_end=getattr(r, "page_end", None),
         heading=getattr(r, "heading", None),
         chunk_index=getattr(r, "chunk_index", None),
@@ -132,7 +132,6 @@ def from_keyword(r: Any) -> RetrievalResult:
         ),
         links=normalize_links(getattr(r, "links", [])),
         matched_terms=getattr(r, "matched_terms", None),
-        rerank_score=getattr(r, "rerank_score", None),
-        rerank_original_score=getattr(r, "original_score", None),
+        structural_type=getattr(r, "structural_type", None),
         audit=getattr(r, "audit", None),
     )

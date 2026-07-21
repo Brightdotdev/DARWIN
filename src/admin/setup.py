@@ -650,7 +650,16 @@ def cmd_setup_onboard(args: SetupOnboardArgs, _get_models) -> None:
     """Non-interactive onboarding with preference dict."""
     models = _get_models(init_models=False)
     if args.preferences:
-        prefs = dict(kv.split("=", 1) for kv in args.preferences)
+        prefs = {}
+        for kv in args.preferences:
+            if "=" not in kv:
+                _r.err(f"Invalid preference format: '{kv}' (expected CATEGORY=MODEL_ID)")
+                return
+            cat, model_id = kv.split("=", 1)
+            if not cat or not model_id:
+                _r.err(f"Invalid preference: '{kv}' (both category and model required)")
+                return
+            prefs[cat] = model_id
         valid_cats = {c.value for c in ModelCategory}
         for cat in prefs:
             if cat.lower() not in valid_cats:
@@ -803,9 +812,9 @@ def cmd_setup_reset(args: SetupResetArgs) -> None:
         _r.ok(f"Config backed up to {backup}")
         darwin_path.unlink()
 
-    # Remove logging.json (unless keeping configs)
+    # Remove logging.json
     logging_path = default_logging_config()
-    if not args.keep_models and logging_path.exists():
+    if logging_path.exists():
         logging_path.unlink()
 
     # Remove models.json (unless keeping configs)

@@ -316,7 +316,7 @@ def parse_markitdown(
     images_dir: Optional[Path] = None,
     caption: bool = False,
     precise: bool = False,
-) -> Tuple[str, str, int, Dict, List[ExtractedImage]]:
+) -> Tuple[str, int, Dict, List[ExtractedImage]]:
     """Parse non-PDF documents via MarkItDown."""
     from markitdown import MarkItDown
 
@@ -328,4 +328,4 @@ def parse_markitdown(
 
     page_count = words_to_pages(text)
 
-    return text, text, page_count, {}, []
+    return text, page_count, {}, []

@@ -557,10 +557,10 @@ class ModelManager:
         model = None
         try:
             model = self.get(category, model_id, auto_download, **kwargs)
-            yield model
         except Exception as e:
-            darwin.error(f"Error in context: {e}")
-            yield None
+            darwin.error(f"Error loading model: {e}")
+        try:
+            yield model
         finally:
             if unload_on_exit and model is not None:
                 cat_name = category.name.lower()

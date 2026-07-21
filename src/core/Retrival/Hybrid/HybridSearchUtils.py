@@ -17,6 +17,9 @@ def reciprocal_rank_fusion(
     score(d) = sum(weight_i / (rrf_k + rank_i(d)))
 
     O(n) rank lookup via pre‑built dicts instead of list.index().
+
+    FIX: Uses copy.deepcopy() instead of copy.copy() to prevent
+    shared mutable state between results.
     """
     if not result_lists:
         return []
@@ -40,10 +43,13 @@ def reciprocal_rank_fusion(
         for lst in result_lists
     ]
 
+    # FIX: Use deepcopy to prevent shared mutable state
     items_by_key: Dict[Tuple[str, int, int], HybridSearchResult] = {}
     for lst in result_lists:
         for item in lst:
-            items_by_key[(item.source, item.page, item.chunk_index)] = copy.copy(item)
+            key = (item.source, item.page, item.chunk_index)
+            if key not in items_by_key:
+                items_by_key[key] = copy.deepcopy(item)
 
     for key, item in items_by_key.items():
         item.rrf_score = sum(
@@ -75,6 +81,7 @@ def build_unified_result(
         links=getattr(result, "links", []),
         matched_terms=set(getattr(result, "matched_terms", [])),
         overlap_direction=getattr(result, "overlap_direction", OverlapDirection.NONE),
+        structural_type=getattr(result, "structural_type", None),
         audit=getattr(result, "audit", None),
     )
 
@@ -109,18 +116,22 @@ def merge_results(
 
 def build_ranked_lists(
     items: List[HybridSearchResult],
+    min_score_threshold: float = 0.0,  # FIX: Added threshold parameter
 ) -> List[List[HybridSearchResult]]:
     """
     Build separate ranked lists for semantic and keyword results,
     each sorted by its respective score descending.
+
+    FIX: Filters out results with score below min_score_threshold
+    to prevent poor matches from influencing RRF ranking.
     """
     semantic_list = sorted(
-        [x for x in items if x.semantic_score is not None],
+        [x for x in items if x.semantic_score is not None and x.semantic_score >= min_score_threshold],
         key=lambda x: x.semantic_score,
         reverse=True,
     )
     keyword_list = sorted(
-        [x for x in items if x.keyword_score is not None],
+        [x for x in items if x.keyword_score is not None and x.keyword_score >= min_score_threshold],
         key=lambda x: x.keyword_score,
         reverse=True,
     )

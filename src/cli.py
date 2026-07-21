@@ -174,6 +174,9 @@ def main():
     args, unknown = parser.parse_known_args()
     if unknown:
         parser.error(f"unrecognized arguments: {' '.join(unknown)}")
+    if not hasattr(args, "func"):
+        parser.print_help()
+        sys.exit(0)
     try:
         args.func(args)
     except KeyboardInterrupt:

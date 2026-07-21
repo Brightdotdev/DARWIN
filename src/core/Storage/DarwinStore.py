@@ -91,7 +91,6 @@ class DarwinStore(StoreSearch):
         source = self._sources.find_by_name(filename)
         if not source:
             darwin.error(f"File not registered: {filename}")
-            darwin.error("All operations aborted")
             darwin.info("Try parsing the file first")
             return None
         return source.content_hash

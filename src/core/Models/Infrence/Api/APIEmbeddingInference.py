@@ -3,6 +3,7 @@ from typing import List, Optional, Union
 import numpy as np
 from src.core.Logger.DarwinLogger import darwin
 from src.core.Models.Infrence.Api.InfrenceApi import embed_sync
+from src.core.Models.EmbeddingConfig import get_preset
 from src.core.Models.ModeInterfaces import (
     EmbeddingInferenceInterface,
     UnifiedEmbeddingMetadata,
@@ -15,7 +16,9 @@ class APIEmbeddingInference(EmbeddingInferenceInterface):
 
     def __init__(self, model_id: str, normalize: bool = True):
         super().__init__(model_id=model_id, normalize=normalize)
-        self._ready = True  # API is always "ready" — no local model to load
+        self._ready = True
+        preset = get_preset(model_id)
+        self.api_batch_limit = preset.api_batch_limit if preset else None
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 

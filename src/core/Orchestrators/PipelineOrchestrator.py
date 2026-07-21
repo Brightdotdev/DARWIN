@@ -5,7 +5,7 @@ Typed parameters, per-stage session logging, stage purge.
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Dict, List, Optional, Set, Union
 
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Storage.DarwinStore import DarwinStore
@@ -66,11 +66,10 @@ class PipelineOrchestrator:
         store: DarwinStore,
     ):
         self.store = store
-        
+
         if not self.store:
-            darwin.error("A valid DarwinStore instance is required.")
-            self.store = None
-        store.repair_registry()
+            raise ValueError("A valid DarwinStore instance is required.")
+        self.store.repair_registry()
         self._handlers = {
             PipelineStage.INGESTION: self._run_ingestion,
             PipelineStage.INDEXING: self._run_indexing,
@@ -229,6 +228,7 @@ class PipelineOrchestrator:
         stages = self._coerce_stages(stages)
         darwin.info(f"Purging {len(stages)} stage(s) for {len(filenames)} file(s)")
 
+        failures = 0
         for stage in stages:
             for filename in filenames:
                 try:
@@ -244,8 +244,12 @@ class PipelineOrchestrator:
                     darwin.success(f"Removed '{filename}' from stage '{stage.value}'")
                 except Exception as e:
                     darwin.error(f"Failed to remove '{filename}' from stage '{stage.value}': {e}")
+                    failures += 1
 
-        darwin.success("Purge completed successfully")
+        if failures:
+            darwin.warning(f"Purge completed with {failures} error(s)")
+        else:
+            darwin.success("Purge completed successfully")
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 

@@ -44,22 +44,22 @@ Query ──> handle_retrieval()
 
 ```python
 from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-from src.core.Retrival.OrchestratorTypes import OrchestratorConfig, MergeStrategy
+from src.core.Orchestrators.lib import RetrievalParameters
 
 store = DarwinStore.get_default_store()
 orch = RetrievalOrchestrator(store)
 
-ctx = orch.retrieve_and_resolve(OrchestratorConfig(
+ctx = orch.retrieve_and_resolve(RetrievalParameters(
     query="machine learning",
     method="hybrid",
-    top_k=10,
+    top_k=5,
     max_passages=5,
-    merge_strategy=MergeStrategy.ADJACENT,
+    merge_strategy="adjacent",
     rerank=True,
 ))
 
 for p in ctx.passages:
-    print(f"[{p.source}] {p.text[:200]}")
+    print(f"[{p.metadata.source}] {p.text[:200]}")
 ```
 
 ### Direct search methods
@@ -75,8 +75,9 @@ results = handle_retrieval(store, args)
 ### Via CLI
 
 ```bash
-darwin search "your query"
-darwin search "your query" --method semantic --top-k 20
+darwin-admin search "your query"
+darwin-admin search "your query" --method semantic --top-k 20
+darwin-admin search "your query" --save
 ```
 
 ### Via MCP tool
@@ -104,9 +105,11 @@ result = await call_tool("search_darwin", {
 
 | Parameter | Default | Description |
 |---|---|---|
-| `top_k` | 10 | Initial result count |
+| `top_k` | 5 | Initial result count |
 | `max_passages` | 5 | Final passage count |
 | `max_chars` | 6000 | Max chars per passage |
-| `merge_strategy` | `adjacent` | Passage merging: none, adjacent, all |
+| `merge_strategy` | `adjacent` | Passage merging: none, adjacent, aggressive |
 | `rerank` | `false` | Enable cross-encoder reranking |
 | `min_passage_score` | 0.3 | Minimum score threshold |
+| `save` | `false` | Save results as JSON for later retrieval |
+| `results_dir` | `null` | Custom dir for saved results (default: `{base}/search-results/`) |

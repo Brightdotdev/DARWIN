@@ -402,13 +402,12 @@ class DarwinLogger:
     # ------------------------------------------------------------------
     # Configuration
     # ------------------------------------------------------------------
-    _CONFIG_FILE = "logging.json"
 
     @staticmethod
     def _config_path() -> Path:
-        from src.lib.AppPaths import default_config_dir
+        from src.lib.AppPaths import default_logging_config
 
-        return default_config_dir() / DarwinLogger._CONFIG_FILE
+        return default_logging_config()
 
     @staticmethod
     def _save_config(config: dict) -> None:
@@ -418,8 +417,9 @@ class DarwinLogger:
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
             path.write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            import warnings
+            warnings.warn(f"Failed to save logging config to {path}: {e}")
 
     @staticmethod
     def _load_config() -> Optional[dict]:

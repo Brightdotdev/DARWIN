@@ -234,12 +234,6 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
         display = path.name
         if store.has_markdown(display) and not args.rerun:
             skipped_count += 1
-            parsed_document = ParsedDocument(
-                 embedding_text=store.load_markdown(display),
-                filename=display,
-                file_type=store.file_status(path).get("file_type", "unknown"),
-                page_count=store.file_status(path).get("page_count", 0),
-            )
             continue
         image_dir = store.ensure_image_dir(display) if args.images else None
         tasks_to_process.append((path, image_dir, display))
@@ -248,11 +242,6 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
     for slug, url, content_hash, data, content_type in url_registered_ok:
         if store.has_markdown(slug) and not args.rerun:
             skipped_count += 1
-            parsed_document = ParsedDocument(
-                 embedding_text=store.load_markdown(slug), filename=slug,
-                file_type=store.file_status(url).get("file_type", "unknown"),
-                page_count=store.file_status(url).get("page_count", 0),
-            )
             continue
         image_dir = store.ensure_image_dir(slug) if args.images else None
         tasks_to_process.append(((url, data, content_type), image_dir, slug))

@@ -5,6 +5,7 @@ Both Server.py (stdio) and UnifiedServer.py (SSE/HTTP) call
 ``create_mcp_app()`` so adding a tool only requires one edit.
 """
 
+import sys
 from typing import Tuple
 
 from mcp.server.fastmcp import FastMCP
@@ -31,8 +32,18 @@ def create_mcp_app(
 
     orch = StoreOrchestrator()
     orch.bootstrap(quiet=True)
-    retrieval = RetrievalOrchestrator(store=orch.store)
-    pipeline = PipelineOrchestrator(store=orch.store)
+
+    try:
+        retrieval = RetrievalOrchestrator(store=orch.store)
+    except Exception as e:
+        print(f"[MCP] WARNING: RetrievalOrchestrator init failed: {e}", file=sys.stderr)
+        retrieval = None
+
+    try:
+        pipeline = PipelineOrchestrator(store=orch.store)
+    except Exception as e:
+        print(f"[MCP] WARNING: PipelineOrchestrator init failed: {e}", file=sys.stderr)
+        pipeline = None
 
     Search.register(mcp, retrieval)
     Pipeline.register(mcp, pipeline)

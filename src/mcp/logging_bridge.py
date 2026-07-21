@@ -22,13 +22,26 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator
 
-from src.core.Logger.DarwinLogger import darwin, LogEvent, LogType
+from src.core.Logger.DarwinLogger import (
+    darwin,
+    EventSubscriber,
+    LogEvent,
+    LogType,
+    ProgressStartEvent,
+    ProgressUpdateEvent,
+    ProgressEndEvent,
+    SpinnerStartEvent,
+    SpinnerUpdateEvent,
+    SpinnerEndEvent,
+    SessionStartEvent,
+    SessionEndEvent,
+)
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import Context
 
 
-class MCPLogBridge:
+class MCPLogBridge(EventSubscriber):
     """Subscribes to DarwinLogger and forwards events as MCP log notifications."""
 
     _LEVEL_MAP = {
@@ -43,7 +56,7 @@ class MCPLogBridge:
         self._ctx = ctx
         self._closed = False
 
-    def on_event(self, event: LogEvent) -> None:
+    def on_log(self, event: LogEvent) -> None:
         """Called by DarwinLogger for each log event. Schedules async MCP send."""
         if self._closed:
             return
@@ -56,6 +69,72 @@ class MCPLogBridge:
         try:
             loop = asyncio.get_running_loop()
             loop.create_task(self._send(level, message, logger))
+        except RuntimeError:
+            pass
+
+    def on_progress_start(self, event: ProgressStartEvent) -> None:
+        if self._closed:
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send("info", f"Progress started: {event.total} steps", "darwin.progress"))
+        except RuntimeError:
+            pass
+
+    def on_progress_update(self, event: ProgressUpdateEvent) -> None:
+        if self._closed:
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send("info", f"Progress: {event.current}/{event.total}", "darwin.progress"))
+        except RuntimeError:
+            pass
+
+    def on_progress_end(self, event: ProgressEndEvent) -> None:
+        if self._closed:
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send("info", "Progress complete", "darwin.progress"))
+        except RuntimeError:
+            pass
+
+    def on_spinner_start(self, event: SpinnerStartEvent) -> None:
+        if self._closed:
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send("info", event.message or "Working...", "darwin.spinner"))
+        except RuntimeError:
+            pass
+
+    def on_spinner_update(self, event: SpinnerUpdateEvent) -> None:
+        pass  # spinner frames are cosmetic, skip
+
+    def on_spinner_end(self, event: SpinnerEndEvent) -> None:
+        pass  # no notification needed
+
+    def on_session_start(self, event: SessionStartEvent) -> None:
+        if self._closed:
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send("info", f"Session '{event.session}' started", "darwin.session"))
+        except RuntimeError:
+            pass
+
+    def on_session_end(self, event: SessionEndEvent) -> None:
+        if self._closed:
+            return
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._send("info", f"Session '{event.session}' ended", "darwin.session"))
         except RuntimeError:
             pass
 

@@ -1,5 +1,7 @@
 import sys
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -11,6 +13,7 @@ from src.core.Pipeline.Indexing.Embedding.lib import EmbeddingArgs
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Models.ModelConfig import get_active_model
 from src.core.Models.Lib.ModelRegistry import ModelCategory
+from src.core.Models.EmbeddingConfig import get_preset
 from src.core.Logger.DarwinLogger import darwin
 from src.lib.Utils import ensure_writable_directory
 
@@ -19,8 +22,44 @@ from src.lib.Utils import ensure_writable_directory
 # Handler — SYNC to match caller (handle_indexing is sync)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _embed_one_file(
+    session: EmbeddingSession,
+    filename: str,
+    store: DarwinStore,
+    args: EmbeddingArgs,
+    _lock: threading.Lock,
+) -> tuple[str, str]:
+    """Embed a single file. Returns (filename, 'ok'|'skip'|'fail')."""
+    if not args.rerun and store.has_embeddings(filename):
+        with _lock:
+            darwin.warning(f"Skipping {filename} — embeddings already exist")
+        return filename, "skip"
+
+    chunks = store.query_records(filename=filename, columns=["clean", "index"])
+    if not chunks:
+        with _lock:
+            darwin.error(f"{filename} has no chunks")
+        return filename, "fail"
+
+    try:
+        vectors = session.embed_file(
+            filename=filename,
+            chunks=chunks,
+            store=store,
+            rerun=args.rerun,
+            batch_size=args.batch_size,
+            use_length_batching=args.use_length_batching,
+        )
+        if vectors is not None and len(vectors) > 0:
+            return filename, "ok"
+        return filename, "skip"
+    except Exception as e:
+        with _lock:
+            darwin.error(f"{filename} — {type(e).__name__}: {e}")
+        return filename, "fail"
+
+
 def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
-    # ── Hardware summary ──────────────────────────────────────────────
     monitor = MemoryMonitor()
     monitor.log_summary()
 
@@ -31,7 +70,6 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
                 f"LengthBatching={args.use_length_batching}")
     darwin.info("")
 
-    # ── Resolve files ──
     if args.files:
         filenames = [f for f in args.files if store.has_records(f)]
     else:
@@ -49,52 +87,45 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
         darwin.error("No embedding model configured — run setup first")
         return
 
-    darwin.info(f"Embedding {len(filenames)} file(s)")
+    preset = get_preset(model_key)
+    is_api = preset.api_batch_limit is not None if preset else False
 
-    # ── FIXED: model loaded ONCE via session, not per-file (Audit #4) ──
+    darwin.info(f"Embedding {len(filenames)} file(s) [backend={'api' if is_api else 'local'}]")
+
     succeeded = skipped = failed = 0
+    lock = threading.Lock()
 
     with EmbeddingSession(model_key=model_key) as session:
         if not session.embedder:
             darwin.error("Failed to acquire embedding model")
             return
 
-        for i, filename in enumerate(filenames):
-            # Skip logic
-            if not args.rerun and store.has_embeddings(filename):
-                darwin.warning(f"Skipping {filename} — embeddings already exist")
-                skipped += 1
-                continue
-
-            chunks = store.query_records(filename=filename, columns=["clean", "index"])
-
-            if not chunks:
-                darwin.error(f"{filename} has no chunks")
-                failed += 1
-                continue
-
-            try:
-                vectors = session.embed_file(
-                    filename=filename,
-                    chunks=chunks,
-                    store=store,
-                    rerun=args.rerun,
-                    batch_size=args.batch_size,
-                    use_length_batching=args.use_length_batching,
-                )
-
-                if vectors is not None and len(vectors) > 0:
+        if is_api:
+            for filename in filenames:
+                _, status = _embed_one_file(session, filename, store, args, lock)
+                if status == "ok":
                     succeeded += 1
-                    
-                else:
+                elif status == "skip":
                     skipped += 1
+                else:
+                    failed += 1
+        else:
+            workers = min(2, len(filenames))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {
+                    pool.submit(_embed_one_file, session, fn, store, args, lock): fn
+                    for fn in filenames
+                }
+                for future in as_completed(futures):
+                    _, status = future.result()
+                    if status == "ok":
+                        succeeded += 1
+                    elif status == "skip":
+                        skipped += 1
+                    else:
+                        failed += 1
 
-            except Exception as e:
-                darwin.error(f"{filename} — {type(e).__name__}: {e}")
-                failed += 1
-
-    # ── Batching history from shared singleton (Audit #3) ─────────────
-    strategy = BatchingStrategy()  # returns same singleton instance
+    strategy = BatchingStrategy()
     history = strategy.get_history()
     if history:
         darwin.info(f"Batching history: {history}")

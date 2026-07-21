@@ -41,7 +41,6 @@ def _resolve_input_files(
         if store.has_records(candidate):
             resolved.append(candidate)
         else:
-            from src.core.Logger.DarwinLogger import darwin
             darwin.warning(f"'{r_str}' has no chunks — skipping")
 
     # Deduplicate while preserving order
@@ -108,6 +107,9 @@ def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
             handle_embedding(EmbeddingArgs(
                 files=files,
                 rerun=args.rerun,
+                batch_size=args.batch_size,
+                token_budget=args.token_budget,
+                use_length_batching=args.use_length_batching,
             ), store=store)
         except Exception as e:
             darwin.error(f"Embedding failed — {e}")

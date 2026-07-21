@@ -31,9 +31,12 @@ def _get_store(store_ref: str | None = None):
 
 def _get_pipeline(store_ref: str | None = None):
     global _pipeline
-    if _pipeline is None or store_ref is not None:
+    if store_ref is not None:
         from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
-        _pipeline = PipelineOrchestrator(store=_get_store(store_ref))
+        return PipelineOrchestrator(store=_get_store(store_ref))
+    if _pipeline is None:
+        from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+        _pipeline = PipelineOrchestrator(store=_get_store())
     return _pipeline
 
 
@@ -87,6 +90,7 @@ Examples:
     from src.admin import commands_models as _models_mod
     from src.admin import commands_store as _store_mod
     from src.admin import commands_pipeline as _pipeline_mod
+    from src.admin import commands_search as _search_mod
     from src.admin import commands_logs as _logs_mod
     from src.admin import commands_system as _system_mod
     from src.admin import uninstall as _uninstall_mod
@@ -95,6 +99,7 @@ Examples:
     _models_mod.add_args(sub, _get_models)
     _store_mod.add_args(sub, _get_store)
     _pipeline_mod.add_args(sub, _get_pipeline)
+    _search_mod.add_args(sub, _get_store)
     _logs_mod.add_args(sub)
     _system_mod.add_args(sub, _get_models)
     _system_mod.add_status_args(sub)

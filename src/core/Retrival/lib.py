@@ -1,7 +1,7 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Any
 from enum import Enum
-
 from src.core.Logger.DarwinLogger import darwin
 
 
@@ -136,6 +136,7 @@ class HybridSearchResult:
     links: List[ChunkLink] = field(default_factory=list)
     matched_terms: Set[str] = field(default_factory=set)
     overlap_direction: OverlapDirection = OverlapDirection.NONE
+    structural_type: Optional[str] = None
     audit: Optional[SearchAudit] = None
 
 @dataclass
@@ -151,6 +152,7 @@ class SemanticSearchResult:
     links: List[ChunkLink] = field(default_factory=list)
     matched_terms: Set[str] = field(default_factory=set)
     overlap_direction: OverlapDirection = OverlapDirection.NONE
+    structural_type: Optional[str] = None
     audit: Optional[SearchAudit] = None
 
 @dataclass
@@ -166,6 +168,7 @@ class KeywordSearchResult:
     links: List[ChunkLink] = field(default_factory=list)
     matched_terms: Set[str] = field(default_factory=set)
     overlap_direction: OverlapDirection = OverlapDirection.NONE
+    structural_type: Optional[str] = None
     audit: Optional[SearchAudit] = None
 
 # -------------------- 10/10 ARGUMENT DATACLASSES (FIXED) --------------------

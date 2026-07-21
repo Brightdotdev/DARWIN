@@ -157,24 +157,45 @@ class EmbeddingEngine:
             batch_size = len(batch_texts)
 
             # Sort within batch by length to minimize padding
-            sorted_pairs = sorted(enumerate(batch_texts), key=lambda x: len(x[1]))
-            sorted_texts = [t for _, t in sorted_pairs]
-            sort_map = [orig for orig, _ in sorted_pairs]
-            unsort_map = [0] * len(sort_map)
-            for new_pos, orig_pos in enumerate(sort_map):
-                unsort_map[orig_pos] = new_pos
+            # Skip for small batches — sort overhead > padding savings
+            needs_unsort = batch_size > 32
+            if needs_unsort:
+                sorted_pairs = sorted(enumerate(batch_texts), key=lambda x: len(x[1]))
+                sorted_texts = [t for _, t in sorted_pairs]
+                sort_map = [orig for orig, _ in sorted_pairs]
+                unsort_map = [0] * len(sort_map)
+                for new_pos, orig_pos in enumerate(sort_map):
+                    unsort_map[orig_pos] = new_pos
+            else:
+                sorted_texts = batch_texts
 
             try:
                 start_t = time.perf_counter()
                 kwargs = dict(encode_kwargs)
-                kwargs.setdefault("batch_size", len(sorted_texts))
+                effective_batch = len(sorted_texts)
+                api_limit = getattr(model, "api_batch_limit", None)
+                if api_limit and effective_batch > api_limit:
+                    effective_batch = api_limit
+                kwargs.setdefault("batch_size", effective_batch)
 
                 vecs = model.encode(sorted_texts, **kwargs)
                 np_vecs = self._to_numpy(vecs.embeddings, expected_dim)
+                if np_vecs is None:
+                    darwin.error(
+                        f"Embedding returned invalid output for batch {batch_num}, "
+                        f"skipping {len(sorted_texts)} chunks"
+                    )
+                    processed += batch_size
+                    darwin.progress_update(
+                        progress_id, processed,
+                        f"Batch {batch_num}/{len(index_batches)} — skipped (invalid output)",
+                    )
+                    continue
                 elapsed = time.perf_counter() - start_t
 
-                # Restore original order
-                np_vecs = np_vecs[unsort_map]
+                # Restore original order (only if we sorted)
+                if needs_unsort:
+                    np_vecs = np_vecs[unsort_map]
                 all_vectors.append(np_vecs)
 
                 processed += batch_size

@@ -66,7 +66,10 @@ class AdminRenderer:
 
     def _out(self, text: str = "", err: bool = False) -> None:
         stream = sys.stderr if err else sys.stdout
-        print(text, file=stream)
+        try:
+            print(text, file=stream)
+        except UnicodeEncodeError:
+            stream.buffer.write((text + "\n").encode("utf-8", errors="replace"))
 
     def _divider(self, width: int = 60) -> str:
         return "─" * width

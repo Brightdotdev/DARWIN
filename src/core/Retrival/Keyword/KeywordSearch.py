@@ -2,6 +2,7 @@
 from typing import List, Optional
 from src.core.Retrival.Keyword.KeywordUtilities import calculate_bm25
 from src.core.Retrival.lib import KeywordSearchResult, OverlapDirection, RETRIVAL_COLUMNS, DEFAULT_TOP_K, DEFAULT_K1, DEFAULT_B
+from src.core.Retrival.retrieval_utils import normalize_links
 from src.core.Logger.DarwinLogger import darwin
 from src.core.Storage.DarwinStore import DarwinStore
 
@@ -58,26 +59,30 @@ def search_single_document_keyword(
                 continue
 
             od_raw = chunk.get("overlap_direction")
-            if isinstance(od_raw, str):
-                od = OverlapDirection(od_raw)
-            elif isinstance(od_raw, OverlapDirection):
+            if isinstance(od_raw, OverlapDirection):
                 od = od_raw
+            elif isinstance(od_raw, str):
+                try:
+                    od = OverlapDirection(od_raw)
+                except ValueError:
+                    od = OverlapDirection.NONE
             else:
                 od = OverlapDirection.NONE
 
             results.append(
                 KeywordSearchResult(
-                    text=chunk["text"],
-                    clean=chunk["clean"],
+                    text=chunk.get("text", ""),
+                    clean=chunk.get("clean", ""),
                     score=score,
                     source=filename,
-                    page=chunk["page"],
-                    page_end=chunk["page_end"],
-                    heading=chunk["heading"],
+                    page=chunk.get("page", 0),
+                    page_end=chunk.get("page_end", 0),
+                    heading=chunk.get("heading", ""),
                     chunk_index=chunk_idx,
                     matched_terms=set(matched),
-                    links=chunk.get("links", []),
+                    links=normalize_links(chunk.get("links", [])),
                     overlap_direction=od,
+                    structural_type=chunk.get("structural_type", "body"),
                 )
             )
 
@@ -124,27 +129,10 @@ def search_across_documents_keyword(
                 f"Search failed for {filename}: {e}", exc_info=True
             )
 
-    # Normalize BM25 scores across documents (BM25 is document-dependent)
-    if all_results:
-        scores = [r.score for r in all_results]
-        min_s, max_s = min(scores), max(scores)
-        span = max_s - min_s or 1.0
-        normalized = []
-        for r in all_results:
-            normalized.append(KeywordSearchResult(
-                text=r.text,
-                clean=r.clean,
-                score=(r.score - min_s) / span,
-                source=r.source,
-                page=r.page,
-                page_end=r.page_end,
-                heading=r.heading,
-                chunk_index=r.chunk_index,
-                matched_terms=r.matched_terms,
-                links=r.links,
-                overlap_direction=r.overlap_direction,
-            ))
-        all_results = normalized
+    # FIX: Removed cross-document BM25 normalization.
+    # BM25 scores are document-dependent; normalizing across documents
+    # destroys their meaning. RRF fusion uses ranks, not scores, for
+    # cross-document comparison, so raw scores are fine.
 
     all_results.sort(key=lambda r: r.score, reverse=True)
     return all_results[:top_k]

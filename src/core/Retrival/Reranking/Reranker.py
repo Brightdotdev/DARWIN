@@ -12,7 +12,7 @@ class RerankedResult:
     """A result that has been reranked by a cross‑encoder."""
     text: str
     clean: str
-    rerank_score: float
+    rerank_score: Optional[float]
     original_score: Optional[float]
     final_score: float
     source: str
@@ -25,9 +25,10 @@ class RerankedResult:
     matched_terms: Optional[List[str]] = None
 
     def __repr__(self) -> str:
+        rerank = f"{self.rerank_score:.3f}" if self.rerank_score is not None else "N/A"
         return (
             f"RerankedResult(final={self.final_score:.3f}, "
-            f"rerank={self.rerank_score:.3f}, "
+            f"rerank={rerank}, "
             f"source='{self.source}', page={self.page})"
         )
 
@@ -60,11 +61,10 @@ def _normalize_original_scores(candidates: List[Any]) -> List[float]:
     # Normalize: if scores are already in [0,1], keep as is; else apply sigmoid scaling
     norm_scores = []
     for c, raw in zip(candidates, raw_scores):
-        # Check if the candidate has a normalized score already
-        if hasattr(c, 'score') and c.score is not None and 0 <= c.score <= 1:
-            norm_scores.append(c.score)
-        elif hasattr(c, 'final_score') and c.final_score is not None and 0 <= c.final_score <= 1:
+        if hasattr(c, 'final_score') and c.final_score is not None and 0 <= c.final_score <= 1:
             norm_scores.append(c.final_score)
+        elif hasattr(c, 'score') and c.score is not None and 0 <= c.score <= 1:
+            norm_scores.append(c.score)
         else:
             # Scale by max and apply sigmoid to bring into (0,1)
             norm_scores.append(_sigmoid(raw / max_score))
@@ -172,7 +172,7 @@ def _fallback_rerank(candidates: List[Any], top_k: int) -> List[RerankedResult]:
         out.append(RerankedResult(
             text=getattr(c, 'text', ''),
             clean=getattr(c, 'clean', getattr(c, 'text', '')),
-            rerank_score=score,
+            rerank_score=None,  # FIX: no reranking occurred, don't set a score
             original_score=score,
             final_score=score,
             source=getattr(c, 'source', ''),

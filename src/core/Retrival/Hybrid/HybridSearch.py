@@ -64,6 +64,7 @@ def hybrid_search(
                     links=r.links,
                     matched_terms=r.matched_terms,
                     overlap_direction=r.overlap_direction,
+                    structural_type=r.structural_type,
                     rrf_score=r.score,  # use keyword score as RRF score (no fusion)
                     final_score=r.score,
                 )
@@ -89,6 +90,7 @@ def hybrid_search(
                     links=r.links,
                     matched_terms=r.matched_terms or set(),
                     overlap_direction=r.overlap_direction,
+                    structural_type=r.structural_type,
                     rrf_score=r.score,  # use semantic score as RRF score
                     final_score=r.score,
                 )

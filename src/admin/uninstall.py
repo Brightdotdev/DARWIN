@@ -13,7 +13,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List,  Tuple
 
 from src.admin.lib import UninstallArgs, ns_to
 from src.admin.renderer import _r

@@ -93,8 +93,6 @@ All shared types live in `lib.py`. No magic strings or raw dicts are passed betw
 | `DEFAULT_SSE_HOST` | `127.0.0.1` | Setup logging |
 | `DEFAULT_RETENTION_DAYS` | `14` | Setup logging |
 | `DEFAULT_MAX_MEMORY` | `10_000` | Setup logging |
-| `DEFAULT_INDEXING_THRESHOLD` | `0.5` | Pipeline indexing |
-| `DEFAULT_IDF_SMOOTHING` | `1.5` | Pipeline BM25 |
 
 ### Utilities
 
@@ -298,6 +296,53 @@ You can run both together (`run`), or each stage independently (`ingest`, `index
 - `--only-kw` — Build keyword index only (skip embeddings)
 - `--only-semantic` — Build vector index only (skip BM25)
 - `--precise` — Precision parsing mode (slower but more accurate)
+
+---
+
+### `search` — Knowledge base search
+
+Search the DARWIN knowledge base and optionally save results.
+
+```bash
+darwin-admin search "machine learning"
+darwin-admin search "AI safety" --method semantic --top-k 20
+darwin-admin search "neural nets" --save
+darwin-admin search "deep learning" --save --results-dir ./my-results
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `query` | *(required)* | Search query string |
+| `--method` | `hybrid` | Search strategy: `hybrid`, `semantic`, `keyword` |
+| `--top-k` | `5` | Number of top results to return |
+| `--max-passages` | `5` | Maximum passages to retrieve |
+| `--max-chars` | `6000` | Character limit on returned text |
+| `--min-score` | `0.15` | Minimum relevance score threshold |
+| `--merge-strategy` | `adjacent` | Merging: `none`, `adjacent`, `aggressive` |
+| `--files`, `-f` | *(all)* | Restrict to specific files (space-separated) |
+| `--store` | *(default)* | Store ID, name, or path |
+| `--save` | `false` | Save results as JSON for later retrieval |
+| `--results-dir` | `{base}/search-results/` | Custom directory for saved results |
+| `--rerank` | `false` | Enable reranking |
+| `--structural-penalty-factor` | `0.5` | Penalty for non-body content (0.0-1.0). Lower = harsher. |
+| `--diversity-rerank` | `true` | Source diversity penalty. Set `false` for deep dives into one file. |
+| `--include-audit` | `false` | Per-passage scoring breakdown (raw_score, penalty_factor, etc.) |
+
+#### Power-user examples
+
+```bash
+# Debug why results rank the way they do
+darwin-admin search "neural nets" --include-audit
+
+# Deep dive into one file — disable diversity penalty
+darwin-admin search "attention mechanism" --files transformer.pdf --diversity-rerank false
+
+# Get 10 passages from a single large document
+darwin-admin search "chapter 3" --max-per-source 10 --max-passages 10
+
+# Disable structural penalties (tables, captions count equally)
+darwin-admin search "data table" --structural-penalty-factor 1.0
+```
 
 ---
 

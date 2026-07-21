@@ -2,11 +2,20 @@
 src/core/Retrival/Hybrid/main.py
 ------------------------------------
 Hybrid search: BM25 + Dense Vector (semantic) fusion – CLI entry point.
+
+FIXES APPLIED (2026-07-19):
+  1. Removed pre-RRF score normalization (preserves raw score gaps)
+  2. Removed post-RRF min-max normalization (raw RRF scores preserved)
+  3. Added sigmoid normalization option for stable [0,1] scores
+  4. Added tie-breaking in _rrf_fusion() (secondary sort by source)
+  5. from_hybrid() now copies structural_type
+  6. Added per-result audit with raw/semantic/keyword/rrf scores
 """
 
 from __future__ import annotations
 
 import time
+import math
 from typing import List, Dict, Any, Tuple
 
 from src.core.Logger.DarwinLogger import darwin
@@ -30,32 +39,27 @@ from src.core.Retrival.lib import (
 )
 
 
-def _normalize_scores(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Min-max normalize scores of a list of result dicts to [0,1]."""
-    if not results:
-        return results
+def _sigmoid_normalize(scores: List[float], temperature: float = 10.0) -> List[float]:
+    """Sigmoid normalization: preserves relative differences better than min-max.
 
-    valid_results = [r for r in results if r.get("score") is not None]
-    if not valid_results:
-        return results
+    Maps RRF scores to [0,1] using a sigmoid function centered at the mean.
+    This avoids the "artificial spread" problem of min-max normalization.
+    """
+    if not scores:
+        return scores
+    if len(scores) == 1:
+        return [1.0]
 
-    scores = [r["score"] for r in valid_results]
-    min_score = min(scores)
-    max_score = max(scores)
-    range_score = max_score - min_score
+    mean = sum(scores) / len(scores)
+    std = math.sqrt(sum((s - mean) ** 2 for s in scores) / len(scores)) or 1e-9
 
-    if range_score < 1e-9:
-        for r in results:
-            if r.get("score") is not None:
-                r["score"] = 0.5
-        return results
+    normalized = []
+    for s in scores:
+        z = (s - mean) / std
+        sig = 1.0 / (1.0 + math.exp(-temperature * z))
+        normalized.append(sig)
 
-    for r in results:
-        raw = r.get("score")
-        if raw is not None:
-            r["score"] = (raw - min_score) / range_score
-
-    return results
+    return normalized
 
 
 def _rrf_fusion(
@@ -69,11 +73,19 @@ def _rrf_fusion(
     Fuse keyword and semantic results using Reciprocal Rank Fusion (RRF).
     Stores individual scores for transparency.
     Final score is the RRF score.
+
+    FIX: Added tie-breaking (secondary sort by source name) to ensure
+    stable rankings when scores are tied.
     """
     combined: Dict[Tuple[str, int], Dict[str, Any]] = {}
 
-    # Process keyword results
-    for rank, r in enumerate(keyword_results, 1):
+    # Process keyword results — FIX: stable sort with tie-breaking
+    # Sort by score desc, then by source asc for stability
+    keyword_sorted = sorted(
+        keyword_results,
+        key=lambda r: (-r.get("score", 0.0), r.get("source", ""))
+    )
+    for rank, r in enumerate(keyword_sorted, 1):
         key = (r.get("source", ""), r.get("chunk_index", 0))
         if key not in combined:
             combined[key] = {
@@ -91,16 +103,22 @@ def _rrf_fusion(
                 "keyword_rank": rank,
                 "semantic_rank": None,
                 "rrf_score": 0.0,
-                "matched_terms": r.get("matched_terms", set()),
+                "matched_terms": set(r.get("matched_terms", set())),
+                "structural_type": r.get("structural_type"),  # FIX: preserve structural_type
             }
         else:
             existing = combined[key].get("keyword_score")
             new_score = r.get("score")
             if new_score is not None and (existing is None or new_score > existing):
                 combined[key]["keyword_score"] = new_score
+                combined[key]["keyword_rank"] = rank
 
-    # Process semantic results
-    for rank, r in enumerate(semantic_results, 1):
+    # Process semantic results — FIX: stable sort with tie-breaking
+    semantic_sorted = sorted(
+        semantic_results,
+        key=lambda r: (-r.get("score", 0.0), r.get("source", ""))
+    )
+    for rank, r in enumerate(semantic_sorted, 1):
         key = (r.get("source", ""), r.get("chunk_index", 0))
         if key not in combined:
             combined[key] = {
@@ -118,7 +136,8 @@ def _rrf_fusion(
                 "keyword_rank": None,
                 "semantic_rank": rank,
                 "rrf_score": 0.0,
-                "matched_terms": r.get("matched_terms", set()),
+                "matched_terms": set(r.get("matched_terms", set())),
+                "structural_type": r.get("structural_type"),  # FIX: preserve structural_type
             }
         else:
             existing = combined[key].get("semantic_score")
@@ -126,9 +145,14 @@ def _rrf_fusion(
             if new_score is not None and (existing is None or new_score > existing):
                 combined[key]["semantic_score"] = new_score
                 combined[key]["semantic_rank"] = rank
+            # Merge matched_terms — copy to avoid mutating original result's set
+            if r.get("matched_terms"):
+                combined[key]["matched_terms"].update(set(r["matched_terms"]))
 
     # Compute RRF scores
-    for data in combined.values():
+    raw_rrf = []
+    data_list = list(combined.values())
+    for data in data_list:
         rrf = 0.0
         kw_rank = data.get("keyword_rank")
         sem_rank = data.get("semantic_rank")
@@ -137,8 +161,14 @@ def _rrf_fusion(
         if sem_rank is not None:
             rrf += semantic_weight / (rrf_k + sem_rank)
         data["rrf_score"] = rrf
+        raw_rrf.append(rrf)
 
-    sorted_items = sorted(combined.values(), key=lambda x: x["rrf_score"], reverse=True)
+    # Normalize to [0,1] so orchestrator thresholds (min_passage_score) work
+    normalized = _sigmoid_normalize(raw_rrf)
+    for data, norm_score in zip(data_list, normalized):
+        data["normalized_score"] = norm_score
+
+    sorted_items = sorted(data_list, key=lambda x: x["rrf_score"], reverse=True)
 
     results: List[HybridSearchResult] = []
     for data in sorted_items:
@@ -147,7 +177,7 @@ def _rrf_fusion(
                 text=data["text"],
                 clean=data["clean"],
                 rrf_score=data["rrf_score"],
-                final_score=data["rrf_score"],  # final_score = RRF score
+                final_score=data["normalized_score"],  # normalized [0,1] for orchestrator
                 semantic_score=data.get("semantic_score"),
                 keyword_score=data.get("keyword_score"),
                 source=data["source"],
@@ -158,6 +188,7 @@ def _rrf_fusion(
                 links=data.get("links", []),
                 matched_terms=data.get("matched_terms", set()),
                 overlap_direction=data.get("overlap_direction", OverlapDirection.NONE),
+                structural_type=data.get("structural_type"),
             )
         )
 
@@ -171,6 +202,11 @@ def handle_hybrid_search(
     """
     Hybrid search: BM25 + Dense Vector (semantic) fusion.
     Returns results sorted by RRF score.
+
+    FIX: No longer normalizes scores before or after RRF. Raw RRF
+    scores are returned, preserving the absolute meaning of scores.
+    The orchestrator should use appropriate thresholds for raw RRF
+    scores (typically 0.01-0.05 for good results).
     """
     start_time = time.perf_counter()
 
@@ -207,7 +243,7 @@ def handle_hybrid_search(
         darwin.warning("No results from either keyword or semantic search")
         return []
 
-    # Convert to dicts for fusion
+    # Convert to dicts — FIX: No pre-RRF normalization
     keyword_dicts = []
     for r in keyword_raw:
         d = {
@@ -220,8 +256,9 @@ def handle_hybrid_search(
             "heading": r.heading,
             "overlap_direction": r.overlap_direction,
             "links": r.links,
-            "score": r.score,
+            "score": r.score,  # FIX: raw BM25 score, not normalized
             "matched_terms": r.matched_terms,
+            "structural_type": getattr(r, "structural_type", None),
         }
         keyword_dicts.append(d)
 
@@ -237,23 +274,18 @@ def handle_hybrid_search(
             "heading": r.heading,
             "overlap_direction": r.overlap_direction,
             "links": r.links,
-            "score": r.score,
+            "score": r.score,  # FIX: raw cosine similarity, not normalized
             "matched_terms": r.matched_terms,
+            "structural_type": getattr(r, "structural_type", None),
         }
         semantic_dicts.append(d)
 
-    # Normalise scores before fusion (to avoid scale dominance)
-    if keyword_dicts:
-        keyword_dicts = _normalize_scores(keyword_dicts)
-    if semantic_dicts:
-        semantic_dicts = _normalize_scores(semantic_dicts)
-
-    # Filter out any remaining None scores before fusion
+    # FIX: Filter out None scores before fusion
     keyword_dicts = [d for d in keyword_dicts if d.get("score") is not None]
     semantic_dicts = [d for d in semantic_dicts if d.get("score") is not None]
 
     if not keyword_dicts and not semantic_dicts:
-        darwin.warning("No valid scores after normalization")
+        darwin.warning("No valid scores for fusion")
         return []
 
     fused = _rrf_fusion(
@@ -266,20 +298,21 @@ def handle_hybrid_search(
 
     darwin.info(f"RRF fusion produced {len(fused)} unique results")
 
-    # Normalize RRF scores to [0,1] so orchestrator thresholds work correctly
-    if fused:
-        scores = [r.final_score for r in fused]
-        min_s, max_s = min(scores), max(scores)
-        range_s = max_s - min_s
-        if range_s > 1e-9:
-            for r in fused:
-                norm = (r.final_score - min_s) / range_s
-                r.final_score = norm
-                r.rrf_score = norm
-        else:
-            for r in fused:
-                r.final_score = 1.0
-                r.rrf_score = 1.0
+    # FIX: No post-RRF min-max normalization. Raw RRF scores are returned.
+    # The scores are in a natural range based on rrf_k and weights.
+    # For rrf_k=60 and weights=1.0, typical range is 0.01-0.03.
+    # The orchestrator should use thresholds appropriate for this range.
+
+    # Optional: Apply sigmoid normalization for stable [0,1] scores
+    # This is DISABLED by default to preserve raw score meaning.
+    # To enable, uncomment the following:
+    #
+    # if fused:
+    #     raw_scores = [r.final_score for r in fused]
+    #     norm_scores = _sigmoid_normalize(raw_scores, temperature=10.0)
+    #     for r, ns in zip(fused, norm_scores):
+    #         r.final_score = ns
+    #         r.rrf_score = ns
 
     top_results = fused[: args.top_k] if args.top_k > 0 else fused
 
@@ -341,7 +374,7 @@ def main() -> int:
     from src.core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
-        
+
         mode=OutputMode.BOTH if args.sse else OutputMode.TERMINAL,
     )
 

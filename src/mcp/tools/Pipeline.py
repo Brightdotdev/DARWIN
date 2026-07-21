@@ -74,20 +74,33 @@ def register(mcp, pipeline):
     async def run_pipeline(
         ctx: Context,
         stages: list[str],
-        target: str = "",
+        target: Optional[str] = None,
         store: Optional[str] = None,
         files: Optional[str] = None,
-        ocr: bool = False,
-        recursive: bool = False,
-        precise: bool = False,
-        rerun: bool = False,
-        threshold: float = 0.5,
-        idf_smoothing: float = 1.5,
-        only_kw: bool = False,
-        only_semantic: bool = False,
-        strict: bool = True,
+        ocr: Optional[bool] = None,
+        recursive: Optional[bool] = None,
+        precise: Optional[bool] = None,
+        rerun: Optional[bool] = None,
+        threshold: Optional[float] = None,
+        idf_smoothing: Optional[float] = None,
+        only_kw: Optional[bool] = None,
+        only_semantic: Optional[bool] = None,
+        strict: Optional[bool] = None,
     ) -> dict:
         """Run ingestion/indexing pipeline stages.
+
+        Defaults (applied by PipelineParameters if not provided):
+        - target: ""
+        - stages: ["ingestion", "indexing"]
+        - ocr: false
+        - recursive: false
+        - precise: false
+        - rerun: false
+        - threshold: 0.5
+        - idf_smoothing: 1.5
+        - only_kw: false
+        - only_semantic: false
+        - strict: true
 
         Stages: 'ingestion' (or aliases: ingest, extract, parse, chunk, ocr, clean)
                 'indexing'  (or aliases: index, embed)
@@ -102,22 +115,34 @@ def register(mcp, pipeline):
         async with darwin_bridge(ctx):
             try:
                 stages = _validate_stages(stages)
-                target = _validate_target(target)
-                params = PipelineInput(
-                    target=target,
-                    store=store,
-                    stages=stages,
-                    files=[files] if files else None,
-                    ocr=ocr,
-                    recursive=recursive,
-                    precise=precise,
-                    rerun=rerun,
-                    threshold=threshold,
-                    idf_smoothing=idf_smoothing,
-                    only_kw=only_kw,
-                    only_semantic=only_semantic,
-                    strict=strict,
-                )
+                if target is not None:
+                    target = _validate_target(target)
+                kwargs = {"stages": stages}
+                if target is not None:
+                    kwargs["target"] = target
+                if store is not None:
+                    kwargs["store"] = store
+                if files is not None:
+                    kwargs["files"] = [files]
+                if ocr is not None:
+                    kwargs["ocr"] = ocr
+                if recursive is not None:
+                    kwargs["recursive"] = recursive
+                if precise is not None:
+                    kwargs["precise"] = precise
+                if rerun is not None:
+                    kwargs["rerun"] = rerun
+                if threshold is not None:
+                    kwargs["threshold"] = threshold
+                if idf_smoothing is not None:
+                    kwargs["idf_smoothing"] = idf_smoothing
+                if only_kw is not None:
+                    kwargs["only_kw"] = only_kw
+                if only_semantic is not None:
+                    kwargs["only_semantic"] = only_semantic
+                if strict is not None:
+                    kwargs["strict"] = strict
+                params = PipelineInput(**kwargs)
 
                 def _blocking():
                     if store:

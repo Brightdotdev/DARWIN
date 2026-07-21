@@ -130,18 +130,27 @@ class BatchingStrategy:
     ) -> int:
         """
         Test a few batch sizes and pick the one with highest throughput.
-        Only runs once per model_key. Returns the winning size.
+        Only runs once per model_key. Skips API models (network latency
+        makes profiling meaningless). Returns the winning size.
         """
         if model_key in self._profiled or len(sample_texts) < 10:
             return base_size
 
-        test_sizes = self._generate_test_sizes(base_size)
+        api_limit = getattr(model, "api_batch_limit", None)
+        if api_limit is not None:
+            self._profiled.add(model_key)
+            return base_size
+
+        test_sizes = [max(1, int(base_size * m)) for m in (0.75, 1.0, 1.5)]
+        test_sizes = sorted(set(s for s in test_sizes if s <= len(sample_texts)))
+        if not test_sizes:
+            return base_size
+
+        sample = sample_texts[:15]
         samples: List[_ThroughputSample] = []
 
         for size in test_sizes:
-            if size > len(sample_texts):
-                continue
-            batch = sample_texts[:size]
+            batch = sample[:size]
             start = time.perf_counter()
             try:
                 result = model.encode(batch)

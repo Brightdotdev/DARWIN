@@ -30,6 +30,8 @@ from src.lib.Utils import ensure_writable_directory
 
 def resolve_target(path: str, files: Optional[List[str]]) -> str:
     if not files:
+        if not path:
+            raise ValueError("Either path or files is required")
         return path
 
     parents = {str(Path(f).parent) for f in files}
@@ -80,8 +82,6 @@ def run_parsing(parsing_args: ParsingArgs, store: DarwinStore) -> List[str]:
         darwin.info("")
 
     if not needs_parsing:
-        if parsing_args.rerun:
-            darwin.info("  All files cached, reprocessing.")
         return cached_names
 
     darwin.info(f"  1/2 Parsing {len(needs_parsing)} file(s)")

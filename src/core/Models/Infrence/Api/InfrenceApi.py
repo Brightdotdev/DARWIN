@@ -88,16 +88,20 @@ def _image_to_base64_url(
 async def embed(
     texts: List[str],
     model: Optional[str] = None,
-    max_batch_size: Optional[int] = None
+    max_batch_size: Optional[int] = None,
+    max_retries: int = 3,
+    inter_batch_delay: float = 0.15,
 ) -> List[List[float]]:
-    """Async embeddings with automatic batching."""
+    """Async embeddings with automatic batching, retry, and rate-limit pacing."""
+    import random
+
     load_keys_from_keychain(log=False)
     if not texts:
         return []
 
     model = model or DEFAULT_EMBEDDING_MODEL
     darwin.info(f"Embedding {len(texts)} texts using {model}")
-    preset, spec  = get_preset_with_spec(model)
+    preset, spec = get_preset_with_spec(model)
 
     provider = _get_provider(spec)
     if not provider:
@@ -113,13 +117,38 @@ async def embed(
         darwin.debug(f"Embedding {len(texts)} texts in {len(batches)} batches (limit={batch_limit})")
 
     all_embeddings = []
-    for batch in batches:
-        try:
-            response = await aembedding(model=model, input=batch)
-            all_embeddings.extend(item["embedding"] for item in response.data)
-        except Exception as e:
-            darwin.error(f"Embedding batch failed for {model}: {e}")
+    for batch_idx, batch in enumerate(batches):
+        last_exc = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = await aembedding(model=model, input=batch)
+                all_embeddings.extend(item["embedding"] for item in response.data)
+                last_exc = None
+                break
+            except Exception as e:
+                last_exc = e
+                is_rate_limit = "rate" in str(e).lower() or "429" in str(e)
+                if attempt < max_retries:
+                    wait = (2 ** attempt) + random.uniform(0, 0.5 * (2 ** attempt))
+                    if is_rate_limit:
+                        wait = max(wait, 2.0)
+                    darwin.warning(
+                        f"Embedding batch {batch_idx+1}/{len(batches)} failed "
+                        f"(attempt {attempt+1}/{max_retries+1}): {e} — retrying in {wait:.1f}s"
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    darwin.error(
+                        f"Embedding batch {batch_idx+1}/{len(batches)} failed after "
+                        f"{max_retries+1} attempts: {e}"
+                    )
+
+        if last_exc is not None:
+            darwin.error(f"Embedding aborted: all batches failed")
             return []
+
+        if batch_idx < len(batches) - 1:
+            await asyncio.sleep(inter_batch_delay)
 
     return all_embeddings
 
@@ -177,11 +206,10 @@ def _run_sync(coro):
     except RuntimeError:
         loop = None
     if loop and loop.is_running():
-        darwin.error(
-            "Cannot run sync wrapper from async context. "
-            "Use the async function directly (embed(), vision(), rerank())."
+        raise RuntimeError(
+            "Cannot call embed_sync/vision_sync from an async context. "
+            "Use the async function directly (embed(), vision())."
         )
-        return None
     return asyncio.run(coro)
 
 

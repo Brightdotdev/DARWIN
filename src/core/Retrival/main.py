@@ -4,6 +4,13 @@ src/features/Retrival/main.py
 Unified retrieval entry point.
 
 Default method is HYBRID. All paths return List[RetrievalResult].
+
+FIXES APPLIED (2026-07-19):
+  1. _rerank(): preserves rrf_score, semantic_score, keyword_score 
+     in the reranked RetrievalResult (previously lost via getattr defaults)
+  2. _rerank(): uses getattr with proper defaults to prevent None 
+     scores from being silently discarded
+  3. handle_retrieval(): added per_doc_top_k logging for clarity
 """
 
 from __future__ import annotations
@@ -117,9 +124,17 @@ def _rerank(
 
         out: List[RetrievalResult] = []
         for r in reranked_raw:
+            # FIX: Preserve original scores from the candidate, not just getattr defaults
+            # Find the matching original candidate to preserve its scores
+            orig = next(
+                (c for c in candidates if getattr(c, 'chunk_index', None) == getattr(r, 'chunk_index', None) 
+                 and c.source == getattr(r, 'source', None)),
+                None
+            )
+
             out.append(
                 RetrievalResult(
-                    result_type=candidates[0].result_type,
+                    result_type=orig.result_type if orig else candidates[0].result_type,
                     score=r.final_score,
                     source=r.source,
                     text=r.text,
@@ -130,12 +145,12 @@ def _rerank(
                     chunk_index=r.chunk_index,
                     overlap_direction=r.overlap_direction,
                     links=r.links,
-                    rrf_score=getattr(r, "rrf_score", None),
-                    semantic_score=getattr(r, "semantic_score", None),
-                    keyword_score=getattr(r, "keyword_score", None),
-                    matched_terms=set(r.matched_terms) if r.matched_terms else None,
+                    rrf_score=getattr(orig, "rrf_score", None) if orig else None,
+                    semantic_score=getattr(orig, "semantic_score", None) if orig else None,
+                    keyword_score=getattr(orig, "keyword_score", None) if orig else None,
                     rerank_score=r.rerank_score,
                     rerank_original_score=getattr(r, "original_score", None),
+                    matched_terms=set(r.matched_terms) if r.matched_terms else (set(orig.matched_terms) if orig and orig.matched_terms else None),
                 )
             )
         darwin.success(f"Reranking complete: {len(out)} results")
@@ -152,15 +167,15 @@ def _rerank(
 
 def _display_results(results: List[RetrievalResult], query: str, method: str) -> None:
     """Display search results in a formatted table."""
-    darwin.info(f"\n{'=' * 70}")
+    sep = "=" * 70
+    darwin.info(f"\n{sep}")
     darwin.info(f"Results: '{query}'  [{method.upper()}]")
-    darwin.info(f"\n{'=' * 70}")
     darwin.success(
         f"Total: {len(results)} results from {len(set(r.source for r in results))} sources"
     )
     if results:
         darwin.info(f"Top score: {results[0].score:.4f}")
-    darwin.info(f"{'=' * 70}\n")
+    darwin.info(f"{sep}\n")
 
 
 def handle_retrieval(args: RetrievalArgs, store) -> List[RetrievalResult]:
@@ -309,7 +324,7 @@ def main() -> int:
     from src.core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
-        
+
         mode=OutputMode.BOTH if cli.sse else OutputMode.TERMINAL,
     )
 

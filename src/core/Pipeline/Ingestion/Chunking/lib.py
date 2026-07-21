@@ -14,7 +14,7 @@ TABLE_OPEN_TOKEN  = "[TABLE]"          # fitz extractor display text
 TABLE_CLOSE_TOKEN = "[/TABLE]"
 TABLE_EMB_TOKEN   = "[Table]"          # fitz extractor embedding text
 CAPTION_TOKEN     = "[Caption:"        # fitz extractor embedding text
-PAGE_HEADER_RE    = re.compile(r"^\[Page\s+[^\]]+\]\s*$", re.MULTILINE)
+PAGE_HEADER_RE    = re.compile(r"\[Page\s+[^\]]+\]")
 
 # Legacy separator kept for backwards compat with pymupdf4llm output
 LEGACY_PAGE_SEP_RE = re.compile(r"^---\s*$", re.MULTILINE)

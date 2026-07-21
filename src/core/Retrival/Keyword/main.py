@@ -92,6 +92,23 @@ def _display_search_results(
         darwin.info("  - Searching a specific file with --file")
         return
 
+    # FIX: Added display logic for non-empty results
+    darwin.info("")
+    darwin.info(f"Results for '{args.query}' [{len(results)} total]:")
+    darwin.info("  #    Score       Source                Page  Preview")
+    darwin.info("  ---  ----------  --------------------  ----  -------")
+
+    for i, r in enumerate(results[:10], 1):
+        preview = r.text[:60].replace("\n", " ") if r.text else ""
+        darwin.info(
+            f"  {i:<4} {r.score:.3f}      {r.source[:20]:<20}  {r.page:<4}  {preview}..."
+        )
+
+    darwin.info("")
+    darwin.info(f"  Top score: {results[0].score:.3f}")
+    darwin.info(f"  Sources: {len(set(r.source for r in results))} files")
+    darwin.info("")
+
 
 def handle_keyword_search(
     args: KeywordSearchArgs, store: DarwinStore
@@ -145,7 +162,7 @@ def main() -> int:
     from src.core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
-        
+
         mode=OutputMode.BOTH if args.sse else OutputMode.TERMINAL,
     )
 

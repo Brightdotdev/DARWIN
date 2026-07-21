@@ -5,9 +5,6 @@ Commands: run, ingest, index, purge
 """
 
 from src.admin.lib import (
-    PipelineAction,
-    DEFAULT_INDEXING_THRESHOLD,
-    DEFAULT_IDF_SMOOTHING,
     ns_to,
     PipelineRunArgs,
     PipelineIngestArgs,
@@ -19,7 +16,7 @@ from src.admin.renderer import _r
 
 def _run_pipeline_stages(
     *,
-    target: str,
+    target: str | None,
     files: str | None,
     stages: list[str],
     ocr: bool,
@@ -37,20 +34,30 @@ def _run_pipeline_stages(
     pipe = _get_pipeline(store_ref)
     from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
 
-    params = PipelineInput(
-        target=target or "",
-        store=store_ref,
-        stages=stages,
-        files=files,
-        ocr=ocr,
-        recursive=recursive,
-        precise=precise,
-        rerun=rerun,
-        threshold=threshold if threshold is not None else DEFAULT_INDEXING_THRESHOLD,
-        idf_smoothing=idf_smoothing if idf_smoothing is not None else DEFAULT_IDF_SMOOTHING,
-        only_kw=only_kw,
-        only_semantic=only_semantic,
-    )
+    kwargs = {"stages": stages}
+    if target is not None:
+        kwargs["target"] = target
+    if store_ref is not None:
+        kwargs["store"] = store_ref
+    if files is not None:
+        kwargs["files"] = files
+    if ocr:
+        kwargs["ocr"] = True
+    if recursive:
+        kwargs["recursive"] = True
+    if precise:
+        kwargs["precise"] = True
+    if rerun:
+        kwargs["rerun"] = True
+    if threshold is not None:
+        kwargs["threshold"] = threshold
+    if idf_smoothing is not None:
+        kwargs["idf_smoothing"] = idf_smoothing
+    if only_kw:
+        kwargs["only_kw"] = True
+    if only_semantic:
+        kwargs["only_semantic"] = True
+    params = PipelineInput(**kwargs)
     _r.info(f"Running pipeline stages: {', '.join(stages)}")
     result = pipe.build_pipeline(params)
     if result.success:
@@ -129,27 +136,21 @@ def add_args(sub, _get_pipeline) -> None:
     sp = p.add_subparsers(dest="pipeline_action", required=True)
 
     r = sp.add_parser("run", help="Full ingest + index pipeline")
-    r.add_argument("target", nargs="?", default=".", help="Directory or URL to process (default: .)")
+    r.add_argument("target", nargs="?", default=None, help="Directory or URL to process")
     r.add_argument("--store", help="Store ID, name, or path (default: auto)")
     r.add_argument("--files", "-f", nargs="+", help="Specific file(s) to process")
     r.add_argument("--ocr", action="store_true", help="Enable OCR for scanned docs")
     r.add_argument("--recursive", action="store_true", help="Recursive directory scan")
     r.add_argument("--precise", action="store_true", help="Precision parsing mode")
-    r.add_argument(
-        "--threshold", type=float, default=DEFAULT_INDEXING_THRESHOLD,
-        help=f"Indexing threshold (default: {DEFAULT_INDEXING_THRESHOLD})",
-    )
-    r.add_argument(
-        "--idf-smoothing", type=float, default=DEFAULT_IDF_SMOOTHING,
-        help=f"BM25 IDF smoothing (default: {DEFAULT_IDF_SMOOTHING})",
-    )
+    r.add_argument("--threshold", type=float, default=None, help="Indexing threshold")
+    r.add_argument("--idf-smoothing", type=float, default=None, help="BM25 IDF smoothing")
     r.add_argument("--only-kw", action="store_true", help="Keyword-only indexing")
     r.add_argument("--only-semantic", action="store_true", help="Semantic-only indexing")
     r.add_argument("--rerun", action="store_true", help="Re-process even if done")
     r.set_defaults(func=lambda a: cmd_pipeline_run(ns_to(PipelineRunArgs, a), _get_pipeline))
 
     i = sp.add_parser("ingest", help="Ingestion only (parse + chunk)")
-    i.add_argument("target", nargs="?", default=".", help="Directory or URL to process (default: .)")
+    i.add_argument("target", nargs="?", default=None, help="Directory or URL to process")
     i.add_argument("--store", help="Store ID, name, or path (default: auto)")
     i.add_argument("--files", "-f", nargs="+", help="Specific file(s) to process")
     i.add_argument("--ocr", action="store_true")
@@ -161,8 +162,8 @@ def add_args(sub, _get_pipeline) -> None:
     ix = sp.add_parser("index", help="Indexing only (BM25 + embeddings)")
     ix.add_argument("--files", "-f", nargs="+", help="Specific file(s) to index")
     ix.add_argument("--store", help="Store ID, name, or path (default: auto)")
-    ix.add_argument("--threshold", type=float, default=DEFAULT_INDEXING_THRESHOLD)
-    ix.add_argument("--idf-smoothing", type=float, default=DEFAULT_IDF_SMOOTHING)
+    ix.add_argument("--threshold", type=float, default=None)
+    ix.add_argument("--idf-smoothing", type=float, default=None)
     ix.add_argument("--only-kw", action="store_true")
     ix.add_argument("--only-semantic", action="store_true")
     ix.add_argument("--rerun", action="store_true")

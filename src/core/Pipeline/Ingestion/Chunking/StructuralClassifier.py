@@ -15,9 +15,9 @@ class StructuralClassifierConfig:
     max_front_pages: int = 20
     max_back_pages: int = 20
     # N‑gram similarity threshold (0..1)
-    ngram_similarity_threshold: float = 0.25
+    ngram_similarity_threshold: float = 0.45
     # Minimum number of overlapping n‑grams to consider
-    min_ngram_overlap: int = 5
+    min_ngram_overlap: int = 15
     # Character n‑gram length range
     ngram_min: int = 3
     ngram_max: int = 5
@@ -139,7 +139,7 @@ _PATTERNS = {
     "copyright": re.compile(r'(?:^|\n)\s*(?:copyright|©|all rights reserved|isbn|published by|permission of)', re.IGNORECASE),
     "cover": re.compile(r'(?:^|\n)\s*(?:title page|dedication|acknowledgments|about the author|praise for)', re.IGNORECASE),
     "index": re.compile(r'(?:^|\n)\s*(?:index|glossary|bibliography|references|works cited|further reading)', re.IGNORECASE),
-    "footnote": re.compile(r'(?:^|\n)\s*(?:\[\d+\]|\d+\.\s+|\*+\d+|†|‡|ibid\.|op\. cit\.)', re.IGNORECASE),
+    "footnote": re.compile(r'(?:^|\n)\s*(?:\[\d+\]|\*+\d+|†|‡|ibid\.|op\. cit\.)', re.IGNORECASE),
     "separator": re.compile(r'^[-=]{3,}\s*$', re.MULTILINE),
 }
 
@@ -205,13 +205,13 @@ def classify_structural_type(
         # Very short text on first pages -> cover
         if page <= 2 and len(text) < 500:
             return "cover"
+        # No heading on early pages -> almost certainly front matter
+        if not heading:
+            return "cover"
 
     if page >= back_threshold:
-        lower_text = text.lower()
         lower_heading = heading.lower()
         if any(kw in lower_heading for kw in ("index", "glossary", "bibliography", "references")):
-            return "index"
-        if any(kw in lower_text for kw in ("index", "glossary", "bibliography", "references")):
             return "index"
 
     # ── 3. Pattern matching ─────────────────────────────────────────────
@@ -258,8 +258,8 @@ def classify_structural_type(
             return best_type
 
     # ── 5. Fallback ──────────────────────────────────────────────────────
-    # If heading is not empty and text is short, treat as heading
-    if heading and len(text) < 300 and text.strip() == heading.strip():
+    # Only classify as heading if text is literally just the heading (no body content)
+    if heading and len(text) < 100 and text.strip().rstrip(':').strip() == heading.strip().rstrip(':').strip():
         return "heading"
 
     return "body"

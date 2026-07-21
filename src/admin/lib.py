@@ -31,8 +31,6 @@ DEFAULT_SSE_PORT: int = 8765
 DEFAULT_SSE_HOST: str = "127.0.0.1"
 DEFAULT_RETENTION_DAYS: int = 14
 DEFAULT_MAX_MEMORY: int = 10_000
-DEFAULT_INDEXING_THRESHOLD: float = 0.5
-DEFAULT_IDF_SMOOTHING: float = 1.5
 
 
 # ══════════════════════════════════════════════════════════════
@@ -473,14 +471,14 @@ class StoreRepairArgs:
 @dataclass(frozen=True)
 class PipelineRunArgs:
     """Args for ``darwin-admin pipeline run``."""
-    target: str = "."
+    target: Optional[str] = None
     store: Optional[str] = None
     files: Optional[List[str]] = None
     ocr: bool = False
     recursive: bool = False
     precise: bool = False
-    threshold: float = DEFAULT_INDEXING_THRESHOLD
-    idf_smoothing: float = DEFAULT_IDF_SMOOTHING
+    threshold: Optional[float] = None
+    idf_smoothing: Optional[float] = None
     only_kw: bool = False
     only_semantic: bool = False
     rerun: bool = False
@@ -490,7 +488,7 @@ class PipelineRunArgs:
 @dataclass(frozen=True)
 class PipelineIngestArgs:
     """Args for ``darwin-admin pipeline ingest``."""
-    target: str = "."
+    target: Optional[str] = None
     store: Optional[str] = None
     files: Optional[List[str]] = None
     ocr: bool = False
@@ -505,8 +503,8 @@ class PipelineIndexArgs:
     """Args for ``darwin-admin pipeline index``."""
     files: Optional[List[str]] = None
     store: Optional[str] = None
-    threshold: float = DEFAULT_INDEXING_THRESHOLD
-    idf_smoothing: float = DEFAULT_IDF_SMOOTHING
+    threshold: Optional[float] = None
+    idf_smoothing: Optional[float] = None
     only_kw: bool = False
     only_semantic: bool = False
     rerun: bool = False
@@ -519,6 +517,30 @@ class PipelinePurgeArgs:
     filenames: List[str] = field(default_factory=list)
     store: Optional[str] = None
     stages: List[str] = field(default_factory=lambda: ["ingestion", "indexing"])
+    verbose: bool = False
+
+
+# ── Search ─────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class SearchArgs:
+    """Args for ``darwin-admin search``."""
+    query: str = ""
+    method: Optional[str] = None
+    top_k: Optional[int] = None
+    max_passages: Optional[int] = None
+    max_chars: Optional[int] = None
+    min_passage_score: Optional[float] = None
+    merge_strategy: Optional[str] = None
+    files: Optional[List[str]] = None
+    store: Optional[str] = None
+    save: bool = False
+    results_dir: Optional[str] = None
+    rerank: bool = False
+    structural_penalty_factor: Optional[float] = None
+    diversity_rerank: Optional[bool] = None
+    include_audit: Optional[bool] = None
     verbose: bool = False
 
 

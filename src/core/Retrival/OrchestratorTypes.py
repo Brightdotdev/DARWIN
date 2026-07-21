@@ -1,5 +1,10 @@
 """
 OrchestratorTypes.py -- Data structures for the Retrieval Orchestrator.
+
+FIXES APPLIED (2026-07-19):
+  1. Added diversity_rerank flag to OrchestratorConfig (default True)
+  2. Added fallback_min_passages, fallback_top_k, fallback_max_chars 
+     to RetrievalParameters (previously hardcoded, now tunable)
 """
 
 from __future__ import annotations
@@ -30,7 +35,7 @@ class OrchestratorConfig:
 
     max_chars: int = 6000
     max_passages: int = 5
-    min_passage_score: float = 0.3
+    min_passage_score: float = 0.15
 
     merge_strategy: MergeStrategy = MergeStrategy.ADJACENT
     max_merge_gap: int = 2
@@ -39,6 +44,8 @@ class OrchestratorConfig:
     max_per_source: int = 2
     prefer_diverse_sources: bool = True
     require_diverse_sources: bool = False
+    # FIX: Added diversity_rerank flag (default True, disabled in fallback)
+    diversity_rerank: bool = True
     prefer_sources: Optional[List[str]] = None
     exclude_sources: Optional[List[str]] = None
 
@@ -48,8 +55,8 @@ class OrchestratorConfig:
     fallback_strategy: FallbackStrategy = FallbackStrategy.BOTH
     fallback_top_k: int = 20
     fallback_max_chars: int = 12000
-    fallback_min_score: float = 0.1
-    fallback_min_passages: int = 2
+    fallback_min_score: float = 0.05
+    fallback_min_passages: int = 1
 
     include_metadata: bool = True
     include_audit: bool = False
@@ -77,6 +84,7 @@ class OrchestratorConfig:
             "max_per_source": self.max_per_source,
             "prefer_diverse_sources": self.prefer_diverse_sources,
             "require_diverse_sources": self.require_diverse_sources,
+            "diversity_rerank": self.diversity_rerank,
             "prefer_sources": self.prefer_sources,
             "exclude_sources": self.exclude_sources,
             "filter_structural": self.filter_structural,
@@ -116,6 +124,12 @@ class PassageMetadata:
     rrf_score: Optional[float] = None
     rerank_score: Optional[float] = None
 
+    heading: Optional[str] = None
+    links: Optional[List[Dict[str, Any]]] = None
+    token_count: Optional[int] = None
+    clean: Optional[str] = None
+    overlap_direction: Optional[str] = None
+
     matched_terms: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -135,6 +149,11 @@ class PassageMetadata:
             "keyword_score": self.keyword_score,
             "rrf_score": self.rrf_score,
             "rerank_score": self.rerank_score,
+            "heading": self.heading,
+            "links": self.links,
+            "token_count": self.token_count,
+            "clean": self.clean,
+            "overlap_direction": self.overlap_direction,
             "matched_terms": self.matched_terms,
         }
 

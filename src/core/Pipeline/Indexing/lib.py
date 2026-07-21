@@ -11,6 +11,9 @@ class IndexingArgs:
     only_semantic: bool = False
     files: Optional[list[str]] = None
     rerun: bool = False
+    batch_size: Optional[int] = None
+    token_budget: int = 2048
+    use_length_batching: bool = True
 
     def __post_init__(self):
         self.threshold = self._clamp(self.threshold, 0.0, 1.0)
