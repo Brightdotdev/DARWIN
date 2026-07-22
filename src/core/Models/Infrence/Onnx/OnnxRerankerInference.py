@@ -305,9 +305,14 @@ class OnnxRerankerInference:
         # Encode each pair with special tokens (CLS, SEP)
         encodings = []
         for q, d in pairs:
-            # tokenizers.Tokenizer.encode(sequence, pair, add_special_tokens=True)
             enc = self._tokenizer.encode(q, d, add_special_tokens=True)
             encodings.append(enc)
+
+        # Truncate to max_length (model can't handle longer sequences)
+        for enc in encodings:
+            if len(enc.ids) > self.max_length:
+                enc.ids = enc.ids[:self.max_length]
+                enc.type_ids = enc.type_ids[:self.max_length]
 
         # Pad to max length in batch
         max_len = max(len(e.ids) for e in encodings)
