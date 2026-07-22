@@ -102,7 +102,8 @@ def rerank_results(
 
     # Get cross‑encoder scores
     try:
-        scores = model.predict(query, documents)
+        result = model.rerank(query, documents)
+        scores = result.scores
     except Exception as e:
         darwin.error(f"Reranking failed: {e}")
         return _fallback_rerank(candidates, top_k)
