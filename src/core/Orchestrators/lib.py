@@ -132,6 +132,9 @@ class RetrievalParameters:
     """Custom directory for saved results. None = default ({base}/search-results/)."""
 
     def __post_init__(self):
+        from src.core.Logger.DarwinLogger import darwin
+
+        # ── Critical: raise (can't proceed without valid values) ──
         if not isinstance(self.query, str):
             raise TypeError(f"query must be str, got {type(self.query).__name__}")
         self.query = self.query.strip()
@@ -146,30 +149,38 @@ class RetrievalParameters:
         valid_fallback = {"expand", "relax", "both"}
         if self.fallback_strategy not in valid_fallback:
             raise ValueError(f"fallback_strategy must be one of {valid_fallback}, got {self.fallback_strategy!r}")
-        if self.top_k < 1:
-            raise ValueError(f"top_k must be >= 1, got {self.top_k}")
-        if self.max_passages < 1:
-            raise ValueError(f"max_passages must be >= 1, got {self.max_passages}")
-        if self.max_chars < 100:
-            raise ValueError(f"max_chars must be >= 100, got {self.max_chars}")
-        if not (0.0 <= self.min_passage_score <= 1.0):
-            raise ValueError(f"min_passage_score must be in [0.0, 1.0], got {self.min_passage_score}")
-        if self.max_per_source < 1:
-            raise ValueError(f"max_per_source must be >= 1, got {self.max_per_source}")
-        if not (0.0 <= self.structural_penalty_factor <= 1.0):
-            raise ValueError(f"structural_penalty_factor must be in [0.0, 1.0], got {self.structural_penalty_factor}")
-        if self.fallback_top_k < 1:
-            raise ValueError(f"fallback_top_k must be >= 1, got {self.fallback_top_k}")
-        if self.fallback_max_chars < 100:
-            raise ValueError(f"fallback_max_chars must be >= 100, got {self.fallback_max_chars}")
-        if not (0.0 <= self.fallback_min_score <= 1.0):
-            raise ValueError(f"fallback_min_score must be in [0.0, 1.0], got {self.fallback_min_score}")
-        if self.fallback_min_passages < 0:
-            raise ValueError(f"fallback_min_passages must be >= 0, got {self.fallback_min_passages}")
-        if not (0.0 <= self.rerank_weight <= 1.0):
-            raise ValueError(f"rerank_weight must be in [0.0, 1.0], got {self.rerank_weight}")
-        if self.rerank_top_k < 1:
-            raise ValueError(f"rerank_top_k must be >= 1, got {self.rerank_top_k}")
+
+        # ── Numeric bounds: warn + clamp to valid range ──
+        def _clamp_int(val, name, lo, hi, default):
+            if val < lo:
+                darwin.warning(f"{name}={val} below minimum, clamping to {lo}")
+                return lo
+            if val > hi:
+                darwin.warning(f"{name}={val} above maximum, clamping to {hi}")
+                return hi
+            return val
+
+        def _clamp_float(val, name, lo, hi, default):
+            if val < lo:
+                darwin.warning(f"{name}={val} below range [{lo}, {hi}], clamping to {lo}")
+                return lo
+            if val > hi:
+                darwin.warning(f"{name}={val} above range [{lo}, {hi}], clamping to {hi}")
+                return hi
+            return val
+
+        self.top_k = _clamp_int(self.top_k, "top_k", 1, 1000, 5)
+        self.max_passages = _clamp_int(self.max_passages, "max_passages", 1, 500, 5)
+        self.max_chars = _clamp_int(self.max_chars, "max_chars", 100, 500_000, 6000)
+        self.min_passage_score = _clamp_float(self.min_passage_score, "min_passage_score", 0.0, 1.0, 0.15)
+        self.max_per_source = _clamp_int(self.max_per_source, "max_per_source", 1, 500, 2)
+        self.structural_penalty_factor = _clamp_float(self.structural_penalty_factor, "structural_penalty_factor", 0.0, 1.0, 0.5)
+        self.fallback_top_k = _clamp_int(self.fallback_top_k, "fallback_top_k", 1, 1000, 20)
+        self.fallback_max_chars = _clamp_int(self.fallback_max_chars, "fallback_max_chars", 100, 500_000, 12000)
+        self.fallback_min_score = _clamp_float(self.fallback_min_score, "fallback_min_score", 0.0, 1.0, 0.05)
+        self.fallback_min_passages = _clamp_int(self.fallback_min_passages, "fallback_min_passages", 0, 100, 1)
+        self.rerank_weight = _clamp_float(self.rerank_weight, "rerank_weight", 0.0, 1.0, 0.3)
+        self.rerank_top_k = _clamp_int(self.rerank_top_k, "rerank_top_k", 1, 10_000, 100)
 
     def build(self):
         """Convert to internal OrchestratorConfig for the orchestrator."""
@@ -246,6 +257,9 @@ class PipelineParameters:
     strict: bool = True
 
     def __post_init__(self):
+        from src.core.Logger.DarwinLogger import darwin
+
+        # ── Critical: raise (can't proceed without valid values) ──
         if not isinstance(self.target, str):
             raise TypeError(f"target must be str, got {type(self.target).__name__}")
         valid_stages = {"ingestion", "indexing"}
@@ -254,12 +268,21 @@ class PipelineParameters:
         bad = set(self.stages) - valid_stages
         if bad:
             raise ValueError(f"Invalid stage(s): {bad}. Valid: {sorted(valid_stages)}")
-        if self.threshold < 0.0 or self.threshold > 1.0:
-            raise ValueError(f"threshold must be in [0.0, 1.0], got {self.threshold}")
-        if self.idf_smoothing < 0.0:
-            raise ValueError(f"idf_smoothing must be >= 0.0, got {self.idf_smoothing}")
         if self.only_kw and self.only_semantic:
             raise ValueError("only_kw and only_semantic are mutually exclusive")
+
+        # ── Numeric bounds: warn + clamp to valid range ──
+        def _clamp_float(val, name, lo, hi, default):
+            if val < lo:
+                darwin.warning(f"{name}={val} below range [{lo}, {hi}], clamping to {lo}")
+                return lo
+            if val > hi:
+                darwin.warning(f"{name}={val} above range [{lo}, {hi}], clamping to {hi}")
+                return hi
+            return val
+
+        self.threshold = _clamp_float(self.threshold, "threshold", 0.0, 1.0, 0.5)
+        self.idf_smoothing = _clamp_float(self.idf_smoothing, "idf_smoothing", 0.0, 10.0, 1.5)
 
     def build(self):
         """Convert to internal (StageParameters, stages) for the orchestrator."""
