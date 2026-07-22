@@ -9,7 +9,7 @@ Run ingestion and/or indexing pipeline stages on files or directories.
 | `stages` | string[] | *(required)* | Stages to run (see valid values below) |
 | `target` | string | `""` | Local path or static URL to ingest |
 | `store` | string \| null | `null` | Store ID, name, or path. `null` = default store |
-| `files` | string \| null | `null` | Comma-separated filenames to process |
+| `files` | string[] \| null | `null` | Filename(s) to process (omit for all) |
 | `ocr` | bool | `false` | Enable OCR for images/PDFs during ingestion |
 | `recursive` | bool | `false` | Recurse into subdirectories |
 | `precise` | bool | `false` | Use precise parsing (slower, more accurate) |

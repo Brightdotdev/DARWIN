@@ -19,7 +19,11 @@ Create a new DarwinStore at a given filesystem path for isolating data.
 
 List all files tracked by the default store with their pipeline status.
 
-No parameters. Returns the pipeline report — each file shows completed stages.
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `filename` | string \| null | `null` | Filter to a single file (omit for all) |
+
+Returns the pipeline report — each file shows completed stages.
 Use this to find exact filenames before running `purge_artifacts`.
 
 ## file_status
