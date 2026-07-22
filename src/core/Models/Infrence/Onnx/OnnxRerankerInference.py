@@ -255,6 +255,7 @@ class OnnxRerankerInference:
             return
 
         self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
+        self._tokenizer.enable_truncation(max_length=self.max_length)
         darwin.log(f"Tokenizer loaded from {tokenizer_path}")
     # ── Internal: ONNX Session ───────────────────────────────────────────────
 
@@ -303,16 +304,11 @@ class OnnxRerankerInference:
     
     def _run_batch(self, pairs: List[Tuple[str, str]]) -> List[float]:
         # Encode each pair with special tokens (CLS, SEP)
+        # Truncation is enabled on the tokenizer (max_length=512)
         encodings = []
         for q, d in pairs:
             enc = self._tokenizer.encode(q, d, add_special_tokens=True)
             encodings.append(enc)
-
-        # Truncate to max_length (model can't handle longer sequences)
-        for enc in encodings:
-            if len(enc.ids) > self.max_length:
-                enc.ids = enc.ids[:self.max_length]
-                enc.type_ids = enc.type_ids[:self.max_length]
 
         # Pad to max length in batch
         max_len = max(len(e.ids) for e in encodings)
