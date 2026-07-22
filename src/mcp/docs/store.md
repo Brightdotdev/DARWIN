@@ -19,11 +19,12 @@ Create a new DarwinStore at a given filesystem path for isolating data.
 
 # list_files
 
-List all files tracked by the default store with their pipeline status. This is the primary tool for checking pipeline status (replaces the deprecated `pipeline_report`).
+List all files tracked by a store with their pipeline status.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `filename` | string \| null | `null` | Filter to a single file; omit for all files |
+| `store` | string \| null | `null` | Store ID, name, or path. `null` = default store |
 
 Returns the pipeline report — each file shows completed stages.
 Use this to find exact filenames before running `purge_artifacts`.
@@ -37,6 +38,7 @@ Get detailed status for a single file across all pipeline stages.
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `filename` | string | *(required)* | Exact filename as used during ingestion |
+| `store` | string \| null | `null` | Store ID, name, or path. `null` = default store |
 
 Use this to check what artifacts exist for a specific file.
 

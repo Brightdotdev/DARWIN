@@ -19,7 +19,7 @@ darwin mcp --http --port 8765
 darwin mcp --temp-port 9000
 ```
 
-All transports share the same 9 tools, 2 resources, and validation logic.
+All transports share the same 8 tools, 2 resources, and validation logic.
 The unified server (`UnifiedServer.py`) handles SSE, HTTP, log streaming,
 history, and health in a single process.
 
@@ -63,7 +63,7 @@ When running with `--sse` or `--http`, the unified server provides:
 consumers (web dashboards, IDE plugins). The agent uses `/sse` or `/mcp`
 for tool calls only.
 
-## Available tools (9)
+## Available tools (8)
 
 ### Search
 - **`search_darwin`** — Query the knowledge base with hybrid/semantic/keyword search.
@@ -73,12 +73,11 @@ for tool calls only.
 ### Pipeline
 - **`run_pipeline`** — Ingest + index documents from a path or URL.
 - **`purge_artifacts`** — Delete pipeline artifacts for specific files.
-- **`pipeline_report`** — Get processing status for files.
 
 ### Store
 - **`create_store`** — Create a new DarwinStore at a given path.
-- **`list_files`** — All files with pipeline status.
-- **`file_status`** — Detailed status for one file.
+- **`list_files`** — All files with pipeline status (supports custom store).
+- **`file_status`** — Detailed status for one file (supports custom store).
 
 ## Available resources (2)
 
@@ -98,7 +97,6 @@ All tools include MCP-compliant annotations for client-side safety:
 | `get_search_result_by_id` | yes | no | yes | no |
 | `run_pipeline` | no | no | no | no |
 | `purge_artifacts` | no | **yes** | yes | no |
-| `pipeline_report` | yes | no | yes | no |
 | `create_store` | no | no | yes | no |
 | `list_files` | yes | no | yes | no |
 | `file_status` | yes | no | yes | no |
@@ -175,6 +173,6 @@ Logger/                   mcp/
 - **mcp/app_factory** is the single source of truth — both Server.py and UnifiedServer.py call `create_mcp_app()` so adding a tool only requires one edit.
 - **DarwinLogger.configure(mode=SSE/BOTH)** starts `UnifiedServer` in a background thread. `shutdown()` closes SSE server + history store.
 - **Stdio mode** — logger is silenced (`mode=none`) to keep stdout clean for JSON-RPC. Logs still go to SQLite history and SSE stream if configured.
-- **Tool annotations** — all 9 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
+- **Tool annotations** — all 8 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
 - **Input validation** — all tools validate parameters before reaching orchestrators. Exceptions returned as structured error objects, never silently swallowed.
 - **Async tools** — all tool functions are async with blocking orchestrator calls dispatched via `run_in_executor`.

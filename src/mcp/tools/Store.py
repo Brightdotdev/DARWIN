@@ -5,6 +5,7 @@ from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
 from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
+from src.core.Orchestrators.lib import resolve_store
 from src.core.Logger.DarwinLogger import darwin
 from src.mcp.logging_bridge import darwin_bridge
 
@@ -50,6 +51,7 @@ def _validate_filename(filename: str) -> str:
 
 
 def register(mcp, store):
+    default_store = store  # capture for list_files closure
     @mcp.tool(
         annotations=ToolAnnotations(
             title="Create Store",
@@ -94,23 +96,24 @@ def register(mcp, store):
             openWorldHint=False,
         ),
     )
-    async def list_files(ctx: Context, filename: Optional[str] = None) -> dict:
-        """List all files tracked by the default store with their pipeline status.
+    async def list_files(ctx: Context, filename: Optional[str] = None, store: Optional[str] = None) -> dict:
+        """List all files tracked by a store with their pipeline status.
 
-        This is the primary tool for checking pipeline status. The deprecated
-        pipeline_report tool is an alias for this.
+        This is the primary tool for checking pipeline status.
 
         Usage tips:
         - Returns the pipeline report — each file shows completed stages.
         - Pass filename to filter to a single file.
+        - Pass store (name/path/ID) to list files from a specific store.
         - Use this to find exact filenames before running purge_artifacts.
-        - Call without arguments to see all files.
+        - Call without arguments to see all files from the default store.
         """
         async with darwin_bridge(ctx):
             try:
+                target_store = resolve_store(store) if store else default_store
                 import asyncio
                 report = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: store.get_pipeline_report(filename)
+                    None, lambda: target_store.get_pipeline_report(filename)
                 )
                 return {"success": True, "data": report}
             except Exception as e:
@@ -126,19 +129,21 @@ def register(mcp, store):
             openWorldHint=False,
         ),
     )
-    async def file_status(ctx: Context, filename: str) -> dict:
+    async def file_status(ctx: Context, filename: str, store: Optional[str] = None) -> dict:
         """Get detailed status for a single file across all pipeline stages.
 
         Usage tips:
         - Use this to check what artifacts exist for a specific file.
         - filename must match the original filename used during ingestion.
+        - Pass store (name/path/ID) to check a file in a specific store.
         """
         async with darwin_bridge(ctx):
             try:
                 filename = _validate_filename(filename)
+                target_store = resolve_store(store) if store else default_store
                 import asyncio
                 status = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: store.file_status(filename)
+                    None, lambda: target_store.file_status(filename)
                 )
                 return {"success": True, "data": status}
             except Exception as e:

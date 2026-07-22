@@ -53,16 +53,3 @@ Delete pipeline artifacts for specific files.
 | `dry_run` | bool | `false` | Preview what would be deleted without making changes |
 
 **Always pass `dry_run=true` first.** Filenames must match the originals used during ingestion. Use `list_files` to see available filenames.
-
----
-
-# list_files
-
-List all files tracked by the default store with their pipeline status. This is the primary tool for checking pipeline status (replaces the deprecated `pipeline_report`).
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `filename` | string \| null | `null` | Filter to a single file; omit for all files |
-
-Returns the pipeline report — each file shows completed stages.
-Use this to find exact filenames before running `purge_artifacts`.

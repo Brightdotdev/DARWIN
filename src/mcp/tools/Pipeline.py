@@ -1,6 +1,6 @@
 """
 MCP tools for PipelineOrchestrator.
-Exposes run_pipeline, purge_artifacts, and pipeline_report via FastMCP.
+Exposes run_pipeline and purge_artifacts via FastMCP.
 """
 
 import re
@@ -209,29 +209,4 @@ def register(mcp, pipeline):
                 return {"success": True, "data": {"message": "Purge completed"}}
             except Exception as e:
                 darwin.error(f"purge_artifacts failed: {type(e).__name__}: {e}")
-                return {"success": False, "error": str(e)}
-
-    @mcp.tool(
-        annotations=ToolAnnotations(
-            title="Pipeline Report",
-            readOnlyHint=True,
-            destructiveHint=False,
-            idempotentHint=True,
-            openWorldHint=False,
-        ),
-    )
-    async def pipeline_report(ctx: Context, filename: Optional[str] = None) -> dict:
-        """[Deprecated] Use list_files instead. This tool is an alias for list_files.
-
-        Get pipeline report for files — shows which stages are complete per file.
-        """
-        async with darwin_bridge(ctx):
-            try:
-                import asyncio
-                report = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: pipeline.store.get_pipeline_report(filename)
-                )
-                return {"success": True, "data": report}
-            except Exception as e:
-                darwin.error(f"pipeline_report failed: {type(e).__name__}: {e}")
                 return {"success": False, "error": str(e)}
