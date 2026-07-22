@@ -9,7 +9,7 @@ Search the DARWIN knowledge base for relevant passages.
 | `query` | string | *(required)* | Search query (max 4096 chars) |
 | `method` | `"hybrid"` \| `"semantic"` \| `"keyword"` | `"hybrid"` | Search strategy |
 | `store` | string \| null | `null` | Store ID, name, or path. `null` = default store |
-| `files` | string \| null | `null` | Filter to a specific file |
+| `files` | string[] \| null | `null` | Filter to specific file(s) |
 | `top_k` | int | `5` | Number of top results to return |
 | `max_passages` | int | `5` | Maximum passages to retrieve |
 | `max_chars` | int | `6000` | Character limit on returned text |
@@ -17,8 +17,8 @@ Search the DARWIN knowledge base for relevant passages.
 | `merge_strategy` | `"none"` \| `"adjacent"` \| `"aggressive"` | `"adjacent"` | How to merge overlapping passages |
 | `fill_gaps` | bool | `false` | Fill gaps between non-adjacent results |
 | `max_per_source` | int | `2` | Max passages from any single file |
-| `prefer_sources` | string \| null | `null` | Favor passages from this file |
-| `exclude_sources` | string \| null | `null` | Exclude passages from this file |
+| `prefer_sources` | string[] \| null | `null` | Favor passages from these files |
+| `exclude_sources` | string[] \| null | `null` | Exclude passages from these files |
 | `filter_structural` | bool | `true` | Filter out boilerplate/structural content |
 | `structural_penalty_factor` | float | `0.5` | Penalty multiplier for non-body content (0.0-1.0). Lower = harsher. |
 | `diversity_rerank` | bool | `true` | Apply 15% compound penalty per extra result from same source |

@@ -19,7 +19,7 @@ darwin mcp --http --port 8765
 darwin mcp --temp-port 9000
 ```
 
-All transports share the same 7 tools, 3 resources, and validation logic.
+All transports share the same 9 tools, 3 resources, and validation logic.
 The unified server (`UnifiedServer.py`) handles SSE, HTTP, log streaming,
 history, and health in a single process.
 
@@ -54,17 +54,21 @@ When running with `--sse` or `--http`, the unified server provides:
 | `/messages/` | MCP POST | AI agent message handling (SSE mode) |
 | `/mcp` | MCP Streamable HTTP | AI agent tool calls (HTTP mode) |
 | `/stream` | SSE | Real-time darwin log events (UI dashboard) |
-| `/history` | GET | Query historical logs (`?session=&levels=&limit=`) |
+| `/history` | GET | Query historical logs (`?session=&levels=&limit=&before=`) |
 | `/health` | GET | Health check (checks store + models) |
+| `/dashboard` | GET | Live log viewer web UI |
+| `/banner` | GET | ASCII banner as JSON |
 
 **Logs never flow to the AI agent.** The `/stream` endpoint is for UI
 consumers (web dashboards, IDE plugins). The agent uses `/sse` or `/mcp`
 for tool calls only.
 
-## Available tools (7)
+## Available tools (9)
 
 ### Search
 - **`search_darwin`** — Query the knowledge base with hybrid/semantic/keyword search.
+- **`get_search_results`** — List saved search results.
+- **`get_search_result_by_id`** — Load a saved search result by filename.
 
 ### Pipeline
 - **`run_pipeline`** — Ingest + index documents from a path or URL.
@@ -91,6 +95,8 @@ All tools include MCP-compliant annotations for client-side safety:
 | Tool | readOnly | destructive | idempotent | openWorld |
 |------|----------|-------------|------------|-----------|
 | `search_darwin` | yes | no | yes | no |
+| `get_search_results` | yes | no | yes | no |
+| `get_search_result_by_id` | yes | no | yes | no |
 | `run_pipeline` | no | no | no | no |
 | `purge_artifacts` | no | **yes** | yes | no |
 | `pipeline_report` | yes | no | yes | no |
@@ -170,6 +176,6 @@ Logger/                   mcp/
 - **mcp/app_factory** is the single source of truth — both Server.py and UnifiedServer.py call `create_mcp_app()` so adding a tool only requires one edit.
 - **DarwinLogger.configure(mode=SSE/BOTH)** starts `UnifiedServer` in a background thread. `shutdown()` closes SSE server + history store.
 - **Stdio mode** — logger is silenced (`mode=none`) to keep stdout clean for JSON-RPC. Logs still go to SQLite history and SSE stream if configured.
-- **Tool annotations** — all 7 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
+- **Tool annotations** — all 9 tools have `ToolAnnotations` (readOnlyHint, destructiveHint, idempotentHint, openWorldHint).
 - **Input validation** — all tools validate parameters before reaching orchestrators. Exceptions returned as structured error objects, never silently swallowed.
 - **Async tools** — all tool functions are async with blocking orchestrator calls dispatched via `run_in_executor`.

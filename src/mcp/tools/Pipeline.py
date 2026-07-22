@@ -23,6 +23,8 @@ _STAGE_MAP = {
 _VALID_STAGES = set(_STAGE_MAP.keys()) | {"ingestion", "indexing"}
 _MAX_TARGET_LEN = 2048
 
+_orch_cache: dict = {}  # store_key -> PipelineOrchestrator
+
 
 def _validate_stages(stages: list[str]) -> list[str]:
     clean = [s.strip().lower() for s in stages if s.strip()]
@@ -76,7 +78,7 @@ def register(mcp, pipeline):
         stages: list[str],
         target: Optional[str] = None,
         store: Optional[str] = None,
-        files: Optional[str] = None,
+        files: Optional[list[str]] = None,
         ocr: Optional[bool] = None,
         recursive: Optional[bool] = None,
         precise: Optional[bool] = None,
@@ -123,7 +125,7 @@ def register(mcp, pipeline):
                 if store is not None:
                     kwargs["store"] = store
                 if files is not None:
-                    kwargs["files"] = [files]
+                    kwargs["files"] = files
                 if ocr is not None:
                     kwargs["ocr"] = ocr
                 if recursive is not None:
@@ -146,9 +148,11 @@ def register(mcp, pipeline):
 
                 def _blocking():
                     if store:
-                        resolved = resolve_store(store)
-                        resolved.bootstrap(quiet=True)
-                        return PipelineOrchestrator(store=resolved).build_pipeline(params)
+                        if store not in _orch_cache:
+                            resolved = resolve_store(store)
+                            resolved.bootstrap(quiet=True)
+                            _orch_cache[store] = PipelineOrchestrator(store=resolved)
+                        return _orch_cache[store].build_pipeline(params)
                     return pipeline.build_pipeline(params)
 
                 import asyncio

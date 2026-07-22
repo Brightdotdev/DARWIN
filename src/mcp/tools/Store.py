@@ -94,18 +94,19 @@ def register(mcp, store):
             openWorldHint=False,
         ),
     )
-    async def list_files(ctx: Context) -> dict:
+    async def list_files(ctx: Context, filename: Optional[str] = None) -> dict:
         """List all files tracked by the default store with their pipeline status.
 
         Usage tips:
         - Returns the pipeline report — each file shows completed stages.
+        - Pass filename to filter to a single file (equivalent to pipeline_report).
         - Use this to find exact filenames before running purge_artifacts.
         """
         async with darwin_bridge(ctx):
             try:
                 import asyncio
                 report = await asyncio.get_event_loop().run_in_executor(
-                    None, store.get_pipeline_report
+                    None, lambda: store.get_pipeline_report(filename)
                 )
                 return {"success": True, "data": report}
             except Exception as e:

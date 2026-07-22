@@ -11,6 +11,8 @@ from src.mcp.logging_bridge import darwin_bridge
 
 _MAX_QUERY_LEN = 4096
 
+_orch_cache: dict = {}  # store_key -> RetrievalOrchestrator
+
 
 def _validate_query(query: str) -> str:
     query = query.strip()
@@ -41,7 +43,7 @@ def register(mcp, retrieval_orch):
         query: str,
         method: Optional[str] = None,
         store: Optional[str] = None,
-        files: Optional[str] = None,
+        files: Optional[list[str]] = None,
         top_k: Optional[int] = None,
         max_passages: Optional[int] = None,
         max_chars: Optional[int] = None,
@@ -49,8 +51,8 @@ def register(mcp, retrieval_orch):
         merge_strategy: Optional[str] = None,
         fill_gaps: Optional[bool] = None,
         max_per_source: Optional[int] = None,
-        prefer_sources: Optional[str] = None,
-        exclude_sources: Optional[str] = None,
+        prefer_sources: Optional[list[str]] = None,
+        exclude_sources: Optional[list[str]] = None,
         filter_structural: Optional[bool] = None,
         structural_penalty_factor: Optional[float] = None,
         diversity_rerank: Optional[bool] = None,
@@ -102,7 +104,7 @@ def register(mcp, retrieval_orch):
                 if store is not None:
                     kwargs["store"] = store
                 if files is not None:
-                    kwargs["files"] = [files]
+                    kwargs["files"] = files
                 if top_k is not None:
                     kwargs["top_k"] = top_k
                 if max_passages is not None:
@@ -118,9 +120,9 @@ def register(mcp, retrieval_orch):
                 if max_per_source is not None:
                     kwargs["max_per_source"] = max_per_source
                 if prefer_sources is not None:
-                    kwargs["prefer_sources"] = [prefer_sources]
+                    kwargs["prefer_sources"] = prefer_sources
                 if exclude_sources is not None:
-                    kwargs["exclude_sources"] = [exclude_sources]
+                    kwargs["exclude_sources"] = exclude_sources
                 if filter_structural is not None:
                     kwargs["filter_structural"] = filter_structural
                 if structural_penalty_factor is not None:
@@ -141,10 +143,12 @@ def register(mcp, retrieval_orch):
 
                 def _blocking():
                     if store:
-                        from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-                        resolved = resolve_store(store)
-                        resolved.bootstrap(quiet=True)
-                        return RetrievalOrchestrator(store=resolved).retrieve_and_resolve(params)
+                        if store not in _orch_cache:
+                            from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                            resolved = resolve_store(store)
+                            resolved.bootstrap(quiet=True)
+                            _orch_cache[store] = RetrievalOrchestrator(store=resolved)
+                        return _orch_cache[store].retrieve_and_resolve(params)
                     return retrieval_orch.retrieve_and_resolve(params)
 
                 import asyncio
