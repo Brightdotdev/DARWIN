@@ -1,4 +1,4 @@
-# Darwin Core
+# Darwin RAG
 
 **Local-first RAG engine** — ingest documents, index them (BM25 + embeddings), and search via hybrid/semantic/keyword retrieval. Runs as an MCP server for AI agent integration or via CLI. All local, all offline-capable.
 
@@ -15,7 +15,7 @@ Built by [BrightDotDev](https://github.com/brightdotdev).
 ```bash
 # 1. Clone
 git clone <repo-url>
-cd darwin-core
+cd darwin-rag
 
 # 2. Create venv & install
 python -m venv .venv

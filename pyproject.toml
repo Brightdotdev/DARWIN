@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "darwin-core"
+name = "darwin-rag"
 version = "0.2.0"
 description = "DARWIN  — Local-first RAG engine with API + ONNX embedding support"
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]

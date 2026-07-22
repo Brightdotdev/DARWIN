@@ -393,7 +393,7 @@ darwin-admin uninstall --keep-package  # clean data only, keep the package
 | Option | Description |
 |--------|-------------|
 | `--dry-run` | Preview what would be removed without making changes |
-| `--keep-package` | Only clean data, skip `pip uninstall darwin-core` |
+| `--keep-package` | Only clean data, skip `pip uninstall darwin-rag` |
 
 **What it does:**
 
@@ -401,7 +401,7 @@ darwin-admin uninstall --keep-package  # clean data only, keep the package
 2. **Cleans extra stores** — removes only `indexes/`, `registry.db`, `.darwin_store_id`, `checkpoints/`, `conversations/` (leaves your original files untouched)
 3. **Removes global registry** — validates `~/.darwin/` before deletion
 4. **Removes main data directory** — with content validation
-5. **Uninstalls package** — runs `pip uninstall darwin-core --yes` (skipped with `--keep-package`)
+5. **Uninstalls package** — runs `pip uninstall darwin-rag --yes` (skipped with `--keep-package`)
 
 ---
 

@@ -1,5 +1,5 @@
 """
-Darwin Wiki / Knowledge Module — Core Types & Constants (v5.1)
+Darwin NLP Utilities — Core Types & Constants (v5.1)
 CHANGES (v5.1):
 - EntityRecord: base_name (merging key), display_name (label), quality_signal (persisted)
 - entity_id is now type‑agnostic (base_name only)

@@ -1,5 +1,5 @@
 """
-Darwin Wiki / Knowledge Module — Utilities (v5.1)
+Darwin NLP Utilities — Utility Functions (v5.1)
 CHANGES (v5.1):
 - get_base_name() / get_display_name() for consistent merging
 - is_blacklisted() now checks head word (last token)

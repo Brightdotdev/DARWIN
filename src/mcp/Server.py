@@ -11,7 +11,7 @@ from src.mcp.app_factory import create_mcp_app
 
 def run_stdio(host: str = "127.0.0.1", port: int = 8765):
     """Start the Darwin MCP server using stdio transport."""
-    mcp, _orch = create_mcp_app(host=host, port=port)
+    mcp, _ = create_mcp_app(host=host, port=port)
     asyncio.run(mcp.run_stdio_async())
 
 

@@ -6,7 +6,7 @@ cleans up the main data directory, and optionally uninstalls the pip package.
 
 Two modes:
   --clean    Remove all darwin data (stores, indexes, configs, logs)
-  --package  Also pip-uninstall darwin-core after cleanup
+   --package  Also pip-uninstall darwin-rag after cleanup
 """
 
 import shutil
@@ -177,15 +177,15 @@ def _remove_base_dir(base: Path, dry_run: bool = False) -> List[str]:
 
 
 def _pip_uninstall() -> bool:
-    """Run pip uninstall darwin-core --yes."""
-    _r.info("Running: pip uninstall darwin-core --yes")
+    """Run pip uninstall darwin-rag --yes."""
+    _r.info("Running: pip uninstall darwin-rag --yes")
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pip", "uninstall", "darwin-core", "--yes"],
+            [sys.executable, "-m", "pip", "uninstall", "darwin-rag", "--yes"],
             capture_output=True, text=True,
         )
         if result.returncode == 0:
-            _r.ok("darwin-core uninstalled")
+            _r.ok("darwin-rag uninstalled")
             return True
         else:
             _r.err(f"pip uninstall failed: {result.stderr.strip()}")
@@ -267,9 +267,9 @@ def cmd_uninstall(args: UninstallArgs):
 
     # ── Step 5: Pip uninstall ──
     if not skip_package:
-        _r.section("Step 5: Uninstalling darwin-core package")
+        _r.section("Step 5: Uninstalling darwin-rag package")
         if dry_run:
-            _r._out("  [dry-run] would run: pip uninstall darwin-core --yes")
+            _r._out("  [dry-run] would run: pip uninstall darwin-rag --yes")
         else:
             _pip_uninstall()
 
@@ -297,6 +297,6 @@ def add_args(sub):
     )
     p.add_argument(
         "--keep-package", action="store_true",
-        help="Only clean data, don't pip-uninstall darwin-core",
+        help="Only clean data, don't pip-uninstall darwin-rag",
     )
     p.set_defaults(func=lambda a: cmd_uninstall(ns_to(UninstallArgs, a)))

@@ -1,49 +1,15 @@
-# Features — Knowledge, Summarization, Images
+# Features — Summarization, Images
 
-**What it is:** Optional feature modules that extend Darwin's core RAG capabilities — knowledge graph construction, extractive summarization, and image processing (OCR + vision captioning).
+**What it is:** Optional feature modules that extend Darwin's core RAG capabilities — extractive summarization and image processing (OCR + vision captioning).
 
-**Why it exists:** RAG alone isn't always enough. These features add entity extraction + relationship graphs, text summarization for chunk reduction, and image OCR/description for multi-modal documents.
+**Why it exists:** RAG alone isn't always enough. These features add text summarization for chunk reduction and image OCR/description for multi-modal documents.
 
 ## Files
 
 | File | Lines | Module | Purpose |
 |---|---|---|---|
-| `Knowledge/WikiOrchestrator.py` | 1171 | Knowledge | Entity extraction + knowledge graph construction |
 | `Summarization/Summarizer.py` | 580 | Summarization | Extractive text summarization |
 | `Images/ImageHandler.py` | 745 | Images | OCR text extraction + vision captioning |
-
----
-
-## Knowledge — WikiOrchestrator
-
-**What it is:** Extracts entities and builds knowledge graphs from document text using pure NLP (spaCy NER + PMI scoring + co-occurrence analysis). No LLM required.
-
-**Usage:**
-
-```python
-from src.features.Knowledge.WikiOrchestrator import WikiOrchestrator
-
-orch = WikiOrchestrator(store)
-result = orch.build_knowledge_graph(file_hash)
-
-# Access entities and relationships
-for entity in result.entities:
-    print(f"{entity.name} ({entity.label}) x{entity.frequency}")
-
-for rel in result.relationships:
-    print(f"{rel.source} --[{rel.label}]--> {rel.target}")
-
-# Export as PyVis HTML graph
-html = result.graph_html
-```
-
-**Key features:**
-- Batch NLP processing with spaCy
-- PMI (Pointwise Mutual Information) scoring for relationship strength
-- Co-occurrence analysis within sliding windows
-- Parallel post-processing for large documents
-- Auto-chunking for long documents (>100K chars)
-- PyVis HTML graph export
 
 ---
 
