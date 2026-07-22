@@ -15,18 +15,22 @@ Create a new DarwinStore at a given filesystem path for isolating data.
 - Pass the returned store ID to other tools via the `store` parameter.
 - `name` is optional; if omitted the store is identified by path only.
 
-## list_files
+---
 
-List all files tracked by the default store with their pipeline status.
+# list_files
+
+List all files tracked by the default store with their pipeline status. This is the primary tool for checking pipeline status (replaces the deprecated `pipeline_report`).
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `filename` | string \| null | `null` | Filter to a single file (omit for all) |
+| `filename` | string \| null | `null` | Filter to a single file; omit for all files |
 
 Returns the pipeline report — each file shows completed stages.
 Use this to find exact filenames before running `purge_artifacts`.
 
-## file_status
+---
+
+# file_status
 
 Get detailed status for a single file across all pipeline stages.
 
@@ -35,3 +39,14 @@ Get detailed status for a single file across all pipeline stages.
 | `filename` | string | *(required)* | Exact filename as used during ingestion |
 
 Use this to check what artifacts exist for a specific file.
+
+---
+
+# Resources
+
+MCP resources are read-only data sources the agent can fetch without tool calls.
+
+| Resource | Description |
+|---|---|
+| `darwin://store/report` | Pipeline report — all files with completed stages and aggregate stats |
+| `darwin://search/results` | Saved search results index — lists all previously saved searches |

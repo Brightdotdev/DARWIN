@@ -38,7 +38,7 @@ Search the DARWIN knowledge base for relevant passages.
 - `fallback_used=true` in the response means the search broadened automatically — check `fallback_reason` for why.
 - Use `prefer_sources`/`exclude_sources` to target or skip specific files.
 - Pass a `store` to search a non-default store.
-- Use `save=true` to persist results. Retrieve them later with `get_search_results` and `get_search_result_by_id`.
+- Use `save=true` to persist results. Retrieve them later via the `darwin://search/results` resource or `get_search_result_by_id`.
 
 ### Power-user tuning
 
@@ -93,7 +93,7 @@ Search the DARWIN knowledge base for relevant passages.
 
 # get_search_results
 
-List all saved search results.
+List all saved search results. Consider using the `darwin://search/results` resource for quick context lookups without a tool call.
 
 ## Parameters
 

@@ -64,35 +64,30 @@ def register(mcp, retrieval_orch):
     ) -> dict:
         """Search the DARWIN knowledge base for relevant passages.
 
+        Parameters with enums (pass exact string):
+          method: "hybrid" (default) | "semantic" | "keyword"
+          merge_strategy: "adjacent" (default) | "none" | "aggressive"
+          fallback_strategy: "both" (default) | "expand" | "relax"
+
         Defaults (applied by RetrievalParameters if not provided):
-        - method: "hybrid"
-        - top_k: 5
-        - max_passages: 5
-        - max_chars: 6000
-        - min_passage_score: 0.15
-        - merge_strategy: "adjacent"
-        - fill_gaps: false
-        - max_per_source: 2
-        - filter_structural: true
-        - structural_penalty_factor: 0.5
-        - diversity_rerank: true
-        - include_audit: false
-        - fallback_strategy: "both"
-        - rerank: false
+          top_k: 5, max_passages: 5, max_chars: 6000,
+          min_passage_score: 0.15, fill_gaps: false, max_per_source: 2,
+          filter_structural: true, structural_penalty_factor: 0.5,
+          diversity_rerank: true, include_audit: false, rerank: false
 
         Usage tips:
         - Check 'summary' in the result for a quick overview before reading passages.
-        - method='hybrid' (default) combines keyword + semantic; best for most queries.
-        - method='semantic' is better for conceptual/fuzzy queries.
-        - method='keyword' is better for exact terms or code references.
+        - method="hybrid" (default) combines keyword + semantic; best for most queries.
+        - method="semantic" is better for conceptual/fuzzy queries.
+        - method="keyword" is better for exact terms or code references.
         - If results are sparse, try lowering min_passage_score (e.g. 0.15).
         - fallback_used=true means hybrid search broadened — check fallback_reason.
         - Pass store name/path/ID to search a specific store.
         - Use prefer_sources/exclude_sources to target or skip specific files.
-        - save=true persists results as JSON for later retrieval via get_search_results.
+        - save=true persists results as JSON; fetch later via darwin://search/results resource.
         - include_audit=true adds per-passage scoring breakdown (raw_score, penalty_factor, etc.).
         - diversity_rerank=false disables source diversity penalty — useful for deep dives into one file.
-        - structural_penalty_factor controls how aggressively non-body content (tables, captions) is penalized. Lower = harsher.
+        - structural_penalty_factor controls how aggressively non-body content is penalized. Lower = harsher.
         - max_per_source caps passages per file. Raise for deeper coverage, lower for more diversity.
         """
         async with darwin_bridge(ctx):
@@ -192,6 +187,9 @@ def register(mcp, retrieval_orch):
         Returns a list of saved result files with metadata (query, method,
         passage count, max score, timestamp). Use get_search_result_by_id
         to load a specific result.
+
+        Tip: The darwin://search/results resource provides the same data
+        without a tool call — use it for quick context lookups.
         """
         async with darwin_bridge(ctx):
             try:

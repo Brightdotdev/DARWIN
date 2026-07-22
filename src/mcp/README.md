@@ -19,7 +19,7 @@ darwin mcp --http --port 8765
 darwin mcp --temp-port 9000
 ```
 
-All transports share the same 9 tools, 3 resources, and validation logic.
+All transports share the same 9 tools, 2 resources, and validation logic.
 The unified server (`UnifiedServer.py`) handles SSE, HTTP, log streaming,
 history, and health in a single process.
 
@@ -80,13 +80,12 @@ for tool calls only.
 - **`list_files`** — All files with pipeline status.
 - **`file_status`** — Detailed status for one file.
 
-## Available resources (3)
+## Available resources (2)
 
 | URI | Description |
 |-----|-------------|
-| `darwin://store/files` | List of files tracked by the current store |
-| `darwin://store/report` | Full pipeline report for the current store |
-| `darwin://store/stats` | Store statistics: file count, stages |
+| `darwin://store/report` | Pipeline report — all files with completed stages and aggregate stats |
+| `darwin://search/results` | Saved search results index — lists all previously saved searches |
 
 ## Tool annotations
 

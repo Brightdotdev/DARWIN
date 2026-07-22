@@ -97,10 +97,14 @@ def register(mcp, store):
     async def list_files(ctx: Context, filename: Optional[str] = None) -> dict:
         """List all files tracked by the default store with their pipeline status.
 
+        This is the primary tool for checking pipeline status. The deprecated
+        pipeline_report tool is an alias for this.
+
         Usage tips:
         - Returns the pipeline report — each file shows completed stages.
-        - Pass filename to filter to a single file (equivalent to pipeline_report).
+        - Pass filename to filter to a single file.
         - Use this to find exact filenames before running purge_artifacts.
+        - Call without arguments to see all files.
         """
         async with darwin_bridge(ctx):
             try:

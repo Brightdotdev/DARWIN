@@ -91,26 +91,26 @@ def register(mcp, pipeline):
     ) -> dict:
         """Run ingestion/indexing pipeline stages.
 
-        Defaults (applied by PipelineParameters if not provided):
-        - target: ""
-        - stages: ["ingestion", "indexing"]
-        - ocr: false
-        - recursive: false
-        - precise: false
-        - rerun: false
-        - threshold: 0.5
-        - idf_smoothing: 1.5
-        - only_kw: false
-        - only_semantic: false
-        - strict: true
+        Parameters with enums (pass exact string):
+          stages: "ingestion" (or: ingest, extract, parse, chunk, ocr, clean)
+                  "indexing"  (or: index, embed)
 
-        Stages: 'ingestion' (or aliases: ingest, extract, parse, chunk, ocr, clean)
-                'indexing'  (or aliases: index, embed)
+        Defaults (applied by PipelineParameters if not provided):
+          target: "" (empty — use files param to target specific files)
+          ocr: false, recursive: false, precise: false, rerun: false,
+          threshold: 0.5, idf_smoothing: 1.5, only_kw: false,
+          only_semantic: false, strict: true
 
         Usage tips:
-        - Always pass a 'target' path or URL for ingestion.
-        - Use 'rerun=true' to re-process files that already have artifacts.
-        - 'strict=true' (default) halts on first failure; set false to continue.
+        - target: a file path, directory path, or URL to ingest.
+          - Directory: ingests all files within it (use recursive=true for subdirs).
+          - File: ingests a single file.
+          - URL: fetches and ingests a remote file.
+        - files: optional list of filenames to process within the target directory.
+          - Use when you want to ingest specific files from a directory, not all of them.
+          - If target is a file path, files is ignored.
+        - Use rerun=true to re-process files that already have artifacts.
+        - strict=true (default) halts on first failure; set false to continue.
         - Logs returned are filtered to WARNING/ERROR/SUCCESS only.
         - Pass store name/path/ID to run against a specific store.
         """
@@ -181,10 +181,15 @@ def register(mcp, pipeline):
     async def purge_artifacts(ctx: Context, stages: list[str], filenames: list[str], dry_run: bool = False) -> dict:
         """Delete pipeline artifacts for specific files.
 
+        Parameters with enums (pass exact string):
+          stages: "ingestion" (or: ingest, extract, parse, chunk, ocr, clean)
+                  "indexing"  (or: index, embed)
+
         Usage tips:
         - Always pass dry_run=true first to preview what will be deleted.
         - Stages: 'ingestion' removes markdown/records; 'indexing' removes embeddings/vector/bm25.
         - filenames must be exact matches to the original filenames used during ingestion.
+        - Use list_files to see available filenames and their pipeline status.
         """
         async with darwin_bridge(ctx):
             try:
@@ -216,12 +221,9 @@ def register(mcp, pipeline):
         ),
     )
     async def pipeline_report(ctx: Context, filename: Optional[str] = None) -> dict:
-        """Get pipeline report for files — shows which stages are complete per file.
+        """[Deprecated] Use list_files instead. This tool is an alias for list_files.
 
-        Usage tips:
-        - Call without arguments to see all files.
-        - Pass a specific filename to check that file's status only.
-        - Use this before running pipeline to decide if rerun is needed.
+        Get pipeline report for files — shows which stages are complete per file.
         """
         async with darwin_bridge(ctx):
             try:
