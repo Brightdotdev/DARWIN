@@ -109,11 +109,8 @@ class OnnxEmbeddingDownloader:
 
     def download(self, force: bool = False) -> bool:
         """Download ONNX model + tokenizer files. Returns True on success."""
-        try:
-            from huggingface_hub import hf_hub_download
-        except ImportError:
-            darwin.error("huggingface_hub not installed. pip install huggingface_hub")
-            return False
+     
+    
 
         spinner_id = f"dl_e5_{self.repo_id.split('/')[-1]}"
         darwin.spinner_start(spinner_id, f"Downloading {self.repo_id}")

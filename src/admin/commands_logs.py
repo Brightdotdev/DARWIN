@@ -6,7 +6,6 @@ Commands: query, sessions, session-info, stats, purge, purge-session,
 """
 
 from src.admin.lib import (
-    LogAction,
     ns_to,
     LogsQueryArgs,
     LogsSessionsArgs,

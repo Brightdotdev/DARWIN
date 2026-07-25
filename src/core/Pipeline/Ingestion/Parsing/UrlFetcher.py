@@ -5,7 +5,6 @@ UrlFetcher.py — Safe, retrying HTTP fetcher with rotating User-Agents.
 from typing import Optional
 from urllib.parse import urlparse
 
-from src.core.Logger.DarwinLogger import darwin
 
 
 # ── URL validation ────────────────────────────────────────────────

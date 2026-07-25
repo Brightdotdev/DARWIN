@@ -21,7 +21,6 @@ from src.core.Models.ModelConfig import (
     get_active_model,
     set_active_model,
     get_model_path,
-    ensure_model_path,
 )
 from src.lib.KeyManager import is_key_set, load_keys_from_keychain
 from src.core.Logger.DarwinLogger import darwin

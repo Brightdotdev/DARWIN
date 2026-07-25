@@ -8,14 +8,14 @@ and optionally hydrates the central chunk from storage if fields are missing.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 from src.core.Pipeline.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     OverlapDirection,
     split_sentences,
 )
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 _OVERLAP_SEARCH_CAP = 10

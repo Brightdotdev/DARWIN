@@ -218,7 +218,7 @@ class LLMClient:
 
         # Guard: resolve provider & build kwargs so ValueError becomes a clean LLMResponse
         try:
-            prov, provider_config = self._resolve_provider_config(provider)
+            prov, _ = self._resolve_provider_config(provider)
             kwargs = self._prepare_kwargs(messages, tier, prov, json_schema, override_kwargs)
         except ValueError as e:
             darwin.error(str(e))

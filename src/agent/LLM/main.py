@@ -4,7 +4,6 @@ main.py — Darwin LLM Manager: onboarding, configuration, and test harness.
 """
 
 import sys
-import asyncio
 import argparse
 import json
 import os
@@ -22,7 +21,6 @@ from src.core.Logger.DarwinLogger import darwin
 from src.lib.KeyManager import (
     set_api_key,
     load_keys_from_keychain,
-    clear_api_key,
     PROVIDER_REGISTRY,
 )
 from src.agent.LLM.ModelPicker import is_likely_llm_model, get_default_models

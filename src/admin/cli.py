@@ -1,7 +1,7 @@
 """
 darwin-admin — Full orchestrator control for power users.
 
-Entry point: src.admin:main()  or  darwin-admin
+Entry point: src.admin.cli:main()  or  darwin-admin
 """
 
 import argparse
@@ -106,6 +106,13 @@ Examples:
     _uninstall_mod.add_args(sub)
 
     args = parser.parse_args()
+
+    if args.command != "setup":
+        from src.admin.setup import _setup_status
+        _status = _setup_status()
+        if not _status.any_configured:
+            _r.warn("No config found — run  darwin-admin setup  first")
+            _r._out("")
 
     try:
         args.func(args)

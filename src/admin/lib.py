@@ -16,12 +16,7 @@ import json as _json
 from dataclasses import dataclass, field, fields
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-# Re-export core enums so admin code imports from one place
-from src.core.Models.Lib.ModelSpec import ModelCategory  # noqa: F401
-from src.core.Logger.DarwinLogger import OutputMode, LogFilter  # noqa: F401
-
+from typing import Any, Dict, List, Optional
 
 # ══════════════════════════════════════════════════════════════
 # Constants
@@ -231,7 +226,6 @@ class CategoryLabel:
 CATEGORY_SETUP_ORDER: List[CategoryLabel] = [
     CategoryLabel("embedding", "Vector embeddings for semantic search", True),
     CategoryLabel("reranker", "Re-rank search results for higher precision", False),
-    CategoryLabel("nlp", "Named entity recognition, summarization, NLP", False),
     CategoryLabel("ocr", "Optical character recognition for scanned documents", False),
     CategoryLabel("vision", "Image analysis and captioning (API-only for now)", False),
 ]

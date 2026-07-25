@@ -1,11 +1,4 @@
-"""
-OrchestratorTypes.py -- Data structures for the Retrieval Orchestrator.
 
-FIXES APPLIED (2026-07-19):
-  1. Added diversity_rerank flag to OrchestratorConfig (default True)
-  2. Added fallback_min_passages, fallback_top_k, fallback_max_chars 
-     to RetrievalParameters (previously hardcoded, now tunable)
-"""
 
 from __future__ import annotations
 

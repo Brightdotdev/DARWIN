@@ -6,8 +6,38 @@ services:
     volumes:
       - darwin_data:/data
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     command: ["darwin", "mcp", "--sse", "--port", "8080"]
+    restart: unless-stopped
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: "2"
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - darwin-net
+
+# ── Network ──────────────────────────────────────────────────────────────────
+# Default: localhost only (127.0.0.1:8080). Agent runs on the host machine.
+# To allow container-to-container access (agent in another container),
+# run with:  docker compose --profile network up
+# Then connect agent containers to the 'darwin-net' network and use
+# http://darwin:8080/sse or http://darwin:8080/mcp as the endpoint.
+networks:
+  darwin-net:
+    driver: bridge
 
 volumes:
   darwin_data:

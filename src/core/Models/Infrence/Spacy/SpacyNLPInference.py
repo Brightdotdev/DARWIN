@@ -49,11 +49,6 @@ class NLPResult:
 class SpacyNLPInference:
     """spaCy NLP inference engine with NER + noun chunk co-extraction."""
 
-    _SIGNIFICANT_ENTITIES = {
-        "PERSON", "NORP", "FAC", "ORG", "GPE", "LOC", "PRODUCT",
-        "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE",
-    }
-
     DEFAULT_MAX_LENGTH = 5000
 
     def __init__(
@@ -89,11 +84,9 @@ class SpacyNLPInference:
         if self.is_loaded():
             return self
         if not self.model_dir.exists():
-            darwin.error(f"Model directory not found: {self.model_dir}")
-            return self
+            raise FileNotFoundError(f"Model directory not found: {self.model_dir}")
         if not (self.model_dir / "config.cfg").exists():
-            darwin.error("Model files missing. Run downloader first.")
-            return self
+            raise FileNotFoundError(f"Model files missing in {self.model_dir}. Run downloader first.")
 
         darwin.info(f"Loading spaCy model from {self.model_dir}")
         import spacy
@@ -129,8 +122,7 @@ class SpacyNLPInference:
 
     def process(self, texts: str | List[str], batch_size: int = 64) -> List[NLPResult]:
         if not self.is_loaded():
-            darwin.error("Model not loaded. Call .load() first.")
-            return []
+            raise RuntimeError("Model not loaded. Call .load() first.")
         if isinstance(texts, str):
             texts = [texts]
         texts = [t.strip() for t in texts if t and t.strip()]
@@ -177,8 +169,7 @@ class SpacyNLPInference:
         source="ner" | "noun_chunk" | "both" (if both detect same span).
         """
         if not self.is_loaded():
-            darwin.error("Model not loaded. Call .load() first.")
-            return iter([])
+            raise RuntimeError("Model not loaded. Call .load() first.")
 
         for doc in self._nlp.pipe(texts, batch_size=batch_size):
             # Collect all candidate spans with their sources
@@ -233,8 +224,7 @@ class SpacyNLPInference:
 
     def pipe(self, texts: Iterable[str], batch_size: int = 64) -> Iterator:
         if not self.is_loaded():
-            darwin.error("Model not loaded. Call .load() first.")
-            return iter([])
+            raise RuntimeError("Model not loaded. Call .load() first.")
         return self._nlp.pipe(texts, batch_size=batch_size)
 
     # ── Info ─────────────────────────────────────────────────────────────────

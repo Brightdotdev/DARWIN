@@ -8,7 +8,7 @@ from io import BytesIO
 from PIL import Image
 
 import litellm
-from litellm import aembedding, acompletion, arerank
+from litellm import aembedding, acompletion
 
 # Silence LiteLLM logs
 os.environ.setdefault("LITELLM_LOG", "ERROR")

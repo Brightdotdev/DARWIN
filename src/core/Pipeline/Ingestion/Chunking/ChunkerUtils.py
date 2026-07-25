@@ -44,31 +44,7 @@ def extract_links(text: str) -> List[ChunkLink]:
 # Sentence splitting
 # ─────────────────────────────────────────────────────────────────────────────
 
-_BLINGFIRE_AVAILABLE = False
-_BLINGFIRE_CHECKED = False
-
-
-def _init_blingfire() -> bool:
-    global _BLINGFIRE_AVAILABLE, _BLINGFIRE_CHECKED
-    if not _BLINGFIRE_CHECKED:
-        try:
-            from blingfire import text_to_sentences  # noqa: F401
-
-            _BLINGFIRE_AVAILABLE = True
-        except ImportError:
-            _BLINGFIRE_AVAILABLE = False
-        _BLINGFIRE_CHECKED = True
-    return _BLINGFIRE_AVAILABLE
-
-
 def split_sentences(text: str) -> List[str]:
-    if _init_blingfire():
-        from blingfire import text_to_sentences
-
-        result = text_to_sentences(text).strip()
-        if result:
-            return [s.strip() for s in result.split("\n") if s.strip()]
-
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     abbrevs = {
         "mr",

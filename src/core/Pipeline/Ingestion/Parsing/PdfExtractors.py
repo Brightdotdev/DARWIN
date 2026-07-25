@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 from src.core.Pipeline.Ingestion.Parsing.lib import (
     ExtractedImage,

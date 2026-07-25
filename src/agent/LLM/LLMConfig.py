@@ -32,12 +32,10 @@ class ProviderConfig:
     smart: TierConfig
     normal: TierConfig
     base_url: Optional[str] = None
-    # Runtime-only: hydrated from keychain/env during initialization.
-    # NEVER written to disk by LLMManager._serialize_config().
     api_key: Optional[str] = None
 
 
 @dataclass
 class LLMConfig:
-    default_provider: str = "openai"
+    default_provider: str = "openrouter"
     providers: Dict[str, ProviderConfig] = field(default_factory=dict)

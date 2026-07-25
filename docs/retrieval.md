@@ -1,4 +1,4 @@
-# Retrival — Search Engine
+# Retrieval — Search Engine
 
 **What it is:** The search and retrieval system supporting hybrid (BM25 + semantic), pure semantic, and pure keyword search with configurable reranking, merging, fallback, and structural penalties.
 

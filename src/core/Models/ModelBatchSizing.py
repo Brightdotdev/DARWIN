@@ -7,12 +7,10 @@ Uses: psutil, onnxruntime providers, nvidia-ml (optional), platform tools.
 import os
 import platform
 import subprocess
-import sys
-from functools import lru_cache
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
 
 from src.core.Models.EmbeddingConfig import ModelPreset, get_preset
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -3,7 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from typing import Tuple, Optional, Union
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url, validate_url
 from src.core.Pipeline.Ingestion.Parsing.HtmlProcessor import extract_content
 from src.core.Pipeline.Ingestion.Parsing.PdfExtractors import parse_pdf, parse_markitdown, check_file_size

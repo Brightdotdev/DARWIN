@@ -61,5 +61,4 @@ teststore
 *.local
 
 # Misc
-Optional[str]
 uv.lock

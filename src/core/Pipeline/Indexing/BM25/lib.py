@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-import numpy as np
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +43,8 @@ CONSERVATIVE_IDF_SMOOTHING = 0.1
 
 def compute_idf(df: int, N: int, smoothing: float = DEFAULT_IDF_SMOOTHING) -> float:
     """IDF with configurable smoothing: log((N - df + s) / (df + s) + 1)"""
+    import numpy as np
+
     return float(np.log((N - df + smoothing) / (df + smoothing) + 1))
 
 

@@ -173,9 +173,9 @@ MODEL_SPECS: List[ModelSpec] = [
         notes="Qwen2.5-VL 72B vision via OpenRouter",
     ),
 
-
-
     # ── NLP — local (spaCy) ──
+
+
     ModelSpec(
         model_id="en_core_web_md",
         category=ModelCategory.NLP,
@@ -195,7 +195,7 @@ MODEL_SPECS: List[ModelSpec] = [
         disk_mb=400,
     ),
 
- ModelSpec(
+    ModelSpec(
     model_id="rapidocr",
     category=ModelCategory.OCR,
     tier=ModelTier.DOLPHIN,

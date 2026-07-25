@@ -11,6 +11,7 @@ import tempfile
 import zipfile
 import json
 import urllib.request
+import ssl
 from pathlib import Path
 from time import sleep
 from typing import Optional
@@ -147,7 +148,6 @@ class SpacyNLPModelDownloader:
                 darwin.info(f"Cleared: {self.target_dir}")
             except Exception as e:
                 darwin.warning(f"Failed to clear {self.target_dir}: {e}")
-        self.target_dir.mkdir(parents=True, exist_ok=True)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Download strategies
@@ -173,7 +173,7 @@ class SpacyNLPModelDownloader:
                     extract_dir = tmp / "extracted"
                     extract_dir.mkdir(exist_ok=True)
                     with zipfile.ZipFile(wheel_path, "r") as zf:
-                        zf.extractall(extract_dir)
+                        self._safe_extract_zip(zf, extract_dir)
 
                     model_dir = self._find_model_in_wheel(extract_dir)
                     if model_dir:
@@ -206,7 +206,7 @@ class SpacyNLPModelDownloader:
 
                     darwin.info("Extracting tarball...")
                     with tarfile.open(tarball_path, "r:gz") as tar:
-                        tar.extractall(tmp)
+                        self._safe_extract_tar(tar, tmp)
 
                     model_dir = self._find_model_in_extracted(tmp)
                     if model_dir:
@@ -251,7 +251,8 @@ class SpacyNLPModelDownloader:
                         "Accept": "*/*",
                     },
                 )
-                with urllib.request.urlopen(req, timeout=60) as response:
+                ctx = ssl.create_default_context()
+                with urllib.request.urlopen(req, timeout=60, context=ctx) as response:
                     total = int(response.headers.get("Content-Length", 0))
                     downloaded = 0
 
@@ -376,6 +377,24 @@ class SpacyNLPModelDownloader:
             shutil.rmtree(target, ignore_errors=True)
         darwin.info("Copying model files...")
         shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+
+    @staticmethod
+    def _safe_extract_zip(zf: zipfile.ZipFile, dest: Path) -> None:
+        """Extract a ZIP archive with path-traversal protection."""
+        for member in zf.namelist():
+            target = (dest / member).resolve()
+            if not str(target).startswith(str(dest.resolve())):
+                raise RuntimeError(f"Path traversal attempt blocked in ZIP: {member}")
+        zf.extractall(dest)
+
+    @staticmethod
+    def _safe_extract_tar(tar: tarfile.TarFile, dest: Path) -> None:
+        """Extract a TAR archive with path-traversal protection."""
+        for member in tar.getmembers():
+            target = (dest / member.name).resolve()
+            if not str(target).startswith(str(dest.resolve())):
+                raise RuntimeError(f"Path traversal attempt blocked in TAR: {member.name}")
+        tar.extractall(dest, filter="data" if hasattr(tarfile, "data") else None)
 
     def _optimize_model(self, model_path: Path) -> None:
         """Strip unused spaCy components to reduce disk footprint."""

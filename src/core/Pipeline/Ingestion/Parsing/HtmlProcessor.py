@@ -1,6 +1,6 @@
 import re
 from typing import Tuple, Optional
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 MIN_EXTRACTED_TEXT_LENGTH = 100
 

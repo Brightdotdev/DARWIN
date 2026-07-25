@@ -24,7 +24,7 @@ darwinstoretest/
 **/darwinstoretest/
 
 darwin.md
-
+error.txt
 **/retrieval_test_results/
 ephemeral_output/**
 /ephemeral_output/**
@@ -112,6 +112,8 @@ DARWIN_module_design_prompt.md
 *.onnx
 data/
 checkpoints/
+src/pdfs/
+*Recovery-Codes*
 
 # ──────────────────────────────────────────
 # OS junk

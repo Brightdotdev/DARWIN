@@ -1,5 +1,4 @@
 import asyncio
-import io
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path

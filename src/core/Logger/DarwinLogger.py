@@ -13,43 +13,9 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable
+from src.core.Logger.lib import OutputMode,LogFilter,STYLE_COLORS,STYLE_MODIFIERS,STYLE_ALIASES,DEFAULT_LOG_STYLES
 
 
-# ---------------------------------------------------------------------------
-# Style system — CSS-like cascading style tokens for log messages
-# ---------------------------------------------------------------------------
-
-# Categories for conflict resolution (colors are mutually exclusive, modifiers are mutually exclusive)
-_STYLE_COLORS = frozenset({
-    "red", "green", "yellow", "orange1", "blue", "magenta", "cyan", "white", "grey",
-    "bright_red", "bright_green", "bright_yellow", "bright_blue",
-    "bright_magenta", "bright_cyan", "bright_white",
-})
-
-_STYLE_MODIFIERS = frozenset({"dim", "bold"})
-
-
-# Semantic aliases — shorthand for common style combos
-_STYLE_ALIASES = {
-    "bright": "bright_white",
-    "orange": "orange1",
-    "gray": "grey",
-    "success": "green",
-    "danger": "red bold",
-    "warning": "orange1 bold",
-    "muted": "dim white",
-    "link": "underline cyan",
-    "none": "",
-}
-
-# Default styles per LogType
-_DEFAULT_LOG_STYLES = {
-    "debug": "grey italic",
-    "info": "dim",
-    "success": "green",
-    "warning": "orange1 bold",
-    "error": "red bold",
-}
 
 
 def _expand_style_aliases(style_str: str) -> str:
@@ -59,7 +25,7 @@ def _expand_style_aliases(style_str: str) -> str:
     tokens = style_str.lower().split()
     expanded = []
     for t in tokens:
-        alias = _STYLE_ALIASES.get(t)
+        alias = STYLE_ALIASES.get(t)
         if alias is not None:
             expanded.append(alias)
         else:
@@ -87,14 +53,14 @@ def _merge_style(default: str, explicit: str) -> str:
     d = tokens(default)
     e = tokens(explicit)
 
-    last_color = next((t for t in reversed(e) if t in _STYLE_COLORS), None)
-    last_modifier = next((t for t in reversed(e) if t in _STYLE_MODIFIERS), None)
+    last_color = next((t for t in reversed(e) if t in STYLE_COLORS), None)
+    last_modifier = next((t for t in reversed(e) if t in STYLE_MODIFIERS), None)
 
     result = []
     for t in d:
-        if t in _STYLE_COLORS and last_color:
+        if t in STYLE_COLORS and last_color:
             continue
-        if t in _STYLE_MODIFIERS and last_modifier:
+        if t in STYLE_MODIFIERS and last_modifier:
             continue
         result.append(t)
 
@@ -111,7 +77,7 @@ def resolve_event_style(event: "LogEvent") -> str:
     the default style for its LogType with any explicit style.
     """
     key = event.log_type.value if hasattr(event.log_type, "value") else str(event.log_type)
-    default = _DEFAULT_LOG_STYLES.get(key, "")
+    default = DEFAULT_LOG_STYLES.get(key, "")
     return _merge_style(default, event.style or "")
 
 
@@ -131,20 +97,6 @@ class LogType(Enum):
         obj.severity = severity
         return obj
 
-
-class OutputMode(Enum):
-    TERMINAL = "terminal"
-    SSE = "sse"
-    BOTH = "both"  # ← NEW: simultaneous terminal + SSE
-    NONE = "none"
-
-
-class LogFilter(Enum):
-    """Filter presets for LogEvents."""
-
-    ALL = "all"  # everything (default)
-    QUIET = "quiet"  # errors + warnings + success only (no info)
-    SILENT = "silent"  # errors only
 
 
 # ---------------------------------------------------------------------------

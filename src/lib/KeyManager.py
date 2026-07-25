@@ -20,7 +20,18 @@ litellm.telemetry = False
 litellm.turn_off_message_logging = True
 
 from src.core.Logger.DarwinLogger import darwin, LogType
-from src.agent.LLM.LLMConfig import PROVIDER_ENV_MAP
+
+PROVIDER_ENV_MAP: dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "mistral": "MISTRAL_API_KEY",
+    "groq": "GROQ_API_KEY",
+    "cohere": "COHERE_API_KEY",
+    "together": "TOGETHER_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+}
 
 
 

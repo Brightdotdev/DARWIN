@@ -173,7 +173,7 @@ def discard_nlp_model(
 
     # ── Clear active preference if it was the active model ────────────────
     if is_active:
-        set_active_model(NLP_CATEGORY,spec.model_id)
+        set_active_model(NLP_CATEGORY, None)
         darwin.info(f"Removed {model_id} from active NLP preferences")
 
 

@@ -6,8 +6,6 @@ from src.core.Logger.DarwinLogger import darwin
 from src.core.Pipeline.Ingestion.Parsing.Extractors.Constants import (
     MIN_IMAGE_SIZE_PX, MAX_IMAGES_PER_PAGE, MAX_IMAGES_PER_DOC,
 )
-from src.core.Pipeline.Ingestion.Parsing.Extractors.ExtractorUtils import make_image_slot
-
 
 def _is_image_xref(doc: fitz.Document, xref: int) -> bool:
     try:

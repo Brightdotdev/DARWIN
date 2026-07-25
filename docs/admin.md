@@ -1,6 +1,6 @@
 # Darwin Admin CLI
 
-Full orchestrator control for power users. 32+ subcommands across 8 groups.
+Full orchestrator control for power users. 36 subcommands across 9 groups.
 
 ## Usage
 
@@ -29,6 +29,7 @@ src/admin/
   commands_models.py     — Model lifecycle: status, list, install, discard, switch, keys
   commands_store.py      — Store introspection: status, files, file, audit, health, repair
   commands_pipeline.py   — Pipeline execution: run, ingest, index, purge
+  commands_search.py     — Knowledge base search: search
   commands_logs.py       — Log management: query, sessions, stats, purge, export, compact
   commands_system.py     — System info + top-level status dashboard
   uninstall.py           — Full uninstall (discover stores, clean artifacts, remove data)
@@ -47,6 +48,7 @@ cli.py  main()
         ├── commands_models.py      ← cmd_models_status/list/install/discard/switch/keys
         ├── commands_store.py       ← cmd_store_status/files/file/audit/health/repair
         ├── commands_pipeline.py    ← cmd_pipeline_run/ingest/index/purge
+        ├── commands_search.py      ← cmd_search
         ├── commands_logs.py        ← cmd_logs_query/sessions/stats/purge/export/compact
         ├── commands_system.py      ← cmd_system_info / cmd_status
         └── uninstall.py            ← cmd_uninstall
@@ -146,7 +148,6 @@ Step 1: Detect system
 Step 2: Configure models per category
   ├── embedding (required) — lists all models, user picks one
   ├── reranker (optional)  — recommended model + accept/browse/skip
-  ├── nlp (optional)
   ├── ocr (optional)
   └── vision (optional)
 
@@ -338,7 +339,7 @@ darwin-admin search "neural nets" --include-audit
 darwin-admin search "attention mechanism" --files transformer.pdf --diversity-rerank false
 
 # Get 10 passages from a single large document
-darwin-admin search "chapter 3" --max-per-source 10 --max-passages 10
+darwin-admin search "chapter 3" --max-passages 10
 
 # Disable structural penalties (tables, captions count equally)
 darwin-admin search "data table" --structural-penalty-factor 1.0

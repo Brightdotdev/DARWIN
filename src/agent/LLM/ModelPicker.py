@@ -1,14 +1,3 @@
-"""
-src/core/LLM/ModelPicker.py
------------------------------------
-Selects the fastest useful model per provider for LLM calls.
-Returns bare model IDs (no provider prefix) — LLMClient handles prefixing.
-
-Tier philosophy:
-  fast   → latency & cost optimized (small/flash models, sub-2s target)
-  normal → balanced quality/speed (mid-size or standard flagship)
-  think  → reasoning optimized (largest/capable, slower acceptable)
-"""
 
 import json
 import os

@@ -5,7 +5,6 @@ Commands: status, files, file, audit, health, repair
 """
 
 from src.admin.lib import (
-    StoreAction,
     ns_to,
     StoreStatusArgs,
     StoreFilesArgs,

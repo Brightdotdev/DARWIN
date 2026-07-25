@@ -6,9 +6,9 @@ Commands: status, list, install, discard, switch, keys
 
 from typing import List
 
+from src.core.Models.Lib.ModelSpec import ModelCategory
 from src.admin.lib import (
     KeyAction,
-    ModelCategory,
     ns_to,
     ModelsStatusArgs,
     ModelsListArgs,

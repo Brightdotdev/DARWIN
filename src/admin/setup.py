@@ -7,23 +7,20 @@ Commands: interactive, profile, onboard, preset, validate, doctor, reset, loggin
 import json as _json
 import shutil
 import time
-from pathlib import Path
 
+from src.core.Models.Lib.ModelSpec import ModelCategory
+from src.core.Logger.lib import OutputMode
 from src.admin.lib import (
-    ConfigFile,
     SetupAction,
     SetupPreset,
     SetupStatus,
     DiskImpact,
     LoggingConfig,
     DoctorCheck,
-    CategoryLabel,
     CATEGORY_SETUP_ORDER,
     DEFAULT_SSE_PORT,
     DEFAULT_SSE_HOST,
     DEFAULT_RETENTION_DAYS,
-    ModelCategory,
-    OutputMode,
     atomic_write_json,
     ns_to,
     SetupInteractiveArgs,
@@ -31,7 +28,6 @@ from src.admin.lib import (
     SetupProfileArgs,
     SetupOnboardArgs,
     SetupValidateArgs,
-    SetupDoctorArgs,
     SetupResetArgs,
     SetupLoggingArgs,
 )
@@ -56,7 +52,7 @@ def _setup_status() -> SetupStatus:
 
 def _load_config_content(status: SetupStatus) -> dict:
     """Load parsed JSON content for each config file that exists."""
-    from src.lib.AppPaths import default_logging_config, default_models_config_dir, default_darwin_config
+    from src.lib.AppPaths import default_logging_config, default_darwin_config
 
     content: dict = {}
 

@@ -1,16 +1,7 @@
-"""
-Darwin NLP Utilities — Utility Functions (v5.1)
-CHANGES (v5.1):
-- get_base_name() / get_display_name() for consistent merging
-- is_blacklisted() now checks head word (last token)
-- custom_blacklist / custom_whitelist support
-- compute_entity_signal uses log‑scaled frequency
-"""
-
 import re
 import unicodedata
 import math
-from typing import Optional, List, Dict, Tuple, Set, Any
+from typing import Optional, List, Dict, Set, Any
 
 
 from src.core.Models.Infrence.Spacy.lib import VALID_ENTITY_TYPES, ENTITY_BLACKLIST
@@ -102,10 +93,6 @@ def is_blacklisted(text: str, custom_blacklist: Optional[Set[str]] = None, custo
         return True
     head = tokens[-1]
     if head in combined:
-        return True
-
-    # If phrase is just one word and it's blacklisted
-    if len(tokens) == 1 and tokens[0] in combined:
         return True
 
     # Reject if > 50% of words are blacklisted (catch "the man" where "man" is blacklisted)

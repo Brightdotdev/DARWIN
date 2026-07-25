@@ -9,22 +9,6 @@ from src.core.Pipeline.Indexing.BM25.lib import (
 
 # ── Tokenization ───────────────────────────────────────────────────────────────
 
-def _blingfire_words(text: str) -> List[str]:
-    try:
-        from blingfire import text_to_words
-        return text_to_words(text).split()
-    except ImportError:
-        darwin.warning("BlingFire not available — using regex fallback")
-        return re.findall(r"[a-zA-Z]{2,}", text)
-
-def _keep_token(word: str, standard_stops: Set[str], domain_stops: Set[str]) -> bool:
-    w = word.lower().strip()
-    return (
-        len(w) >= MIN_TOKEN_LENGTH
-        and not w.isdigit()
-        and w not in standard_stops
-        and w not in domain_stops
-    )
 
 
 def tokenize_text(

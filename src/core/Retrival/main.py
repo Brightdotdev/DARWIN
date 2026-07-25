@@ -1,17 +1,3 @@
-"""
-src/features/Retrival/main.py
-------------------------------
-Unified retrieval entry point.
-
-Default method is HYBRID. All paths return List[RetrievalResult].
-
-FIXES APPLIED (2026-07-19):
-  1. _rerank(): preserves rrf_score, semantic_score, keyword_score 
-     in the reranked RetrievalResult (previously lost via getattr defaults)
-  2. _rerank(): uses getattr with proper defaults to prevent None 
-     scores from being silently discarded
-  3. handle_retrieval(): added per_doc_top_k logging for clarity
-"""
 
 from __future__ import annotations
 

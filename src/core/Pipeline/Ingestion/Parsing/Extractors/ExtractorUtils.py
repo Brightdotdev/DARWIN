@@ -1,8 +1,6 @@
 import re
 from pathlib import Path
-from typing import List, Dict, Tuple
-
-
+from typing import List, Dict
 def strip_pymupdf_markers(text: str, keep_images: bool = False) -> str:
     """Remove pymupdf4llm debug markers and optionally image tags."""
     text = re.sub(r"\*\*==>.*?<==\*\*", "", text, flags=re.DOTALL)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 import threading
 from typing import Any, Dict, Optional
+from rich.tree import Tree
 
 from rich.console import Console
 from rich.progress import (
@@ -18,7 +19,6 @@ from rich.progress import (
     TimeElapsedColumn,
     TaskProgressColumn,
 )
-from rich.tree import Tree
 
 from src.core.Logger.DarwinLogger import (
     EventSubscriber,

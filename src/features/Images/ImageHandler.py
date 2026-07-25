@@ -19,9 +19,8 @@ from typing import Union, Optional, Callable, Literal, List, Dict, Any, Tuple
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 import numpy as np
-from PIL import Image, ImageFilter, ImageStat, ImageEnhance
-
-from src.core.Logger.DarwinLogger import darwin, LogType
+from PIL import Image, ImageFilter, ImageStat
+from src.core.Logger.DarwinLogger import darwin
 from src.core.Models.ModelManager import modelManager
 from src.core.Models.Lib.ModelRegistry import ModelCategory
 

@@ -7,7 +7,7 @@ from src.core.Models.Infrence.Api.APIEmbeddingInference import APIEmbeddingInfer
 from src.core.Models.Infrence.Onnx.OnnxEmbeddingInference import OnnxEmbeddingInference
 from src.core.Models.ModelDownloading.OnnxEmbeddingDownloader import OnnxEmbeddingDownloader
 from src.core.Models.ModeInterfaces import EmbeddingInferenceInterface
-from src.core.Logger.DarwinLogger import darwin, LogType
+from src.core.Logger.DarwinLogger import darwin
 
 
 # ---------------------------------------------------------------------------

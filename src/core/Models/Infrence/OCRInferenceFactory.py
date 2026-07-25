@@ -18,7 +18,6 @@ from src.core.Models.ModelConfig import (
 from src.core.Logger.DarwinLogger import darwin
 from src.core.Models.ModeInterfaces import OCRInferenceInterface
 
-# IMPORT HERE - not inside functions
 from src.core.Models.Infrence.Onnx.RapidOCRInference import RapidOCRInference, MODELS
 
 

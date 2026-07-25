@@ -100,10 +100,10 @@ embeddings = engine.encode(["text to embed"])
 ### Via CLI
 
 ```bash
-darwin admin models status
-darwin admin models list
-darwin admin models install intfloat/multilingual-e5-small-onnx
-darwin admin models switch embedding intfloat/multilingual-e5-small-onnx
+darwin-admin models status
+darwin-admin models list
+darwin-admin models install intfloat/multilingual-e5-small-onnx
+darwin-admin models switch embedding intfloat/multilingual-e5-small-onnx
 ```
 
 ## Provider Registry

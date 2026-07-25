@@ -11,6 +11,7 @@ src/core/
   Pipeline/      Ingestion (parsing → chunking) + Indexing (BM25 + embeddings)
   Orchestrators/ High-level orchestrators that wire Storage + Retrival + Pipeline together
   Logger/        Structured session logging
+  Models/        Model registry (40+), inference factories, downloaders
 ```
 
 ## Orchestrators

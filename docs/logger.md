@@ -143,7 +143,7 @@ style = _merge_style("dim", "bold green")  # "bold green"
 
 ## SSE Server
 
-The log SSE server has moved to `src/mcp/UnifiedServer.py`.  See [src/mcp/README.md](../mcp/README.md) for details.
+The log SSE server has moved to `src/mcp/UnifiedServer.py`. See `docs/mcp.md` for details.
 
 ```bash
 # Start the unified server (log SSE + MCP tools + history + health)

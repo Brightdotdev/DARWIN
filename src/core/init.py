@@ -56,7 +56,7 @@ def run_init(profile: str = "required", no_download: bool = False):
             f"  [yellow]⚠[/yellow] API keys needed: {', '.join(providers_needed)}"
         )
         console.print(
-            f"  Set them:  [cyan]darwin admin models keys set <provider> <key>[/cyan]"
+            f"  Set them:  [cyan]darwin-admin models keys set <provider> <key>[/cyan]"
         )
     else:
         console.print(
@@ -69,10 +69,10 @@ def run_init(profile: str = "required", no_download: bool = False):
     console.print(
         Panel.fit(
             "[bold]Next steps[/bold]\n\n"
-            "  [cyan]darwin mcp[/cyan]           Start MCP server (for AI agents)\n"
-            "  [cyan]darwin admin[/cyan]         Full admin control (models, store, pipeline)\n"
-            "  [cyan]darwin ingest ./docs[/cyan] Ingest documents\n"
-            "  [cyan]darwin search <query>[/cyan] Quick search",
+            "  [cyan]darwin mcp[/cyan]               Start MCP server (for AI agents)\n"
+            "  [cyan]darwin-admin setup interactive[/cyan]  Re-run setup\n"
+            "  [cyan]darwin-admin pipeline run ./docs[/cyan] Ingest documents\n"
+            "  [cyan]darwin-admin search <query>[/cyan]     Search knowledge base",
             border_style="green",
         )
     )

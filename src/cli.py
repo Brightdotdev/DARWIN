@@ -41,7 +41,7 @@ def _mcp(args):
         server = UnifiedServer(host=args.host, port=port, transport="sse")
         server.run_foreground(transport="sse")
     else:
-        darwin.configure(mode="none", override=True)
+        darwin.configure()
         run_stdio(host=args.host, port=port)
 
 
@@ -125,7 +125,7 @@ def _config(args):
 
 def main():
     from src.core.Logger.DarwinLogger import darwin
-    darwin.configure( override=True)
+    darwin.configure()
     parser = argparse.ArgumentParser(
         prog="darwin",
         description=(
@@ -177,6 +177,11 @@ def main():
     if not hasattr(args, "func"):
         parser.print_help()
         sys.exit(0)
+    if args.command == "mcp":
+        from src.admin.setup import _setup_status
+        _status = _setup_status()
+        if not _status.any_configured:
+            print("No config found — run  darwin-admin setup  first\n")
     try:
         args.func(args)
     except KeyboardInterrupt:
