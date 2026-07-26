@@ -17,6 +17,7 @@ import src.mcp.tools.Search as Search
 import src.mcp.tools.Pipeline as Pipeline
 import src.mcp.tools.Store as Store
 import src.mcp.tools.Resources as Resources
+import src.mcp.tools.Logs as Logs
 
 
 def create_mcp_app(
@@ -49,5 +50,6 @@ def create_mcp_app(
     Pipeline.register(mcp, pipeline)
     Store.register(mcp, orch.store)
     Resources.register(mcp, orch.store)
+    Logs.register(mcp)
 
     return mcp, orch

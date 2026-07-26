@@ -1,7 +1,7 @@
 """
 Search command handler for darwin-admin.
 
-Commands: search (retrieval with optional save)
+Commands: search (retrieval with auto-save to CWD)
 """
 
 
@@ -24,6 +24,7 @@ def _str2bool(v):
 
 
 def cmd_search(args: SearchArgs, _get_store) -> None:
+    from pathlib import Path
     from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
     from src.core.Orchestrators.lib import RetrievalParameters
 
@@ -57,16 +58,22 @@ def cmd_search(args: SearchArgs, _get_store) -> None:
         kwargs["diversity_rerank"] = args.diversity_rerank
     if args.include_audit is not None:
         kwargs["include_audit"] = args.include_audit
-    if args.save:
+
+    _should_save = not args.no_save
+    if _should_save:
         kwargs["save"] = True
-    if args.results_dir is not None:
-        kwargs["results_dir"] = args.results_dir
+        if args.results_dir is not None:
+            kwargs["results_dir"] = args.results_dir
+        else:
+            kwargs["results_dir"] = str(Path.cwd())
+
     params = RetrievalParameters(**kwargs)
 
     _r.header(f"Search: {args.query}")
     _r.info(f"Method: {args.method} | Top K: {args.top_k} | Max passages: {args.max_passages}")
-    if args.save:
-        _r.info(f"Save: enabled")
+    if _should_save:
+        save_path = args.results_dir or str(Path.cwd())
+        _r.info(f"Save: {save_path}")
     _r._out()
 
     ctx = orch.retrieve_and_resolve(params)
@@ -89,8 +96,8 @@ def cmd_search(args: SearchArgs, _get_store) -> None:
         _r._out(f"      {text_preview}...")
         _r._out()
 
-    if args.save:
-        _r.ok("Results saved")
+    if _should_save:
+        _r.ok("Results saved to current directory")
 
 
 def add_args(sub, _get_store) -> None:
@@ -105,8 +112,8 @@ def add_args(sub, _get_store) -> None:
     p.add_argument("--merge-strategy", choices=["none", "adjacent", "aggressive"], default=None)
     p.add_argument("--files", "-f", nargs="+", help="Restrict to specific files")
     p.add_argument("--store", help="Store ID, name, or path")
-    p.add_argument("--save", action="store_true", help="Save results as JSON")
-    p.add_argument("--results-dir", help="Custom directory for saved results")
+    p.add_argument("--no-save", action="store_true", help="Disable auto-save to current directory")
+    p.add_argument("--results-dir", help="Override save directory (default: current directory)")
     p.add_argument("--rerank", action="store_true", help="Enable reranking")
     p.add_argument("--structural-penalty-factor", type=float, default=None,
                    help="Penalty for non-body content (0.0-1.0, default: 0.5). Lower = harsher penalty.")

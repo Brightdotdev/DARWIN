@@ -529,7 +529,7 @@ class SearchArgs:
     merge_strategy: Optional[str] = None
     files: Optional[List[str]] = None
     store: Optional[str] = None
-    save: bool = False
+    no_save: bool = False
     results_dir: Optional[str] = None
     rerank: bool = False
     structural_penalty_factor: Optional[float] = None
