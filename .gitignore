@@ -10,7 +10,7 @@ dist/
 build/
 *.so
 .eggs/
-
+.env
 /test-store
 /teststore
 teststore/
@@ -72,6 +72,8 @@ htmlcov/
 .env.*
 !.env.example
 *.local
+secret.*
+secrets.*
 
 # ──────────────────────────────────────────
 # Darwin-specific (your project)

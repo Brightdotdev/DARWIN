@@ -14,6 +14,25 @@ _MAX_QUERY_LEN = 4096
 _orch_cache: dict = {}  # store_key -> RetrievalOrchestrator
 
 
+def _filter_passage(p: dict) -> dict:
+    """Strip clean, audit, token_count from a passage dict."""
+    meta = p.get("metadata", {})
+    for k in ("clean", "token_count"):
+        meta.pop(k, None)
+    p["metadata"] = meta
+    p.pop("audit", None)
+    return p
+
+
+def _filter_context(data: dict) -> dict:
+    """Strip context-level bloat from a RetrievalContext dict."""
+    for k in ("candidates_found", "penalized_count", "source_diversity", "audit_summary", "raw_results"):
+        data.pop(k, None)
+    if "passages" in data:
+        data["passages"] = [_filter_passage(p) for p in data["passages"]]
+    return data
+
+
 def _validate_query(query: str) -> str:
     query = query.strip()
     if not query:
@@ -61,6 +80,7 @@ def register(mcp, retrieval_orch):
         rerank: Optional[bool] = None,
         save: Optional[bool] = None,
         results_dir: Optional[str] = None,
+        filter: Optional[bool] = None,
     ) -> dict:
         """Search the DARWIN knowledge base for relevant passages.
 
@@ -86,6 +106,7 @@ def register(mcp, retrieval_orch):
         - Use prefer_sources/exclude_sources to target or skip specific files.
         - save=true persists results as JSON; fetch later via darwin://search/results resource.
         - include_audit=true adds per-passage scoring breakdown (raw_score, penalty_factor, etc.).
+        - filter=true strips clean, audit, token_count from passages (text is canonical).
         - diversity_rerank=false disables source diversity penalty — useful for deep dives into one file.
         - structural_penalty_factor controls how aggressively non-body content is penalized. Lower = harsher.
         - max_per_source caps passages per file. Raise for deeper coverage, lower for more diversity.
@@ -135,6 +156,7 @@ def register(mcp, retrieval_orch):
                 if results_dir is not None:
                     kwargs["results_dir"] = results_dir
                 params = RetrievalParameters(**kwargs)
+                _filter = filter is True
 
                 def _blocking():
                     if store:
@@ -151,10 +173,14 @@ def register(mcp, retrieval_orch):
                 if ctx_result is None or ctx_result.is_empty():
                     return {"success": True, "data": {"passages": [], "total": 0}}
 
+                passages = [p.to_dict() for p in ctx_result.passages]
+                if _filter:
+                    passages = [_filter_passage(p) for p in passages]
+
                 return {
                     "success": True,
                     "data": {
-                        "passages": [p.to_dict() for p in ctx_result.passages],
+                        "passages": passages,
                         "total": ctx_result.total_passages,
                         "total_chars": ctx_result.total_chars,
                         "sources": ctx_result.sources_used,
@@ -185,8 +211,9 @@ def register(mcp, retrieval_orch):
         """List all saved search results.
 
         Returns a list of saved result files with metadata (query, method,
-        passage count, max score, timestamp). Use get_search_result_by_id
-        to load a specific result.
+        passage count, max score, timestamp). This listing is already minimal —
+        no filter param needed. Use get_search_result_by_id to load a specific
+        result (pass filter=true for a stripped-down view).
 
         Tip: The darwin://search/results resource provides the same data
         without a tool call — use it for quick context lookups.
@@ -237,12 +264,14 @@ def register(mcp, retrieval_orch):
         ctx: Context,
         filename: str,
         results_dir: Optional[str] = None,
+        filter: Optional[bool] = None,
     ) -> dict:
         """Load a saved search result by its filename.
 
         Pass the filename from get_search_results (e.g. "machine-learning_20260718_143022.json").
         Returns the full RetrievalContext with passages, metadata, and scores.
         If not found, returns an error suggesting you run search_darwin with save=true.
+        Pass filter=true to strip bloat (clean, audit, candidates_found, raw_results, etc.).
         """
         async with darwin_bridge(ctx):
             try:
@@ -265,6 +294,8 @@ def register(mcp, retrieval_orch):
                         }
                     try:
                         data = json.loads(filepath.read_text(encoding="utf-8"))
+                        if filter is True:
+                            data = _filter_context(data)
                         return {"success": True, "data": data}
                     except Exception as e:
                         return {"success": False, "error": f"Failed to read {filename}: {e}"}
