@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darwin-rag"
-version = "0.2.9"
+version = "0.2.10"
 description = "DARWIN — Local-first RAG engine with API + ONNX embedding support"
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
@@ -83,7 +83,7 @@ Repository = "https://github.com/Brightdotdev/DARWIN"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["src*"]
-exclude = ["src.agent*", "src.features*"]
+exclude = ["src.agent*"]
 
 [tool.setuptools.package-data]
 "src.mcp" = ["*.html", "docs/*.md"]
