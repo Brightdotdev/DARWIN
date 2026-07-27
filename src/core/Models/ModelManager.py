@@ -218,8 +218,14 @@ class ModelManager:
                 error = f"Active model '{active_id}' not available and no other model ready"
                 warnings.append(f"[{cat_name}] Active model '{active_id}' is not available.")
             elif not active_id and any_available:
+                # Auto-register: models on disk but no config entry
+                auto_id = available_models[0]
+                set_active_model(cat_name, auto_id)
+                active_id = auto_id
                 available = True
-                warnings.append(f"[{cat_name}] No active model set, but {len(available_models)} model(s) are ready. Set a preference.")
+                warnings.append(
+                    f"[{cat_name}] Config missing — auto-registered '{auto_id}' from disk."
+                )
             else:
                 available = False
                 error = "No model available"

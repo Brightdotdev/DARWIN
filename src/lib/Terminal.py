@@ -358,7 +358,8 @@ class TerminalUI:
     @classmethod
     def print_darwin(cls) -> None:
         """Clear screen and print ASCII logo."""
-        cls.console.clear()
+        import os
+        os.system("cls" if os.name == "nt" else "clear")
         cls.console.print()
         for line in cls.ASCII:
             cls.console.print(f"[cyan]{line}[/cyan]")
@@ -438,7 +439,6 @@ class TerminalUI:
         """Display detailed status for a single file."""
         f = store.file_status(filename)
 
-        cls.console.clear()
         cls.print_darwin()
 
         cls.console.print(f"  [bold white]{filename}[/bold white]")

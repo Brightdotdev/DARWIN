@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darwin-rag"
-version = "0.2.5"
+version = "0.2.7"
 description = "DARWIN — Local-first RAG engine with API + ONNX embedding support"
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
@@ -24,7 +24,7 @@ classifiers = [
 
 dependencies = [
     # ── API Routing ──
-    "litellm>=1.83.0",
+    "litellm==1.83.14",
     "onnxruntime>=1.17.0",
     # ── Array & Data ──
     "numpy>=1.24.0",

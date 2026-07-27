@@ -83,7 +83,8 @@ class TerminalUI(EventSubscriber):
         self._spinner_started = False
 
     def show_banner(self) -> None:
-        self.console.clear()
+        import os
+        os.system("cls" if os.name == "nt" else "clear")
         for line in ASCII_BANNER:
             self.console.print(f"[cyan]{line}[/cyan]")
         self.console.print()

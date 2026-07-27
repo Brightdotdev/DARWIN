@@ -2,12 +2,38 @@
 Terminal renderer for darwin-admin CLI.
 
 Zero-dependency ANSI output. Respects NO_COLOR and non-TTY detection.
+On Windows, enables VT100 processing for proper ANSI rendering.
 """
 
 import os
 import re
 import sys
 from typing import Any, List, Optional, Tuple
+
+
+def _enable_vt100() -> bool:
+    """Try to enable Windows VT100/ANSI escape processing. Returns True on success."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        STD_OUTPUT_HANDLE = -11
+        handle = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+        if handle == -1:
+            return False
+        # Get current mode
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        new_mode = mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        if kernel32.SetConsoleMode(handle, new_mode):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 class AdminRenderer:
@@ -17,7 +43,8 @@ class AdminRenderer:
     """
 
     def __init__(self, plain: bool = False):
-        self.plain = plain or os.environ.get("NO_COLOR") or not sys.stdout.isatty()
+        vt100_ok = _enable_vt100()
+        self.plain = plain or os.environ.get("NO_COLOR") or (not sys.stdout.isatty() and not vt100_ok)
 
     def _style(self, text: str, fg: Optional[str] = None, bold: bool = False) -> str:
         if self.plain:

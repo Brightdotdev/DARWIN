@@ -90,8 +90,7 @@ class DarwinStore(StoreSearch):
     def _resolve_hash(self, filename: str) -> str | None:
         source = self._sources.find_by_name(filename)
         if not source:
-            darwin.error(f"File not registered: {filename}")
-            darwin.info("Try parsing the file first")
+            darwin.warning(f"File not registered: {filename} :: ignore if parsing")
             return None
         return source.content_hash
 
