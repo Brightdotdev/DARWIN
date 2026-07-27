@@ -90,6 +90,18 @@ See [docs/admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.
 
 ---
 
+## Contributing
+
+Found a bug? Want to add something? You're welcome here.
+
+- **Issues** — open one at [github.com/BrightDotDev/DARWIN/issues](https://github.com/BrightDotDev/DARWIN/issues)
+- **Code** — fork, branch, PR. Keep it minimal.
+- **AI-generated code is fine** — but you own what you ship. Test it before submitting.
+
+Read [CONTRIBUTING.md](https://github.com/BrightDotDev/DARWIN/blob/main/CONTRIBUTING.md) for the full guidelines.
+
+---
+
 ## License
 
 MIT with Attribution — see [LICENSE](LICENSE).
