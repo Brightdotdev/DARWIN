@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darwin-rag"
-version = "0.2.8"
+version = "0.2.9"
 description = "DARWIN — Local-first RAG engine with API + ONNX embedding support"
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
@@ -66,7 +66,7 @@ dependencies = [
     "starlette>=1.3.0",
     "uvicorn>=0.50.0",
     "fastmcp>=3.4.2",
-    "click>=8.4.0",
+    "click>=8.1.0,<9.0",
 ]
 
 [project.optional-dependencies]
