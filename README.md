@@ -43,7 +43,7 @@ After setup, start the MCP server:
 darwin mcp --http --port 8765
 ```
 
-For a full setup walkthrough including Docker, from source, and API key configuration, see [docs/setup.md](docs/setup.md).
+For a full setup walkthrough including Docker, from source, and API key configuration, see [docs/setup.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/setup.md).
 
 ---
 
@@ -69,7 +69,7 @@ Or point any MCP client directly:
 
 **`darwin-admin`** — power-user CLI (setup, models, store, pipeline, search, logs, system, uninstall, status)
 
-See [docs/admin.md](docs/admin.md) for the full command reference.
+See [docs/admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.md) for the full command reference.
 
 ---
 
@@ -77,16 +77,16 @@ See [docs/admin.md](docs/admin.md) for the full command reference.
 
 | Doc | What |
 |---|---|
-| [setup.md](docs/setup.md) | Full setup walkthrough |
-| [architecture.md](docs/architecture.md) | For developers and contributors |
-| [mcp.md](docs/mcp.md) | MCP server, tools, resources |
-| [admin.md](docs/admin.md) | Admin CLI reference |
-| [storage.md](docs/storage.md) | DarwinStore |
-| [pipeline.md](docs/pipeline.md) | Ingestion & indexing |
-| [retrieval.md](docs/retrieval.md) | Search engine |
-| [models.md](docs/models.md) | Model registry & inference |
-| [logger.md](docs/logger.md) | Structured logging |
-| [orchestrators.md](docs/orchestrators.md) | High-level business logic |
+| [setup.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/setup.md) | Full setup walkthrough |
+| [architecture.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/architecture.md) | For developers and contributors |
+| [mcp.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/mcp.md) | MCP server, tools, resources |
+| [admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.md) | Admin CLI reference |
+| [storage.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/storage.md) | DarwinStore |
+| [pipeline.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/pipeline.md) | Ingestion & indexing |
+| [retrieval.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/retrieval.md) | Search engine |
+| [models.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/models.md) | Model registry & inference |
+| [logger.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/logger.md) | Structured logging |
+| [orchestrators.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/orchestrators.md) | High-level business logic |
 
 ---
 
