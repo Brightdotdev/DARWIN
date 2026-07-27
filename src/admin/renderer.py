@@ -44,7 +44,7 @@ class AdminRenderer:
 
     def __init__(self, plain: bool = False):
         vt100_ok = _enable_vt100()
-        self.plain = plain or os.environ.get("NO_COLOR") or (not sys.stdout.isatty() and not vt100_ok)
+        self.plain = plain or os.environ.get("NO_COLOR") or not sys.stdout.isatty() or not vt100_ok
 
     def _style(self, text: str, fg: Optional[str] = None, bold: bool = False) -> str:
         if self.plain:
