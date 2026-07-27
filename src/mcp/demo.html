@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DARWIN — Search Demo</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a25;
+    --border: #2a2a3a;
+    --text: #e0e0e8;
+    --text-dim: #6a6a80;
+    --accent: #6C63FF;
+    --accent-glow: rgba(108,99,255,0.15);
+    --green: #00D4AA;
+    --red: #FF6B6B;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ── Header ── */
+  .hero {
+    text-align: center;
+    padding: 60px 20px 30px;
+    background: linear-gradient(180deg, rgba(108,99,255,0.06) 0%, transparent 100%);
+  }
+  .hero h1 {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 8px;
+  }
+  .hero h1 span { color: var(--accent); }
+  .hero p {
+    color: var(--text-dim);
+    font-size: 15px;
+    max-width: 500px;
+    margin: 0 auto 28px;
+    line-height: 1.5;
+  }
+
+  /* ── Search ── */
+  .search-wrap {
+    max-width: 640px;
+    margin: 0 auto;
+    position: relative;
+  }
+  .search-input {
+    width: 100%;
+    padding: 14px 50px 14px 18px;
+    font-size: 15px;
+    font-family: inherit;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    color: var(--text);
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .search-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+  .search-input::placeholder { color: var(--text-dim); }
+  .search-btn {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s;
+  }
+  .search-btn:hover { opacity: 0.85; }
+  .search-btn svg { width: 16px; height: 16px; fill: white; }
+  .meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 640px;
+    margin: 12px auto 0;
+    font-size: 13px;
+    color: var(--text-dim);
+    min-height: 20px;
+  }
+  .meta-row .error { color: var(--red); }
+
+  /* ── Results ── */
+  .results {
+    max-width: 720px;
+    margin: 24px auto 60px;
+    padding: 0 20px;
+  }
+  .result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 12px;
+    transition: border-color 0.15s;
+  }
+  .result-card:hover { border-color: var(--accent); }
+  .result-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .result-source {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-glow);
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+  .result-score {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+  }
+  .result-pages {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-left: 8px;
+  }
+  .result-text {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .result-text mark {
+    background: rgba(108,99,255,0.25);
+    color: var(--text);
+    border-radius: 2px;
+    padding: 0 2px;
+  }
+
+  /* ── Files ── */
+  .files-section {
+    max-width: 720px;
+    margin: 0 auto 60px;
+    padding: 0 20px;
+  }
+  .files-section h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--text-dim);
+  }
+  .file-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 10px;
+  }
+  .file-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  .file-card:hover { border-color: var(--accent); }
+  .file-card .name {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .file-card .detail {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .file-card .bar {
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+  .file-card .bar-fill {
+    height: 100%;
+    background: var(--green);
+    border-radius: 2px;
+    transition: width 0.3s;
+  }
+
+  /* ── Loading ── */
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+
+  /* ── Footer ── */
+  footer {
+    text-align: center;
+    padding: 20px;
+    font-size: 12px;
+    color: var(--text-dim);
+    border-top: 1px solid var(--border);
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <h1><span>DARWIN</span> Search</h1>
+  <p>Local-first RAG engine. Search your ingested documents instantly.</p>
+  <div class="search-wrap">
+    <input type="text" class="search-input" id="search" placeholder="Search your documents..." autofocus>
+    <button class="search-btn" onclick="doSearch()" aria-label="Search">
+      <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+    </button>
+  </div>
+  <div class="meta-row" id="meta"></div>
+</div>
+
+<div class="results" id="results"></div>
+
+<div class="files-section" id="files-section" style="display:none">
+  <h2>Indexed Documents</h2>
+  <div class="file-grid" id="files"></div>
+</div>
+
+<footer>
+  DARWIN RAG &mdash; <a href="https://github.com/BrightDotDev/DARWIN">GitHub</a> &middot; <a href="https://pypi.org/project/darwin-rag/">PyPI</a>
+</footer>
+
+<script>
+const API = window.location.origin;
+let debounceTimer;
+
+document.getElementById('search').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doSearch();
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => { if (e.target.value.length >= 3) doSearch(); }, 400);
+});
+
+async function doSearch() {
+  const q = document.getElementById('search').value.trim();
+  if (!q) return;
+  const meta = document.getElementById('meta');
+  const results = document.getElementById('results');
+  meta.innerHTML = '<span class="spinner"></span> Searching...';
+  results.innerHTML = '';
+
+  try {
+    const t0 = performance.now();
+    const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&top_k=5`);
+    const data = await r.json();
+    const ms = Math.round(performance.now() - t0);
+
+    if (data.error) {
+      meta.innerHTML = `<span class="error">${data.error}</span>`;
+      return;
+    }
+
+    if (data.count === 0) {
+      meta.textContent = `No results (${ms}ms)`;
+      results.innerHTML = '<div class="empty-state">No matching passages found.</div>';
+      return;
+    }
+
+    meta.textContent = `${data.count} result${data.count !== 1 ? 's' : ''} in ${ms}ms`;
+
+    data.passages.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      const highlighted = highlightQuery(p.text, q);
+      const pages = p.pages ? `<span class="result-pages">pp. ${p.pages}</span>` : '';
+      card.innerHTML = `
+        <div class="result-header">
+          <span class="result-source">${escapeHtml(p.source || 'unknown')}</span>
+          <span><span class="result-score">${p.score}</span>${pages}</span>
+        </div>
+        <div class="result-text">${highlighted}</div>
+      `;
+      results.appendChild(card);
+    });
+  } catch (e) {
+    meta.innerHTML = `<span class="error">Connection error — is the server running?</span>`;
+  }
+}
+
+function highlightQuery(text, query) {
+  const escaped = escapeHtml(text.substring(0, 600));
+  const words = query.split(/\s+/).filter(w => w.length > 2);
+  if (!words.length) return escaped;
+  const re = new RegExp(`(${words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+  return escaped.replace(re, '<mark>$1</mark>');
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function loadFiles() {
+  try {
+    const r = await fetch(`${API}/api/files`);
+    const data = await r.json();
+    if (data.error || !data.files.length) return;
+    document.getElementById('files-section').style.display = 'block';
+    const grid = document.getElementById('files');
+    data.files.forEach(f => {
+      const card = document.createElement('div');
+      card.className = 'file-card';
+      card.onclick = () => {
+        document.getElementById('search').value = f.name.replace(/\.[^.]+$/, '');
+        doSearch();
+      };
+      const pct = typeof f.progress === 'number' ? f.progress : 0;
+      card.innerHTML = `
+        <div class="name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+        <div class="detail">${f.chunks || 0} chunks</div>
+        <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+      `;
+      grid.appendChild(card);
+    });
+  } catch (e) {}
+}
+
+loadFiles();
+</script>
+</body>
+</html>

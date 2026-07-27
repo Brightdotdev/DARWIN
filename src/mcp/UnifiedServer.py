@@ -279,6 +279,61 @@ class UnifiedServer:
             from src.core.Logger.lib import ASCII_BANNER
             return JSONResponse({"banner": ASCII_BANNER})
 
+        @mcp.custom_route("/demo", methods=["GET"])
+        async def demo_page(request: Request):
+            """Serve the interactive demo UI."""
+            from starlette.responses import HTMLResponse
+            html_path = Path(__file__).parent / "demo.html"
+            return HTMLResponse(html_path.read_text(encoding="utf-8"))
+
+        @mcp.custom_route("/api/search", methods=["GET"])
+        async def api_search(request: Request) -> JSONResponse:
+            """Simple search API for the demo UI."""
+            query = request.query_params.get("q", "").strip()
+            if not query:
+                return JSONResponse({"error": "missing query parameter ?q="}, status_code=400)
+            try:
+                top_k = min(int(request.query_params.get("top_k", 5)), 20)
+            except (ValueError, TypeError):
+                top_k = 5
+            try:
+                from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                from src.core.Orchestrators.lib import RetrievalParameters
+                ro = RetrievalOrchestrator(store=orch.store)
+                params = RetrievalParameters(query=query, top_k=top_k, save=False)
+                ctx = ro.retrieve_and_resolve(params)
+                if ctx is None or ctx.is_empty():
+                    return JSONResponse({"query": query, "passages": [], "count": 0})
+                passages = []
+                for p in ctx.passages:
+                    meta = p.metadata if hasattr(p, "metadata") else {}
+                    passages.append({
+                        "text": p.text if hasattr(p, "text") else str(p),
+                        "score": round(meta.avg_score if hasattr(meta, "avg_score") else 0, 3),
+                        "source": meta.source if hasattr(meta, "source") else "",
+                        "pages": f"{meta.page_start}-{meta.page_end}" if hasattr(meta, "page_start") else "",
+                    })
+                return JSONResponse({"query": query, "passages": passages, "count": len(passages)})
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
+        @mcp.custom_route("/api/files", methods=["GET"])
+        async def api_files(request: Request) -> JSONResponse:
+            """List all files in the store."""
+            try:
+                report = orch.store.get_pipeline_report()
+                files = []
+                for f in (report if isinstance(report, list) else []):
+                    files.append({
+                        "name": f.get("filename", ""),
+                        "chunks": f.get("chunk_count", 0),
+                        "progress": f.get("progress_percent", 0),
+                        "searchable": f.get("core_complete", False),
+                    })
+                return JSONResponse({"files": files, "count": len(files)})
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=500)
+
         self._mcp = mcp
         return mcp
 
