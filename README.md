@@ -1,73 +1,177 @@
+<!-- mcp-name: io.github.Brightdotdev/darwin-rag -->
+
 # Darwin RAG
 
-Local-first RAG engine. Ingest documents, index them with BM25 and embeddings, and search via hybrid/semantic/keyword retrieval. Runs as an MCP server for AI agent integration or via CLI. All local, all offline-capable.
+A local-first RAG engine that ingests documents, indexes them with BM25 + dense embeddings, and exposes search via an MCP server for AI agent integration.
 
-Built by [BrightDotDev](https://github.com/brightdotdev).
+- **Ingestion** — PDF, Markdown, HTML, images (OCR), CSV, Excel, ODS, URLs
+- **Indexing** — BM25 keyword + dense embedding hybrid index with configurable chunking strategies
+- **Search** — Hybrid, semantic, or keyword retrieval with reranking, diversity rerank, and structural penalties
+- **Generation** — LLM-backed answer synthesis via LiteLLM (OpenAI, Anthropic, Gemini, etc.)
+- **Observability** — Structured logging with per-session history, queryable via MCP
+- **Isolation** — Multiple independent stores for tenant/project separation
+- **Deployment** — stdio (AI agent subprocess), SSE, or Streamable HTTP; Docker-ready
+- **Local-first** — Everything runs locally, fully offline-capable after setup
 
+Built by [BrightDotDev](https://github.com/brightdotdev).  
 [![License: MIT with Attribution](https://img.shields.io/badge/License-MIT%20with%20Attribution-blue.svg)](LICENSE)
 
 ---
 
-## Setup
+## Quick Start
 
-Internet is required for first-time setup to download and validate models. After that, everything runs offline.
-
-### Interactive (guided)
-
-Detects your hardware, shows available models, lets you pick. Takes about 2 minutes.
+### 1. Install
 
 ```bash
 pip install darwin-rag
-darwin-admin setup interactive
 ```
 
-### One-shot: required (embedding only)
-
-Downloads and configures only the embedding model. No prompts, no choices. Fastest path to a working install.
+### 2. Set up models
 
 ```bash
+# Interactive — detects hardware, pick your models
+darwin-admin setup interactive
+
+# Or one-shot (embedding-only, no prompts)
 darwin-admin setup --preset required
 ```
 
-### One-shot: recommended (embedding + reranker + OCR)
-
-Also downloads a reranker and OCR model. Better search quality out of the box.
+### 3. Start the MCP server & connect
 
 ```bash
-darwin-admin setup --preset recommended
-```
+# stdio mode — for AI agent subprocess (Claude Desktop, Cursor, etc.)
+darwin mcp
 
-After setup, start the MCP server:
-
-```bash
+# Or HTTP mode — for remote clients
 darwin mcp --http --port 8765
 ```
 
-For a full setup walkthrough including Docker, from source, and API key configuration, see [docs/setup.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/setup.md).
+Configure your MCP client:
 
----
-
-## Connecting your agent
-
-```bash
-# Generate config for Claude Desktop, Cursor, etc.
-darwin config claude
-
-# Generate config for all clients
-darwin config all --copy
+```json
+{
+  "mcpServers": {
+    "darwin": {
+      "command": "darwin",
+      "args": ["mcp"],
+      "env": {
+        "OPENAI_API_KEY": "sk-..."  // At least one LLM provider key
+      }
+    }
+  }
+}
 ```
 
-Or point any MCP client directly:
-- **SSE:** `http://localhost:8765/sse`
-- **HTTP:** `http://localhost:8765/mcp`
+Or generate config automatically:
+
+```bash
+darwin config claude          # Claude Desktop config
+darwin config cursor          # Cursor config
+darwin config all --copy      # All clients + copy to clipboard
+```
 
 ---
 
-## Commands
+## MCP Tools
 
-**`darwin`** — user CLI (mcp, config)
+| Tool | Description |
+|------|-------------|
+| `search_darwin` | Query the knowledge base with hybrid/semantic/keyword search |
+| `get_search_results` | List saved search results |
+| `get_search_result_by_id` | Load a saved search result by filename |
+| `run_pipeline` | Ingest + index documents from a path or URL |
+| `purge_artifacts` | Delete pipeline artifacts for specific files |
+| `create_store` | Create a new isolated data store |
+| `list_files` | List all tracked files with pipeline status |
+| `file_status` | Detailed status for a single file across all stages |
+| `get_logs` | Query session logs (oldest first, INFO excluded) |
 
-**`darwin-admin`** — power-user CLI (setup, models, store, pipeline, search, logs, system, uninstall, status)
+> Full documentation: [docs/mcp.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/mcp.md)
+
+---
+
+## Remote / HTTP Mode
+
+Start the server on a network-accessible endpoint:
+
+```bash
+# SSE transport (legacy)
+darwin mcp --sse --host 0.0.0.0 --port 8765
+
+# Streamable HTTP transport (recommended for production)
+darwin mcp --http --host 0.0.0.0 --port 8765
+```
+
+Configure your MCP client with the URL:
+
+```json
+{
+  "mcpServers": {
+    "darwin": {
+      "url": "http://your-host:8765/mcp"  // or /sse for SSE mode
+    }
+  }
+}
+```
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENAI_API_KEY` | No* | OpenAI provider key |
+| `ANTHROPIC_API_KEY` | No* | Anthropic provider key |
+| `GEMINI_API_KEY` | No* | Google Gemini provider key |
+| `MISTRAL_API_KEY` | No* | Mistral AI provider key |
+| `GROQ_API_KEY` | No* | Groq provider key |
+| `COHERE_API_KEY` | No* | Cohere provider key |
+| `TOGETHER_API_KEY` | No* | Together AI provider key |
+| `OPENROUTER_API_KEY` | No* | OpenRouter provider key |
+| `DEEPSEEK_API_KEY` | No* | DeepSeek provider key |
+| `DARWIN_BASE_DIR` | No | Override the base data directory |
+| `NO_COLOR` | No | Set to any value to disable ANSI color output |
+
+*\* At least one LLM provider key is required for answer generation. Search/indexing works without any.*
+
+---
+
+## Setup Details
+
+| Command | What it does |
+|---------|-------------|
+| `darwin-admin setup interactive` | Guided setup — detect hardware, choose models |
+| `darwin-admin setup --preset required` | Download embedding model only (fastest) |
+| `darwin-admin setup --preset recommended` | Embedding + reranker + OCR models |
+| `darwin-admin setup logging` | Reconfigure logging only |
+| `darwin-admin setup validate` | Validate current setup |
+
+See [docs/setup.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/setup.md) for the full walkthrough including Docker, from-source install, and API key configuration.
+
+---
+
+## CLI Reference
+
+**`darwin`** — User CLI
+
+| Command | Description |
+|---------|-------------|
+| `darwin mcp` | Start MCP server (stdio, `--sse` or `--http` for network) |
+| `darwin config [client]` | Generate MCP client config |
+
+**`darwin-admin`** — Power-user CLI
+
+| Command | Description |
+|---------|-------------|
+| `darwin-admin setup` | Setup models, logging, and configuration |
+| `darwin-admin status` | System status overview |
+| `darwin-admin models` | Model registry: list, install, switch, keys |
+| `darwin-admin store` | Data store: status, files, audit, health, repair |
+| `darwin-admin pipeline` | Ingestion pipeline: run, ingest, index, purge |
+| `darwin-admin search` | Interactive search |
+| `darwin-admin logs` | Structured log viewer and management |
+| `darwin-admin system` | System information |
+| `darwin-admin uninstall` | Remove Darwin data and configuration |
 
 See [docs/admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.md) for the full command reference.
 
@@ -76,14 +180,14 @@ See [docs/admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.
 ## Documentation
 
 | Doc | What |
-|---|---|
+|-----|------|
 | [setup.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/setup.md) | Full setup walkthrough |
-| [architecture.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/architecture.md) | For developers and contributors |
-| [mcp.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/mcp.md) | MCP server, tools, resources |
+| [mcp.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/mcp.md) | MCP server, tools, resources, transports |
 | [admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.md) | Admin CLI reference |
-| [storage.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/storage.md) | DarwinStore |
+| [architecture.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/architecture.md) | For developers and contributors |
 | [pipeline.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/pipeline.md) | Ingestion & indexing |
 | [retrieval.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/retrieval.md) | Search engine |
+| [storage.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/storage.md) | DarwinStore |
 | [models.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/models.md) | Model registry & inference |
 | [logger.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/logger.md) | Structured logging |
 | [orchestrators.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/orchestrators.md) | High-level business logic |

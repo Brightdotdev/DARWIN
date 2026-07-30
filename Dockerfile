@@ -32,7 +32,10 @@ RUN mkdir -p /data && chown darwin:darwin /data
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
 USER darwin
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["darwin", "mcp", "--sse", "--port", "8080"]
+CMD ["darwin", "mcp", "--http", "--port", "8080"]

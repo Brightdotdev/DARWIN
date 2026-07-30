@@ -84,7 +84,7 @@ def handle_embedding(args: EmbeddingArgs, store: DarwinStore) -> None:
 
     model_key = get_active_model(ModelCategory.EMBEDDING.value.lower())
     if not model_key:
-        darwin.error("No embedding model configured — run setup first")
+        darwin.error("No embedding model configured — run setup first :: darwin-admin setup")
         return
 
     preset = get_preset(model_key)

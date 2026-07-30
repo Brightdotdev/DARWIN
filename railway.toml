@@ -1,0 +1,14 @@
+[build]
+  builder = "DOCKERFILE"
+  dockerfilePath = "./Dockerfile"
+
+[deploy]
+  startCommand = "darwin mcp --http --host 0.0.0.0 --port $PORT"
+  healthcheckPath = "/health"
+  healthcheckTimeout = 10
+  restartPolicyType = "on_failure"
+
+[volumes]
+  [volumes.data]
+    mountPath = "/data"
+    sizeGb = 10

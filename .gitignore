@@ -74,7 +74,8 @@ htmlcov/
 *.local
 secret.*
 secrets.*
-
+test_*
+info.txt
 # ──────────────────────────────────────────
 # Darwin-specific (your project)
 # ──────────────────────────────────────────
