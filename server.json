@@ -1,0 +1,60 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Brightdotdev/darwin-rag",
+  "description": "Local-first RAG engine with MCP server for AI agent integration.",
+  "title": "Darwin RAG",
+  "repository": {
+    "url": "https://github.com/Brightdotdev/DARWIN",
+    "source": "github"
+  },
+  "version": "0.2.13",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "darwin-rag",
+      "version": "0.2.13",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "OPENAI_API_KEY",
+          "description": "OpenAI API key for LLM answer generation",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "description": "Anthropic API key for LLM answer generation",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "GEMINI_API_KEY",
+          "description": "Google Gemini API key",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "DARWIN_BASE_DIR",
+          "description": "Override the base data directory",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://your-host.com/mcp"
+    }
+  ]
+}

@@ -33,6 +33,7 @@ test_summarizer_results.txt
 .exe
 *.exe
 *.json
+!server.json
 # ──────────────────────────────────────────
 # Virtual Environment & Dependencies
 # ──────────────────────────────────────────
@@ -76,6 +77,7 @@ secret.*
 secrets.*
 test_*
 info.txt
+.mcpregistry_*_token
 # ──────────────────────────────────────────
 # Darwin-specific (your project)
 # ──────────────────────────────────────────
