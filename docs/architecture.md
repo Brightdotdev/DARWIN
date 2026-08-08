@@ -170,7 +170,7 @@ Resources: `darwin://store/report` (pipeline report), `darwin://search/results` 
 
 Darwin uses three config files in your platform's data directory:
 
-- **`darwin.json`** — models, API keys, environment settings. Written by `darwin-admin setup`.
+- **`darwin.json`** — setup completion record. Written (stamped with the last setup time) by `darwin-admin setup`.
 - **`logging.json`** — log mode, SSE port, retention. Written by setup, read by the MCP server at startup.
 - **`models.json`** — active model per category. Updated when you switch models.
 

@@ -29,7 +29,7 @@ darwin mcp --http --port 8765  # HTTP (for remote agents, Docker, browser)
 
 ### Optional: spaCy NLP support
 
-spaCy is an optional extra for NLP features (entity recognition, summarization):
+spaCy is an optional extra for NLP features (entity recognition, summarization)[experimental]:
 
 ```bash
 pip install "darwin-rag[nlp]"
@@ -80,7 +80,7 @@ Open `http://localhost:8080/dashboard` in your browser to watch logs in real tim
 
 ### Networking
 
-By default, the MCP server is bound to `127.0.0.1:8080` — accessible only from the host machine. This is the right setup when your AI agent (Claude Desktop, Cursor, etc.) runs on the same machine as Docker.
+By default, the MCP server is bound to `127.0.0.1:8080` — accessible only from the host machine. This works when your AI agent (Claude Desktop, Cursor, etc.) runs on the same machine as Docker.
 
 If your agent runs in a **different container**, you need container-to-container networking. The compose file includes a `darwin-net` bridge network for this:
 
@@ -131,6 +131,7 @@ All config lives in your platform's data directory:
 
 | File | Purpose |
 |---|---|
-| `darwin.json` | Models, API keys, environment |
+| `darwin.json` | Setup completion record (stamped by `darwin-admin setup`) |
 | `logging.json` | Log mode, SSE port, retention |
 | `models.json` | Active model per category |
+| keychain | API keys (set via `darwin-admin setup` / `KeyManager`, never stored in a config file) |

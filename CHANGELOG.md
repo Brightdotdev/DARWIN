@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.14 — 2026-08-08
+
+Stability and accuracy release.
+
+### What's new
+- **Honest config layout** — `darwin.json` is now written by `darwin-admin setup` as a setup-completion record. `setup validate` no longer reports it as missing on fresh installs (nothing was ever writing it before).
+- **Docs accuracy** — setup/admin/architecture docs now state where settings really live: `models.json` for model selections, `logging.json` for logging, and the OS keychain for API keys. Removed the incorrect claim that `darwin.json` stores models/keys/environment.
+- **MCP registry manifest cleanup** — removed the placeholder `https://your-host.com/mcp` remotes entry from `server.json`; the registry entry is now pip stdio via `darwin mcp`.
+- **setup.md** — marked spaCy NLP support as experimental; clarified Docker networking wording.
+
 ## v0.2.13 — 2026-07-29
 
 MCP Registry release.

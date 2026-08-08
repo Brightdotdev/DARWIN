@@ -165,7 +165,7 @@ Step 5: Logging
 
 When run, setup checks three config files via `SetupStatus`:
 
-- `darwin.json` — setup config (models, keys, environment)
+- `darwin.json` — setup completion record (stamped by `darwin-admin setup`)
 - `logging.json` — logging mode, SSE port, retention
 - `models.json` — active model per category
 

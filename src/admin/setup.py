@@ -107,6 +107,21 @@ def _show_setup_status(status: SetupStatus, content: dict) -> None:
     _r._out()
 
 
+def _write_darwin_config() -> None:
+    """Write darwin.json — stamp when setup last completed.
+
+    darwin.json is a lightweight completion marker. Real settings live in
+    logging.json (logging) and models.json (model selections); API keys are
+    stored in the OS keychain via KeyManager.
+    """
+    from src.lib.AppPaths import default_darwin_config
+
+    atomic_write_json(
+        default_darwin_config(),
+        {"setup_completed": time.strftime("%Y-%m-%d %H:%M:%S")},
+    )
+
+
 # ══════════════════════════════════════════════════════════════
 # Disk impact
 # ══════════════════════════════════════════════════════════════
@@ -565,6 +580,7 @@ def _setup_full_interactive(_get_models, yes: bool = False) -> None:
             _r.warn(impact.warning)
 
     _r._out()
+    _write_darwin_config()
     _r.ok("Setup complete")
     _r.next_steps([
         "darwin mcp               # Start the MCP server",
@@ -634,6 +650,7 @@ def cmd_setup_profile(args: SetupProfileArgs, _get_models) -> None:
     results = models.setup_profile(
         profile=args.profile, auto_download=not args.no_download
     )
+    _write_darwin_config()
     _r.header(f"Setup Profile: {args.profile}")
     for cat, res in results.items():
         if res.success:
@@ -664,6 +681,7 @@ def cmd_setup_onboard(args: SetupOnboardArgs, _get_models) -> None:
     else:
         prefs = None
     report = models.onboard(preferences=prefs, auto_download=not args.no_download)
+    _write_darwin_config()
     summary = report.get("summary", {})
     _r.header("Onboard Report")
     for cat in summary.get("ready", []):
@@ -955,6 +973,7 @@ def _setup_preset(args: SetupPresetArgs, _get_models) -> None:
             all_ok = False
 
     _setup_logging_defaults()
+    _write_darwin_config()
 
     if all_ok:
         _r.ok("Setup complete")

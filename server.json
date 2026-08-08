@@ -7,13 +7,13 @@
     "url": "https://github.com/Brightdotdev/DARWIN",
     "source": "github"
   },
-  "version": "0.2.13",
+  "version": "0.2.14",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "darwin-rag",
-      "version": "0.2.13",
+      "version": "0.2.14",
       "transport": {
         "type": "stdio"
       },
@@ -49,12 +49,6 @@
           "isSecret": false
         }
       ]
-    }
-  ],
-  "remotes": [
-    {
-      "type": "streamable-http",
-      "url": "https://your-host.com/mcp"
     }
   ]
 }
