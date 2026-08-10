@@ -4,21 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darwin-rag"
-version = "0.2.14"
-description = "DARWIN — Local-first RAG engine with API + ONNX embedding support"
+version = "0.2.15"
+description = "Local-first RAG knowledge base with hybrid search (BM25 + embeddings), exposed to AI agents via MCP — fully offline-capable."
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
+keywords = [
+    "rag",
+    "retrieval-augmented-generation",
+    "knowledge-base",
+    "knowledgebase",
+    "mcp",
+    "model-context-protocol",
+    "llm",
+    "ai-agent",
+    "embedding",
+    "vector-search",
+    "bm25",
+    "hybrid-search",
+    "semantic-search",
+    "local-ai",
+    "offline",
+    "private",
+]
 license = "MIT"
 requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Indexing",
+    "Topic :: Text Processing :: Markup",
     "Operating System :: OS Independent",
 ]
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.15 — 2026-08-08
+
+Discoverability release.
+
+### What's new
+- **PyPI search optimization** — added `keywords` (rag, knowledge-base, mcp, bm25, hybrid-search, local-ai, offline, …), Information Retrieval classifiers, and a keyword-rich summary so Darwin surfaces for "local RAG", "MCP knowledge base", and related searches.
+- **MCP registry republished** at 0.2.15 with the updated metadata.
+
 ## v0.2.14 — 2026-08-08
 
 Stability and accuracy release.
