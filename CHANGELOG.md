@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.2.16 — 2026-08-11
+
+Demo UI release.
+
+### What's new
+- **File filtering in the demo UI** — `/demo` file cards are now a real multi-select: pick one or more indexed documents and search only those. Active filters show as chips with per-file removal and a "Clear all".
+- **`/api/search` supports `files`** — comma-separated `?files=` param restricts retrieval to the named documents (backed by `RetrievalParameters.files`), so the same filtering works for any client hitting the HTTP API, not just the web UI.
+- **`/api/search` response includes the active `files` scope** so callers can confirm the filter applied.
+
 ## v0.2.15 — 2026-08-08
 
 Discoverability release.

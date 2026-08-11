@@ -296,14 +296,16 @@ class UnifiedServer:
                 top_k = min(int(request.query_params.get("top_k", 5)), 20)
             except (ValueError, TypeError):
                 top_k = 5
+            files_raw = request.query_params.get("files", "").strip()
+            files = [f.strip() for f in files_raw.split(",") if f.strip()] if files_raw else None
             try:
                 from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
                 from src.core.Orchestrators.lib import RetrievalParameters
                 ro = RetrievalOrchestrator(store=orch.store)
-                params = RetrievalParameters(query=query, top_k=top_k, save=False)
+                params = RetrievalParameters(query=query, top_k=top_k, save=False, files=files)
                 ctx = ro.retrieve_and_resolve(params)
                 if ctx is None or ctx.is_empty():
-                    return JSONResponse({"query": query, "passages": [], "count": 0})
+                    return JSONResponse({"query": query, "passages": [], "count": 0, "files": files})
                 passages = []
                 for p in ctx.passages:
                     meta = p.metadata if hasattr(p, "metadata") else {}
@@ -313,7 +315,7 @@ class UnifiedServer:
                         "source": meta.source if hasattr(meta, "source") else "",
                         "pages": f"{meta.page_start}-{meta.page_end}" if hasattr(meta, "page_start") else "",
                     })
-                return JSONResponse({"query": query, "passages": passages, "count": len(passages)})
+                return JSONResponse({"query": query, "passages": passages, "count": len(passages), "files": files})
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
 

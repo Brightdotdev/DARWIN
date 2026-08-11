@@ -203,6 +203,60 @@
     border-radius: 2px;
     transition: width 0.3s;
   }
+  .file-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  .file-card .check {
+    float: right;
+    color: var(--accent);
+    font-weight: 700;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .file-card.selected .check { opacity: 1; }
+
+  /* ── Filter bar ── */
+  .filter-bar {
+    max-width: 720px;
+    margin: 10px auto 0;
+    padding: 0 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .filter-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 20px;
+    cursor: pointer;
+  }
+  .filter-chip:hover { border-color: var(--red); }
+  .filter-chip .chip-x { color: var(--accent); font-weight: 700; }
+  .filter-chip:hover .chip-x { color: var(--red); }
+  .filter-clear {
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+    text-decoration: underline;
+    margin-left: auto;
+  }
+  .filter-clear:hover { color: var(--red); }
 
   /* ── Loading ── */
   .spinner {
@@ -251,6 +305,8 @@
   <div class="meta-row" id="meta"></div>
 </div>
 
+<div class="filter-bar" id="filter-bar" style="display:none"></div>
+
 <div class="results" id="results"></div>
 
 <div class="files-section" id="files-section" style="display:none">
@@ -265,6 +321,8 @@
 <script>
 const API = window.location.origin;
 let debounceTimer;
+let selectedFiles = [];
+const fileCards = {};
 
 document.getElementById('search').addEventListener('keydown', e => {
   if (e.key === 'Enter') doSearch();
@@ -282,7 +340,8 @@ async function doSearch() {
 
   try {
     const t0 = performance.now();
-    const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&top_k=5`);
+    const filesParam = selectedFiles.length ? `&files=${encodeURIComponent(selectedFiles.join(','))}` : '';
+    const r = await fetch(`${API}/api/search?q=${encodeURIComponent(q)}&top_k=5${filesParam}`);
     const data = await r.json();
     const ms = Math.round(performance.now() - t0);
 
@@ -297,7 +356,8 @@ async function doSearch() {
       return;
     }
 
-    meta.textContent = `${data.count} result${data.count !== 1 ? 's' : ''} in ${ms}ms`;
+    const scope = data.files && data.files.length ? ` · ${data.files.length} file${data.files.length !== 1 ? 's' : ''}` : '';
+    meta.textContent = `${data.count} result${data.count !== 1 ? 's' : ''} in ${ms}ms${scope}`;
 
     data.passages.forEach(p => {
       const card = document.createElement('div');
@@ -342,19 +402,59 @@ async function loadFiles() {
     data.files.forEach(f => {
       const card = document.createElement('div');
       card.className = 'file-card';
-      card.onclick = () => {
-        document.getElementById('search').value = f.name.replace(/\.[^.]+$/, '');
-        doSearch();
-      };
+      card.onclick = () => toggleFile(f.name, card);
       const pct = typeof f.progress === 'number' ? f.progress : 0;
       card.innerHTML = `
+        <span class="check">✓</span>
         <div class="name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
         <div class="detail">${f.chunks || 0} chunks</div>
         <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
       `;
+      fileCards[f.name] = card;
       grid.appendChild(card);
     });
   } catch (e) {}
+}
+
+function toggleFile(name, card) {
+  const i = selectedFiles.indexOf(name);
+  if (i >= 0) selectedFiles.splice(i, 1);
+  else selectedFiles.push(name);
+  card.classList.toggle('selected', selectedFiles.includes(name));
+  renderFilterBar();
+  doSearch();
+}
+
+function renderFilterBar() {
+  const bar = document.getElementById('filter-bar');
+  if (!selectedFiles.length) {
+    bar.style.display = 'none';
+    bar.innerHTML = '';
+    return;
+  }
+  bar.style.display = 'flex';
+  bar.innerHTML = '<span class="filter-label">Filtering:</span>' +
+    selectedFiles.map(name =>
+      `<span class="filter-chip" onclick="removeFilter('${escapeHtml(name).replace(/'/g, "\\'")}')">
+        ${escapeHtml(name)}<span class="chip-x">×</span>
+      </span>`
+    ).join('') +
+    '<span class="filter-clear" onclick="clearFilters()">Clear all</span>';
+}
+
+function removeFilter(name) {
+  const card = fileCards[name];
+  if (card) card.classList.remove('selected');
+  selectedFiles = selectedFiles.filter(f => f !== name);
+  renderFilterBar();
+  doSearch();
+}
+
+function clearFilters() {
+  Object.values(fileCards).forEach(c => c.classList.remove('selected'));
+  selectedFiles = [];
+  renderFilterBar();
+  doSearch();
 }
 
 loadFiles();
