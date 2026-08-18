@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 import numpy as np
 import pyarrow as pa
@@ -354,6 +354,234 @@ class DarwinStore(StoreSearch):
         )
         self._contents.update_meta(h, chunk_count=0)
         return removed
+
+    # --- Schema (structured data) ---
+    def save_schema(self, filename: str, schema: dict) -> None:
+        """Save structured schema metadata (keys, types, record_count)."""
+        h = self._resolve_hash(filename)
+        if h is None:
+            return
+
+        def _write():
+            schema_path = self.paths.artifact_path(h, "schema", "file")
+            schema_path.parent.mkdir(parents=True, exist_ok=True)
+            write_json(schema_path, schema)
+
+        self._write_artifact(h, "schema", _write)
+
+    def load_schema(self, filename: str) -> dict | None:
+        """Load structured schema metadata."""
+        h = self._resolve_hash(filename)
+        if h is None:
+            return None
+        cache_key = f"{h}:schema"
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        schema_path = self.paths.artifact_path(h, "schema", "file")
+        if not schema_path.exists():
+            return None
+
+        result = read_json(schema_path)
+        if result is not None:
+            self._cache.put(cache_key, result)
+        return result
+
+    def has_schema(self, filename: str) -> bool:
+        """Check if a file has structured schema metadata."""
+        h = self._resolve_hash(filename)
+        return False if h is None else self.paths.has_artifact(h, "schema")
+
+    def list_structured_files(self) -> List[str]:
+        """Return filenames of all indexed files that have structured schemas."""
+        structured = []
+        for filename in self.get_search_ready_files():
+            if self.has_schema(filename):
+                structured.append(filename)
+        return structured
+
+    def get_all_schemas(self) -> Dict[str, dict]:
+        """Return {filename: schema} for all structured files in the store.
+
+        Useful for:
+          - Discovering what structured data is available
+          - Checking for overlapping keys across files
+          - Providing schema context to AI agents
+        """
+        schemas = {}
+        for filename in self.list_structured_files():
+            schema = self.load_schema(filename)
+            if schema is not None:
+                schemas[filename] = schema
+        return schemas
+
+    def find_overlapping_keys(self) -> Dict[str, List[str]]:
+        """Find keys that appear in multiple structured files' schemas.
+
+        Returns {key_name: [list_of_files_that_have_it]} for keys
+        appearing in more than one file. Useful for disambiguation
+        when filtering across multiple files.
+        """
+        all_schemas = self.get_all_schemas()
+        key_to_files: Dict[str, List[str]] = {}
+
+        for filename, schema in all_schemas.items():
+            for key in schema.get("keys", []):
+                key_to_files.setdefault(key, []).append(filename)
+
+        return {k: files for k, files in key_to_files.items() if len(files) > 1}
+
+    def validate_filters(
+        self,
+        filters: Dict[str, Any],
+        files: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Validate filter keys/types against schemas. Returns a validation report.
+
+        Report contains:
+          - valid: dict of filters that are valid (key exists in schema)
+          - warnings: list of warning strings (missing keys, type mismatches)
+          - overlapping: dict of keys found in multiple files
+          - files_checked: list of files that were checked
+          - schemas_found: whether any schemas were found at all
+        """
+        if not filters:
+            return {
+                "valid": {},
+                "warnings": ["No filters provided"],
+                "overlapping": {},
+                "files_checked": [],
+                "schemas_found": False,
+            }
+
+        target_files = files or self.list_structured_files()
+        if not target_files:
+            return {
+                "valid": {},
+                "warnings": ["No structured files found in store"],
+                "overlapping": {},
+                "files_checked": [],
+                "schemas_found": False,
+            }
+
+        # Merge all schemas from target files
+        merged_keys: Dict[str, str] = {}  # key -> type
+        file_schemas: Dict[str, dict] = {}
+        for filename in target_files:
+            schema = self.load_schema(filename)
+            if schema is None:
+                continue
+            file_schemas[filename] = schema
+            for key, typ in schema.get("types", {}).items():
+                if key not in merged_keys:
+                    merged_keys[key] = typ
+
+        if not file_schemas:
+            return {
+                "valid": {},
+                "warnings": [f"No schemas found for files: {target_files}"],
+                "overlapping": {},
+                "files_checked": target_files,
+                "schemas_found": False,
+            }
+
+        # Check each filter
+        valid_filters = {}
+        warnings = []
+
+        # Import operator parser from StructuredSearch
+        from src.core.Retrival.StructuredSearch import _parse_filter_key, OPERATORS
+
+        for filter_key, filter_value in filters.items():
+            # Parse operator from filter key
+            field_name, operator = _parse_filter_key(filter_key)
+
+            # For nested fields, check the root key
+            root_key = field_name.split(".")[0]
+
+            # Check if the field (or root key for nested) exists in schema
+            if root_key not in merged_keys and field_name not in merged_keys:
+                available = sorted(merged_keys.keys())
+                warnings.append(
+                    f"Filter key '{field_name}' (from '{filter_key}') not found in any schema. "
+                    f"Available keys: {available}"
+                )
+                continue
+
+            # Validate operator
+            if operator not in ("exact", *OPERATORS):
+                warnings.append(
+                    f"Unknown operator '{operator}' in '{filter_key}'. "
+                    f"Supported: exact (default), {', '.join(sorted(OPERATORS))}"
+                )
+                continue
+
+            # Type check (skip for operator-based filters that change semantics)
+            if operator not in ("exists",):
+                schema_type = merged_keys.get(root_key, merged_keys.get(field_name, "str"))
+
+                if isinstance(filter_value, str):
+                    if schema_type in ("int", "float") and operator in ("gt", "lt", "gte", "lte"):
+                        try:
+                            float(filter_value)
+                        except ValueError:
+                            warnings.append(
+                                f"Filter '{filter_key}': numeric operator '{operator}' "
+                                f"requires a number, got '{filter_value}'"
+                            )
+                            continue
+                    elif schema_type in ("int", "float") and operator == "exact":
+                        try:
+                            if schema_type == "int":
+                                int(filter_value)
+                            else:
+                                float(filter_value)
+                        except ValueError:
+                            warnings.append(
+                                f"Filter '{filter_key}': schema type is {schema_type} "
+                                f"but value '{filter_value}' cannot be converted"
+                            )
+                            continue
+                    elif schema_type == "bool" and operator == "exact":
+                        if filter_value.lower() not in ("true", "false", "1", "0", "yes", "no"):
+                            warnings.append(
+                                f"Filter '{filter_key}': schema type is bool "
+                                f"but value '{filter_value}' is not a recognized boolean"
+                            )
+                            continue
+                elif isinstance(filter_value, list) and operator == "in":
+                    # In-list: each item should be checkable against schema type
+                    pass  # allow any list
+                elif operator in ("gt", "lt", "gte", "lte"):
+                    if not isinstance(filter_value, (int, float)):
+                        warnings.append(
+                            f"Filter '{filter_key}': numeric operator requires a number"
+                        )
+                        continue
+
+            valid_filters[filter_key] = filter_value
+
+        # Check overlapping keys (using parsed field names)
+        overlapping = self.find_overlapping_keys()
+        overlap_warnings = []
+        for key in valid_filters:
+            field_name, _ = _parse_filter_key(key)
+            root_key = field_name.split(".")[0]
+            if root_key in overlapping:
+                overlap_warnings.append(
+                    f"Key '{root_key}' exists in multiple files: {overlapping[root_key]}"
+                )
+
+        return {
+            "valid": valid_filters,
+            "warnings": warnings + overlap_warnings,
+            "overlapping": {k: v for k, v in overlapping.items() if k in [
+                _parse_filter_key(key)[0].split(".")[0] for key in valid_filters
+            ]},
+            "files_checked": sorted(file_schemas.keys()),
+            "schemas_found": True,
+        }
 
     # --- Embeddings ---
     def has_embeddings(self, filename: str) -> bool:

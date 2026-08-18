@@ -48,11 +48,16 @@ from src.core.Retrival.OrchestratorTypes import (
 )
 
 from src.core.Orchestrators.lib import RetrievalParameters as RetrievalInput  # public API
+from src.core.Orchestrators.lib import StructuredSearchParams  # structured search API
 
 
 class RetrievalOrchestrator:
     """
     Orchestrates retrieval: retrieve, filter, penalize, merge, and resolve passages.
+
+    Public API:
+      - retrieve_and_resolve(params)  →  text/hybrid/semantic search
+      - search_lists(params)          →  structured search (filter-by-fields + hybrid fallback)
     """
 
     def __init__(self, store: DarwinStore, config: Optional[RetrievalInput] = None):
@@ -117,6 +122,207 @@ class RetrievalOrchestrator:
             from src.lib.PrettyTraceback import darwin_traceback
             darwin_traceback(e, label="RetrievalOrchestrator._save_results")
             return False
+
+    def search_lists(
+        self,
+        params: Optional[StructuredSearchParams] = None,
+    ) -> Optional[RetrievalContext]:
+        """Public API — structured search with hybrid text fallback.
+
+        Orchestrates structured list search following the same pattern as
+        retrieve_and_resolve(). This is the single entry point for:
+
+          - MCP tool: search_lists
+          - Admin CLI: darwin-admin search-lists
+          - Python API: orchestrator.search_lists(params)
+          - Independent testing
+
+        Flow:
+          1. If filters provided and mode in ("auto", "structured"):
+             → Filter records by field values via Polars JSON queries
+             → Apply filter_boost_factor to scores
+             → If hits found, return structured results as RetrievalContext
+          2. If no structured hits and mode == "auto":
+             → Fall back to hybrid text search via retrieve_and_resolve()
+             → Add warning about fallback
+          3. If mode == "structured" and no hits:
+             → Return empty RetrievalContext
+
+        Args:
+            params: StructuredSearchParams with filters, query, mode, etc.
+                    If None, uses default params (will raise — at least query or filters required).
+
+        Returns:
+            RetrievalContext with passages populated as structured records
+            (fields dict in metadata) or text passages (on fallback).
+            None on error.
+        """
+        search_params = params or StructuredSearchParams(query="")
+        if not search_params.query and not search_params.filters:
+            darwin.error("search_lists requires at least query or filters")
+            return None
+
+        with darwin.session("STRUCTURED_SEARCH"):
+            darwin.info(f"Structured search started")
+            darwin.info(f"Mode: {search_params.mode} | Top K: {search_params.top_k}")
+            darwin.info(f"Filters: {search_params.filters or '(none)'}")
+            darwin.info(f"Query: '{search_params.query}' (fallback)")
+            darwin.info(f"Filter boost: {search_params.filter_boost_factor}")
+            darwin.info(f"Files: {search_params.files or '(all structured)'}")
+
+            # ── Step 1: Try structured filter search ──────────────────────
+            has_filters = bool(search_params.filters)
+            if has_filters and search_params.mode in ("auto", "structured"):
+                from src.core.Retrival.StructuredSearch import search_structured
+
+                results, mode_used = search_structured(
+                    store=self.store,
+                    query=search_params.query,
+                    filters=search_params.filters,
+                    top_k=search_params.top_k,
+                    files=search_params.files,
+                    filter_boost_factor=search_params.filter_boost_factor,
+                    mode=search_params.mode,
+                )
+
+                if results:
+                    darwin.success(
+                        f"Structured match: {len(results)} record(s) found "
+                        f"(mode={mode_used})"
+                    )
+                    return self._build_structured_context(
+                        results, mode_used, search_params
+                    )
+
+                if search_params.mode == "structured":
+                    darwin.info("No structured matches (explicit structured mode)")
+                    return RetrievalContext(
+                        query=search_params.query,
+                        method="structured",
+                        passages=[],
+                        total_passages=0,
+                        total_chars=0,
+                        sources_used=[],
+                        max_score=0.0,
+                        avg_score=0.0,
+                        elapsed_ms=0,
+                        fallback_used=False,
+                        fallback_reason=None,
+                    )
+
+                darwin.info("No structured matches — falling back to text search")
+
+            # ── Step 2: Hybrid text fallback ──────────────────────────────
+            if search_params.query:
+                darwin.info("Executing hybrid text fallback")
+                fallback_params = RetrievalInput(
+                    query=search_params.query,
+                    files=search_params.files or [],
+                    top_k=search_params.top_k,
+                    rerank=search_params.rerank,
+                    save=False,
+                )
+                ctx = self.retrieve_and_resolve(fallback_params)
+                if ctx is not None and not ctx.is_empty():
+                    # Annotate that this was a fallback
+                    ctx.fallback_used = True
+                    ctx.fallback_reason = (
+                        "No structured match found — returned text-based results"
+                    )
+                    darwin.success(
+                        f"Text fallback: {ctx.total_passages} passage(s)"
+                    )
+                    return ctx
+
+            darwin.warning("No results found (structured or text)")
+            return RetrievalContext(
+                query=search_params.query,
+                passages=[],
+                total_passages=0,
+                total_chars=0,
+                sources_used=[],
+                max_score=0.0,
+                avg_score=0.0,
+                elapsed_ms=0,
+                fallback_used=False,
+                fallback_reason=None,
+            )
+
+    def _build_structured_context(
+        self,
+        results: List[Dict[str, Any]],
+        mode_used: str,
+        params: StructuredSearchParams,
+    ) -> RetrievalContext:
+        """Convert structured search results into a RetrievalContext.
+
+        Each result dict has: fields, score, source, chunk_index, heading, structural_type.
+        We pack them into ResolvedPassage objects with the fields dict attached
+        so downstream consumers (MCP, admin CLI, API) get a uniform interface.
+
+        The fields dict is attached to PassageMetadata via a `_extra` attribute
+        for structured access, and also serialized in the passage's to_dict().
+        """
+        passages: List[ResolvedPassage] = []
+        sources_used: set = set()
+
+        for r in results:
+            fields = r.get("fields", {})
+            source = r.get("source", "")
+            score = r.get("score", 0.0)
+
+            # Build a text preview from fields for passage text
+            field_parts = []
+            for k, v in fields.items():
+                if v is not None:
+                    field_parts.append(f"{k}: {v}")
+            passage_text = " | ".join(field_parts) if field_parts else json.dumps(fields)
+
+            meta = PassageMetadata(
+                source=source,
+                chunk_indices=[r.get("chunk_index", 0)],
+                chunk_count=1,
+                is_merged=False,
+                gap_filled=False,
+                page_start=0,
+                page_end=0,
+                structural_type="record",
+                penalty_factor=1.0,
+                was_penalized=False,
+                avg_score=score,
+                heading=r.get("heading", ""),
+                token_count=0,
+            )
+
+            passage = ResolvedPassage(
+                text=passage_text,
+                metadata=meta,
+            )
+
+            # Attach structured fields for downstream access
+            # Consumers check: passage.metadata._extra.get("fields")
+            meta._structured_fields = fields
+            meta._search_mode = mode_used
+
+            passages.append(passage)
+            sources_used.add(source)
+
+        total_chars = sum(len(p.text) for p in passages)
+        scores = [p.metadata.avg_score for p in passages]
+
+        return RetrievalContext(
+            query=params.query,
+            method=f"structured:{mode_used}",
+            passages=passages,
+            total_passages=len(passages),
+            total_chars=total_chars,
+            sources_used=sorted(sources_used),
+            max_score=max(scores) if scores else 0.0,
+            avg_score=sum(scores) / len(scores) if scores else 0.0,
+            elapsed_ms=0,
+            fallback_used=False,
+            fallback_reason=None,
+        )
 
     # ════════════════════════════════════════════════════════════════
     # Internal — operates on raw OrchestratorConfig
@@ -408,6 +614,16 @@ class RetrievalOrchestrator:
             if cfg.max_per_source > 0 and source_counts[r.source] >= cfg.max_per_source:
                 continue
             if (r.source, r.chunk_index) in processed:
+                continue
+
+            # Skip merging for structured records — each record stays discrete
+            if r.structural_type == "record":
+                passage = self._build_single_passage(r, cfg)
+                if passage:
+                    processed.add((r.source, r.chunk_index))
+                    passages.append(passage)
+                    total_chars += len(passage.text)
+                    source_counts[r.source] += 1
                 continue
 
             # If chunk_index is None, we cannot merge; treat as single passage.

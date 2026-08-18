@@ -34,6 +34,7 @@ class StructuralClassifierConfig:
         "copyright": 0.3,
         "cover":     0.2,
         "separator": 0.1,
+        "record":    1.0,  # structured records — full weight
         "unknown":   0.8,
     }
 

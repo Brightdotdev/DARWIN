@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.17 — 2026-08-18
+
+Structured data indexing and search.
+
+### What's new
+- **Structured list indexing** — CSVs, JSON arrays, and spreadsheets are now auto-detected and indexed as structured records (one chunk per row/record). Each record's fields are stored as a Polars struct for native filtering.
+- **`search_lists` MCP tool** — filter structured data by field values with 10 operators (`exact`, `__contains`, `__startswith`, `__endswith`, `__gt`, `__lt`, `__gte`, `__lte`, `__neq`, `__in`, `__exists`). Supports nested dot-notation fields, case-insensitive matching, and hybrid text fallback.
+- **`get_schema` MCP tool** — inspect schemas for structured files (keys, types, record counts). Four modes: single file, multiple files (overlapping key detection), list all, validate filters.
+- **`RetrievalOrchestrator.search_lists()`** — orchestrator-backed structured search with pre-filter validation, re-ranking, and session logging.
+- **Admin CLI `search-lists` subcommand** — `--query`, `--filters`, `--mode`, `--files`, `--top-k`, `--filter-boost-factor`, `--rerank`, `--validate-filters`, `--list-all`.
+- **`--index-mode` flag** on `pipeline run` — force `text` or `structured` indexing (default `auto`).
+- **Filter validation guardrails** — filter keys validated against schemas before searching; overlapping keys across files detected; type mismatches warned.
+
+### Fixes
+- **BOM handling** — CSV/JSON parsers now use `utf-8-sig` to strip byte-order marks from Excel-exported files.
+- **Polars struct extraction** — `StructuredSearch` now uses `.struct.field()` instead of `str.json_path_match()` for native struct column access.
+- **Exact match semantics** — filter `exact` operator now uses `==` instead of `str.contains()`, preventing false positives.
+
+### Docs
+- Added full documentation for `search_lists` and `get_schema` in `docs/mcp/search.md`.
+- Updated tool counts (9 → 11) in `README.md`, `docs/mcp.md`, `docs/architecture.md`.
+
 ## v0.2.16 — 2026-08-11
 
 Demo UI release.

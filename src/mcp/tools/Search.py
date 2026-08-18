@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
@@ -303,4 +303,296 @@ def register(mcp, retrieval_orch):
                 return await asyncio.get_event_loop().run_in_executor(None, _blocking)
             except Exception as e:
                 darwin.error(f"get_search_result_by_id failed: {type(e).__name__}: {e}")
+                return {"success": False, "error": str(e)}
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Search Structured Lists",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    async def search_lists(
+        ctx: Context,
+        query: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        mode: Optional[str] = "auto",
+        store: Optional[str] = None,
+        files: Optional[List[str]] = None,
+        top_k: Optional[int] = 5,
+        rerank: Optional[bool] = False,
+        filter_boost_factor: Optional[float] = 0.2,
+        save: Optional[bool] = False,
+    ) -> dict:
+        """Search structured data (JSON arrays, CSVs) by field values with hybrid text fallback.
+
+        This tool routes through RetrievalOrchestrator.search_lists(), following the same
+        orchestration pattern as search_darwin. It handles store resolution, logging,
+        session management, and result formatting.
+
+        Parameters:
+          query: Text query for hybrid fallback (optional if filters provided).
+          filters: Dict of field-value pairs to filter by (e.g. {"status": "failed"}).
+          mode: "auto" (try structured, fallback to text), "structured" (filter only),
+                or "text" (hybrid only).
+          store: Store name/path/ID (optional, uses default if not provided).
+          files: Limit to specific files (optional).
+          top_k: Max results to return (default 5).
+          rerank: Enable reranking on results (default false).
+          filter_boost_factor: Score boost for filter matches (default 0.2).
+          save: Save results to disk (default false).
+
+        Returns:
+          When structured match found:
+            {success: true, mode: "structured", records: [{fields, score, source, ...}], total, warning: null}
+          When falling back to text:
+            {success: true, mode: "text", passages: [...], total, warning: "No structured match..."}
+          When no results:
+            {success: true, mode: "structured", records: [], total: 0, warning: "No records matched..."}
+        """
+        async with darwin_bridge(ctx):
+            try:
+                from src.core.Orchestrators.lib import StructuredSearchParams
+
+                def _blocking():
+                    # Resolve store
+                    if store:
+                        from src.core.Orchestrators.lib import resolve_store
+                        resolved_store = resolve_store(store)
+                        resolved_store.bootstrap(quiet=True)
+                    else:
+                        resolved_store = retrieval_orch.store
+
+                    # ── Pre-validate filters ────────────────────────────
+                    validation_warnings = []
+                    validated_filters = filters
+                    if filters:
+                        report = resolved_store.validate_filters(filters, files)
+                        validated_filters = report.get("valid", filters)
+                        validation_warnings = report.get("warnings", [])
+
+                        if not validated_filters:
+                            return {
+                                "success": True,
+                                "mode": "structured",
+                                "records": [],
+                                "passages": [],
+                                "total": 0,
+                                "warning": (
+                                    "No valid filters after validation. "
+                                    + "; ".join(validation_warnings)
+                                ),
+                                "validation": report,
+                            }
+
+                    from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                    orch = RetrievalOrchestrator(store=resolved_store)
+
+                    params = StructuredSearchParams(
+                        query=query or "",
+                        filters=validated_filters,
+                        mode=mode or "auto",
+                        top_k=top_k or 5,
+                        files=files,
+                        filter_boost_factor=filter_boost_factor or 0.2,
+                        rerank=rerank or False,
+                        save=save or False,
+                    )
+
+                    ctx_result = orch.search_lists(params)
+
+                    if ctx_result is None or ctx_result.is_empty():
+                        warning = None
+                        if validated_filters:
+                            if mode == "structured":
+                                warning = "No records matched the specified filters"
+                            else:
+                                warning = "No structured match found — no text results either"
+                        if validation_warnings:
+                            warning = (warning + "; " if warning else "") + "; ".join(validation_warnings)
+                        return {
+                            "success": True,
+                            "mode": "structured" if validated_filters and mode != "text" else "text",
+                            "records": [],
+                            "passages": [],
+                            "total": 0,
+                            "warning": warning,
+                            "validation": {"warnings": validation_warnings} if validation_warnings else None,
+                        }
+
+                    # Determine mode from context
+                    ctx_mode = "structured" if "structured" in (ctx_result.method or "") else "text"
+
+                    if ctx_mode == "structured":
+                        # Extract fields from structured passages
+                        records = []
+                        for p in ctx_result.passages:
+                            meta = p.metadata
+                            fields = getattr(meta, "_structured_fields", {})
+                            records.append({
+                                "fields": fields,
+                                "score": meta.avg_score,
+                                "source": meta.source,
+                                "chunk_index": meta.chunk_indices[0] if meta.chunk_indices else 0,
+                                "heading": meta.heading or "",
+                            })
+                        result = {
+                            "success": True,
+                            "mode": "structured",
+                            "records": records,
+                            "passages": [],
+                            "total": ctx_result.total_passages,
+                            "warning": ctx_result.fallback_reason,
+                        }
+                    else:
+                        # Text fallback — return passages
+                        passages = [p.to_dict() for p in ctx_result.passages]
+                        result = {
+                            "success": True,
+                            "mode": "text",
+                            "records": [],
+                            "passages": passages,
+                            "total": ctx_result.total_passages,
+                            "warning": ctx_result.fallback_reason,
+                        }
+
+                    if validation_warnings:
+                        result["validation"] = {"warnings": validation_warnings}
+                    return result
+
+                import asyncio
+                return await asyncio.get_event_loop().run_in_executor(None, _blocking)
+            except Exception as e:
+                darwin.error(f"search_lists failed: {type(e).__name__}: {e}")
+                return {"success": False, "error": str(e)}
+
+    @mcp.tool(
+        annotations=ToolAnnotations(
+            title="Get Structured Schema",
+            readOnlyHint=True,
+            destructiveHint=False,
+            idempotentHint=True,
+            openWorldHint=False,
+        ),
+    )
+    async def get_schema(
+        ctx: Context,
+        file: Optional[str] = None,
+        files: Optional[List[str]] = None,
+        list_all: Optional[bool] = None,
+        validate_filters: Optional[Dict[str, Any]] = None,
+        store: Optional[str] = None,
+    ) -> dict:
+        """Get schema information for structured files (JSON arrays, CSVs).
+
+        Three modes of operation:
+
+        1. Single file: file="tickets.csv"
+           Returns schema for one file (keys, types, record_count).
+
+        2. Multiple files: files=["tickets.csv", "orders.json"]
+           Returns schemas mapped to each file. Also detects overlapping keys
+           (keys that appear in multiple files with potentially different meanings).
+
+        3. List all: list_all=true
+           Returns schemas for ALL indexed structured files in the store.
+
+        4. Validate filters: validate_filters={"status": "open", "priority": "high"}
+           Validates filter keys/types against schemas before searching.
+           Returns valid filters, warnings about missing keys or type mismatches,
+           and overlapping key detection.
+
+        If the file is not structured or not found, returns an error.
+        """
+        async with darwin_bridge(ctx):
+            try:
+                def _blocking():
+                    resolved_store = None
+                    if store:
+                        resolved_store = resolve_store(store)
+                        resolved_store.bootstrap(quiet=True)
+                    else:
+                        resolved_store = retrieval_orch.store
+
+                    # ── Validate filters mode ──────────────────────────
+                    if validate_filters is not None:
+                        report = resolved_store.validate_filters(
+                            validate_filters, files
+                        )
+                        return {
+                            "success": True,
+                            "data": report,
+                        }
+
+                    # ── List all mode ──────────────────────────────────
+                    if list_all:
+                        all_schemas = resolved_store.get_all_schemas()
+                        overlapping = resolved_store.find_overlapping_keys()
+                        return {
+                            "success": True,
+                            "data": {
+                                "schemas": all_schemas,
+                                "total_files": len(all_schemas),
+                                "overlapping_keys": overlapping,
+                            },
+                        }
+
+                    # ── Multi-file mode ────────────────────────────────
+                    if files:
+                        schemas = {}
+                        missing = []
+                        for f in files:
+                            s = resolved_store.load_schema(f)
+                            if s is None:
+                                missing.append(f)
+                            else:
+                                schemas[f] = s
+
+                        overlapping = resolved_store.find_overlapping_keys()
+                        # Only report overlapping for keys in these files
+                        all_keys = set()
+                        for s in schemas.values():
+                            all_keys.update(s.get("keys", []))
+                        relevant_overlapping = {
+                            k: v for k, v in overlapping.items()
+                            if k in all_keys
+                        }
+
+                        result = {
+                            "schemas": schemas,
+                            "found": len(schemas),
+                            "missing": missing,
+                            "overlapping_keys": relevant_overlapping,
+                        }
+                        if missing:
+                            result["warning"] = (
+                                f"No schemas found for: {missing}. "
+                                "These files may not be indexed in structured mode."
+                            )
+                        return {"success": True, "data": result}
+
+                    # ── Single file mode (default) ─────────────────────
+                    if not file:
+                        return {
+                            "success": False,
+                            "error": "Provide file, files, list_all=true, or validate_filters",
+                        }
+
+                    schema = resolved_store.load_schema(file)
+                    if schema is None:
+                        return {
+                            "success": False,
+                            "error": (
+                                f"No schema found for '{file}'. "
+                                "File may not be indexed in structured mode."
+                            ),
+                        }
+                    return {"success": True, "data": schema}
+
+                import asyncio
+                return await asyncio.get_event_loop().run_in_executor(None, _blocking)
+            except Exception as e:
+                darwin.error(f"get_schema failed: {type(e).__name__}: {e}")
                 return {"success": False, "error": str(e)}

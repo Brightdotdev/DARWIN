@@ -8,12 +8,14 @@ OPTIONAL_ARTIFACT_KEYS = {
     "embeddings": {"index_map"},
     "images": {"dir"},
     "graph_vis": {"file"},
+    "schema": {"file"},  # only present for structured files
 }
 
 ARTIFACT_MANIFEST = {
     "images": {"dir": "images/"},
     "markdown": {"source": "markdown.md"},
     "chunks": {"file": "chunks.parquet"},
+    "schema": {"file": "schema.json"},
     "vector": {"index": "vectors/vector.usearch", "meta": "vectors/vector.meta.json"},
     "embeddings": {
         "file": "vectors/embeddings.f16.npy",

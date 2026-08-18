@@ -477,6 +477,7 @@ class PipelineRunArgs:
     only_semantic: bool = False
     rerun: bool = False
     verbose: bool = False
+    index_mode: str = "auto"  # "auto", "text", or "structured"
 
 
 @dataclass(frozen=True)
@@ -535,6 +536,40 @@ class SearchArgs:
     structural_penalty_factor: Optional[float] = None
     diversity_rerank: Optional[bool] = None
     include_audit: Optional[bool] = None
+    verbose: bool = False
+
+
+@dataclass(frozen=True)
+class SearchListsArgs:
+    """Args for ``darwin-admin search-lists``.
+
+    Structured search: filter records by field values with hybrid text fallback.
+
+    Examples:
+        darwin-admin search-lists --filters status=open priority=high
+        darwin-admin search-lists --query "login bug" --filters status=open
+        darwin-admin search-lists --query "API timeout" --mode text
+        darwin-admin search-lists --filters priority=critical --files tickets.csv
+        darwin-admin search-lists --schema tickets.csv
+        darwin-admin search-lists --schema tickets.csv orders.json
+        darwin-admin search-lists --list-all
+        darwin-admin search-lists --validate-filters status=open priority=high
+    """
+    query: str = ""
+    filters: Optional[Dict[str, str]] = None
+    """Field-value pairs parsed from CLI: --filters status=open priority=high"""
+    mode: str = "auto"
+    files: Optional[List[str]] = None
+    top_k: int = 5
+    filter_boost_factor: float = 0.2
+    rerank: bool = False
+    store: Optional[str] = None
+    schema_file: Optional[List[str]] = None
+    """Show schema for one or more structured files (instead of searching)."""
+    list_all: bool = False
+    """List all structured files and their schemas."""
+    validate_filters: Optional[Dict[str, str]] = None
+    """Validate filter keys/types against schemas without searching."""
     verbose: bool = False
 
 

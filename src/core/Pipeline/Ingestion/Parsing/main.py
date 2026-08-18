@@ -22,6 +22,7 @@ from src.core.Pipeline.Ingestion.Parsing.lib import (
     url_to_slug,
     ParsingArgs,
     detect_type,
+    detect_structured,
     ExtractedImage,
     MAX_PARSING_WORKERS,
 )
@@ -33,6 +34,7 @@ from src.features.Images.ImageHandler import ImageHandler
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Logger.DarwinLogger import darwin, LogType
 from src.core.Logger.DarwinMP import DarwinMPBridge, worker_log
+from src.core.Pipeline.Ingestion.Parsing.StructuredParser import parse_structured, StructuredDocument
 
 # ── Worker initializer (shared logging queue) ────────────────────────────────
 
@@ -183,7 +185,83 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
                     darwin.error(f"Unsupported file type: {p.suffix} ({p.name})")
                     continue
                 target_paths.append(p)
-        if not target_paths and not target_urls:
+    # ── Separate structured from text files ──────────────────────────────────
+    structured_paths: List[Path] = []
+    text_paths: List[Path] = []
+
+    for path in target_paths:
+        # Use index_mode override if set, otherwise auto-detect
+        if args.index_mode == "text":
+            is_struct = False
+        elif args.index_mode == "structured":
+            is_struct = True
+        else:
+            is_struct, _ = detect_structured(path)
+
+        if is_struct:
+            structured_paths.append(path)
+        else:
+            text_paths.append(path)
+
+    # ── Handle structured files (bypass markitdown, parse directly) ──────────
+    if structured_paths:
+        darwin.info(f"  Detected {len(structured_paths)} structured file(s)")
+
+        for path in structured_paths:
+            display = path.name
+
+            # Check cache
+            if store.has_schema(display) and not args.rerun:
+                darwin.info(f"  Cache hit (schema): {display}")
+                continue
+
+            doc = parse_structured(path, display)
+
+            if doc.error:
+                darwin.error(f"  {display}: {doc.error}")
+                continue
+
+            # Save schema
+            source = store.get_source(display)
+            if not source:
+                store.register(path)
+                source = store.get_source(display)
+
+            if source:
+                store.save_schema(display, {
+                    "keys": list(doc.schema.keys()),
+                    "types": doc.schema,
+                    "record_count": doc.record_count,
+                    "file_type": doc.file_type,
+                    "index_mode": "structured",
+                    "metadata": doc.metadata,
+                })
+
+                # Save a JSON representation as "markdown" for the chunking step
+                # This allows handle_chunking to detect structured files via has_schema
+                import json as _json
+                from src.core.Storage.Transanctions import write_text_atomic
+                from src.core.Storage.StoreUtils import to_dict
+
+                embedding_text = _json.dumps(doc.records, ensure_ascii=False, default=str)
+                h = source.content_hash
+                write_text_atomic(
+                    store.paths.artifact_path(h, "markdown", "source"),
+                    embedding_text,
+                )
+                store.update_meta(h, page_count=1)
+                store._meta.update(h, "markdown", extras={
+                    "index_mode": "structured",
+                    "record_count": doc.record_count,
+                })
+                store._contents.set_stage(h, "markdown", complete=True)
+
+                darwin.success(f"  {display}: {doc.record_count} records, {len(doc.schema)} fields")
+
+    # ── Handle text files (existing markitdown path) ─────────────────────────
+    target_paths = text_paths
+
+    if not target_paths and not target_urls and not structured_paths:
             darwin.error("No valid supported files or URLs found.")
             return []
     else:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Dict, Any, List
 
 # ═══════════════════════════════════════════════════════════════════
 # Type aliases — Literal = IDE intellisense + MCP JSON Schema enum
@@ -222,6 +222,135 @@ class RetrievalParameters:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Structured Search Parameters
+# ═══════════════════════════════════════════════════════════════════
+
+StructuredSearchMode = Literal["auto", "structured", "text"]
+
+
+@dataclass
+class StructuredSearchParams:
+    """Parameters for RetrievalOrchestrator.search_lists().
+
+    Structured search filters records by field values (JSON arrays, CSVs)
+    with automatic fallback to hybrid text search when no structured
+    matches are found.
+
+    All defaults defined here — single source of truth.
+    Pass only what you need; defaults fill the rest.
+
+    Examples:
+        # Filter-only: find all open high-priority tickets
+        StructuredSearchParams(filters={"status": "open", "priority": "high"})
+
+        # Filter + text query: search within filtered results
+        StructuredSearchParams(
+            query="login bug",
+            filters={"status": "open"},
+            top_k=3,
+        )
+
+        # Text-only fallback (skip structured path entirely)
+        StructuredSearchParams(query="API timeout", mode="text")
+
+        # Structured-only (no fallback if no match)
+        StructuredSearchParams(filters={"status": "open"}, mode="structured")
+
+        # Target specific files
+        StructuredSearchParams(
+            filters={"assignee": "Bright"},
+            files=["tickets.csv"],
+        )
+
+        # Adjust filter boost strength
+        StructuredSearchParams(
+            filters={"priority": "critical"},
+            filter_boost_factor=0.5,  # stronger boost for filter matches
+        )
+    """
+
+    query: str = ""
+    """Text query for hybrid text search fallback. Optional if filters are provided.
+    When both query and filters are present, filters run first; if they match,
+    results are returned. If no structured match, hybrid search runs as fallback."""
+
+    filters: Optional[Dict[str, Any]] = None
+    """Dict of field-value pairs to filter by. Keys must match field names in the
+    structured file's schema. Values are matched exactly (string comparison).
+    Examples: {"status": "open"}, {"priority": "high", "assignee": "Bright"}."""
+
+    mode: StructuredSearchMode = "auto"
+    """Search mode:
+      - "auto" (default): Try structured filter first, fall back to hybrid text
+        search if no matches found.
+      - "structured": Filter only — return empty if no structured matches.
+        Never falls back to text search.
+      - "text": Skip structured filter entirely — run hybrid text search only.
+    """
+
+    store: Optional[str] = None
+    """Store ID, name, or path. Resolved via resolve_store(). None = default."""
+
+    files: Optional[List[str]] = None
+    """Limit search to specific files. Only files with structured schemas are
+    searched in structured mode. In text mode, this restricts hybrid search."""
+
+    top_k: int = 5
+    """Maximum number of results to return."""
+
+    filter_boost_factor: float = 0.2
+    """Additive score boost applied to records that match all filters.
+    Range: 0.0–1.0. Default 0.2 mirrors structural_penalty_factor convention.
+    Higher values rank filtered results above text-based results."""
+
+    rerank: bool = False
+    """Enable cross-encoder reranking on results (structured and text fallback)."""
+
+    save: bool = False
+    """Save search results as JSON to the results directory."""
+
+    results_dir: Optional[str] = None
+    """Custom directory for saved results. None = default ({base}/search-results/)."""
+
+    def __post_init__(self):
+        from src.core.Logger.DarwinLogger import darwin
+
+        if not isinstance(self.query, str):
+            raise TypeError(f"query must be str, got {type(self.query).__name__}")
+        self.query = self.query.strip()
+
+        valid_modes = {"auto", "structured", "text"}
+        if self.mode not in valid_modes:
+            raise ValueError(f"mode must be one of {valid_modes}, got {self.mode!r}")
+
+        if not self.query and not self.filters:
+            raise ValueError("At least one of query or filters must be provided")
+
+        def _clamp_int(val, name, lo, hi, default):
+            if val < lo:
+                darwin.warning(f"{name}={val} below minimum, clamping to {lo}")
+                return lo
+            if val > hi:
+                darwin.warning(f"{name}={val} above maximum, clamping to {hi}")
+                return hi
+            return val
+
+        def _clamp_float(val, name, lo, hi, default):
+            if val < lo:
+                darwin.warning(f"{name}={val} below range [{lo}, {hi}], clamping to {lo}")
+                return lo
+            if val > hi:
+                darwin.warning(f"{name}={val} above range [{lo}, {hi}], clamping to {hi}")
+                return hi
+            return val
+
+        self.top_k = _clamp_int(self.top_k, "top_k", 1, 1000, 5)
+        self.filter_boost_factor = _clamp_float(
+            self.filter_boost_factor, "filter_boost_factor", 0.0, 1.0, 0.2
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Pipeline Parameters
 # ═══════════════════════════════════════════════════════════════════
 
@@ -255,6 +384,7 @@ class PipelineParameters:
     only_semantic: bool = False
     rerun: bool = False
     strict: bool = True
+    index_mode: str = "auto"  # "auto", "text", or "structured"
 
     def __post_init__(self):
         from src.core.Logger.DarwinLogger import darwin
@@ -304,6 +434,7 @@ class PipelineParameters:
                 recursive=self.recursive,
                 precise=self.precise,
                 rerun=self.rerun,
+                index_mode=self.index_mode,
             )
         if "indexing" in self.stages:
             internal.indexing = IndexingArgs(

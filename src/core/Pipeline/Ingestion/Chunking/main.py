@@ -12,6 +12,7 @@ if __name__ == "__main__":
 
 from src.core.Storage.DarwinStore import DarwinStore
 from src.core.Pipeline.Ingestion.Chunking.Chunker import chunk_document
+from src.core.Pipeline.Ingestion.Chunking.StructuredChunker import chunk_structured
 from src.core.Pipeline.Ingestion.Chunking.lib import  ChunkingArgs
 from src.core.Logger.DarwinLogger import darwin
 
@@ -100,6 +101,64 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
             darwin.warning(f"{filename} 'already chunked' (use --rerun to re-chunk)")
             succeeded += 1
             continue
+
+        # ── Check if this is a structured file ──────────────────────────
+        schema = store.load_schema(filename)
+        is_structured = schema is not None
+
+        if is_structured:
+            # Structured path: use StructuredChunker
+            try:
+                import json as _json
+
+                t0 = time.perf_counter()
+
+                # Re-parse the original file to get records
+                from src.core.Pipeline.Ingestion.Parsing.StructuredParser import (
+                    parse_structured,
+                )
+                source_obj = store.get_source(filename)
+                if not source_obj or not source_obj.current_path:
+                    darwin.error(f"{filename}: source path not found, cannot re-parse")
+                    failed += 1
+                    continue
+
+                from pathlib import Path as _Path
+                doc = parse_structured(_Path(source_obj.current_path), filename)
+                if doc.error:
+                    darwin.error(f"{filename}: parse error: {doc.error}")
+                    failed += 1
+                    continue
+
+                chunks = chunk_structured(doc)
+
+                elapsed = time.perf_counter() - t0
+                darwin.info(f"  Chunked {filename} (structured) in {elapsed:.2f}s")
+
+                if not chunks:
+                    darwin.error(f"{filename} produced 0 chunks")
+                    failed += 1
+                    continue
+
+                store.save_records(filename=filename, records=chunks)
+
+                avg_tokens = sum(c.token_count for c in chunks) // len(chunks)
+                darwin.success(
+                    f"{filename}: {len(chunks)} records, "
+                    f"avg {avg_tokens} tokens"
+                )
+
+                succeeded += 1
+
+            except Exception as e:
+                import traceback
+                darwin.error(f"{filename}: {type(e).__name__}: {e}")
+                darwin.error(traceback.format_exc())
+                failed += 1
+
+            continue
+
+        # ── Text path (existing chunk_document) ─────────────────────────
 
         chunk_text = store.load_markdown(filename)
         

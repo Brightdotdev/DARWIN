@@ -65,6 +65,8 @@ class Chunk:
     overlap_direction: OverlapDirection = OverlapDirection.NONE
     links: List[ChunkLink] = field(default_factory=list)
     structural_type: Optional[str] = "body"  # CHANGED: was None — now always present
+    fields: Optional[Dict[str, Any]] = None   # structured record data (JSON/CSV rows)
+    index_mode: str = "text"                   # "text" or "structured"
     
     def __post_init__(self):
         """Ensure overlap_direction is always an Enum."""
@@ -119,6 +121,12 @@ class Chunk:
 
             # Structural type for penalty system
             "structural_type": self.structural_type,
+
+            # Structured record data (None for text-mode chunks)
+            "fields": self.fields,
+
+            # Index mode: "text" or "structured"
+            "index_mode": self.index_mode,
         }
     
     @classmethod 
@@ -153,6 +161,8 @@ class Chunk:
             overlap_direction=overlap_direction,
             links=links,
             structural_type=data.get("structural_type", "body"),
+            fields=data.get("fields"),
+            index_mode=data.get("index_mode", "text"),
         )
     
     

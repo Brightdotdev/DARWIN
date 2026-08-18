@@ -3,7 +3,7 @@ import re
 import hashlib
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Optional, List, Union, Dict
+from typing import Optional, List, Union, Dict, Tuple
 from urllib.parse import urlparse
 
 
@@ -133,6 +133,31 @@ def detect_type(path: Path) -> Optional[str]:
     return SUPPORTED_TYPES.get(path.suffix.lower())
 
 
+def detect_structured(path: Path) -> Tuple[bool, str]:
+    """
+    Check if a file should be indexed as structured data.
+    Returns (is_structured, delimiter) where delimiter is "," or "\\t".
+    For JSON: checks if it's a top-level array of objects.
+    For CSV: checks if it has a header row.
+    """
+    suffix = path.suffix.lower()
+
+    if suffix == ".json":
+        from src.core.Pipeline.Ingestion.Parsing.StructuredParser import is_structured_json
+        return is_structured_json(path), ","
+
+    if suffix in (".csv", ".tsv"):
+        from src.core.Pipeline.Ingestion.Parsing.StructuredParser import is_structured_csv
+        is_struct, delim = is_structured_csv(path)
+        return is_struct, delim
+
+    if suffix in (".xlsx", ".xls", ".ods"):
+        # Spreadsheets are always treated as structured
+        return True, ","
+
+    return False, ","
+
+
 def is_supported(path: Path) -> bool:
     return detect_type(path) is not None
 
@@ -185,6 +210,7 @@ class ParsingArgs:
     precise:           bool = False
     save:              bool = True
     cleanup:           bool = True
+    index_mode:        str = "auto"  # "auto", "text", or "structured"
 
 
 @dataclass

@@ -98,7 +98,7 @@ All Darwin components log through a global `darwin` singleton, so there's one co
 
 ### MCP (`src/mcp/`)
 
-The MCP (Model Context Protocol) server. Exposes Darwin as 8 tools + 2 resources that AI agents can call.
+The MCP (Model Context Protocol) server. Exposes Darwin as 11 tools + 2 resources that AI agents can call.
 
 Three transports: stdio (for subprocess by Claude Desktop, Cursor, etc.), SSE (legacy network), and Streamable HTTP (recommended for production). All transports share the same tools and validation logic.
 
@@ -154,13 +154,16 @@ MCP / CLI output
 | Tool | What it does |
 |---|---|
 | `search_darwin` | Query the knowledge base (hybrid/semantic/keyword) |
+| `search_lists` | Search structured data (CSVs, JSON arrays) by field values |
 | `get_search_results` | List saved search results |
 | `get_search_result_by_id` | Load a saved result by filename |
+| `get_schema` | Inspect schemas for structured files (keys, types, record counts) |
 | `run_pipeline` | Ingest + index documents from a path or URL |
 | `purge_artifacts` | Delete pipeline artifacts for specific files |
 | `create_store` | Create a new DarwinStore |
 | `list_files` | All files with pipeline status |
 | `file_status` | Detailed status for one file |
+| `get_logs` | Query session logs (INFO excluded) |
 
 Resources: `darwin://store/report` (pipeline report), `darwin://search/results` (saved search index).
 

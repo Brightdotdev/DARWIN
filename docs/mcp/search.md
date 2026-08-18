@@ -149,3 +149,165 @@ Returns the full `RetrievalContext` (same structure as `search_darwin` response 
   "error": "Result 'xyz.json' not found in {path}. Run search_darwin with save=true to create one."
 }
 ```
+
+---
+
+# search_lists
+
+Search structured data (JSON arrays, CSVs, spreadsheets) by field values with hybrid text fallback. Routes through `RetrievalOrchestrator.search_lists()` — same orchestration pattern as `search_darwin`.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `query` | string \| null | `null` | Text query for hybrid/re-ranking (optional if filters provided) |
+| `filters` | object \| null | `null` | Dict of field-value pairs to filter by (see filter syntax below) |
+| `mode` | `"auto"` \| `"structured"` \| `"text"` | `"auto"` | `"auto"` = try structured, fallback to text. `"structured"` = filter only. `"text"` = hybrid only |
+| `store` | string \| null | `null` | Store name/path/ID. `null` = default store |
+| `files` | string[] \| null | `null` | Limit search to specific structured file(s) |
+| `top_k` | int | `5` | Max results to return |
+| `rerank` | bool | `false` | Apply semantic re-ranking to filtered results |
+| `filter_boost_factor` | float | `0.2` | Score boost added to filter matches (0.0-1.0) |
+| `save` | bool | `false` | Save results to disk |
+
+### Filter syntax (Django-style double underscore operators)
+
+| Operator | Example | Description |
+|---|---|---|
+| *(exact)* | `{"status": "open"}` | Exact match (case-insensitive for strings) |
+| `__contains` | `{"title__contains": "login"}` | Substring match |
+| `__startswith` | `{"title__startswith": "error"}` | Prefix match |
+| `__endswith` | `{"title__endswith": "404"}` | Suffix match |
+| `__gt` | `{"score__gt": 5}` | Greater than |
+| `__lt` | `{"score__lt": 10}` | Less than |
+| `__gte` | `{"score__gte": 5}` | Greater than or equal |
+| `__lte` | `{"score__lte": 10}` | Less than or equal |
+| `__neq` | `{"status__neq": "closed"}` | Not equal |
+| `__in` | `{"status__in": ["open", "pending"]}` | Match any value in list |
+| `__exists` | `{"email__exists": true}` | Field existence check |
+
+Nested fields use dot-notation: `{"user.name": "Bright"}`, `{"user.role__contains": "admin"}`
+
+## Usage guidance
+
+- Use `get_schema` first to discover available fields and their types.
+- **`mode="auto"`** (default) tries structured filtering first, falls back to hybrid text search if no filter matches.
+- **`mode="structured"`** returns empty if no filters match — no text fallback.
+- **`mode="text"`** skips structured search entirely, goes straight to hybrid text.
+- Combine filters with a query for re-ranked results: `filters={"gender": "Female"}, query="nurse"` ranks filter matches by semantic similarity to "nurse".
+- `filter_boost_factor` works like `structural_penalty_factor` — additive constant added to filter match scores.
+- Use `rerank=true` to apply cross-encoder re-ranking when both `query` and `filters` are provided.
+- Call `get_schema` with `validate_filters` to pre-validate filter keys before searching.
+
+## Response (structured mode)
+
+```json
+{
+  "success": true,
+  "mode": "structured",
+  "records": [
+    {
+      "fields": {"status": "open", "priority": "high", "assignee": "Alice"},
+      "score": 1.0,
+      "source": "tickets.csv",
+      "chunk_index": 42,
+      "heading": ""
+    }
+  ],
+  "passages": [],
+  "total": 5,
+  "warning": null
+}
+```
+
+## Response (text fallback)
+
+```json
+{
+  "success": true,
+  "mode": "text",
+  "records": [],
+  "passages": [
+    {
+      "text": "Matching passage text...",
+      "metadata": { "source": "tickets.csv", "avg_score": 0.85, "..." : "..." }
+    }
+  ],
+  "total": 3,
+  "warning": "No structured matches found — fell back to hybrid text search"
+}
+```
+
+---
+
+# get_schema
+
+Get schema information for structured files (JSON arrays, CSVs, spreadsheets). Four modes of operation.
+
+## Parameters
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `file` | string \| null | `null` | Single file to inspect (e.g. `"tickets.csv"`) |
+| `files` | string[] \| null | `null` | Multiple files — returns mapped schemas + overlapping key detection |
+| `list_all` | bool \| null | `null` | `true` = return schemas for ALL indexed structured files |
+| `validate_filters` | object \| null | `null` | Filter dict to validate against schemas before searching |
+| `store` | string \| null | `null` | Store name/path/ID. `null` = default store |
+
+**Exactly one mode** must be provided: `file`, `files`, `list_all=true`, or `validate_filters`.
+
+## Usage guidance
+
+- **Single file** (`file="tickets.csv"`) — discover available fields, types, and record count.
+- **Multiple files** (`files=["a.csv", "b.json"]`) — compare schemas, detect overlapping keys that could cause ambiguous filters.
+- **List all** (`list_all=true`) — overview of every structured file in the store.
+- **Validate filters** (`validate_filters={"status": "open"}`) — pre-check filter keys/types before calling `search_lists`. Returns warnings for missing keys or type mismatches.
+
+Always call this before `search_lists` to know what fields are available and how to spell them.
+
+## Response (single file)
+
+```json
+{
+  "success": true,
+  "data": {
+    "keys": ["status", "priority", "assignee", "created_at"],
+    "types": {"status": "str", "priority": "str", "assignee": "str", "created_at": "str"},
+    "record_count": 1200,
+    "file_type": "csv",
+    "index_mode": "structured"
+  }
+}
+```
+
+## Response (list all)
+
+```json
+{
+  "success": true,
+  "data": {
+    "schemas": {
+      "tickets.csv": {"keys": ["status", "priority"], "record_count": 1200},
+      "orders.json": {"keys": ["order_id", "total"], "record_count": 500}
+    },
+    "total_files": 2,
+    "overlapping_keys": {
+      "status": ["tickets.csv", "orders.json"]
+    }
+  }
+}
+```
+
+## Response (validate filters)
+
+```json
+{
+  "success": true,
+  "data": {
+    "valid": {"status": "open"},
+    "warnings": ["Filter key 'foo' not found in any schema. Available keys: ['status', 'priority', 'assignee']"],
+    "files_checked": ["tickets.csv"],
+    "schemas_found": true
+  }
+}
+```

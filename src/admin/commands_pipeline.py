@@ -28,6 +28,7 @@ def _run_pipeline_stages(
     only_semantic: bool,
     rerun: bool,
     store_ref: str | None,
+    index_mode: str = "auto",
     _get_pipeline,
 ) -> bool:
     """Shared pipeline execution. Returns True on success."""
@@ -57,6 +58,8 @@ def _run_pipeline_stages(
         kwargs["only_kw"] = True
     if only_semantic:
         kwargs["only_semantic"] = True
+    if index_mode and index_mode != "auto":
+        kwargs["index_mode"] = index_mode
     params = PipelineInput(**kwargs)
     _r.info(f"Running pipeline stages: {', '.join(stages)}")
     result = pipe.build_pipeline(params)
@@ -84,6 +87,7 @@ def cmd_pipeline_run(args: PipelineRunArgs, _get_pipeline) -> None:
         only_semantic=args.only_semantic,
         rerun=args.rerun,
         store_ref=args.store,
+        index_mode=args.index_mode,
         _get_pipeline=_get_pipeline,
     )
 
@@ -147,6 +151,10 @@ def add_args(sub, _get_pipeline) -> None:
     r.add_argument("--only-kw", action="store_true", help="Keyword-only indexing")
     r.add_argument("--only-semantic", action="store_true", help="Semantic-only indexing")
     r.add_argument("--rerun", action="store_true", help="Re-process even if done")
+    r.add_argument(
+        "--index-mode", choices=["auto", "text", "structured"], default="auto",
+        help="Index mode: auto (detect), text (paragraph chunks), structured (record-level)",
+    )
     r.set_defaults(func=lambda a: cmd_pipeline_run(ns_to(PipelineRunArgs, a), _get_pipeline))
 
     i = sp.add_parser("ingest", help="Ingestion only (parse + chunk)")

@@ -77,8 +77,10 @@ darwin config all --copy      # All clients + copy to clipboard
 | Tool | Description |
 |------|-------------|
 | `search_darwin` | Query the knowledge base with hybrid/semantic/keyword search |
+| `search_lists` | Search structured data (CSVs, JSON arrays) by field values |
 | `get_search_results` | List saved search results |
 | `get_search_result_by_id` | Load a saved search result by filename |
+| `get_schema` | Inspect schemas for structured files (keys, types, record counts) |
 | `run_pipeline` | Ingest + index documents from a path or URL |
 | `purge_artifacts` | Delete pipeline artifacts for specific files |
 | `create_store` | Create a new isolated data store |
