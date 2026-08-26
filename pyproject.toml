@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "darwin-rag"
-version = "0.2.17"
+version = "0.2.18"
 description = "Local-first RAG knowledge base with hybrid search (BM25 + embeddings), exposed to AI agents via MCP — fully offline-capable."
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
@@ -94,20 +94,20 @@ dependencies = [
 nlp = ["spacy>=3.8.14", "pytextrank>=3.3.0", "networkx>=3.4"]
 
 [project.scripts]
-darwin = "src.cli:main"
-darwin-admin = "src.admin.cli:main"
+darwin = "cli:main"
+darwin-admin = "admin.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Brightdotdev/DARWIN"
 Repository = "https://github.com/Brightdotdev/DARWIN"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
-exclude = ["src.agent*"]
+where = ["src"]
+include = ["core*", "lib*", "darwin_mcp*", "admin*", "features*", "cli*"]
+exclude = ["agent*", "pdfs*", "__pycache__*"]
 
 [tool.setuptools.package-data]
-"src.mcp" = ["*.html", "docs/*.md"]
+"darwin_mcp" = ["*.html", "docs/*.md"]
 
 [tool.deptry.package_module_name_map]
 beautifulsoup4 = ["bs4"]

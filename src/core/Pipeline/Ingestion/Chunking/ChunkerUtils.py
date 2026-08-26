@@ -1,9 +1,9 @@
 import re
 import functools
 from typing import List, Optional, Tuple
-from src.core.Pipeline.Ingestion.Chunking.ChunkConfig import get_chunk_config
-from src.core.Pipeline.Ingestion.Chunking.ChunkCleaners import prepare_embedding_text
-from src.core.Pipeline.Ingestion.Chunking.lib import (
+from core.Pipeline.Ingestion.Chunking.ChunkConfig import get_chunk_config
+from core.Pipeline.Ingestion.Chunking.ChunkCleaners import prepare_embedding_text
+from core.Pipeline.Ingestion.Chunking.lib import (
     OverlapDirection,
     ChunkLink,
     Chunk,
@@ -12,7 +12,7 @@ from src.core.Pipeline.Ingestion.Chunking.lib import (
     TABLE_EMB_TOKEN,
     CAPTION_TOKEN,
 )
-from src.core.Pipeline.Ingestion.Chunking.StructuralClassifier import (
+from core.Pipeline.Ingestion.Chunking.StructuralClassifier import (
     classify_structural_type,
 )
 

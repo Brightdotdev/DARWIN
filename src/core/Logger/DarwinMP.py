@@ -8,7 +8,7 @@ import multiprocessing
 import threading
 from typing import Optional
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from core.Logger.DarwinLogger import darwin, LogType
 
 
 class DarwinMPBridge:

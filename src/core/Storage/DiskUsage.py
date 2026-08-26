@@ -9,10 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Callable
 
-from src.core.Storage.StorePaths import StorePaths, ARTIFACT_MANIFEST
-from src.core.Models.Lib.ModelRegistry import find_spec
-from src.core.Models.ModelStore import ModelStore
-from src.lib.AppPaths import default_models_dir
+from core.Storage.StorePaths import StorePaths, ARTIFACT_MANIFEST
+from core.Models.Lib.ModelRegistry import find_spec
+from core.Models.ModelStore import ModelStore
+from lib.AppPaths import default_models_dir
 
 # ── size helpers ─────────────────────────────────────────────────────────
 

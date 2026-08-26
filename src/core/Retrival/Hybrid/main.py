@@ -18,14 +18,14 @@ import time
 import math
 from typing import List, Dict, Any, Tuple
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
 
-from src.core.Retrival.Keyword.main import handle_keyword_search
+from core.Retrival.Keyword.main import handle_keyword_search
 
-from src.core.Retrival.Semantic.main import handle_semantic_search
+from core.Retrival.Semantic.main import handle_semantic_search
 
-from src.core.Retrival.lib import (
+from core.Retrival.lib import (
     DEFAULT_KEYWORD_WEIGHT,
     DEFAULT_POOL_SIZE,
     DEFAULT_RRF_K,
@@ -325,7 +325,7 @@ def handle_hybrid_search(
 # ---- CLI ----
 def main() -> int:
     import argparse
-    from src.core.Storage.DarwinStore import DarwinStore
+    from core.Storage.DarwinStore import DarwinStore
 
     parser = argparse.ArgumentParser(description="Hybrid search (BM25 + semantic)")
     parser.add_argument("query", nargs="?", help="Search query")
@@ -371,7 +371,7 @@ def main() -> int:
     if not query:
         parser.error("Query required (either positional or --query)")
 
-    from src.core.Logger.DarwinLogger import OutputMode
+    from core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
 

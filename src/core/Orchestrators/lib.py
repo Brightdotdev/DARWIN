@@ -41,8 +41,8 @@ def resolve_store(store_ref: Optional[str] = None):
 
     Always returns a valid DarwinStore — logs a warning on fallback.
     """
-    from src.core.Storage.DarwinStore import DarwinStore
-    from src.core.Logger.DarwinLogger import darwin
+    from core.Storage.DarwinStore import DarwinStore
+    from core.Logger.DarwinLogger import darwin
 
     if store_ref is None:
         return DarwinStore()
@@ -132,7 +132,7 @@ class RetrievalParameters:
     """Custom directory for saved results. None = default ({base}/search-results/)."""
 
     def __post_init__(self):
-        from src.core.Logger.DarwinLogger import darwin
+        from core.Logger.DarwinLogger import darwin
 
         # ── Critical: raise (can't proceed without valid values) ──
         if not isinstance(self.query, str):
@@ -184,7 +184,7 @@ class RetrievalParameters:
 
     def build(self):
         """Convert to internal OrchestratorConfig for the orchestrator."""
-        from src.core.Retrival.OrchestratorTypes import (
+        from core.Retrival.OrchestratorTypes import (
             OrchestratorConfig as _OC,
             MergeStrategy as _MS,
             FallbackStrategy as _FS,
@@ -313,7 +313,7 @@ class StructuredSearchParams:
     """Custom directory for saved results. None = default ({base}/search-results/)."""
 
     def __post_init__(self):
-        from src.core.Logger.DarwinLogger import darwin
+        from core.Logger.DarwinLogger import darwin
 
         if not isinstance(self.query, str):
             raise TypeError(f"query must be str, got {type(self.query).__name__}")
@@ -387,7 +387,7 @@ class PipelineParameters:
     index_mode: str = "auto"  # "auto", "text", or "structured"
 
     def __post_init__(self):
-        from src.core.Logger.DarwinLogger import darwin
+        from core.Logger.DarwinLogger import darwin
 
         # ── Critical: raise (can't proceed without valid values) ──
         if not isinstance(self.target, str):
@@ -416,9 +416,9 @@ class PipelineParameters:
 
     def build(self):
         """Convert to internal (StageParameters, stages) for the orchestrator."""
-        from src.core.Orchestrators.PipelineOrchestrator import StageParameters
-        from src.core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
-        from src.core.Pipeline.Indexing.lib import IndexingArgs
+        from core.Orchestrators.PipelineOrchestrator import StageParameters
+        from core.Pipeline.Ingestion.Parsing.lib import ParsingArgs
+        from core.Pipeline.Indexing.lib import IndexingArgs
 
         valid_stages = {"ingestion", "indexing"}
         bad = set(self.stages) - valid_stages

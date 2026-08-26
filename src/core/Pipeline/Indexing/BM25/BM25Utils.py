@@ -2,8 +2,8 @@
 import re
 from collections import Counter
 from typing import Iterator, List, Optional, Set, Tuple, Dict, Any
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Indexing.BM25.lib import (
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Indexing.BM25.lib import (
     MIN_TOKEN_LENGTH, STANDARD_STOPS, DOMAIN_STOP_THRESHOLD
 )
 

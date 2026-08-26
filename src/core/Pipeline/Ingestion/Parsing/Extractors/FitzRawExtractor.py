@@ -5,10 +5,10 @@ import re
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Ingestion.Parsing.Extractors.ExtractorUtils import make_image_slot, make_page_header
-from src.core.Pipeline.Ingestion.Parsing.Extractors.ImageExtractors import extract_page_images
-from src.core.Pipeline.Ingestion.Parsing.Extractors.Constants import MAX_IMAGES_PER_DOC
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Ingestion.Parsing.Extractors.ExtractorUtils import make_image_slot, make_page_header
+from core.Pipeline.Ingestion.Parsing.Extractors.ImageExtractors import extract_page_images
+from core.Pipeline.Ingestion.Parsing.Extractors.Constants import MAX_IMAGES_PER_DOC
 
 
 def fitz_raw_extract(

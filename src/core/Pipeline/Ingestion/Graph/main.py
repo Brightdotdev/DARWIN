@@ -4,8 +4,8 @@ Entity Graph Pipeline — entry point.
 Standalone experimental module. Not wired into PipelineOrchestrator.
 
 Usage:
-    from src.core.Pipeline.Ingestion.Graph.main import build_entity_graph
-    from src.core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
+    from core.Pipeline.Ingestion.Graph.main import build_entity_graph
+    from core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
 
     config = GraphConfig(min_mentions=2, wiki_tier=2)
     result = build_entity_graph(chunks, config, store, "filename.pdf")
@@ -16,11 +16,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
-from src.core.Pipeline.Ingestion.Graph.EntityExtractor import extract_entities
-from src.core.Pipeline.Ingestion.Graph.GraphBuilder import build_graph, GraphResult
-from src.core.Pipeline.Ingestion.Graph.WikiBuilder import enrich_entities
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
+from core.Pipeline.Ingestion.Graph.EntityExtractor import extract_entities
+from core.Pipeline.Ingestion.Graph.GraphBuilder import build_graph, GraphResult
+from core.Pipeline.Ingestion.Graph.WikiBuilder import enrich_entities
 
 
 def build_entity_graph(
@@ -189,7 +189,7 @@ def _add_visualization(result: GraphResult) -> GraphResult:
 def _save_to_store(store: Any, source_name: str, result: GraphResult) -> None:
     """Save graph results to the store if GraphStore is available."""
     try:
-        from src.core.Storage.GraphStore import GraphStore
+        from core.Storage.GraphStore import GraphStore
 
         gs = GraphStore(store)
         gs.save_graph(source_name, result)

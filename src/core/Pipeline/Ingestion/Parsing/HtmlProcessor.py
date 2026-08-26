@@ -1,6 +1,6 @@
 import re
 from typing import Tuple, Optional
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 MIN_EXTRACTED_TEXT_LENGTH = 100
 
@@ -42,7 +42,7 @@ def extract_content(
     text will be empty if extraction fails, and metadata may contain 'error'.
     """
     if html_bytes is None:
-        from src.core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url
+        from core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url
         html_bytes, _, err = fetch_url(url)
         if err:
             return "", {"error": err}

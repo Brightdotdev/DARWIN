@@ -4,12 +4,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Any, Set
 
-from src.core.Retrival.lib import (
+from core.Retrival.lib import (
     OverlapDirection,
     ChunkLink,
     SearchAudit,
 )
-from src.core.Retrival.retrieval_utils import normalize_links, ensure_overlap_direction
+from core.Retrival.retrieval_utils import normalize_links, ensure_overlap_direction
 
 
 class ResultType(str, Enum):

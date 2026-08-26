@@ -2,9 +2,9 @@
 Entry point for running the Darwin MCP server.
 
 Supports three transport modes:
-  SSE  (legacy)     : python -m src.mcp --sse
-  HTTP (modern)     : python -m src.mcp --http
-  stdio (default)   : python -m src.mcp
+  SSE  (legacy)     : python -m darwin_mcp --sse
+  HTTP (modern)     : python -m darwin_mcp --http
+  stdio (default)   : python -m darwin_mcp
 
 The default port is read from logging.json (the same port used by the
 logging SSE server). If not found, falls back to 8765.
@@ -12,9 +12,9 @@ logging SSE server). If not found, falls back to 8765.
 
 import argparse
 
-from src.mcp.UnifiedServer import UnifiedServer
-from src.mcp.Server import run_stdio
-from src.cli import _read_logging_port
+from darwin_mcp.UnifiedServer import UnifiedServer
+from darwin_mcp.Server import run_stdio
+from cli import _read_logging_port
 
 
 def main():

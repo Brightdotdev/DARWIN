@@ -3,11 +3,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 from typing import Tuple, Optional, Union
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url, validate_url
-from src.core.Pipeline.Ingestion.Parsing.HtmlProcessor import extract_content
-from src.core.Pipeline.Ingestion.Parsing.PdfExtractors import parse_pdf, parse_markitdown, check_file_size
-from src.core.Pipeline.Ingestion.Parsing.lib import (
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url, validate_url
+from core.Pipeline.Ingestion.Parsing.HtmlProcessor import extract_content
+from core.Pipeline.Ingestion.Parsing.PdfExtractors import parse_pdf, parse_markitdown, check_file_size
+from core.Pipeline.Ingestion.Parsing.lib import (
     ParsedDocument,
     SUPPORTED_TYPES,
     detect_type,
@@ -16,7 +16,7 @@ from src.core.Pipeline.Ingestion.Parsing.lib import (
     is_good_enough,
     words_to_pages,
 )
-from src.core.Pipeline.Ingestion.Parsing.TextExtractors import (
+from core.Pipeline.Ingestion.Parsing.TextExtractors import (
     parse_html,
     parse_xml,
     parse_csv,

@@ -4,16 +4,16 @@ from typing import List, Optional, Dict, Any
 
 import numpy as np
 
-from src.core.Pipeline.Indexing.Embedding.EmbeddingEngine import EmbeddingEngine
-from src.core.Models.ModelBatchSizing import get_model_batch_size
-from src.core.Models.EmbeddingConfig import (
+from core.Pipeline.Indexing.Embedding.EmbeddingEngine import EmbeddingEngine
+from core.Models.ModelBatchSizing import get_model_batch_size
+from core.Models.EmbeddingConfig import (
     ModelPreset,
     get_preset,
 )
 
-from src.core.Models.ModelManager import modelManager
-from src.core.Models.Lib.ModelSpec import ModelCategory
-from src.core.Logger.DarwinLogger import darwin
+from core.Models.ModelManager import modelManager
+from core.Models.Lib.ModelSpec import ModelCategory
+from core.Logger.DarwinLogger import darwin
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -230,7 +230,7 @@ class EmbeddingSession:
             darwin.info(f"Embedding session acquired: {self._preset.model_name}")
         else:
             darwin.error("Failed to load embedding model")
-            darwin.info("Run: python -m src.core.Models.cli setup --profile required")
+            darwin.info("Run: python -m core.Models.cli setup --profile required")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):

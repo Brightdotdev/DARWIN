@@ -6,8 +6,8 @@ Commands: status, list, install, discard, switch, keys
 
 from typing import List
 
-from src.core.Models.Lib.ModelSpec import ModelCategory
-from src.admin.lib import (
+from core.Models.Lib.ModelSpec import ModelCategory
+from admin.lib import (
     KeyAction,
     ns_to,
     ModelsStatusArgs,
@@ -17,12 +17,12 @@ from src.admin.lib import (
     ModelsSwitchArgs,
     ModelsKeysArgs,
 )
-from src.admin.renderer import _r
+from admin.renderer import _r
 
 
 def _get_installed_in_category(models, cat_enum: ModelCategory) -> List[str]:
     """Return list of model_ids that are installed (downloaded or API-keyed) in a category."""
-    from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+    from lib.KeyManager import is_key_set, load_keys_from_keychain
 
     specs = models.list_registered(category=cat_enum)
     installed: list[str] = []
@@ -97,7 +97,7 @@ def cmd_models_install(args: ModelsInstallArgs, _get_models) -> None:
 
 def cmd_models_discard(args: ModelsDiscardArgs, _get_models) -> None:
     """Discard models per category with --all/--active/--inactive selection."""
-    from src.core.Models.ModelConfig import get_active_model
+    from core.Models.ModelConfig import get_active_model
 
     models = _get_models(init_models=False)
     delete = args.delete
@@ -192,8 +192,8 @@ def cmd_models_discard(args: ModelsDiscardArgs, _get_models) -> None:
 
 def cmd_models_switch(args: ModelsSwitchArgs, _get_models) -> None:
     """Switch active model. Fully interactive: no args → category → model."""
-    from src.core.Models.ModelConfig import get_active_model
-    from src.core.Models.Lib.ModelRegistry import find_spec
+    from core.Models.ModelConfig import get_active_model
+    from core.Models.Lib.ModelRegistry import find_spec
 
     models = _get_models(init_models=False)
 
@@ -298,7 +298,7 @@ def cmd_models_switch(args: ModelsSwitchArgs, _get_models) -> None:
         _r._out(f"  New provider: {_r._yellow(new_provider or 'none (local)')}")
 
         if new_provider:
-            from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+            from lib.KeyManager import is_key_set, load_keys_from_keychain
             load_keys_from_keychain(log=False)
             if is_key_set(new_provider):
                 _r.info(f"Key for {new_provider} already set — ready to use")

@@ -2,7 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Set, Any
 from enum import Enum
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 RETRIVAL_COLUMNS = [

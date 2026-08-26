@@ -2,8 +2,8 @@ import fitz
 from pathlib import Path
 from typing import List, Dict, Optional, Set, Tuple
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Ingestion.Parsing.Extractors.Constants import (
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Ingestion.Parsing.Extractors.Constants import (
     MIN_IMAGE_SIZE_PX, MAX_IMAGES_PER_PAGE, MAX_IMAGES_PER_DOC,
 )
 

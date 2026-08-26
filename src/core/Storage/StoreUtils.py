@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 def sanitize(name: str) -> str:
@@ -78,14 +78,14 @@ def to_dict(obj: Any) -> dict:
 
 
 def get_current_embedding_model() -> str:
-    from src.core.Models.ModelConfig import get_active_model
-    from src.core.Models.Lib.ModelSpec import ModelCategory
+    from core.Models.ModelConfig import get_active_model
+    from core.Models.Lib.ModelSpec import ModelCategory
     return get_active_model(ModelCategory.EMBEDDING.name.lower()) or ""
 
 
 def get_current_model_dimensions() -> int:
     try:
-        from src.core.Models.EmbeddingConfig import get_preset
+        from core.Models.EmbeddingConfig import get_preset
         key = get_current_embedding_model()
         presets = get_preset(key)
         if presets:

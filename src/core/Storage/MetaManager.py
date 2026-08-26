@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from src.core.Storage.StorePaths import StorePaths
-from src.core.Storage.StoreUtils import now, read_json, write_json
+from core.Storage.StorePaths import StorePaths
+from core.Storage.StoreUtils import now, read_json, write_json
 
 
 class MetaManager:

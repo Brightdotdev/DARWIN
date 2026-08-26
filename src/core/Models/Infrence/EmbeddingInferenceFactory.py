@@ -1,13 +1,13 @@
 from pathlib import Path
 from typing import Optional
-from src.core.Models.Lib.ModelRegistry import find_spec, ModelCategory
-from src.core.Models.ModelConfig import get_active_model, set_active_model, get_model_path, ensure_model_path
-from src.lib.KeyManager import is_key_set, load_keys_from_keychain
-from src.core.Models.Infrence.Api.APIEmbeddingInference import APIEmbeddingInference
-from src.core.Models.Infrence.Onnx.OnnxEmbeddingInference import OnnxEmbeddingInference
-from src.core.Models.ModelDownloading.OnnxEmbeddingDownloader import OnnxEmbeddingDownloader
-from src.core.Models.ModeInterfaces import EmbeddingInferenceInterface
-from src.core.Logger.DarwinLogger import darwin
+from core.Models.Lib.ModelRegistry import find_spec, ModelCategory
+from core.Models.ModelConfig import get_active_model, set_active_model, get_model_path, ensure_model_path
+from lib.KeyManager import is_key_set, load_keys_from_keychain
+from core.Models.Infrence.Api.APIEmbeddingInference import APIEmbeddingInference
+from core.Models.Infrence.Onnx.OnnxEmbeddingInference import OnnxEmbeddingInference
+from core.Models.ModelDownloading.OnnxEmbeddingDownloader import OnnxEmbeddingDownloader
+from core.Models.ModeInterfaces import EmbeddingInferenceInterface
+from core.Logger.DarwinLogger import darwin
 
 
 # ---------------------------------------------------------------------------

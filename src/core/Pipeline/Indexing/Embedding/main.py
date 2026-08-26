@@ -6,16 +6,16 @@ import threading
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.core.Pipeline.Indexing.Embedding.MemoryMonitor import MemoryMonitor
-from src.core.Pipeline.Indexing.Embedding.BatchingStrategy import BatchingStrategy
-from src.core.Pipeline.Indexing.Embedding.Embedder import EmbeddingSession
-from src.core.Pipeline.Indexing.Embedding.lib import EmbeddingArgs
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Models.ModelConfig import get_active_model
-from src.core.Models.Lib.ModelRegistry import ModelCategory
-from src.core.Models.EmbeddingConfig import get_preset
-from src.core.Logger.DarwinLogger import darwin
-from src.lib.Utils import ensure_writable_directory
+from core.Pipeline.Indexing.Embedding.MemoryMonitor import MemoryMonitor
+from core.Pipeline.Indexing.Embedding.BatchingStrategy import BatchingStrategy
+from core.Pipeline.Indexing.Embedding.Embedder import EmbeddingSession
+from core.Pipeline.Indexing.Embedding.lib import EmbeddingArgs
+from core.Storage.DarwinStore import DarwinStore
+from core.Models.ModelConfig import get_active_model
+from core.Models.Lib.ModelRegistry import ModelCategory
+from core.Models.EmbeddingConfig import get_preset
+from core.Logger.DarwinLogger import darwin
+from lib.Utils import ensure_writable_directory
 
 
 # ─────────────────────────────────────────────────────────────────────────────

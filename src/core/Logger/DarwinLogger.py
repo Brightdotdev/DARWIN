@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Callable
-from src.core.Logger.lib import OutputMode,LogFilter,STYLE_COLORS,STYLE_MODIFIERS,STYLE_ALIASES,DEFAULT_LOG_STYLES
+from core.Logger.lib import OutputMode,LogFilter,STYLE_COLORS,STYLE_MODIFIERS,STYLE_ALIASES,DEFAULT_LOG_STYLES
 
 
 
@@ -207,7 +207,7 @@ DarwinEvent = (
 # History store — SQLite‑backed ring buffer (imported lazily to avoid circular)
 # ---------------------------------------------------------------------------
 def _create_history_store(max_memory: int, persist_dir: Optional[Path]) -> Any:
-    from src.core.Logger.SQLiteHistoryStore import SQLiteHistoryStore
+    from core.Logger.SQLiteHistoryStore import SQLiteHistoryStore
 
     return SQLiteHistoryStore(max_memory=max_memory, persist_dir=persist_dir)
 
@@ -357,7 +357,7 @@ class DarwinLogger:
 
     @staticmethod
     def _config_path() -> Path:
-        from src.lib.AppPaths import default_logging_config
+        from lib.AppPaths import default_logging_config
 
         return default_logging_config()
 
@@ -407,7 +407,7 @@ class DarwinLogger:
         if isinstance(log_filter, str):
             log_filter = LogFilter(log_filter)
 
-        from src.lib.AppPaths import default_logs_dir
+        from lib.AppPaths import default_logs_dir
 
         # ── Load persisted config (unless override discards it) ──
         saved = self._load_config() if persist_config and not override else None
@@ -484,7 +484,7 @@ class DarwinLogger:
 
     def _attach_terminal(self) -> None:
         try:
-            from src.core.Logger.TerminalUi import TerminalUI
+            from core.Logger.TerminalUi import TerminalUI
 
             tui = TerminalUI()
             tui.show_banner()
@@ -494,7 +494,7 @@ class DarwinLogger:
 
     def _start_sse(self, host: str, port: int) -> None:
         try:
-            from src.mcp.UnifiedServer import UnifiedServer
+            from darwin_mcp.UnifiedServer import UnifiedServer
 
             server = UnifiedServer(host=host, port=port)
             server.start()

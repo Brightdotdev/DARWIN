@@ -8,15 +8,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import polars as pl
 
-from src.core.Storage.CacheManager import CacheManager
-from src.core.Storage.Constants import ARTIFACT_MANIFEST, CORE_STAGES
-from src.core.Storage.DataModels import Source
-from src.core.Storage.LocalRegistry import LocalRegistry, SourceManager, ContentIndex
-from src.core.Storage.MetaManager import MetaManager
-from src.core.Storage.StorePaths import StorePaths
-from src.core.Storage.StoreRegistry import StoreRegistry
-from src.core.Storage.StoreSearch import StoreSearch
-from src.core.Storage.StoreUtils import (
+from core.Storage.CacheManager import CacheManager
+from core.Storage.Constants import ARTIFACT_MANIFEST, CORE_STAGES
+from core.Storage.DataModels import Source
+from core.Storage.LocalRegistry import LocalRegistry, SourceManager, ContentIndex
+from core.Storage.MetaManager import MetaManager
+from core.Storage.StorePaths import StorePaths
+from core.Storage.StoreRegistry import StoreRegistry
+from core.Storage.StoreSearch import StoreSearch
+from core.Storage.StoreUtils import (
     get_current_embedding_model,
     get_current_model_dimensions,
     now,
@@ -24,9 +24,9 @@ from src.core.Storage.StoreUtils import (
     to_dict,
     write_json,
 )
-from src.core.Storage.Transanctions import write_text_atomic
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.lib.AppPaths import set_darwin_base_dir
+from core.Storage.Transanctions import write_text_atomic
+from core.Logger.DarwinLogger import darwin, LogType
+from lib.AppPaths import set_darwin_base_dir
 
 
 class DarwinStore(StoreSearch):
@@ -62,7 +62,7 @@ class DarwinStore(StoreSearch):
         if not quiet:
             self.print_dashboard()
         try:
-            from src.core.Models.ModelManager import modelManager
+            from core.Models.ModelManager import modelManager
 
             modelManager.initialize()
         except Exception as e:
@@ -491,7 +491,7 @@ class DarwinStore(StoreSearch):
         warnings = []
 
         # Import operator parser from StructuredSearch
-        from src.core.Retrival.StructuredSearch import _parse_filter_key, OPERATORS
+        from core.Retrival.StructuredSearch import _parse_filter_key, OPERATORS
 
         for filter_key, filter_value in filters.items():
             # Parse operator from filter key
@@ -1431,8 +1431,8 @@ class DarwinStore(StoreSearch):
         return self.full_audit()
 
     def get_embedding_health(self, model_id: str) -> dict:
-        from src.core.Models.ModelManager import modelManager
-        from src.core.Models.Lib.ModelRegistry import ModelCategory
+        from core.Models.ModelManager import modelManager
+        from core.Models.Lib.ModelRegistry import ModelCategory
 
         health = {
             "active_model": model_id,

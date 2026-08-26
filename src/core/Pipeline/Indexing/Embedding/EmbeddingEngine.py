@@ -5,9 +5,9 @@ from typing import Any, List, Optional
 
 import numpy as np
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Indexing.Embedding.MemoryMonitor import MemoryMonitor
-from src.core.Pipeline.Indexing.Embedding.BatchingStrategy import BatchingStrategy
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Indexing.Embedding.MemoryMonitor import MemoryMonitor
+from core.Pipeline.Indexing.Embedding.BatchingStrategy import BatchingStrategy
 
 
 class EmbeddingEngine:

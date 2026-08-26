@@ -6,13 +6,13 @@ from PIL import Image as PILImage  # imported once
 
 import pymupdf4llm
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Ingestion.Parsing.Extractors.ExtractorUtils import (
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Ingestion.Parsing.Extractors.ExtractorUtils import (
     make_page_header,
     strip_pymupdf_markers,
     convert_markdown_images_to_slots,
 )
-from src.core.Pipeline.Ingestion.Parsing.Extractors.Constants import (
+from core.Pipeline.Ingestion.Parsing.Extractors.Constants import (
     MAX_IMAGES_PER_DOC,
     MIN_IMAGE_SIZE_PX,
 )

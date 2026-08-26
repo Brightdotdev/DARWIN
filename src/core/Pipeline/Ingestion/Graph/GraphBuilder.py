@@ -12,9 +12,9 @@ import math
 
 import pandas as pd
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.Infrence.Spacy.lib import EntityRecord
-from src.core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
+from core.Logger.DarwinLogger import darwin
+from core.Models.Infrence.Spacy.lib import EntityRecord
+from core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
 
 
 @dataclass
@@ -152,8 +152,8 @@ def _extract_dependency_edges(
     """Extract syntactic dependency edges between entities in the same chunk."""
     edges = []
     try:
-        from src.core.Models.ModelManager import modelManager
-        from src.core.Models.Lib.ModelRegistry import ModelCategory
+        from core.Models.ModelManager import modelManager
+        from core.Models.Lib.ModelRegistry import ModelCategory
 
         wrapper = modelManager.get(ModelCategory.NLP)
         if wrapper is None or not wrapper.is_loaded():

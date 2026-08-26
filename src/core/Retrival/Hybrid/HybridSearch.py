@@ -1,16 +1,16 @@
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import List, Optional
 
-from src.core.Retrival.Semantic.SemanticSearch import (
+from core.Retrival.Semantic.SemanticSearch import (
     search_single_document as semantic_search_single,
     search_across_documents as semantic_search_all,
 )
 
-from src.core.Retrival.Keyword.KeywordSearch import (
+from core.Retrival.Keyword.KeywordSearch import (
     search_single_document_keyword as keyword_search_single,
     search_across_documents_keyword as keyword_search_all,
 )
-from src.core.Retrival.lib import (
+from core.Retrival.lib import (
     KeywordSearchResult,
     DEFAULT_SEMANTIC_WEIGHT,
     DEFAULT_KEYWORD_WEIGHT,
@@ -21,13 +21,13 @@ from src.core.Retrival.lib import (
     SemanticSearchResult,
 )
 
-from src.core.Retrival.Hybrid.HybridSearchUtils import (
+from core.Retrival.Hybrid.HybridSearchUtils import (
     reciprocal_rank_fusion,
     merge_results,
     build_ranked_lists,
 )
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin
 
 
 def hybrid_search(

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from filelock import FileLock
-from src.lib.AppPaths import default_models_config_dir,default_models_dir
+from lib.AppPaths import default_models_config_dir,default_models_dir
 
 
 CONFIG_FILENAME = "models.json"
@@ -35,7 +35,7 @@ def load_active_models() -> Dict[str, Optional[str]]:
         with lock:
             try:
                 data = json.loads(path.read_text())
-                from src.core.Models.Lib.ModelSpec import ModelCategory
+                from core.Models.Lib.ModelSpec import ModelCategory
                 config = {}
                 for cat in ModelCategory:
                     config[cat.value] = data.get(cat.value, None)

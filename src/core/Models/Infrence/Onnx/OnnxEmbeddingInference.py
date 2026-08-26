@@ -5,8 +5,8 @@ from typing import List, Optional, Union
 
 import numpy as np
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.ModeInterfaces import (
+from core.Logger.DarwinLogger import darwin
+from core.Models.ModeInterfaces import (
     EmbeddingInferenceInterface,
     UnifiedEmbeddingResult,
     UnifiedEmbeddingMetadata,

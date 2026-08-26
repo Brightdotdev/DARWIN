@@ -11,9 +11,9 @@ from typing import Optional
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
-from src.mcp.logging_bridge import darwin_bridge
+from core.Logger.DarwinLogger import darwin, LogType
+from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+from darwin_mcp.logging_bridge import darwin_bridge
 
 
 class SessionName(str, Enum):

@@ -143,11 +143,11 @@ def detect_structured(path: Path) -> Tuple[bool, str]:
     suffix = path.suffix.lower()
 
     if suffix == ".json":
-        from src.core.Pipeline.Ingestion.Parsing.StructuredParser import is_structured_json
+        from core.Pipeline.Ingestion.Parsing.StructuredParser import is_structured_json
         return is_structured_json(path), ","
 
     if suffix in (".csv", ".tsv"):
-        from src.core.Pipeline.Ingestion.Parsing.StructuredParser import is_structured_csv
+        from core.Pipeline.Ingestion.Parsing.StructuredParser import is_structured_csv
         is_struct, delim = is_structured_csv(path)
         return is_struct, delim
 

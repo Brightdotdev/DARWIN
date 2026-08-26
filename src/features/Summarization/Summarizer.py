@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from core.Logger.DarwinLogger import darwin, LogType
 
 # ── Configuration defaults ──────────────────────────────────────────────────
 DEFAULT_SENTENCE_COUNT = 5
@@ -74,8 +74,8 @@ class _SpacyPipelineFactory:
                 return cls._base_nlp
 
             try:
-                from src.core.Models.ModelManager import modelManager
-                from src.core.Models.Lib.ModelRegistry import ModelCategory
+                from core.Models.ModelManager import modelManager
+                from core.Models.Lib.ModelRegistry import ModelCategory
 
                 spacy_wrapper = modelManager.get(ModelCategory.NLP)
                 if spacy_wrapper is None:

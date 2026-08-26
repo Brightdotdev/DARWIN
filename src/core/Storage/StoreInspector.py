@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Storage.StoreRegistry import StoreRegistry
+from core.Storage.DarwinStore import DarwinStore
+from core.Storage.StoreRegistry import StoreRegistry
 
 
 class StoreInspector:

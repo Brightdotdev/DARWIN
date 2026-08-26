@@ -5,9 +5,9 @@ from typing import Optional, Dict, Any, List
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
-from src.core.Orchestrators.lib import RetrievalParameters, resolve_store
-from src.core.Logger.DarwinLogger import darwin
-from src.mcp.logging_bridge import darwin_bridge
+from core.Orchestrators.lib import RetrievalParameters, resolve_store
+from core.Logger.DarwinLogger import darwin
+from darwin_mcp.logging_bridge import darwin_bridge
 
 _MAX_QUERY_LEN = 4096
 
@@ -43,7 +43,7 @@ def _validate_query(query: str) -> str:
 
 
 def _get_results_dir() -> Path:
-    from src.lib.AppPaths import set_darwin_base_dir
+    from lib.AppPaths import set_darwin_base_dir
     return set_darwin_base_dir() / "search-results"
 
 
@@ -161,7 +161,7 @@ def register(mcp, retrieval_orch):
                 def _blocking():
                     if store:
                         if store not in _orch_cache:
-                            from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                            from core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
                             resolved = resolve_store(store)
                             resolved.bootstrap(quiet=True)
                             _orch_cache[store] = RetrievalOrchestrator(store=resolved)
@@ -354,12 +354,12 @@ def register(mcp, retrieval_orch):
         """
         async with darwin_bridge(ctx):
             try:
-                from src.core.Orchestrators.lib import StructuredSearchParams
+                from core.Orchestrators.lib import StructuredSearchParams
 
                 def _blocking():
                     # Resolve store
                     if store:
-                        from src.core.Orchestrators.lib import resolve_store
+                        from core.Orchestrators.lib import resolve_store
                         resolved_store = resolve_store(store)
                         resolved_store.bootstrap(quiet=True)
                     else:
@@ -387,7 +387,7 @@ def register(mcp, retrieval_orch):
                                 "validation": report,
                             }
 
-                    from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                    from core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
                     orch = RetrievalOrchestrator(store=resolved_store)
 
                     params = StructuredSearchParams(

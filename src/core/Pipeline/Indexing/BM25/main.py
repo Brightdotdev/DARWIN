@@ -7,20 +7,20 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
-from src.lib.Utils import ensure_writable_directory
+from lib.Utils import ensure_writable_directory
 
-from src.core.Pipeline.Indexing.BM25.BM25Indexer import (
+from core.Pipeline.Indexing.BM25.BM25Indexer import (
     run_bm25_indexing_pipeline,
 )
-from src.core.Pipeline.Indexing.BM25.lib import (
+from core.Pipeline.Indexing.BM25.lib import (
     BM25IndexingArgs,
     DOMAIN_STOP_THRESHOLD,
     DEFAULT_IDF_SMOOTHING,
     
 )
 
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin
 
 
 

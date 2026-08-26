@@ -148,7 +148,7 @@ class MemoryMonitor:
 
     def log_summary(self) -> None:
         """Pretty-print hardware summary via darwin logger."""
-        from src.core.Logger.DarwinLogger import darwin
+        from core.Logger.DarwinLogger import darwin
         p = self.profile
         darwin.info(f"Platform: {p.platform}")
         darwin.info(f"CPUs: {p.cpu_count}, RAM: {p.ram_total_gb:.1f}GB total, {p.ram_free_gb:.1f}GB free")

@@ -5,8 +5,8 @@ import zipfile
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Pipeline.Ingestion.Parsing.lib import ExtractedImage, words_to_pages
+from core.Logger.DarwinLogger import darwin
+from core.Pipeline.Ingestion.Parsing.lib import ExtractedImage, words_to_pages
 
 
 # ═══════════════════════════════════════════════════════════════════════════

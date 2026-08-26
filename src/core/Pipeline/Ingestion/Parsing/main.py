@@ -12,12 +12,12 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.core.Pipeline.Ingestion.Parsing.Parser import (
+from core.Pipeline.Ingestion.Parsing.Parser import (
     parse as _parse,
     scan_directory,
     is_url,
 )
-from src.core.Pipeline.Ingestion.Parsing.lib import (
+from core.Pipeline.Ingestion.Parsing.lib import (
     ParsedDocument,
     url_to_slug,
     ParsingArgs,
@@ -26,15 +26,15 @@ from src.core.Pipeline.Ingestion.Parsing.lib import (
     ExtractedImage,
     MAX_PARSING_WORKERS,
 )
-from src.core.Pipeline.Ingestion.Parsing.PdfExtractors import (
+from core.Pipeline.Ingestion.Parsing.PdfExtractors import (
     replace_image_slots,
     normalize_image_path,
 )
-from src.features.Images.ImageHandler import ImageHandler
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Logger.DarwinMP import DarwinMPBridge, worker_log
-from src.core.Pipeline.Ingestion.Parsing.StructuredParser import parse_structured, StructuredDocument
+from features.Images.ImageHandler import ImageHandler
+from core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin, LogType
+from core.Logger.DarwinMP import DarwinMPBridge, worker_log
+from core.Pipeline.Ingestion.Parsing.StructuredParser import parse_structured, StructuredDocument
 
 # ── Worker initializer (shared logging queue) ────────────────────────────────
 
@@ -240,8 +240,8 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
                 # Save a JSON representation as "markdown" for the chunking step
                 # This allows handle_chunking to detect structured files via has_schema
                 import json as _json
-                from src.core.Storage.Transanctions import write_text_atomic
-                from src.core.Storage.StoreUtils import to_dict
+                from core.Storage.Transanctions import write_text_atomic
+                from core.Storage.StoreUtils import to_dict
 
                 embedding_text = _json.dumps(doc.records, ensure_ascii=False, default=str)
                 h = source.content_hash
@@ -287,7 +287,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
         store.register(path)
 
     # ── Fetch and register URLs with content-hash BEFORE cache check ──────
-    from src.core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url
+    from core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url
     url_registered_ok = []
     for url in target_urls:
         slug = f"{url_to_slug(url)}"
@@ -436,7 +436,7 @@ def handle_parsing(args: ParsingArgs, store: DarwinStore) -> List[ParsedDocument
 # ── CLI entry point ──────────────────────────────────────────────────────────
 
 def main() -> int:
-    from src.lib.Utils import ensure_writable_directory
+    from lib.Utils import ensure_writable_directory
     import argparse
     parser = argparse.ArgumentParser(description="Parse documents into .darwin format")
     parser.add_argument("path", nargs="?", default=".", help="File or directory to parse")

@@ -6,8 +6,8 @@ Commands: search, search-lists
 
 
 
-from src.admin.lib import SearchArgs, SearchListsArgs, ns_to
-from src.admin.renderer import _r
+from admin.lib import SearchArgs, SearchListsArgs, ns_to
+from admin.renderer import _r
 
 
 def _str2bool(v):
@@ -25,8 +25,8 @@ def _str2bool(v):
 
 def cmd_search(args: SearchArgs, _get_store) -> None:
     from pathlib import Path
-    from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-    from src.core.Orchestrators.lib import RetrievalParameters
+    from core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+    from core.Orchestrators.lib import RetrievalParameters
 
     if not args.query:
         _r.err("Query is required")
@@ -136,8 +136,8 @@ def cmd_search_lists(args: SearchListsArgs, _get_store) -> None:
       2. Filter validation: --validate-filters status=open priority=high
       3. Structured search: --filters / --query  →  filter-by-fields with hybrid fallback
     """
-    from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-    from src.core.Orchestrators.lib import StructuredSearchParams
+    from core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+    from core.Orchestrators.lib import StructuredSearchParams
 
     store = _get_store(args.store)
 

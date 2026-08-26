@@ -13,7 +13,7 @@ import json
 
 
 def _get_results_dir():
-    from src.lib.AppPaths import set_darwin_base_dir
+    from lib.AppPaths import set_darwin_base_dir
     return set_darwin_base_dir() / "search-results"
 
 

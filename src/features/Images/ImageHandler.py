@@ -20,9 +20,9 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 
 import numpy as np
 from PIL import Image, ImageFilter, ImageStat
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.ModelManager import modelManager
-from src.core.Models.Lib.ModelRegistry import ModelCategory
+from core.Logger.DarwinLogger import darwin
+from core.Models.ModelManager import modelManager
+from core.Models.Lib.ModelRegistry import ModelCategory
 
 
 # ──────────────────────────────────────────────────────────────────────────

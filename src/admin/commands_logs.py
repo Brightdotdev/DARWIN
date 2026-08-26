@@ -5,7 +5,7 @@ Commands: query, sessions, session-info, stats, purge, purge-session,
           export, compact, set-retention
 """
 
-from src.admin.lib import (
+from admin.lib import (
     ns_to,
     LogsQueryArgs,
     LogsSessionsArgs,
@@ -17,11 +17,11 @@ from src.admin.lib import (
     LogsCompactArgs,
     LogsSetRetentionArgs,
 )
-from src.admin.renderer import _r
+from admin.renderer import _r
 
 
 def cmd_logs_query(args: LogsQueryArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     logs = LoggerOrchestrator.get_logs(
         session=args.session, levels=args.levels, limit=args.limit,
@@ -41,7 +41,7 @@ def cmd_logs_query(args: LogsQueryArgs) -> None:
 
 
 def cmd_logs_sessions(args: LogsSessionsArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     sessions = LoggerOrchestrator.get_sessions()
     if not sessions:
@@ -67,49 +67,49 @@ def cmd_logs_sessions(args: LogsSessionsArgs) -> None:
 
 
 def cmd_logs_session_info(args: LogsSessionInfoArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     info = LoggerOrchestrator.get_session_info(args.session_name)
     _r.panel(f"Session: {args.session_name}", str(info))
 
 
 def cmd_logs_stats(args: LogsStatsArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     stats = LoggerOrchestrator.history_stats()
     _r.panel("Log History Stats", str(stats))
 
 
 def cmd_logs_purge(args: LogsPurgeArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     count = LoggerOrchestrator.purge_logs(days=args.days)
     _r.ok(f"Purged {count} log(s) older than {args.days} day(s)")
 
 
 def cmd_logs_purge_session(args: LogsPurgeSessionArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     count = LoggerOrchestrator.purge_session(args.session_name)
     _r.ok(f"Purged {count} log(s) for session '{args.session_name}'")
 
 
 def cmd_logs_export(args: LogsExportArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     count = LoggerOrchestrator.export_logs(args.output, session=args.session)
     _r.ok(f"Exported {count} log(s) to {args.output}")
 
 
 def cmd_logs_compact(args: LogsCompactArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     result = LoggerOrchestrator.compact()
     _r.panel("Compact Result", str(result))
 
 
 def cmd_logs_set_retention(args: LogsSetRetentionArgs) -> None:
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     LoggerOrchestrator.set_retention(days=args.days)
     _r.ok(f"Retention set to {args.days} day(s)")

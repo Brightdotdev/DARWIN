@@ -16,8 +16,8 @@ from typing import Optional
 
 from huggingface_hub import hf_hub_download
 
-from src.core.Logger.DarwinLogger import darwin
-from src.lib.InternetChecker import wait_for_internet, check_internet_robust
+from core.Logger.DarwinLogger import darwin
+from lib.InternetChecker import wait_for_internet, check_internet_robust
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

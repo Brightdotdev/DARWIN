@@ -8,9 +8,9 @@ import json as _json
 import shutil
 import time
 
-from src.core.Models.Lib.ModelSpec import ModelCategory
-from src.core.Logger.lib import OutputMode
-from src.admin.lib import (
+from core.Models.Lib.ModelSpec import ModelCategory
+from core.Logger.lib import OutputMode
+from admin.lib import (
     SetupAction,
     SetupPreset,
     SetupStatus,
@@ -31,7 +31,7 @@ from src.admin.lib import (
     SetupResetArgs,
     SetupLoggingArgs,
 )
-from src.admin.renderer import _r
+from admin.renderer import _r
 
 
 # ══════════════════════════════════════════════════════════════
@@ -41,7 +41,7 @@ from src.admin.renderer import _r
 
 def _setup_status() -> SetupStatus:
     """Check which config files exist."""
-    from src.lib.AppPaths import default_logging_config, default_models_config_dir, default_darwin_config
+    from lib.AppPaths import default_logging_config, default_models_config_dir, default_darwin_config
 
     return SetupStatus(
         darwin_json=default_darwin_config().exists(),
@@ -52,7 +52,7 @@ def _setup_status() -> SetupStatus:
 
 def _load_config_content(status: SetupStatus) -> dict:
     """Load parsed JSON content for each config file that exists."""
-    from src.lib.AppPaths import default_logging_config, default_darwin_config
+    from lib.AppPaths import default_logging_config, default_darwin_config
 
     content: dict = {}
 
@@ -74,7 +74,7 @@ def _load_config_content(status: SetupStatus) -> dict:
 
     if status.models_json:
         try:
-            from src.core.Models.ModelConfig import load_active_models
+            from core.Models.ModelConfig import load_active_models
             content["models"] = load_active_models()
         except Exception:
             content["models"] = None
@@ -114,7 +114,7 @@ def _write_darwin_config() -> None:
     logging.json (logging) and models.json (model selections); API keys are
     stored in the OS keychain via KeyManager.
     """
-    from src.lib.AppPaths import default_darwin_config
+    from lib.AppPaths import default_darwin_config
 
     atomic_write_json(
         default_darwin_config(),
@@ -136,8 +136,8 @@ def calculate_disk_impact(preferences: dict[str, str]) -> DiskImpact:
     Returns:
         DiskImpact dataclass
     """
-    from src.core.Models.Lib.ModelRegistry import find_spec
-    from src.lib.AppPaths import set_darwin_base_dir
+    from core.Models.Lib.ModelRegistry import find_spec
+    from lib.AppPaths import set_darwin_base_dir
 
     required_mb = 0
     for model_id in preferences.values():
@@ -386,7 +386,7 @@ def _resolve_sse_port(mode: str) -> tuple[str, int, str]:
     host = DEFAULT_SSE_HOST
 
     if mode in (OutputMode.SSE.value, OutputMode.BOTH.value):
-        from src.lib.NetUtils import is_port_available, find_available_port
+        from lib.NetUtils import is_port_available, find_available_port
 
         if is_port_available(host, port):
             _r.ok(f"Port {port} available")
@@ -405,7 +405,7 @@ def _resolve_sse_port(mode: str) -> tuple[str, int, str]:
 
 def _setup_logging_interactive(yes: bool = False) -> None:
     """Interactively configure logging.json."""
-    from src.lib.AppPaths import default_logging_config
+    from lib.AppPaths import default_logging_config
 
     _r.section("Step 5: Logging")
 
@@ -480,8 +480,8 @@ def _setup_logging_interactive(yes: bool = False) -> None:
 
 def _setup_logging_defaults(retention_days: int = DEFAULT_RETENTION_DAYS) -> None:
     """Write recommended logging.json without prompts (for presets)."""
-    from src.lib.AppPaths import default_logging_config
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from lib.AppPaths import default_logging_config
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
 
     cfg = LoggingConfig(retention_days=retention_days)
     atomic_write_json(default_logging_config(), cfg.to_dict())
@@ -692,7 +692,7 @@ def cmd_setup_onboard(args: SetupOnboardArgs, _get_models) -> None:
 
 def cmd_setup_validate(args: SetupValidateArgs) -> None:
     """Validate the current Darwin configuration."""
-    from src.lib.AppPaths import default_logging_config, default_models_config_dir, default_darwin_config
+    from lib.AppPaths import default_logging_config, default_models_config_dir, default_darwin_config
 
     darwin_path = default_darwin_config()
     logging_path = default_logging_config()
@@ -717,11 +717,11 @@ def cmd_setup_validate(args: SetupValidateArgs) -> None:
     # Embedding model
     if models_path.exists():
         try:
-            from src.core.Models.ModelConfig import load_active_models
+            from core.Models.ModelConfig import load_active_models
             active = load_active_models()
             emb = active.get("embedding")
             if emb:
-                from src.core.Models.Lib.ModelRegistry import find_spec
+                from core.Models.Lib.ModelRegistry import find_spec
                 spec = find_spec(emb)
                 if spec:
                     ok.append(f"Embedding model registered: {emb}")
@@ -746,7 +746,7 @@ def cmd_setup_validate(args: SetupValidateArgs) -> None:
 
 def cmd_setup_doctor(_get_models) -> None:
     """Diagnose common Darwin issues."""
-    from src.lib.AppPaths import default_logging_config, default_models_config_dir, set_darwin_base_dir, default_darwin_config
+    from lib.AppPaths import default_logging_config, default_models_config_dir, set_darwin_base_dir, default_darwin_config
 
     _r.header("Darwin Doctor")
     checks: list[DoctorCheck] = []
@@ -771,11 +771,11 @@ def cmd_setup_doctor(_get_models) -> None:
     # Models
     if models_path.exists():
         try:
-            from src.core.Models.ModelConfig import load_active_models
+            from core.Models.ModelConfig import load_active_models
             active = load_active_models()
             emb = active.get("embedding")
             if emb:
-                from src.core.Models.Lib.ModelRegistry import find_spec
+                from core.Models.Lib.ModelRegistry import find_spec
                 spec = find_spec(emb)
                 checks.append(DoctorCheck(f"Embedding model '{emb}' registered", spec is not None, "Re-run setup"))
                 if spec and spec.is_local:
@@ -803,7 +803,7 @@ def cmd_setup_doctor(_get_models) -> None:
 
 def cmd_setup_reset(args: SetupResetArgs) -> None:
     """Reset Darwin configuration. Optionally keep downloaded models."""
-    from src.lib.AppPaths import default_logging_config, default_models_config_dir, default_darwin_config
+    from lib.AppPaths import default_logging_config, default_models_config_dir, default_darwin_config
 
     if not args.yes:
         action = "keep models" if args.keep_models else "remove everything"
@@ -851,7 +851,7 @@ def cmd_setup_reset(args: SetupResetArgs) -> None:
 
 def cmd_setup_logging(_args: SetupLoggingArgs, _get_models) -> None:
     """Interactively reconfigure logging without re-running full setup."""
-    from src.lib.AppPaths import default_logging_config
+    from lib.AppPaths import default_logging_config
 
     _r.header("Reconfigure Logging")
 
@@ -926,7 +926,7 @@ def cmd_setup_logging(_args: SetupLoggingArgs, _get_models) -> None:
     atomic_write_json(cfg_path, cfg.to_dict())
 
     # Apply immediately
-    from src.core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
+    from core.Orchestrators.LoggerOrchestrator import LoggerOrchestrator
     LoggerOrchestrator.configure(
         mode=mode,
         persist=persist,

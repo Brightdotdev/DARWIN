@@ -9,8 +9,8 @@ import platform
 import subprocess
 from typing import Optional, Dict, Any
 
-from src.core.Models.EmbeddingConfig import ModelPreset, get_preset
-from src.core.Logger.DarwinLogger import darwin
+from core.Models.EmbeddingConfig import ModelPreset, get_preset
+from core.Logger.DarwinLogger import darwin
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -301,7 +301,7 @@ def estimate_model_batch_from_registry(model_id: str) -> int:
     based on its declared RAM requirements.
     """
     try:
-        from src.core.Models.Lib.ModelRegistry import find_spec
+        from core.Models.Lib.ModelRegistry import find_spec
         spec = find_spec(model_id)
         if spec is None:
             return get_optimal_batch_size(32)

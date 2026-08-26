@@ -7,13 +7,13 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.core.Pipeline.Indexing.lib import IndexingArgs
-from src.core.Logger.DarwinLogger import darwin
-from src.lib.Utils import ensure_writable_directory
-from src.core.Storage.DarwinStore import DarwinStore
+from core.Pipeline.Indexing.lib import IndexingArgs
+from core.Logger.DarwinLogger import darwin
+from lib.Utils import ensure_writable_directory
+from core.Storage.DarwinStore import DarwinStore
 
-from src.core.Pipeline.Indexing.Embedding.lib import EmbeddingArgs
-from src.core.Pipeline.Indexing.BM25.lib import (
+from core.Pipeline.Indexing.Embedding.lib import EmbeddingArgs
+from core.Pipeline.Indexing.BM25.lib import (
     BM25IndexingArgs,
     DOMAIN_STOP_THRESHOLD,
     DEFAULT_IDF_SMOOTHING,
@@ -55,8 +55,8 @@ def _resolve_input_files(
 # ── main handler ──────────────────────
 
 def handle_indexing(args: IndexingArgs, store: DarwinStore) -> None:
-    from src.core.Pipeline.Indexing.Embedding.main import handle_embedding
-    from src.core.Pipeline.Indexing.BM25.main import handle_bm25_indexing
+    from core.Pipeline.Indexing.Embedding.main import handle_embedding
+    from core.Pipeline.Indexing.BM25.main import handle_bm25_indexing
 
     # Resolve user‑provided input (paths or basenames) to registered filenames with chunks
     files = _resolve_input_files(args.files, store)

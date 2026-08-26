@@ -8,8 +8,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.ModeInterfaces import OCRInferenceInterface
+from core.Logger.DarwinLogger import darwin
+from core.Models.ModeInterfaces import OCRInferenceInterface
 
 
 

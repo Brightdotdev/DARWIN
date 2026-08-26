@@ -15,8 +15,8 @@ import sys
 from pathlib import Path
 from typing import List,  Tuple
 
-from src.admin.lib import UninstallArgs, ns_to
-from src.admin.renderer import _r
+from admin.lib import UninstallArgs, ns_to
+from admin.renderer import _r
 
 
 # ══════════════════════════════════════════════════════════════
@@ -27,7 +27,7 @@ from src.admin.renderer import _r
 def _discover_stores() -> List[dict]:
     """Load all registered stores from the persistent StoreRegistry."""
     try:
-        from src.core.Storage.StoreRegistry import StoreRegistry
+        from core.Storage.StoreRegistry import StoreRegistry
         reg = StoreRegistry()
         return reg.list_stores()
     except Exception:
@@ -36,7 +36,7 @@ def _discover_stores() -> List[dict]:
 
 def _get_base_dir() -> Path:
     """Get the platform-specific darwin base directory."""
-    from src.lib.AppPaths import set_darwin_base_dir
+    from lib.AppPaths import set_darwin_base_dir
     return set_darwin_base_dir()
 
 

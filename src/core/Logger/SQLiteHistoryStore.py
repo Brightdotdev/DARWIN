@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from src.core.Logger.DarwinLogger import (
+from core.Logger.DarwinLogger import (
     DarwinEvent,
     LogEvent,
     LogType

@@ -28,7 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
-from src.core.Logger.DarwinLogger import (
+from core.Logger.DarwinLogger import (
     darwin, LogType, LogEvent, DarwinEvent, EventSubscriber,
 )
 
@@ -121,7 +121,7 @@ class UnifiedServer:
     Two usage modes:
       * **Background thread** — created by ``DarwinLogger._start_sse()``
         when ``OutputMode.SSE`` or ``OutputMode.BOTH`` is selected.
-      * **Foreground (CLI)** — used by ``python -m src.mcp --sse``.
+      * **Foreground (CLI)** — used by ``python -m darwin_mcp --sse``.
     """
 
     def __init__(
@@ -146,7 +146,7 @@ class UnifiedServer:
 
     def _resolve_port(self) -> int:
         """Check port availability, scan for a free one if occupied."""
-        from src.lib.NetUtils import is_port_available, find_available_port
+        from lib.NetUtils import is_port_available, find_available_port
 
         if is_port_available(self.host, self._requested_port):
             self.port = self._requested_port
@@ -172,7 +172,7 @@ class UnifiedServer:
     def _save_port_to_config(port: int) -> None:
         """Persist the resolved port to logging.json so MCP and logger share it."""
         try:
-            from src.lib.AppPaths import default_logging_config
+            from lib.AppPaths import default_logging_config
             path = default_logging_config()
             if not path.exists():
                 return
@@ -186,8 +186,8 @@ class UnifiedServer:
 
     def _build_app(self) -> FastMCP:
         """Register all MCP tools + custom HTTP routes and return the FastMCP instance."""
-        from src.mcp.app_factory import create_mcp_app
-        from src.core.Orchestrators.ModelOrchestrator import modelsOrchestrator
+        from darwin_mcp.app_factory import create_mcp_app
+        from core.Orchestrators.ModelOrchestrator import modelsOrchestrator
 
         mcp, orch = create_mcp_app(host=self.host, port=self.port)
 
@@ -276,7 +276,7 @@ class UnifiedServer:
         @mcp.custom_route("/banner", methods=["GET"])
         async def banner(request: Request) -> JSONResponse:
             """Return the Darwin ASCII banner for frontend display."""
-            from src.core.Logger.lib import ASCII_BANNER
+            from core.Logger.lib import ASCII_BANNER
             return JSONResponse({"banner": ASCII_BANNER})
 
         @mcp.custom_route("/demo", methods=["GET"])
@@ -299,8 +299,8 @@ class UnifiedServer:
             files_raw = request.query_params.get("files", "").strip()
             files = [f.strip() for f in files_raw.split(",") if f.strip()] if files_raw else None
             try:
-                from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-                from src.core.Orchestrators.lib import RetrievalParameters
+                from core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+                from core.Orchestrators.lib import RetrievalParameters
                 ro = RetrievalOrchestrator(store=orch.store)
                 params = RetrievalParameters(query=query, top_k=top_k, save=False, files=files)
                 ctx = ro.retrieve_and_resolve(params)
@@ -376,7 +376,7 @@ class UnifiedServer:
     # ---- lifecycle: foreground (for CLI) ----
 
     def run_foreground(self, transport: str = "sse") -> None:
-        """Block and serve.  Used by ``python -m src.mcp --sse`` or ``--http``."""
+        """Block and serve.  Used by ``python -m darwin_mcp --sse`` or ``--http``."""
         self._resolve_port()
         self._build_app()
         import uvicorn

@@ -11,9 +11,9 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
-from src.core.Retrival.RetrievalArgs import RetrievalArgs
+from core.Retrival.RetrievalArgs import RetrievalArgs
 
-from src.core.Retrival.lib import (
+from core.Retrival.lib import (
     RetrievalMethod,
     DEFAULT_TOP_K,
     DEFAULT_POOL_SIZE,
@@ -27,7 +27,7 @@ from src.core.Retrival.lib import (
     DEFAULT_RERANK_TOP_K,
 )
 
-from src.core.Retrival.RetrievalResult import (
+from core.Retrival.RetrievalResult import (
     RetrievalResult,
     OverlapDirection,
     from_hybrid,
@@ -35,13 +35,13 @@ from src.core.Retrival.RetrievalResult import (
     from_keyword,
 )
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
-from src.core.Retrival.Hybrid.main import handle_hybrid_search
-from src.core.Retrival.Semantic.main import handle_semantic_search
-from src.core.Retrival.Keyword.main import handle_keyword_search
+from core.Retrival.Hybrid.main import handle_hybrid_search
+from core.Retrival.Semantic.main import handle_semantic_search
+from core.Retrival.Keyword.main import handle_keyword_search
 
-from src.core.Retrival.lib import (
+from core.Retrival.lib import (
     SemanticSearchArgs,
     HybridSearchArgs,
     KeywordSearchArgs,
@@ -96,7 +96,7 @@ def _rerank(
         return candidates
 
     try:
-        from src.core.Retrival.Reranking.Reranker import rerank_results
+        from core.Retrival.Reranking.Reranker import rerank_results
 
         darwin.info(
             f"Reranking {len(candidates)} results (weight={args.rerank_weight})"
@@ -297,8 +297,8 @@ Examples:
 
 
 def main() -> int:
-    from src.core.Storage.DarwinStore import DarwinStore
-    from src.lib.Utils import ensure_writable_directory
+    from core.Storage.DarwinStore import DarwinStore
+    from lib.Utils import ensure_writable_directory
 
     parser = create_parser()
     cli = parser.parse_args()
@@ -307,7 +307,7 @@ def main() -> int:
     if not query:
         parser.error("Query required")
 
-    from src.core.Logger.DarwinLogger import OutputMode
+    from core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
 

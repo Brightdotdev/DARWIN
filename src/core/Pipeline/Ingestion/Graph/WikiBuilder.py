@@ -11,9 +11,9 @@ from collections import defaultdict
 
 import pandas as pd
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.Infrence.Spacy.lib import EntityRecord
-from src.core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
+from core.Logger.DarwinLogger import darwin
+from core.Models.Infrence.Spacy.lib import EntityRecord
+from core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
 
 
 def enrich_entities(

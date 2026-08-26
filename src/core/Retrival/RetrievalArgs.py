@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 # All constants are defined in lib.py – import from there
-from src.core.Retrival.lib import (
+from core.Retrival.lib import (
     RetrievalMethod,
     DEFAULT_TOP_K,
     DEFAULT_POOL_SIZE,
@@ -24,7 +24,7 @@ from src.core.Retrival.lib import (
     _warn_and_reset_int,
     _warn_and_reset_float,
 )
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 @dataclass

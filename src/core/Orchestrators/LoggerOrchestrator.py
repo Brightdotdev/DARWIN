@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from src.core.Logger.DarwinLogger import darwin, LogType, LogFilter, OutputMode
+from core.Logger.DarwinLogger import darwin, LogType, LogFilter, OutputMode
 
 
 class LoggerOrchestrator:
@@ -138,7 +138,7 @@ class LoggerOrchestrator:
 
     @staticmethod
     def export_logs(path: str, session: Optional[str] = None) -> int:
-        from src.core.Logger.SQLiteHistoryStore import SQLiteHistoryStore
+        from core.Logger.SQLiteHistoryStore import SQLiteHistoryStore
 
         store = darwin._history
         if isinstance(store, SQLiteHistoryStore):

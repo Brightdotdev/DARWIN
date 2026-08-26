@@ -1,6 +1,6 @@
 def get_current_embedding_model() -> str:
-    from src.core.Models.ModelConfig import get_active_model
-    from src.core.Models.Lib.ModelRegistry import ModelCategory
+    from core.Models.ModelConfig import get_active_model
+    from core.Models.Lib.ModelRegistry import ModelCategory
     return get_active_model(ModelCategory.EMBEDDING.name.lower()) or ""
 
 
@@ -8,7 +8,7 @@ def get_current_embedding_model() -> str:
 # ── Shorthand for code that only needs chunk sizing ──
 
 def get_chunk_config():
-    from src.core.Models.EmbeddingConfig import get_preset
+    from core.Models.EmbeddingConfig import get_preset
     """Alias — returns the same thing as get_preset()."""
     key = get_current_embedding_model()
     return get_preset(key)
@@ -18,7 +18,7 @@ def get_chunk_config():
 
 def get_model_config() -> dict:
     """Dict-style access for code expecting get_model_config()["max_tokens"]."""
-    from src.core.Models.EmbeddingConfig import get_preset
+    from core.Models.EmbeddingConfig import get_preset
     key = get_current_embedding_model()
     preset = get_preset(key)
     return {
@@ -35,7 +35,7 @@ def get_model_config() -> dict:
 
 def format_passage(text: str) -> str:
     """Apply the model's passage prefix/instruction to text."""
-    from src.core.Models.EmbeddingConfig import get_preset
+    from core.Models.EmbeddingConfig import get_preset
     key = get_current_embedding_model()
     preset = get_preset(key)
     

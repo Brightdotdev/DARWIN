@@ -4,12 +4,12 @@ System info and status overview command handlers for darwin-admin.
 Commands: system info, status (top-level)
 """
 
-from src.admin.lib import (
+from admin.lib import (
     ns_to,
     SystemInfoArgs,
     StatusArgs,
 )
-from src.admin.renderer import _r
+from admin.renderer import _r
 
 
 def cmd_system_info(args: SystemInfoArgs, _get_models) -> None:
@@ -44,8 +44,8 @@ def cmd_system_info(args: SystemInfoArgs, _get_models) -> None:
 
 def cmd_status(args: StatusArgs) -> None:
     """Comprehensive overview: store files, installed models, preferences."""
-    from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
-    from src.core.Orchestrators.lib import resolve_store
+    from core.Orchestrators.StoreOrchestrator import StoreOrchestrator
+    from core.Orchestrators.lib import resolve_store
 
     if args.store:
         ds = resolve_store(args.store)

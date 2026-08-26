@@ -37,8 +37,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import polars as pl
 
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin
 
 
 DEFAULT_FILTER_BOOST = 0.2
@@ -525,8 +525,8 @@ def _rerank_by_query(
     Falls back to original filter scores if reranking fails.
     """
     try:
-        from src.core.Retrival.Reranking.Reranker import rerank_results
-        from src.core.Retrival.Reranking.Reranker import RerankedResult
+        from core.Retrival.Reranking.Reranker import rerank_results
+        from core.Retrival.Reranking.Reranker import RerankedResult
 
         # Create lightweight candidates for the reranker
         # The reranker expects objects with a .text attribute
@@ -631,9 +631,9 @@ def search_structured(
     # ── Step 2: Hybrid fallback ───────────────────────────────────────
     if query:
         darwin.info("Falling back to hybrid text search")
-        from src.core.Retrival.RetrievalArgs import RetrievalArgs
-        from src.core.Retrival.lib import RetrievalMethod
-        from src.core.Retrival.main import handle_retrieval
+        from core.Retrival.RetrievalArgs import RetrievalArgs
+        from core.Retrival.lib import RetrievalMethod
+        from core.Retrival.main import handle_retrieval
 
         args = RetrievalArgs(
             query=query,

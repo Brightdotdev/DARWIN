@@ -5,15 +5,15 @@ from typing import List
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.core.Retrival.Semantic.SemanticSearch import search_across_documents
-from src.core.Retrival.lib import (
+from core.Retrival.Semantic.SemanticSearch import search_across_documents
+from core.Retrival.lib import (
     SemanticSearchArgs,
     DEFAULT_TOP_K,
     DEFAULT_MIN_SCORE,
     SemanticSearchResult,
 )
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin
 
 
 def _validate_files(files: List[str], store: DarwinStore, mode: str = "semantic") -> List[str]:
@@ -28,7 +28,7 @@ def _validate_files(files: List[str], store: DarwinStore, mode: str = "semantic"
 
 
 def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List[SemanticSearchResult]:
-    from src.core.Models.ModelConfig import get_active_model
+    from core.Models.ModelConfig import get_active_model
     model_name = get_active_model("embedding")
 
     if model_name is None:
@@ -104,7 +104,7 @@ def handle_semantic_search(args: SemanticSearchArgs, store: DarwinStore) -> List
 def main() -> int:
     import argparse
 
-    from src.lib.Utils import ensure_writable_directory
+    from lib.Utils import ensure_writable_directory
 
     parser = argparse.ArgumentParser(
         description="Semantic search over embedded documents",
@@ -126,7 +126,7 @@ def main() -> int:
     if not query:
         parser.error("Query required (either positional or --query)")
 
-    from src.core.Logger.DarwinLogger import OutputMode
+    from core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
         

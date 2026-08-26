@@ -8,11 +8,11 @@ from typing import Dict, List, Optional, Any, Callable
 from dataclasses import asdict
 import os
 
-from src.core.Models.Lib.ModelSpec import (
+from core.Models.Lib.ModelSpec import (
     ModelSpec, ModelCategory, ModelTier,
     PROVIDER_REGISTRY,
 )
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 

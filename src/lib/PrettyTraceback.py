@@ -5,11 +5,11 @@ Drop this anywhere in your project (e.g. src/core/Utils/pretty_traceback.py)
 and call it from your entry point or wrap your main() with it.
 
 Usage:
-    from src.core.Utils.pretty_traceback import install_pretty_traceback
+    from core.Utils.pretty_traceback import install_pretty_traceback
     install_pretty_traceback()   # one-liner, replaces sys.excepthook
 
 Or manually:
-    from src.core.Utils.pretty_traceback import format_exception
+    from core.Utils.pretty_traceback import format_exception
     try:
         ...
     except Exception as e:

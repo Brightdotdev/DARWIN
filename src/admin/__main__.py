@@ -1,3 +1,3 @@
-from src.admin.cli import main
+from admin.cli import main
 
 main()

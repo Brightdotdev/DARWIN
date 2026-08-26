@@ -1,16 +1,16 @@
 from pathlib import Path
 from typing import Optional, List
 
-from src.core.Models.Lib.ModelRegistry import find_spec, ModelCategory
-from src.core.Models.ModelConfig import (
+from core.Models.Lib.ModelRegistry import find_spec, ModelCategory
+from core.Models.ModelConfig import (
     get_active_model,
     set_active_model,
     get_model_path,
     ensure_model_path,
 )
-from src.core.Models.Infrence.Spacy.SpacyNLPInference import SpacyNLPInference
-from src.core.Models.ModelDownloading.SpacyNLPModelDownloader import SpacyNLPModelDownloader 
-from src.core.Logger.DarwinLogger import darwin
+from core.Models.Infrence.Spacy.SpacyNLPInference import SpacyNLPInference
+from core.Models.ModelDownloading.SpacyNLPModelDownloader import SpacyNLPModelDownloader 
+from core.Logger.DarwinLogger import darwin
 
 
 # ---------------------------------------------------------------------------

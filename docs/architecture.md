@@ -96,13 +96,24 @@ The logger outputs to three places: terminal (Rich-based), SQLite history (for q
 
 All Darwin components log through a global `darwin` singleton, so there's one consistent logging interface everywhere.
 
-### MCP (`src/mcp/`)
+### MCP (`src/darwin_mcp/`)
 
 The MCP (Model Context Protocol) server. Exposes Darwin as 11 tools + 2 resources that AI agents can call.
 
 Three transports: stdio (for subprocess by Claude Desktop, Cursor, etc.), SSE (legacy network), and Streamable HTTP (recommended for production). All transports share the same tools and validation logic.
 
 The MCP server also serves a live log dashboard at `/dashboard` and a health check at `/health`.
+
+### Python API (`src/core/api.py`)
+
+The public API for Python developers. A single `Darwin` class that wraps all orchestrators behind a flat, documented surface — no need to juggle `StoreOrchestrator`, `RetrievalOrchestrator`, `PipelineOrchestrator`, or `LoggerOrchestrator` directly.
+
+Three audiences, three interfaces:
+- **CLI** (`darwin` / `darwin-admin`) — for humans
+- **MCP server** (`darwin_mcp`) — for AI agents
+- **Python API** (`Darwin` class) — for developers embedding darwin-rag as a library
+
+**Why it exists:** Desktop apps, agent frameworks, and custom scripts need a clean Python import — not subprocess calls to CLI commands or MCP tool schemas. The `Darwin` class gives you `search()`, `ingest()`, `search_records()`, `schema()`, and admin/status methods in one import, with async variants for FastAPI and agent loops.
 
 ### Lib (`src/lib/`)
 
@@ -144,7 +155,7 @@ Retrieval
 Resolved Passages
     │
     ▼
-MCP / CLI output
+MCP / CLI / Python API output
 ```
 
 ---

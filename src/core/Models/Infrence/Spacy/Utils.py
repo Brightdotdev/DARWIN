@@ -4,7 +4,7 @@ import math
 from typing import Optional, List, Dict, Set, Any
 
 
-from src.core.Models.Infrence.Spacy.lib import VALID_ENTITY_TYPES, ENTITY_BLACKLIST
+from core.Models.Infrence.Spacy.lib import VALID_ENTITY_TYPES, ENTITY_BLACKLIST
 
 # ── Canonicalisation v2 ────────────────────────────────────────────────────
 

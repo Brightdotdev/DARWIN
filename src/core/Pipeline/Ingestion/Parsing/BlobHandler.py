@@ -6,11 +6,11 @@ from typing import List, Dict, Optional, Tuple, Union
 from urllib.parse import urlparse, urljoin
 from dataclasses import dataclass
 
-from src.core.Logger.DarwinLogger import darwin, LogType
-from src.core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url
-from src.core.Pipeline.Ingestion.Parsing.HtmlProcessor import extract_content
-from src.core.Pipeline.Ingestion.Parsing.lib import ParsedDocument, BlobInput, ExtractedImage
-from src.core.Pipeline.Ingestion.Parsing.lib import is_good_enough
+from core.Logger.DarwinLogger import darwin, LogType
+from core.Pipeline.Ingestion.Parsing.UrlFetcher import fetch_url
+from core.Pipeline.Ingestion.Parsing.HtmlProcessor import extract_content
+from core.Pipeline.Ingestion.Parsing.lib import ParsedDocument, BlobInput, ExtractedImage
+from core.Pipeline.Ingestion.Parsing.lib import is_good_enough
 
 # ── Constants ──────────────────────────────────────────────────────────────
 _MAX_BLOB_BYTES = 10 * 1024 * 1024       # 10 MB
@@ -216,7 +216,7 @@ def _extract_images_from_html(
     logs.append(f"Found {len(img_tags)} <img> tag(s) in HTML blob")
 
     # Lazy import to avoid circular deps at module load
-    from src.features.Images.ImageHandler import ImageHandler
+    from features.Images.ImageHandler import ImageHandler
 
     handler = ImageHandler()
     img_paths: List[Path] = []

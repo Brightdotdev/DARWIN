@@ -7,8 +7,8 @@ Does not depend on ModelManager.
 from pathlib import Path
 from typing import List, Optional
 
-from src.core.Models.Lib.ModelRegistry import _ID_INDEX, find_spec, ModelCategory
-from src.lib.AppPaths import default_models_dir
+from core.Models.Lib.ModelRegistry import _ID_INDEX, find_spec, ModelCategory
+from lib.AppPaths import default_models_dir
 
 
 class ModelStore:

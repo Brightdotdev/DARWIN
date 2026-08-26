@@ -7,13 +7,13 @@ for co-extraction of NER entities and noun chunks with deduplication.
 
 from typing import List, Dict, Any
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.Infrence.Spacy.lib import EntityRecord, Mention
-from src.core.Models.Infrence.Spacy.Utils import (
+from core.Logger.DarwinLogger import darwin
+from core.Models.Infrence.Spacy.lib import EntityRecord, Mention
+from core.Models.Infrence.Spacy.Utils import (
     get_base_name, get_display_name,
     compute_entity_signal,
 )
-from src.core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
+from core.Pipeline.Ingestion.Graph.GraphConfig import GraphConfig
 
 
 def extract_entities(
@@ -51,8 +51,8 @@ def extract_entities(
 def _load_spacy():
     """Load spaCy model via ModelManager."""
     try:
-        from src.core.Models.ModelManager import modelManager
-        from src.core.Models.Lib.ModelRegistry import ModelCategory
+        from core.Models.ModelManager import modelManager
+        from core.Models.Lib.ModelRegistry import ModelCategory
 
         wrapper = modelManager.get(ModelCategory.NLP)
         if wrapper is None:

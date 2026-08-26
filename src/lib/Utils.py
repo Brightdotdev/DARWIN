@@ -3,7 +3,7 @@ import platform
 from pathlib import Path
 import subprocess
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 

@@ -1,10 +1,10 @@
 # KeywordSearch.py
 from typing import List, Optional
-from src.core.Retrival.Keyword.KeywordUtilities import calculate_bm25
-from src.core.Retrival.lib import KeywordSearchResult, OverlapDirection, RETRIVAL_COLUMNS, DEFAULT_TOP_K, DEFAULT_K1, DEFAULT_B
-from src.core.Retrival.retrieval_utils import normalize_links
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Storage.DarwinStore import DarwinStore
+from core.Retrival.Keyword.KeywordUtilities import calculate_bm25
+from core.Retrival.lib import KeywordSearchResult, OverlapDirection, RETRIVAL_COLUMNS, DEFAULT_TOP_K, DEFAULT_K1, DEFAULT_B
+from core.Retrival.retrieval_utils import normalize_links
+from core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
 
 
 def search_single_document_keyword(
@@ -32,7 +32,7 @@ def search_single_document_keyword(
         return []
 
     chunk_by_index = {c.get("index"): c for c in all_chunks}
-    from src.core.Pipeline.Indexing.BM25.BM25Utils import tokenize_text
+    from core.Pipeline.Indexing.BM25.BM25Utils import tokenize_text
 
     query_terms = tokenize_text(query)
     if not query_terms:

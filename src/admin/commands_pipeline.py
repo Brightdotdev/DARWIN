@@ -4,14 +4,14 @@ Pipeline execution and maintenance command handlers for darwin-admin.
 Commands: run, ingest, index, purge
 """
 
-from src.admin.lib import (
+from admin.lib import (
     ns_to,
     PipelineRunArgs,
     PipelineIngestArgs,
     PipelineIndexArgs,
     PipelinePurgeArgs,
 )
-from src.admin.renderer import _r
+from admin.renderer import _r
 
 
 def _run_pipeline_stages(
@@ -33,7 +33,7 @@ def _run_pipeline_stages(
 ) -> bool:
     """Shared pipeline execution. Returns True on success."""
     pipe = _get_pipeline(store_ref)
-    from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
+    from core.Orchestrators.lib import PipelineParameters as PipelineInput
 
     kwargs = {"stages": stages}
     if target is not None:

@@ -7,8 +7,8 @@ import uuid
 from pathlib import Path
 from typing import Optional, Any
 
-from src.core.Storage.DataModels import Content, Source
-from src.core.Storage.StoreUtils import file_hash, now
+from core.Storage.DataModels import Content, Source
+from core.Storage.StoreUtils import file_hash, now
 
 
 SCHEMA = """

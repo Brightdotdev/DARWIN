@@ -9,11 +9,11 @@ from typing import Optional
 from mcp.server.fastmcp import Context
 from mcp.types import ToolAnnotations
 
-from src.core.Orchestrators.lib import PipelineParameters as PipelineInput
-from src.core.Orchestrators.lib import resolve_store
-from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
-from src.core.Logger.DarwinLogger import darwin
-from src.mcp.logging_bridge import darwin_bridge
+from core.Orchestrators.lib import PipelineParameters as PipelineInput
+from core.Orchestrators.lib import resolve_store
+from core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+from core.Logger.DarwinLogger import darwin
+from darwin_mcp.logging_bridge import darwin_bridge
 
 _STAGE_MAP = {
     "ingest": "ingestion", "extract": "ingestion", "parse": "ingestion",

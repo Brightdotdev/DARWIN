@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from core.Logger.DarwinLogger import darwin, LogType
 
 
 def reconstruct_records(rows: list[dict], cls: Any) -> list[Any]:

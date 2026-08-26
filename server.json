@@ -7,13 +7,13 @@
     "url": "https://github.com/Brightdotdev/DARWIN",
     "source": "github"
   },
-  "version": "0.2.15",
+  "version": "0.2.18",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "darwin-rag",
-      "version": "0.2.15",
+      "version": "0.2.18",
       "transport": {
         "type": "stdio"
       },

@@ -10,11 +10,11 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Pipeline.Ingestion.Chunking.Chunker import chunk_document
-from src.core.Pipeline.Ingestion.Chunking.StructuredChunker import chunk_structured
-from src.core.Pipeline.Ingestion.Chunking.lib import  ChunkingArgs
-from src.core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
+from core.Pipeline.Ingestion.Chunking.Chunker import chunk_document
+from core.Pipeline.Ingestion.Chunking.StructuredChunker import chunk_structured
+from core.Pipeline.Ingestion.Chunking.lib import  ChunkingArgs
+from core.Logger.DarwinLogger import darwin
 
 
 # ── file resolution ────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
                 t0 = time.perf_counter()
 
                 # Re-parse the original file to get records
-                from src.core.Pipeline.Ingestion.Parsing.StructuredParser import (
+                from core.Pipeline.Ingestion.Parsing.StructuredParser import (
                     parse_structured,
                 )
                 source_obj = store.get_source(filename)
@@ -219,7 +219,7 @@ def handle_chunking(args: ChunkingArgs, store: DarwinStore) -> None:
 # ── CLI entry point ────────────────────────────────────────────────────────────
 
 async def main() -> int:
-    from src.lib.Utils import ensure_writable_directory
+    from lib.Utils import ensure_writable_directory
     import argparse
 
     parser = argparse.ArgumentParser(

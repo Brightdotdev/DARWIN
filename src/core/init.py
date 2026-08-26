@@ -17,7 +17,7 @@ def run_init(profile: str = "required", no_download: bool = False):
 
     # 1. Store
     console.print("\n[bold]1/3[/bold] Initialising store...")
-    from src.core.Storage.DarwinStore import DarwinStore
+    from core.Storage.DarwinStore import DarwinStore
 
     store = DarwinStore()
     store.bootstrap(quiet=True)
@@ -28,7 +28,7 @@ def run_init(profile: str = "required", no_download: bool = False):
 
     # 2. Models
     console.print(f"\n[bold]2/3[/bold] Setting up {profile} models...")
-    from src.core.Orchestrators.ModelOrchestrator import modelsOrchestrator
+    from core.Orchestrators.ModelOrchestrator import modelsOrchestrator
 
     if no_download:
         console.print("  [dim]--no-download set, skipping model downloads[/dim]")

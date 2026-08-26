@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from src.core.Models.Lib.ModelRegistry import (
+from core.Models.Lib.ModelRegistry import (
     ModelCategory,
     ModelTier,
     find_spec,
@@ -22,14 +22,14 @@ from src.core.Models.Lib.ModelRegistry import (
     get_models_per_provider,
     get_registry_stats,
 )
-from src.core.Models.ModelManager import (
+from core.Models.ModelManager import (
     ModelManager,
     ManagerStatus,
     SetupResult,
     modelManager,
 )
-from src.core.Logger.DarwinLogger import darwin
-from src.lib.KeyManager import (
+from core.Logger.DarwinLogger import darwin
+from lib.KeyManager import (
     set_api_key,
     clear_api_key,
     load_keys_from_keychain,
@@ -182,7 +182,7 @@ class ModelsOrchestrator:
                 continue
             if spec.requires_provider:
                 try:
-                    from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+                    from lib.KeyManager import is_key_set, load_keys_from_keychain
                     load_keys_from_keychain(log=False)
                     if is_key_set(spec.requires_provider):
                         result.append(spec.model_id)
@@ -383,7 +383,7 @@ class ModelsOrchestrator:
         # 3. API key check
         if spec.requires_provider:
             try:
-                from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+                from lib.KeyManager import is_key_set, load_keys_from_keychain
                 load_keys_from_keychain(log=False)
                 if not is_key_set(spec.requires_provider):
                     return OperationResult(

@@ -10,14 +10,14 @@ from typing import Tuple
 
 from mcp.server.fastmcp import FastMCP
 
-from src.core.Orchestrators.StoreOrchestrator import StoreOrchestrator
-from src.core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
-from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
-import src.mcp.tools.Search as Search
-import src.mcp.tools.Pipeline as Pipeline
-import src.mcp.tools.Store as Store
-import src.mcp.tools.Resources as Resources
-import src.mcp.tools.Logs as Logs
+from core.Orchestrators.StoreOrchestrator import StoreOrchestrator
+from core.Orchestrators.RetrievalOrchestrator import RetrievalOrchestrator
+from core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+import darwin_mcp.tools.Search as Search
+import darwin_mcp.tools.Pipeline as Pipeline
+import darwin_mcp.tools.Store as Store
+import darwin_mcp.tools.Resources as Resources
+import darwin_mcp.tools.Logs as Logs
 
 
 def create_mcp_app(

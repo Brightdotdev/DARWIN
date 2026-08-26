@@ -4,7 +4,7 @@ MCP Logging Bridge — forwards DarwinLogger events as MCP log notifications.
 Two ways to use:
 
 1. Context manager in tool handlers (preferred):
-       from src.mcp.logging_bridge import darwin_bridge
+       from darwin_mcp.logging_bridge import darwin_bridge
        async with darwin_bridge(ctx):
            # ... tool logic ...
 
@@ -22,7 +22,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator
 
-from src.core.Logger.DarwinLogger import (
+from core.Logger.DarwinLogger import (
     darwin,
     EventSubscriber,
     LogEvent,

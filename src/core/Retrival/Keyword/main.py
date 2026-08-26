@@ -7,8 +7,8 @@ from typing import List
 if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from src.core.Retrival.Keyword.KeywordSearch import search_across_documents_keyword
-from src.core.Retrival.lib import (
+from core.Retrival.Keyword.KeywordSearch import search_across_documents_keyword
+from core.Retrival.lib import (
     KeywordSearchResult,
     KeywordSearchArgs,
     DEFAULT_TOP_K,
@@ -17,8 +17,8 @@ from src.core.Retrival.lib import (
 )
 
 
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin
 
 
 def _validate_files(
@@ -159,7 +159,7 @@ def main() -> int:
     if not query:
         parser.error("Query required (either as positional or --query)")
 
-    from src.core.Logger.DarwinLogger import OutputMode
+    from core.Logger.DarwinLogger import OutputMode
 
     darwin.configure(
 

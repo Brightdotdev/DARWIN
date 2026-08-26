@@ -20,7 +20,7 @@ from rich.progress import (
     TaskProgressColumn,
 )
 
-from src.core.Logger.DarwinLogger import (
+from core.Logger.DarwinLogger import (
     EventSubscriber,
     LogEvent,
     LogType,
@@ -34,7 +34,7 @@ from src.core.Logger.DarwinLogger import (
     SessionEndEvent,
     resolve_event_style,
 )
-from src.core.Logger.lib import ASCII_BANNER
+from core.Logger.lib import ASCII_BANNER
 
 
 _ICONS = {

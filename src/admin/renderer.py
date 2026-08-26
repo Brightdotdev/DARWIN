@@ -108,7 +108,7 @@ class AdminRenderer:
 
     def show_banner(self) -> None:
         """Print the Darwin ASCII banner."""
-        from src.core.Logger.lib import ASCII_BANNER
+        from core.Logger.lib import ASCII_BANNER
         for line in ASCII_BANNER:
             try:
                 self._out(line)

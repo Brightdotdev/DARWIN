@@ -4,7 +4,7 @@ import socket
 import urllib.request
 import time
 from typing import Optional
-from src.core.Logger.DarwinLogger import darwin,LogType
+from core.Logger.DarwinLogger import darwin,LogType
 
 # Configuration
 TEST_HOSTS = [

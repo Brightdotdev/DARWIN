@@ -10,12 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Union
 
-from src.core.Pipeline.Ingestion.Chunking.ChunkerUtils import (
+from core.Pipeline.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     OverlapDirection,
     split_sentences,
 )
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 _OVERLAP_SEARCH_CAP = 10

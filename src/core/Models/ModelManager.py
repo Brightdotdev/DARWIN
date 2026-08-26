@@ -9,47 +9,47 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from src.core.Models.Lib.ModelRegistry import ModelCategory, find_spec, get_specs_by_category,MODEL_SPECS
-from src.core.Models.ModelConfig import get_active_model, set_active_model
-from src.core.Logger.DarwinLogger import darwin
+from core.Models.Lib.ModelRegistry import ModelCategory, find_spec, get_specs_by_category,MODEL_SPECS
+from core.Models.ModelConfig import get_active_model, set_active_model
+from core.Logger.DarwinLogger import darwin
 
 # Import all factories
-from src.core.Models.Infrence.EmbeddingInferenceFactory import (
+from core.Models.Infrence.EmbeddingInferenceFactory import (
     get_embedding_inference,
     set_embedding_preference,
     discard_embedding_model,
     get_embedding_model_path,
     is_embedding_model_downloaded,
 )
-from src.core.Models.Infrence.NLPInferenceFactory import (
+from core.Models.Infrence.NLPInferenceFactory import (
     get_nlp_inference,
     set_nlp_preference,
     discard_nlp_model,
     get_nlp_model_path,
     is_nlp_model_downloaded,
 )
-from src.core.Models.Infrence.RerankerInferenceFactory import (
+from core.Models.Infrence.RerankerInferenceFactory import (
     get_reranker_inference,
     set_reranker_preference,
     discard_reranker_model,
     get_reranker_model_path,
     is_reranker_model_downloaded,
 )
-from src.core.Models.Infrence.VisionInfrenceFactory import (
+from core.Models.Infrence.VisionInfrenceFactory import (
     get_vision_inference,
     set_vision_preference,
     discard_vision_model,
     get_vision_model_path,
     is_vision_model_downloaded,
 )
-from src.core.Models.Infrence.OCRInferenceFactory import (
+from core.Models.Infrence.OCRInferenceFactory import (
     get_ocr_inference,
     set_ocr_preference,
     discard_ocr_model,
     get_ocr_model_path,
     is_ocr_model_downloaded,
 )
-from src.lib.KeyManager import is_key_set, load_keys_from_keychain
+from lib.KeyManager import is_key_set, load_keys_from_keychain
 
 
 @dataclass

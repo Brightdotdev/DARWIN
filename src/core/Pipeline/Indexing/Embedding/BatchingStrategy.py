@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Optional, Tuple, Any
 
-from src.core.Pipeline.Indexing.Embedding.MemoryMonitor import MemoryMonitor
+from core.Pipeline.Indexing.Embedding.MemoryMonitor import MemoryMonitor
 
 
 class _ThroughputSample:

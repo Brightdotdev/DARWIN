@@ -2,11 +2,11 @@ import numpy as np
 import re
 from typing import List, Optional, Set
 
-from src.core.Storage.DarwinStore import DarwinStore
-from src.core.Pipeline.Indexing.Embedding.Embedder import EmbeddingSession
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Retrival.lib import OverlapDirection, SemanticSearchResult
-from src.core.Retrival.retrieval_utils import normalize_links
+from core.Storage.DarwinStore import DarwinStore
+from core.Pipeline.Indexing.Embedding.Embedder import EmbeddingSession
+from core.Logger.DarwinLogger import darwin
+from core.Retrival.lib import OverlapDirection, SemanticSearchResult
+from core.Retrival.retrieval_utils import normalize_links
 
 _RESULT_COLUMNS = [
     "text",

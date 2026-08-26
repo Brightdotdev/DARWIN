@@ -19,7 +19,7 @@ litellm.suppress_debug_info = True
 litellm.telemetry = False
 litellm.turn_off_message_logging = True
 
-from src.core.Logger.DarwinLogger import darwin, LogType
+from core.Logger.DarwinLogger import darwin, LogType
 
 PROVIDER_ENV_MAP: dict[str, str] = {
     "openai": "OPENAI_API_KEY",

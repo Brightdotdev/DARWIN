@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from src.core.Pipeline.Indexing.BM25.lib import  compute_idf
+from core.Pipeline.Indexing.BM25.lib import  compute_idf
 
 
 

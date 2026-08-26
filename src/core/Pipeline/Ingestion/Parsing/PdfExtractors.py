@@ -2,9 +2,9 @@ import re
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
-from src.core.Pipeline.Ingestion.Parsing.lib import (
+from core.Pipeline.Ingestion.Parsing.lib import (
     ExtractedImage,
     MAX_FILE_SIZE_MB,
     IMAGE_SLOT_RE,
@@ -12,8 +12,8 @@ from src.core.Pipeline.Ingestion.Parsing.lib import (
     LARGE_PDF_PAGE_THRESHOLD,
 )
 
-from src.core.Pipeline.Ingestion.Parsing.Extractors.FitzExtractor import fitz_extract
-from src.core.Pipeline.Ingestion.Parsing.Extractors.FitzRawExtractor import fitz_raw_extract
+from core.Pipeline.Ingestion.Parsing.Extractors.FitzExtractor import fitz_extract
+from core.Pipeline.Ingestion.Parsing.Extractors.FitzRawExtractor import fitz_raw_extract
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -320,7 +320,7 @@ def parse_markitdown(
     """Parse non-PDF documents via MarkItDown."""
     from markitdown import MarkItDown
 
-    from src.core.Pipeline.Ingestion.Parsing.lib import words_to_pages
+    from core.Pipeline.Ingestion.Parsing.lib import words_to_pages
 
     result = MarkItDown().convert(str(path))
     text   = result.text_content or ""

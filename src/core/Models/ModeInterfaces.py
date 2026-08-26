@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Union
 import numpy as np
 from PIL import Image
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 import numpy as np

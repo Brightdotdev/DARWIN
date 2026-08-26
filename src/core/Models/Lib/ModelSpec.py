@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Literal
 from enum import Enum, auto
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 # ═══════════════════════════════════════════════════════════════════════════

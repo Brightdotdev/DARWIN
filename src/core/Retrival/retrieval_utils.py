@@ -7,7 +7,7 @@ Eliminates duplicate implementations across submodules.
 
 from typing import Any, List
 
-from src.core.Retrival.lib import ChunkLink, OverlapDirection
+from core.Retrival.lib import ChunkLink, OverlapDirection
 
 
 def normalize_links(links_raw: Any) -> List[ChunkLink]:

@@ -1,18 +1,18 @@
 # BM25Indexer.py
 from collections import Counter
 from typing import List, Optional, Any, Dict
-from src.core.Pipeline.Indexing.BM25.lib import (
+from core.Pipeline.Indexing.BM25.lib import (
     BM25Data,
     DEFAULT_IDF_SMOOTHING,
     DOMAIN_STOP_THRESHOLD,
 )
-from src.core.Pipeline.Indexing.BM25.BM25Utils import (
+from core.Pipeline.Indexing.BM25.BM25Utils import (
     detect_domain_stopwords,
     tokenize_text,
     stream_tokenize_chunks,
 )
-from src.core.Storage import DarwinStore
-from src.core.Logger.DarwinLogger import darwin
+from core.Storage import DarwinStore
+from core.Logger.DarwinLogger import darwin
 
 
 def index_chunks_for_bm25(

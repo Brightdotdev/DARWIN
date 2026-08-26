@@ -12,7 +12,7 @@ from typing import Optional, Any
 
 import pandas as pd
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
 class GraphStore:

@@ -1,14 +1,14 @@
 """
 darwin-admin — Full orchestrator control for power users.
 
-Entry point: src.admin.cli:main()  or  darwin-admin
+Entry point: admin.cli:main()  or  darwin-admin
 """
 
 import argparse
 import sys
 import traceback
 
-from src.admin.renderer import _r
+from admin.renderer import _r
 
 
 # ── Lazy orchestrator singletons ──
@@ -21,7 +21,7 @@ _models = None
 def _get_store(store_ref: str | None = None):
     global _store
     if _store is None or store_ref is not None:
-        from src.core.Orchestrators.lib import resolve_store
+        from core.Orchestrators.lib import resolve_store
         resolved = resolve_store(store_ref)
         if store_ref is None:
             _store = resolved
@@ -32,10 +32,10 @@ def _get_store(store_ref: str | None = None):
 def _get_pipeline(store_ref: str | None = None):
     global _pipeline
     if store_ref is not None:
-        from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+        from core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
         return PipelineOrchestrator(store=_get_store(store_ref))
     if _pipeline is None:
-        from src.core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
+        from core.Orchestrators.PipelineOrchestrator import PipelineOrchestrator
         _pipeline = PipelineOrchestrator(store=_get_store())
     return _pipeline
 
@@ -43,7 +43,7 @@ def _get_pipeline(store_ref: str | None = None):
 def _get_models(init_models: bool = False):
     global _models
     if _models is None:
-        from src.core.Orchestrators.ModelOrchestrator import modelsOrchestrator
+        from core.Orchestrators.ModelOrchestrator import modelsOrchestrator
         _models = modelsOrchestrator
         if init_models:
             _models.status()
@@ -56,7 +56,7 @@ def _get_models(init_models: bool = False):
 
 
 def main():
-    from src.core.Logger.DarwinLogger import darwin
+    from core.Logger.DarwinLogger import darwin
     darwin.configure()
 
     parser = argparse.ArgumentParser(
@@ -86,14 +86,14 @@ Examples:
                         help="Enable verbose error output")
 
     # Register all command groups
-    from src.admin import setup as _setup_mod
-    from src.admin import commands_models as _models_mod
-    from src.admin import commands_store as _store_mod
-    from src.admin import commands_pipeline as _pipeline_mod
-    from src.admin import commands_search as _search_mod
-    from src.admin import commands_logs as _logs_mod
-    from src.admin import commands_system as _system_mod
-    from src.admin import uninstall as _uninstall_mod
+    from admin import setup as _setup_mod
+    from admin import commands_models as _models_mod
+    from admin import commands_store as _store_mod
+    from admin import commands_pipeline as _pipeline_mod
+    from admin import commands_search as _search_mod
+    from admin import commands_logs as _logs_mod
+    from admin import commands_system as _system_mod
+    from admin import uninstall as _uninstall_mod
 
     _setup_mod.add_args(sub, _get_models)
     _models_mod.add_args(sub, _get_models)
@@ -108,7 +108,7 @@ Examples:
     args = parser.parse_args()
 
     if args.command != "setup":
-        from src.admin.setup import _setup_status
+        from admin.setup import _setup_status
         _status = _setup_status()
         if not _status.any_configured:
             _r.warn("No config found — run  darwin-admin setup  first")

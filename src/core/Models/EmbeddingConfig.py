@@ -294,7 +294,7 @@ def get_preset(model_key: Optional[str] = None) -> ModelPreset:
 # ═══════════════════════════════════════════════════════════════════════════
 # NEW: Local vs API detection helpers
 # ═══════════════════════════════════════════════════════════════════════════
-from src.core.Models.Lib.ModelSpec import LOADER_TYPES
+from core.Models.Lib.ModelSpec import LOADER_TYPES
 
 _LOCAL_LOADERS = {t for t in LOADER_TYPES.__args__ if not t.startswith("api_")}
 _API_LOADERS = {t for t in LOADER_TYPES.__args__ if t.startswith("api_")}
@@ -365,7 +365,7 @@ def get_preset_with_spec(model_id: str) -> Tuple[ModelPreset, Optional[Any]]:
     """
     preset = get_preset(model_id)
     try:
-        from src.core.Models.Lib.ModelRegistry import find_spec
+        from core.Models.Lib.ModelRegistry import find_spec
         spec = find_spec(model_id)
         return preset, spec
     except ImportError:
@@ -375,7 +375,7 @@ def get_preset_with_spec(model_id: str) -> Tuple[ModelPreset, Optional[Any]]:
 def get_local_presets_with_specs() -> List[Tuple[ModelPreset, Any]]:
     """Return all local presets paired with their ModelSpecs."""
     try:
-        from src.core.Models.Lib.ModelRegistry import find_spec
+        from core.Models.Lib.ModelRegistry import find_spec
     except ImportError:
         return [(v, None) for v in get_local_presets().values()]
 
@@ -439,7 +439,7 @@ def validate_presets() -> Dict[str, Any]:
 
         # ModelRegistry cross-check (optional)
         try:
-            from src.core.Models.Lib.ModelRegistry import find_spec
+            from core.Models.Lib.ModelRegistry import find_spec
             spec = find_spec(model_id)
             if spec is None:
                 warnings.append(

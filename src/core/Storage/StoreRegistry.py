@@ -6,8 +6,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Storage.StoreUtils import now
+from core.Logger.DarwinLogger import darwin
+from core.Storage.StoreUtils import now
 
 
 # ── Ambient in-memory registry for active store instances ───────────────
@@ -57,7 +57,7 @@ class DarwinStoreRegistry:
     @classmethod
     def create_store(cls, key: str, path: Path) -> Any:
         # Lazy import to avoid circular dependency
-        from src.core.Storage.DarwinStore import DarwinStore
+        from core.Storage.DarwinStore import DarwinStore
         store = DarwinStore(path, name=key)
         cls.register(key, store)
         return store

@@ -1,7 +1,7 @@
 import re
 import unicodedata
 
-from src.core.Pipeline.Ingestion.Chunking.ChunkConfig import get_chunk_config
+from core.Pipeline.Ingestion.Chunking.ChunkConfig import get_chunk_config
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Compiled regex library

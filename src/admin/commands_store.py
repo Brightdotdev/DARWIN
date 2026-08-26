@@ -4,7 +4,7 @@ Store introspection and maintenance command handlers for darwin-admin.
 Commands: status, files, file, audit, health, repair
 """
 
-from src.admin.lib import (
+from admin.lib import (
     ns_to,
     StoreStatusArgs,
     StoreFilesArgs,
@@ -13,7 +13,7 @@ from src.admin.lib import (
     StoreHealthArgs,
     StoreRepairArgs,
 )
-from src.admin.renderer import _r
+from admin.renderer import _r
 
 
 def cmd_store_status(args: StoreStatusArgs, _get_store) -> None:

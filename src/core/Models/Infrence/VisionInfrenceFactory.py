@@ -6,7 +6,7 @@ Provides model registry-aware routing between API (LiteLLM) and local (ONNX)
 vision backends. Consumed directly by ModelManager.
 
 Usage:
-    from src.core.Models.ModelLoading.Vision.VisionInferenceFactory import get_vision_inference
+    from core.Models.ModelLoading.Vision.VisionInferenceFactory import get_vision_inference
 
     inference = get_vision_inference("openai/gpt-4o-mini")
     # or
@@ -16,15 +16,15 @@ Usage:
 from pathlib import Path
 from typing import Optional
 
-from src.core.Models.Lib.ModelRegistry import find_spec, ModelCategory
-from src.core.Models.ModelConfig import (
+from core.Models.Lib.ModelRegistry import find_spec, ModelCategory
+from core.Models.ModelConfig import (
     get_active_model,
     set_active_model,
     get_model_path,
 )
-from src.lib.KeyManager import is_key_set, load_keys_from_keychain
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.ModeInterfaces import VisionInferenceInterface
+from lib.KeyManager import is_key_set, load_keys_from_keychain
+from core.Logger.DarwinLogger import darwin
+from core.Models.ModeInterfaces import VisionInferenceInterface
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ def get_vision_inference(
         darwin.error("Model loading failed")
         return None
 
-    from src.core.Models.Infrence.Api.ApiVisionInfrence import APIVisionInference
+    from core.Models.Infrence.Api.ApiVisionInfrence import APIVisionInference
     api_vision = APIVisionInference(
         model_id=spec.model_id,
         max_image_size=kwargs.get("max_image_size", 1280),

@@ -16,7 +16,7 @@ def _read_logging_port() -> int:
     """Read sse_port from logging.json. Returns DEFAULT_PORT if unavailable."""
     import json
     try:
-        from src.lib.AppPaths import default_logging_config
+        from lib.AppPaths import default_logging_config
         path = default_logging_config()
         if path.exists():
             data = json.loads(path.read_text(encoding="utf-8"))
@@ -28,9 +28,9 @@ def _read_logging_port() -> int:
 
 
 def _mcp(args):
-    from src.core.Logger.DarwinLogger import darwin
-    from src.mcp.Server import run_stdio
-    from src.mcp.UnifiedServer import UnifiedServer
+    from core.Logger.DarwinLogger import darwin
+    from darwin_mcp.Server import run_stdio
+    from darwin_mcp.UnifiedServer import UnifiedServer
 
     port = args.temp_port or args.port or _read_logging_port()
 
@@ -60,7 +60,7 @@ def _config(args):
             "mcpServers": {
                 "darwin": {
                     "command": python,
-                    "args": ["-m", "src.mcp"],
+                    "args": ["-m", "darwin_mcp"],
                     "cwd": workspace,
                 }
             }
@@ -71,7 +71,7 @@ def _config(args):
             "mcpServers": {
                 "darwin": {
                     "command": python,
-                    "args": ["-m", "src.mcp"],
+                    "args": ["-m", "darwin_mcp"],
                     "cwd": workspace,
                 }
             }
@@ -82,7 +82,7 @@ def _config(args):
             "mcpServers": {
                 "darwin": {
                     "command": python,
-                    "args": ["-m", "src.mcp"],
+                    "args": ["-m", "darwin_mcp"],
                     "cwd": workspace,
                 }
             }
@@ -124,7 +124,7 @@ def _config(args):
 
 
 def main():
-    from src.core.Logger.DarwinLogger import darwin
+    from core.Logger.DarwinLogger import darwin
     darwin.configure()
     parser = argparse.ArgumentParser(
         prog="darwin",
@@ -178,7 +178,7 @@ def main():
         parser.print_help()
         sys.exit(0)
     if args.command == "mcp":
-        from src.admin.setup import _setup_status
+        from admin.setup import _setup_status
         _status = _setup_status()
         if not _status.any_configured:
             print("No config found — run  darwin-admin setup  first\n")

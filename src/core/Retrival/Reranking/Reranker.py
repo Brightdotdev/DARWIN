@@ -2,8 +2,8 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Any
 import numpy as np
 
-from src.core.Retrival.lib import OverlapDirection, ChunkLink,DEFAULT_TOP_K,DEFAULT_RERANK_WEIGHT
-from src.core.Logger.DarwinLogger import darwin
+from core.Retrival.lib import OverlapDirection, ChunkLink,DEFAULT_TOP_K,DEFAULT_RERANK_WEIGHT
+from core.Logger.DarwinLogger import darwin
 
 
 
@@ -78,8 +78,8 @@ def rerank_results(
     original_score_weight: float =DEFAULT_RERANK_WEIGHT,
 ) -> List[RerankedResult]:
     """Re‑score candidate chunks with a cross‑encoder."""
-    from src.core.Models.ModelManager import modelManager
-    from src.core.Models.Lib.ModelRegistry import ModelCategory
+    from core.Models.ModelManager import modelManager
+    from core.Models.Lib.ModelRegistry import ModelCategory
 
     if not candidates:
         darwin.warning("No candidates to rerank")

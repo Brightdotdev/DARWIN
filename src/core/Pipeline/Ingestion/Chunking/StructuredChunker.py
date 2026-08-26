@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional
 
-from src.core.Pipeline.Ingestion.Chunking.lib import (
+from core.Pipeline.Ingestion.Chunking.lib import (
     Chunk,
     ChunkLink,
     OverlapDirection,
 )
-from src.core.Pipeline.Ingestion.Parsing.StructuredParser import StructuredDocument
+from core.Pipeline.Ingestion.Parsing.StructuredParser import StructuredDocument
 
 
 def _concatenate_fields(record: Dict[str, Any]) -> str:

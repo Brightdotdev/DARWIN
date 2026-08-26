@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2.18 — 2026-08-26
+
+Public Python API and namespace fix.
+
+### What's new
+- **`Darwin` public API facade** — single `from core import Darwin` gives you `ingest()`, `search()`, `search_records()`, `schema()`, `status()`, `list_files()`, `file_status()`, `logs()`, `validate_filters()`, `overlapping_keys()`, `purge()`, `create_store()`, `list_stores()`. All with async variants (`_async` suffix) for FastAPI and agent loops.
+- **Namespace fix** — `src/mcp/` renamed to `src/darwin_mcp/` to avoid collision with the `mcp` PyPI SDK. Entry points updated, 119 files re-imported, MANIFEST.in updated.
+
+### Docs
+- Added `docs/api.md` — full reference for the Darwin class (tiers, params, return shapes, filter operators, async, internal wiring).
+- Updated `README.md` — added "Python API" section and `api.md` link.
+- Updated `docs/architecture.md` — added "Python API" section, fixed MCP path.
+
 ## v0.2.17 — 2026-08-18
 
 Structured data indexing and search.

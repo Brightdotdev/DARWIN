@@ -179,6 +179,23 @@ See [docs/admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.
 
 ---
 
+## Python API
+
+For embedding darwin-rag as a library in your own app:
+
+```python
+from core import Darwin
+
+d = Darwin()
+d.ingest("./papers", recursive=True)
+results = d.search("what is this paper about")
+records = d.search_records(filters={"status": "active"})
+```
+
+Full reference: [docs/api.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/api.md)
+
+---
+
 ## Documentation
 
 | Doc | What |
@@ -193,6 +210,7 @@ See [docs/admin.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/admin.
 | [models.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/models.md) | Model registry & inference |
 | [logger.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/logger.md) | Structured logging |
 | [orchestrators.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/orchestrators.md) | High-level business logic |
+| [api.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/api.md) | Python API (Darwin class) |
 
 ---
 

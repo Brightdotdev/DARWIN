@@ -1,7 +1,7 @@
 from typing import List
 
-from src.core.Pipeline.Ingestion.Chunking.lib import OverlapDirection
-from src.core.Pipeline.Ingestion.Chunking.ChunkerUtils import (
+from core.Pipeline.Ingestion.Chunking.lib import OverlapDirection
+from core.Pipeline.Ingestion.Chunking.ChunkerUtils import (
     Chunk,
     split_into_sections,
     count_page_seps,
@@ -9,7 +9,7 @@ from src.core.Pipeline.Ingestion.Chunking.ChunkerUtils import (
     section_to_chunks,
     tokens,   
 )
-from src.core.Pipeline.Ingestion.Chunking.ChunkConfig import get_chunk_config
+from core.Pipeline.Ingestion.Chunking.ChunkConfig import get_chunk_config
 
 
 def chunk_document(

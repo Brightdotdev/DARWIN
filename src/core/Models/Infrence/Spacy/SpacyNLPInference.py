@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Iterator, Iterable,Tuple
 
-from src.core.Logger.DarwinLogger import darwin
+from core.Logger.DarwinLogger import darwin
 
 
-from src.core.Models.Infrence.Spacy.Utils import canonicalize, is_valid_entity, is_valid_noun_chunk
+from core.Models.Infrence.Spacy.Utils import canonicalize, is_valid_entity, is_valid_noun_chunk
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

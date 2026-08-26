@@ -4,8 +4,8 @@ from typing import Optional, Union, List
 import numpy as np
 from PIL import Image
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Models.ModeInterfaces import (
+from core.Logger.DarwinLogger import darwin
+from core.Models.ModeInterfaces import (
     VisionInferenceInterface,
     UnifiedVisionMetadata,
     UnifiedVisionResult,
@@ -30,7 +30,7 @@ class APIVisionInference(VisionInferenceInterface):
 
     def load(self) -> "APIVisionInference":
         """Verify model_id is valid. No heavy loading for API. Chainable."""
-        from src.core.Models.Lib.ModelRegistry import find_spec
+        from core.Models.Lib.ModelRegistry import find_spec
         spec = find_spec(self.model_id)
         if not spec:
             darwin.error(f"Model {self.model_id} not found in registry")
@@ -70,7 +70,7 @@ class APIVisionInference(VisionInferenceInterface):
         start = time.perf_counter()
 
         try:
-            from src.core.Models.Infrence.Api.InfrenceApi import vision_sync
+            from core.Models.Infrence.Api.InfrenceApi import vision_sync
             text = vision_sync(
                 image=image,
                 prompt=prompt,
@@ -119,7 +119,7 @@ class APIVisionInference(VisionInferenceInterface):
         if not self.is_loaded():
             self.load()
 
-        from src.core.Models.Infrence.Api.InfrenceApi import vision
+        from core.Models.Infrence.Api.InfrenceApi import vision
 
         start = time.perf_counter()
 

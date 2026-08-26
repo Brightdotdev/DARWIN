@@ -16,9 +16,9 @@ from pathlib import Path
 from time import sleep
 from typing import Optional
 
-from src.core.Logger.DarwinLogger import darwin
-from src.lib.InternetChecker import wait_for_internet, check_internet_robust
-from src.core.Models.lib import SPACY_URLS, tarball_urls
+from core.Logger.DarwinLogger import darwin
+from lib.InternetChecker import wait_for_internet, check_internet_robust
+from core.Models.lib import SPACY_URLS, tarball_urls
 
 
 class SpacyNLPModelDownloader:

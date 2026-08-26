@@ -26,20 +26,20 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Set, Tuple
 
-from src.core.Logger.DarwinLogger import darwin
-from src.core.Storage.DarwinStore import DarwinStore
+from core.Logger.DarwinLogger import darwin
+from core.Storage.DarwinStore import DarwinStore
 
-from src.core.Retrival.main import handle_retrieval
-from src.core.Retrival.RetrievalArgs import RetrievalArgs, RetrievalMethod
-from src.core.Retrival.RetrievalResult import RetrievalResult
-from src.core.Retrival.lib import SearchAudit, OverlapDirection
+from core.Retrival.main import handle_retrieval
+from core.Retrival.RetrievalArgs import RetrievalArgs, RetrievalMethod
+from core.Retrival.RetrievalResult import RetrievalResult
+from core.Retrival.lib import SearchAudit, OverlapDirection
 
-from src.core.Pipeline.Ingestion.Chunking.StructuralClassifier import get_penalty_factor
-from src.core.Pipeline.Ingestion.Chunking.ChunkerUtils import split_sentences
-from src.lib.PrettyTraceback import install_pretty_traceback
+from core.Pipeline.Ingestion.Chunking.StructuralClassifier import get_penalty_factor
+from core.Pipeline.Ingestion.Chunking.ChunkerUtils import split_sentences
+from lib.PrettyTraceback import install_pretty_traceback
 
 install_pretty_traceback()
-from src.core.Retrival.OrchestratorTypes import (
+from core.Retrival.OrchestratorTypes import (
     OrchestratorConfig,
     MergeStrategy,
     ResolvedPassage,
@@ -47,8 +47,8 @@ from src.core.Retrival.OrchestratorTypes import (
     RetrievalContext,
 )
 
-from src.core.Orchestrators.lib import RetrievalParameters as RetrievalInput  # public API
-from src.core.Orchestrators.lib import StructuredSearchParams  # structured search API
+from core.Orchestrators.lib import RetrievalParameters as RetrievalInput  # public API
+from core.Orchestrators.lib import StructuredSearchParams  # structured search API
 
 
 class RetrievalOrchestrator:
@@ -99,7 +99,7 @@ class RetrievalOrchestrator:
     def _save_results(self, ctx: RetrievalContext, results_dir: Optional[str] = None) -> bool:
         """Save RetrievalContext as JSON to the results directory. Returns True on success."""
         try:
-            from src.lib.AppPaths import set_darwin_base_dir
+            from lib.AppPaths import set_darwin_base_dir
             if results_dir:
                 save_dir = Path(results_dir)
             else:
@@ -119,7 +119,7 @@ class RetrievalOrchestrator:
             darwin.success(f"Results saved: {filepath}")
             return True
         except Exception as e:
-            from src.lib.PrettyTraceback import darwin_traceback
+            from lib.PrettyTraceback import darwin_traceback
             darwin_traceback(e, label="RetrievalOrchestrator._save_results")
             return False
 
@@ -173,7 +173,7 @@ class RetrievalOrchestrator:
             # ── Step 1: Try structured filter search ──────────────────────
             has_filters = bool(search_params.filters)
             if has_filters and search_params.mode in ("auto", "structured"):
-                from src.core.Retrival.StructuredSearch import search_structured
+                from core.Retrival.StructuredSearch import search_structured
 
                 results, mode_used = search_structured(
                     store=self.store,
@@ -408,7 +408,7 @@ class RetrievalOrchestrator:
             )
 
         except Exception as e:
-            from src.lib.PrettyTraceback import darwin_traceback
+            from lib.PrettyTraceback import darwin_traceback
             darwin_traceback(e, label="RetrievalOrchestrator._retrieve_and_resolve_internal")
             return self._empty_context(
                 cfg, elapsed_ms=int((time.perf_counter() - start_time) * 1000)
@@ -945,7 +945,7 @@ class RetrievalOrchestrator:
                 self._chunk_meta_cache[source] = {row["index"]: row for row in rows}
             except Exception as e:
                 # FIX: Don't cache errors — allow retry on next call
-                from src.lib.PrettyTraceback import darwin_traceback
+                from lib.PrettyTraceback import darwin_traceback
                 darwin_traceback(e, label=f"RetrievalOrchestrator._fetch_chunk_metadata ({source})")
                 return {}
         cache = self._chunk_meta_cache[source]
