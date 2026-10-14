@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "darwin-rag"
-version = "0.2.18"
+version = "0.2.19"
 description = "Local-first RAG knowledge base with hybrid search (BM25 + embeddings), exposed to AI agents via MCP — fully offline-capable."
 authors = [{name = "Brightdotdev", email = "mail.bright.dev@gmail.com"}]
 readme = "README.md"
@@ -27,6 +27,7 @@ keywords = [
     "private",
 ]
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -100,6 +101,8 @@ darwin-admin = "admin.cli:main"
 [project.urls]
 Homepage = "https://github.com/Brightdotdev/DARWIN"
 Repository = "https://github.com/Brightdotdev/DARWIN"
+Issues = "https://github.com/Brightdotdev/DARWIN/issues"
+Documentation = "https://github.com/Brightdotdev/DARWIN/tree/main/docs"
 
 [tool.setuptools.packages.find]
 where = ["src"]
