@@ -2,19 +2,35 @@
 
 # Darwin RAG
 
-A local-first RAG engine that ingests documents, indexes them with BM25 + dense embeddings, and exposes search via an MCP server for AI agent integration.
+**Search your own documents with any AI agent, privately, on your own machine.**
 
-- **Ingestion** — PDF, Markdown, HTML, images (OCR), CSV, Excel, ODS, URLs
-- **Indexing** — BM25 keyword + dense embedding hybrid index with configurable chunking strategies
-- **Search** — Hybrid, semantic, or keyword retrieval with reranking, diversity rerank, and structural penalties
-- **Generation** — LLM-backed answer synthesis via LiteLLM (OpenAI, Anthropic, Gemini, etc.)
-- **Observability** — Structured logging with per-session history, queryable via MCP
-- **Isolation** — Multiple independent stores for tenant/project separation
-- **Deployment** — stdio (AI agent subprocess), SSE, or Streamable HTTP; Docker-ready
-- **Local-first** — Everything runs locally, fully offline-capable after setup
+Darwin is a local-first RAG engine that ingests documents, indexes them with BM25 + dense embeddings, and exposes search through an MCP server. Point Claude, Cursor, or any MCP client at it and your agent can search your PDFs, notes, spreadsheets, and web pages without sending them to a cloud index.
 
-Built by [BrightDotDev](https://github.com/brightdotdev).  
-[![License: MIT with Attribution](https://img.shields.io/badge/License-MIT%20with%20Attribution-blue.svg)](LICENSE)
+> One-time internet is needed to download models during setup. After that, search and indexing run fully offline.
+
+<!-- TODO: add a 20-second demo GIF here: ingest a folder -> ask the agent a question -> get a sourced answer -->
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) [![PyPI](https://img.shields.io/pypi/v/darwin-rag)](https://pypi.org/project/darwin-rag/)
+
+- **Ingestion**: PDF, Markdown, HTML, images (OCR), CSV, Excel, ODS, URLs
+- **Indexing**: BM25 keyword + dense embedding hybrid index with configurable chunking strategies
+- **Search**: Hybrid, semantic, or keyword retrieval with reranking, diversity rerank, and structural penalties
+- **Generation**: LLM-backed answer synthesis via LiteLLM (OpenAI, Anthropic, Gemini, etc.)
+- **Observability**: Structured logging with per-session history, queryable via MCP
+- **Isolation**: Multiple independent stores for tenant/project separation
+- **Deployment**: stdio (AI agent subprocess), SSE, or Streamable HTTP; Docker-ready
+- **Local-first**: Everything runs locally, fully offline-capable after setup
+
+Built by [BrightDotDev](https://github.com/brightdotdev).
+
+---
+
+## Why Darwin?
+
+- **Private by default.** Your documents stay on your machine.
+- **Works with your agent.** Standard MCP server: Claude Desktop, Cursor, and other MCP clients.
+- **Search that fits the question.** Keyword for exact terms, semantic for meaning, hybrid when unsure.
+- **Light to start.** The `required` preset downloads just one embedding model.
 
 ---
 
@@ -29,7 +45,7 @@ pip install darwin-rag
 ### 2. Set up models
 
 ```bash
-# Interactive — detects hardware, pick your models
+# Interactive: detects hardware, pick your models
 darwin-admin setup interactive
 
 # Or one-shot (embedding-only, no prompts)
@@ -39,10 +55,10 @@ darwin-admin setup --preset required
 ### 3. Start the MCP server & connect
 
 ```bash
-# stdio mode — for AI agent subprocess (Claude Desktop, Cursor, etc.)
+# stdio mode: for AI agent subprocess (Claude Desktop, Cursor, etc.)
 darwin mcp
 
-# Or HTTP mode — for remote clients
+# Or HTTP mode: for remote clients
 darwin mcp --http --port 8765
 ```
 
@@ -69,6 +85,16 @@ darwin config claude          # Claude Desktop config
 darwin config cursor          # Cursor config
 darwin config all --copy      # All clients + copy to clipboard
 ```
+
+### 4. Try it
+
+Ask your agent: *"Ingest ./my-notes with Darwin, then find everything I wrote about <topic>."*
+
+---
+
+## Use it as an agent skill
+
+Darwin ships with a skill (`skills/darwin-rag/SKILL.md`) that tells agents *when* and *how* to use the MCP tools: check what's indexed, ingest, pick a search mode, and answer from sources. Copy the `darwin-rag` folder into your agent's skills directory (for Claude Code: `~/.claude/skills/`).
 
 ---
 
@@ -142,7 +168,7 @@ Configure your MCP client with the URL:
 
 | Command | What it does |
 |---------|-------------|
-| `darwin-admin setup interactive` | Guided setup — detect hardware, choose models |
+| `darwin-admin setup interactive` | Guided setup: detect hardware, choose models |
 | `darwin-admin setup --preset required` | Download embedding model only (fastest) |
 | `darwin-admin setup --preset recommended` | Embedding + reranker + OCR models |
 | `darwin-admin setup logging` | Reconfigure logging only |
@@ -154,14 +180,14 @@ See [docs/setup.md](https://github.com/BrightDotDev/DARWIN/blob/main/docs/setup.
 
 ## CLI Reference
 
-**`darwin`** — User CLI
+**`darwin`**: User CLI
 
 | Command | Description |
 |---------|-------------|
 | `darwin mcp` | Start MCP server (stdio, `--sse` or `--http` for network) |
 | `darwin config [client]` | Generate MCP client config |
 
-**`darwin-admin`** — Power-user CLI
+**`darwin-admin`**: Power-user CLI
 
 | Command | Description |
 |---------|-------------|
@@ -218,9 +244,9 @@ Full reference: [docs/api.md](https://github.com/BrightDotDev/DARWIN/blob/main/d
 
 Found a bug? Want to add something? You're welcome here.
 
-- **Issues** — open one at [github.com/BrightDotDev/DARWIN/issues](https://github.com/BrightDotDev/DARWIN/issues)
-- **Code** — fork, branch, PR. Keep it minimal.
-- **AI-generated code is fine** — but you own what you ship. Test it before submitting.
+- **Issues**: open one at [github.com/BrightDotDev/DARWIN/issues](https://github.com/BrightDotDev/DARWIN/issues)
+- **Code**: fork, branch, PR. Keep it minimal.
+- **AI-generated code is fine**, but you own what you ship. Test it before submitting.
 
 Read [CONTRIBUTING.md](https://github.com/BrightDotDev/DARWIN/blob/main/CONTRIBUTING.md) for the full guidelines.
 
@@ -228,6 +254,6 @@ Read [CONTRIBUTING.md](https://github.com/BrightDotDev/DARWIN/blob/main/CONTRIBU
 
 ## License
 
-MIT with Attribution — see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
 
 Core architecture and implementation by [BrightDotDev](https://github.com/brightdotdev).
